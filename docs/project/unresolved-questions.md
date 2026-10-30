@@ -51,3 +51,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-044 | 8 / 10 | Whether NIST SP 800-63B-4 supersedes the 2017 revision cited in Ch 8; align with Ch 10 | Open | Merge with UQ-036 |
 | UQ-045 | 8 | URLs: Byron 2015 GraphQL post; GitHub GraphQL rate-limit docs | Open | |
 | UQ-046 | 8 | Table 8.3 latency ranges vs Appendix F; ~100 ms scrypt figure from a single measurement | Open | |
+| UQ-047 | 4 | Dean & Barroso (2013) hedged-request figures (1,800 ms → 74 ms p99.9 with ~2% extra requests) | Open | |
+| UQ-048 | 4 | Schroeder & Gibson (FAST 2007) annual disk replacement rates (2–4%) | Open | |
+| UQ-049 | 4 / 5 | Canonical version of the "latency numbers" list (variants differ: 1 KB vs 2 KB send, 20 vs 30 ms disk read); "as of 2025" column is an author estimate | Open | Merge with UQ-022; resolve in Appendix F |
+| UQ-050 | 4 | AWS S3 "11 nines" durability wording and URL | Open | |
+| UQ-051 | 4 | Notation in Gunther's *Guerrilla Capacity Planning* (2007): α/β vs σ/κ | Open | |
+| UQ-052 | 4 | Current edition year of IEC 80000-13 | Open | |
