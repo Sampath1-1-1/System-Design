@@ -103,3 +103,11 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-096 | 11 | Sentry 2015 transaction-ID wraparound postmortem — details and URL | Open | |
 | UQ-097 | 11 / 13 | URLs for Uber 2016 (Postgres→MySQL) and Instagram 2012 (sharding & IDs) posts | Open | Merge with UQ-087, UQ-093 |
 | UQ-098 | 11 | PostgreSQL 16 xid wraparound warning / write-refusal thresholds (stated qualitatively) | Accepted | |
+| UQ-099 | 17 | Twitter 2010 "Announcing Snowflake" post — author, date, URL | Open | Bit layout verified from archived GitHub repo |
+| UQ-100 | 17 | Flickr "Ticket Servers" post — author (believed Kay Kremerskothen) and date | Open | |
+| UQ-101 | 17 | Akamai one-hit-wonder claim in Maggs & Sitaraman (2015) | Open | |
+| UQ-102 | 17 | Counting Bloom filter counter-overflow bound in Fan et al. (2000) | Open | |
+| UQ-103 | 17 | Redis sorted-set skip-list constants (p = 1/4, 32 levels); RedisBloom bundled in Redis 8 | Open | Version-dependent |
+| UQ-104 | 17 | RocksDB ribbon filters; default skip-list memtable | Open | |
+| UQ-105 | 17 | Citation form for Niemeyer (2008) geohash | Open | |
+| UQ-106 | 17 | xxHash speed claims from author's own benchmarks only | Accepted | Labeled in text |

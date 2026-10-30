@@ -119,8 +119,6 @@ $$\mu = \frac{n}{B}, \qquad \sigma \approx \sqrt{\frac{n}{B}}, \qquad \chi^2 = \
 The program implements MurmurHash3 (x86, 32-bit) and compares it with a deliberately bad hash on 100,000 structured keys.
 
 ```python
-import random
-
 def murmur3_32(data: bytes, seed: int = 0) -> int:
     """MurmurHash3 x86_32 (Appleby), pure Python. Returns an unsigned 32-bit int."""
     c1, c2, mask = 0xCC9E2D51, 0x1B873593, 0xFFFFFFFF
@@ -287,7 +285,6 @@ In each case the filter turns most memory- or I/O-heavy exact lookups into a che
 4. **Never delete** by clearing bits: a bit may belong to several items, so clearing it creates false negatives (§17.4.6 covers deletable variants).
 
 You do not need $k$ unrelated hash functions: two hashes combined as $g_i(x) = h_a(x) + i \cdot h_b(x) \bmod m$ give the same asymptotic false-positive rate [Kirsch & Mitzenmacher 2006], so one 128-bit hash split in two suffices. Filters with identical $m$, $k$ and hashes merge by bitwise OR into a filter of the **union**.
-
 
 #### Architecture diagram
 
@@ -499,7 +496,6 @@ sequenceDiagram
 ### 17.4.6 Counting Bloom filters
 
 A **counting Bloom filter** replaces each bit with a small counter, typically 4 bits [Fan et al. 2000]. Insert increments the $k$ counters, delete decrements them, and a query checks that all are non-zero, so the false-positive rate equals that of a bit filter with the same $m$ and $k$. Costs: 4× the memory; counter overflow, which is astronomically unlikely with optimal $k$ and 4-bit counters [Fan et al. 2000; Broder & Mitzenmacher 2004]; and false negatives if you delete an item that was never inserted. Fan and colleagues introduced it for the **Summary Cache** protocol, in which web proxies exchanged compact, constantly changing summaries of their cache contents.
-
 
 ### 17.4.7 Cuckoo filters
 
@@ -994,7 +990,7 @@ flowchart LR
   API([Trending API]) -->|read| ST
 ```
 
-**Reading the diagram.** Workers consume partitions of the event log (Chapter 30), each keeping a local Count-Min sketch and candidate heap. Every 10 seconds they ship sketches and candidates asynchronously (dotted) to an aggregator, which adds the sketches, re-estimates candidates and writes the global top 100 to a store the API reads synchronously. An item moderately frequent everywhere can miss every local top-*k*; ship more candidates (top 1,000 for a global top 100) or partition the log by item key. Failure points: slow workers delay windows (event-time windows with lateness bounds, Chapter 31), and the aggregator must restart from the log. Scale by adding workers and partitions.
+**Reading the diagram.** Workers consume partitions of the event log (Chapter 30), each keeping a local Count-Min sketch and candidate heap. Every 10 seconds they ship sketches and candidates asynchronously (dotted) to an aggregator, which adds the sketches, re-estimates candidates and writes the global top 100 to a store the API reads synchronously. An item moderately frequent everywhere can miss every local top-*k*; ship more candidates (top 1,000 for a global top 100) or partition the log by item key. Failure points: slow workers delay windows (event-time windows with lateness bounds, §29.8), and the aggregator must restart from the log. Scale by adding workers and partitions.
 
 #### Code example
 
@@ -1148,24 +1144,32 @@ Balanced trees (red–black, AVL) guarantee $O(\log n)$, but their rotations are
 3. **Delete**: search, then unlink the node from each level it occupies.
 4. **Range scan** $[a, b]$: search for $a$, then walk level 0 until passing $b$. This is why skip lists suit ordered data such as leaderboards and memtables.
 
-**Figure 17.8 — A skip list with three levels; searching for 40.**
+**Figure 17.8 — A skip list with three levels; the bold path finds 40.**
 
 ```mermaid
 flowchart LR
-  subgraph L3["Level 3"]
-    H3[head] --> N30c[30] --> E3[end]
-  end
-  subgraph L2["Level 2"]
-    H2[head] --> N10b[10] --> N30b[30] --> N50b[50] --> E2[end]
-  end
-  subgraph L1["Level 1: every node"]
-    H1[head] --> N10[10] --> N20[20] --> N30[30] --> N40[40] --> N50[50] --> E1[end]
-  end
-  N30c -.->|down| N30b
-  N30b -.->|down| N30
+  H["head<br/>levels 1-3"]
+  N10["10<br/>levels 1-2"]
+  N20["20<br/>level 1"]
+  N30["30<br/>levels 1-3"]
+  N40["40<br/>level 1"]
+  N50["50<br/>levels 1-2"]
+  E["end"]
+  H ==>|L3| N30
+  N30 -->|L3| E
+  H -->|L2| N10
+  N10 -->|L2| N30
+  N30 -->|L2| N50
+  N50 -->|L2| E
+  H -->|L1| N10
+  N10 -->|L1| N20
+  N20 -->|L1| N30
+  N30 ==>|L1| N40
+  N40 -->|L1| N50
+  N50 -->|L1| E
 ```
 
-**Reading the diagram.** Each subgraph is one level; solid arrows are forward pointers, dotted arrows show the search descending at node 30 (one node object holds all its levels). Searching for 40: right to 30 at level 3, down (next is the end), down again (50 > 40), one step to 40; the saving grows with $n$. Everything is in memory and synchronous. Failure points: unlucky coin flips can slow one search (the guarantee is probabilistic), and pointer chasing causes CPU cache misses (§5.4), which is why on-disk indexes prefer B-trees. Concurrency scales well because an insert changes only a few predecessor pointers.
+**Reading the diagram.** Each box is one node, labeled with the levels it occupies; each arrow is a forward pointer labeled with its level (L1 links every node, L2 about a quarter to a half of them, L3 fewer still). Searching for 40 follows the bold path: at level 3 the head jumps straight to 30; the next L3 and L2 pointers from 30 overshoot (end, 50), so the search drops to level 1 and steps once to 40, two moves instead of four along the bottom list, a saving that grows with $n$. Everything is in memory and every step is a synchronous pointer read. Failure points: unlucky coin flips can slow one search (the guarantee is probabilistic), and pointer chasing causes CPU cache misses (§5.4), which is why on-disk indexes prefer B-trees. Concurrency scales well because an insert changes only a few predecessor pointers.
 
 #### Mathematical foundations
 
@@ -1325,18 +1329,16 @@ Merkle introduced hash trees so one signature over a root could authenticate man
 
 ```mermaid
 flowchart TD
-  ROOT["Root = H of H_AB and H_CD"] --> HAB["H_AB = H of H_A and H_B"]
-  ROOT --> HCD["H_CD = H of H_C and H_D"]
+  ROOT["Root = H of H_AB and H_CD"] --> HAB["H_AB = H of H_A and H_B<br/>sent as proof item 2"]
+  ROOT --> HCD["H_CD = H of H_C and H_D<br/>recomputed by verifier"]
   HAB --> HA["H_A = H of record A"]
   HAB --> HB["H_B = H of record B"]
-  HCD --> HC["H_C = H of record C"]
-  HCD --> HD["H_D = H of record D"]
+  HCD --> HC["H_C = H of record C<br/>recomputed by verifier"]
+  HCD --> HD["H_D = H of record D<br/>sent as proof item 1"]
   HC --> RC[(Record C)]
-  HD -.->|proof item 1| HC
-  HAB -.->|proof item 2| HCD
 ```
 
-**Reading the diagram.** Leaves hash records, parents hash children, the root summarizes all. To prove C is present, the server sends C plus the dotted siblings $H_D$ and $H_{AB}$; the verifier recomputes $H_C$, $H_{CD}$ and the root and compares it with a root obtained through a trusted channel (signed log head, block header), all synchronously and locally. Records live in storage; hashes can be cached or stored beside them. Failure points: a stale or untrusted root, and rebuild cost after many updates (incremental trees rehash only the changed leaf's path). Proofs grow logarithmically: 30 hashes for a billion records.
+**Reading the diagram.** Leaves hash records, parents hash children, the root summarizes all. To prove C is present, the server sends C plus the two siblings marked as proof items, $H_D$ and $H_{AB}$; the verifier recomputes $H_C$, $H_{CD}$ and the root and compares it with a root obtained through a trusted channel (signed log head, block header), all synchronously and locally. Records live in storage; hashes can be cached or stored beside them. Failure points: a stale or untrusted root, and rebuild cost after many updates (incremental trees rehash only the changed leaf's path). Proofs grow logarithmically: 30 hashes for a billion records.
 
 ::: formula
 **Merkle proof size and anti-entropy cost**
@@ -1473,7 +1475,7 @@ Chapter 27 (§27.13) places Merkle-tree anti-entropy alongside read repair and h
 
 ### 17.9.1 Why location needs its own index
 
-"Find all drivers within 1 km" looks like a database query: `WHERE lat BETWEEN ... AND lon BETWEEN ...`. A B-tree on `lat` can use only one of the two ranges efficiently. It returns a horizontal strip around the whole planet at the right latitude, and the database then filters that strip by longitude. A composite index on `(lat, lon)` has the same problem, because a B-tree orders keys along one dimension. The fix is to map two-dimensional positions onto a one-dimensional key so that points close on the map usually have close keys. Curves that do this are called **space-filling curves**, and every index in this section is a variation on the idea: divide the map into **cells**, give each cell an ID, index points by cell ID, and answer a proximity query by looking up a small set of cells and filtering the candidates by exact distance.
+"Find all drivers within 1 km" looks like `WHERE lat BETWEEN ... AND lon BETWEEN ...`, but a B-tree orders keys along one dimension: an index on `lat` (or `(lat, lon)`) returns a strip around the planet, filtered afterwards by longitude. The fix is a **space-filling curve**: divide the map into **cells** whose IDs are close when the cells are close, index points by cell ID, look up a few cells per query and filter candidates by exact distance.
 
 ### 17.9.2 Geohash
 
@@ -1488,7 +1490,7 @@ Chapter 27 (§27.13) places Merkle-tree anti-entropy alongside read repair and h
 3. Do the same with latitude, and keep alternating.
 4. Group bits in fives and map each group to the alphabet `0123456789bcdefghjkmnpqrstuvwxyz` (the letters a, i, l and o are omitted to avoid confusion with digits).
 
-The interleaving traces a **Z-order (Morton) curve**: within each cell the four sub-quadrants are visited in a Z pattern. Points with a long shared prefix are close together. The reverse is not always true. Two points a meter apart on either side of a major cell boundary, such as the equator or the prime meridian, can have geohashes with no common prefix at all. Proximity search must therefore always look at neighboring cells, never at a prefix alone.
+The interleaving traces a **Z-order (Morton) curve**. A long shared prefix means nearby points, but not conversely: points a meter apart across a major boundary (the equator, the prime meridian) can share no prefix. Proximity search must always examine neighboring cells, never a prefix alone.
 
 **Figure 17.11 — Geohash refinement: each character narrows the cell.**
 
@@ -1503,7 +1505,7 @@ flowchart TD
   C6 --> IDX[("Index: key = geohash,<br/>value = driver IDs")]
 ```
 
-**Reading the diagram.** Each arrow appends one character (5 bits) and shrinks the cell by a factor of 32 in area; the sizes are at the equator, and widths shrink by $\cos(\text{latitude})$ toward the poles. The chain shows the cells containing a point in San Francisco. Because a longer geohash extends a shorter one, a range scan over keys starting with `9q8yy` in any ordered store (B-tree, sorted set, LSM tree) returns every point in that 4.9 km cell, which is how geohash turns a 2-D query into 1-D range scans. All steps are pure computation; the only storage is the index at the bottom. The failure point is the boundary effect described above, and the main scaling decision is the precision, which trades the number of cells scanned against the number of false candidates per cell.
+**Reading the diagram.** Each arrow appends one character, shrinking the cell's area 32-fold (sizes at the equator; widths shrink by $\cos(\text{latitude})$). Because a longer geohash extends a shorter one, a range scan over keys starting `9q8yy` in any ordered store (B-tree, sorted set, LSM tree) returns every point in that 4.9 km cell: a 2-D query becomes 1-D range scans. Encoding is pure computation; the only storage is the index. The failure point is the boundary effect; the scaling decision is precision, trading cells scanned against false candidates per cell.
 
 ::: formula
 **Geohash cell size**
@@ -1526,7 +1528,7 @@ $$b_{\text{lon}} = \left\lceil \frac{5L}{2} \right\rceil, \quad b_{\text{lat}} =
 2. Width: $360/32{,}768 = 0.010986^\circ$; $\times 111.32 = 1.223$ km at the equator; $\times \cos 37.77^\circ = 0.7905$ gives 0.967 km.
 3. Height: $180/32{,}768 = 0.005493^\circ \times 110.57 = 0.607$ km.
 
-*Interpretation.* A 6-character cell here is about 970 m × 610 m, not square. *Engineering implication.* The 3 × 3 block of cells around a point extends at least one cell height, 610 m, in every direction. That covers a 500 m search radius but **not** a 1 km radius. The program below measures what happens if you ignore this.
+*Interpretation.* The cell is about 970 m × 610 m, not square. *Engineering implication.* The 3 × 3 block around a point reaches at least 610 m in every direction: enough for a 500 m radius, **not** for 1 km. The program below measures the consequence.
 :::
 
 **Table 17.6 — Geohash precision (cell size at the equator, computed by the program below).**
@@ -1666,12 +1668,12 @@ What to notice:
 - The encoder reproduces the widely used reference geohash `u4pruydqqvj` for (57.64911, 10.40744), and the precision table reproduces Table 17.6.
 - **The 3 × 3 trick at 6 characters silently misses 5.8% of drivers within 1 km**, exactly as the worked example predicted: the cells are only 611 m tall.
 - Dropping to 5 characters restores full recall but scans 130,946 candidates, 65% of all drivers, because each cell is now about 4 km on a side.
-- Covering the circle's bounding box with 25 six-character cells gives full recall with 17,908 candidates, 7× fewer than the 5-character scan. The general rule: pick the precision from the radius, then cover the search area with as many cells as it takes.
+- Covering the circle's bounding box with 25 six-character cells gives full recall with 17,908 candidates, 7× fewer. Rule: pick precision from the radius, then cover the area with as many cells as needed.
 - Drivers are uniformly spread at about 1,220 per km² in this test, so the expected count within 1 km is $\pi \times 1^2 \times 1{,}220 \approx 3{,}830$; brute force found 3,822.
 
 ### 17.9.3 Quadtrees
 
-A geohash grid is fixed: a 6-character cell in central Manhattan may hold thousands of drivers while one over a lake holds none. A **quadtree** adapts to density [Finkel & Bentley 1974]. Each node covers a rectangle and holds up to a capacity, say 100 points. When it overflows, it splits into four children (NW, NE, SW, SE) and redistributes its points. Dense areas become deep and fine; empty areas stay as one large leaf. A proximity query descends only into nodes whose rectangles intersect the search circle.
+A geohash grid is fixed, so a downtown cell may hold thousands of drivers and a lake cell none. A **quadtree** adapts [Finkel & Bentley 1974]: each node covers a rectangle holding up to a capacity (say 100 points) and splits into four children when it overflows. Dense areas grow deep, empty ones stay shallow, and queries descend only into nodes intersecting the search circle.
 
 **Figure 17.12 — An adaptive quadtree: dense areas split further.**
 
@@ -1688,11 +1690,11 @@ flowchart TD
   NE2 --> D1["4 leaves of about 90 points each"]
 ```
 
-**Reading the diagram.** The root covers the city and has split because it exceeded its capacity. Three quadrants are leaves with few enough points; downtown (NE) has split again, and its financial district has split a third time. A query near the park reads one leaf; a query downtown descends three levels to a small leaf. The tree lives in memory on the service that owns it; edges are parent-to-child pointers, traversed synchronously. Failure points: moving points (drivers report every few seconds) force constant removal and reinsertion and occasional splits and merges, which complicates concurrency; and an in-memory tree on one server is a single point of failure, so production designs shard it by region and rebuild it from the location stream after a restart. Quadtrees suit in-memory indexes of moderately dynamic points; for a persistent index on an ordinary database, the fixed cells of geohash or S2 fit B-trees better.
+**Reading the diagram.** The root split on overflow; three quadrants are leaves, downtown split again and its financial district a third time, so a query near the park reads one leaf while a downtown query descends three levels. The tree lives in memory and is walked synchronously by parent–child pointers. Failure points: moving points force constant reinsertion, splits and merges, complicating concurrency; a single in-memory tree is a single point of failure, so production systems shard by region and rebuild from the location stream after restart. For persistent indexes in ordinary databases, fixed cells (geohash, S2) fit B-trees better.
 
 ### 17.9.4 Google S2
 
-**S2** is Google's open-source spherical geometry library [S2 Geometry Docs]. It avoids the distortion of latitude/longitude grids, whose cells become slivers near the poles, by projecting the sphere onto the six faces of a cube. Each face is divided as a quadtree, and the cells are ordered along a **Hilbert curve**, a space-filling curve that, unlike the Z-curve, never jumps: consecutive cells always share an edge. A cell is named by a 64-bit **cell ID** that encodes the face, the path down the quadtree and the level (0–30). Because children's IDs fall in a contiguous range inside their parent's, "all points in this cell" is a range scan on a 64-bit integer column. A **region coverer** approximates any shape (circle, polygon) with a small set of cells at mixed levels, and a query becomes a handful of integer ranges.
+**S2** is Google's open-source spherical geometry library [S2 Geometry Docs]. It projects the sphere onto a cube's six faces, divides each face as a quadtree and orders cells along a **Hilbert curve**, whose consecutive cells always share an edge (the Z-curve jumps). A 64-bit **cell ID** encodes face, path and level (0–30); a cell's descendants form a contiguous ID range, so "points in this cell" is an integer range scan. A **region coverer** approximates any circle or polygon with a few cells at mixed levels.
 
 ::: formula
 **Average S2 cell area at level L**
@@ -1707,12 +1709,12 @@ $$\bar{A}_L \approx \frac{4\pi R^2}{6 \times 4^{L}} = \frac{510.1 \times 10^{6} 
 :::
 
 ::: example
-**Worked example — which S2 level for a 1 km search?** Level 12: $85.0 \times 10^6 / 4^{12} = 85.0 \times 10^6 / 16{,}777{,}216 = 5.07$ km², cells about 2.3 km across. Level 13: 1.27 km², about 1.1 km across. Level 30: $85.0 \times 10^6 / 4^{30}$ km² $= 7.4 \times 10^{-11}$ km² $\approx 0.74$ cm². *Interpretation.* Each level divides area by 4, and 31 levels span from a sixth of the planet to under a square centimeter. *Engineering implication.* Index points at a fine level (often the leaf ID itself) and let the region coverer pick coarse cells for the query, so that one index serves every search radius.
+**Worked example — which S2 level for a 1 km search?** Level 12: $85.0 \times 10^6 / 4^{12} = 85.0 \times 10^6 / 16{,}777{,}216 = 5.07$ km², about 2.3 km across. Level 13: 1.27 km², about 1.1 km across. Level 30: $7.4 \times 10^{-11}$ km² $\approx 0.74$ cm². *Interpretation.* Each level quarters the area; 31 levels span a sixth of the planet to under a square centimeter. *Engineering implication.* Index points at a fine level and let the coverer choose coarse query cells, so one index serves every radius.
 :::
 
 ### 17.9.5 Uber H3
 
-**H3** is Uber's open-source hexagonal grid [H3 Docs; Brodsky 2018]. It projects the globe onto an icosahedron and tiles it with hexagons at 16 resolutions (0–15). Resolution 0 has 122 base cells, and each finer resolution has about 7 times as many cells (aperture 7). Twelve cells at every resolution must be pentagons, because a sphere cannot be tiled with hexagons alone. A hexagon's six neighbors all share an edge and all lie the same distance from its center, whereas a square cell has four edge neighbors and four corner neighbors at 1.41× the distance. That makes hexagons a natural unit for analyzing movement, smoothing values over neighborhoods ("rings") and pricing by area. The trade-off is hierarchy: seven child hexagons do not exactly tile their parent, so parent–child containment is approximate, unlike S2 and geohash.
+**H3** is Uber's open-source hexagonal grid [H3 Docs; Brodsky 2018]. It projects the globe onto an icosahedron and tiles it with hexagons at 16 resolutions (0–15): 122 base cells, about 7× more cells per finer resolution, and 12 unavoidable pentagons per resolution. A hexagon's six neighbors all share an edge and are equidistant, whereas a square has edge and corner neighbors at different distances, so hexagons suit movement analysis, neighborhood smoothing and area pricing. The trade-off: seven children do not exactly tile their parent, so containment is approximate.
 
 **Table 17.7 — Selected H3 resolutions (average hexagon, from the H3 library version 4).**
 
@@ -1729,7 +1731,7 @@ $$\bar{A}_L \approx \frac{4\pi R^2}{6 \times 4^{L}} = \frac{510.1 \times 10^{6} 
 A k-ring query (`grid_disk` in H3 v4) returns a hexagon and all hexagons within $k$ steps: 7 cells for $k = 1$ and 19 for $k = 2$ ($1 + 3k(k+1)$).
 
 ::: industry
-**Uber.** Uber's engineering blog describes building H3 to analyze supply, demand and pricing across cities: events are bucketed by hexagon, and hexagons' equal-distance neighbors make smoothing across adjacent areas straightforward. Uber open-sourced the library in 2018 [Brodsky 2018; H3 Docs]. **Redis** offers geospatial commands (`GEOADD`, `GEOSEARCH`) that store each member's 52-bit interleaved geohash as its sorted-set score, so a radius search becomes range scans over the cells that cover the area, followed by a distance filter [Redis Docs: Geospatial].
+**Uber and Redis.** Uber built H3 to analyze supply, demand and pricing by hexagon, using equidistant neighbors to smooth across adjacent areas, and open-sourced it in 2018 [Brodsky 2018; H3 Docs]. Redis's `GEOADD`/`GEOSEARCH` store each member's 52-bit interleaved geohash as its sorted-set score, so a radius search becomes range scans over covering cells plus a distance filter [Redis Docs: Geospatial].
 *Evidence: Primary* — [Brodsky 2018; H3 Docs; Redis Docs]
 :::
 
@@ -1749,7 +1751,7 @@ flowchart LR
   LOG -.->|rebuild after failure| GI
 ```
 
-**Reading the diagram.** Drivers send positions every 4 seconds; the location service computes each position's cell (geohash, S2 or H3) and moves the driver between cells in the geo index, which is held in memory (Redis or a custom service) and sharded by region so that a city's index fits on one shard. Every update is also appended asynchronously to a location stream (dotted), which feeds analytics and lets a failed index shard be rebuilt in seconds. A rider's request goes to the query service, which covers the search circle with cells, reads candidates from the index synchronously, filters them by exact distance and ranks them by estimated arrival time from a routing service (not shown). Load: 1 million active drivers at one update per 4 s is 250,000 writes per second, so the index must be in memory and partitioned. Failure points: a stale driver entry (a driver whose app died) needs a TTL on each entry; a hot shard during a big event needs finer cells or a shard split; and cells straddling a shard boundary make the query fan out to two shards. Chapter 55 (§55.1, §55.2) develops this into a full ride-matching design.
+**Reading the diagram.** Drivers report every 4 seconds; the location service computes each position's cell and moves the driver between cells in an in-memory geo index sharded by region. Updates are also appended asynchronously (dotted) to a location stream for analytics and for rebuilding a failed shard. A rider's request is synchronous: the query service covers the circle with cells, reads candidates, filters by exact distance and ranks by arrival time. Load: 1 million drivers every 4 s is 250,000 writes per second, hence memory and partitioning. Failure points: stale entries from dead apps (use a TTL), hot shards during events (finer cells or shard splits), and circles straddling shard boundaries (two-shard fan-out). Chapter 55 (§55.1, §55.2) develops the full design.
 
 **Table 17.8 — Geospatial indexes compared.**
 
@@ -1764,7 +1766,7 @@ flowchart LR
 | Choose when | Simple prefix/range scans, Redis, Elasticsearch | In-memory dynamic points | Global coverage, polygons, ranges on integers | Movement analytics, aggregation, pricing | Polygons and shapes in PostGIS (GiST) |
 
 ::: mistake
-**"Searching the 3 × 3 block of geohash cells finds everything within the radius."** Only if the cell's smaller side is at least the radius, and cell width shrinks with latitude. The measurement above lost 5.8% of results at 1 km with 6-character cells. Derive precision from the radius and latitude, or use a region coverer.
+**"Searching the 3 × 3 block of geohash cells finds everything within the radius."** Only if the cell's smaller side is at least the radius, and widths shrink with latitude; the measurement above lost 5.8% at 1 km. Derive precision from radius and latitude, or use a region coverer.
 :::
 
 ## 17.10 Unique ID generation
@@ -1775,7 +1777,7 @@ Every row, message, order and event needs an identifier. On one database, an aut
 
 1. **Unique** across all generators, forever.
 2. **Generated without coordination** on the hot path, so that ID creation adds no network round trip and survives the loss of any central service.
-3. **Roughly time-ordered** (often called **k-sortable**): IDs created later sort later. This keeps B-tree inserts near the right-hand edge of the index (§11.8, §13.6), lets you paginate by ID, and lets you find recent items with a range scan.
+3. **Roughly time-ordered** (**k-sortable**): later IDs sort later, keeping B-tree inserts at the index's right edge (§11.8, §13.6) and enabling pagination and recent-item range scans.
 4. **Compact**: 64 bits fits a `BIGINT` and halves index size compared with 128 bits.
 5. **Not leaking** information you would rather hide, such as exact creation time, order volume or which machine created the record.
 
@@ -1783,7 +1785,7 @@ No scheme maximizes all five. The rest of this section compares the main familie
 
 ### 17.10.2 UUIDv4 and UUIDv7
 
-RFC 9562 (May 2024) defines the current **UUID** (universally unique identifier) versions, all 128 bits, and replaces RFC 4122 [RFC 9562]. **UUIDv4** is 122 random bits plus 6 fixed version and variant bits. **UUIDv7** puts a 48-bit Unix timestamp in milliseconds in the most significant bits, followed by the version, 12 bits that may be random or a sub-millisecond counter, the variant, and 62 more random bits. UUIDv7 therefore sorts by creation time, which UUIDv4 cannot. Inserting random UUIDv4 keys into a large B-tree touches a random leaf page each time, so once the index exceeds memory nearly every insert reads a page from disk and splits pages all over the tree. UUIDv7 inserts land on the rightmost pages, which stay hot in the buffer pool.
+RFC 9562 (May 2024) defines the current 128-bit **UUID** versions and replaces RFC 4122 [RFC 9562]. **UUIDv4** is 122 random bits plus version and variant bits. **UUIDv7** starts with a 48-bit Unix millisecond timestamp, then the version, 12 bits of randomness or sub-millisecond counter, the variant and 62 random bits, so it sorts by creation time. Random UUIDv4 keys hit a random B-tree leaf on every insert; once the index exceeds memory, most inserts read a page and split pages all over the tree. UUIDv7 inserts land on the hot rightmost pages.
 
 Collisions between random IDs are governed by the birthday bound (§10.4.1).
 
@@ -1806,12 +1808,12 @@ $$P_{\text{collision}} \approx 1 - e^{-n^2 / (2N)} \approx \frac{n^2}{2N} \ \ (\
 1. UUIDv4: $N = 2^{122} = 5.3 \times 10^{36}$. For one trillion IDs, $n^2/(2N) = 10^{24}/(1.06 \times 10^{37}) = 9.4 \times 10^{-14}$. A coin-flip collision needs $n_{50\%} = 1.18 \times \sqrt{5.3 \times 10^{36}} = 2.7 \times 10^{18}$ IDs.
 2. UUIDv7 with all 74 non-timestamp bits random: only IDs created in the same millisecond can collide, so $N = 2^{74} = 1.9 \times 10^{22}$ per millisecond. At 1 million IDs per second (1,000 per ms): $10^6/(3.8 \times 10^{22}) = 2.6 \times 10^{-17}$ per millisecond; over a year of $3.16 \times 10^{10}$ ms, $8.3 \times 10^{-7}$.
 
-*Interpretation.* Both are safe for any realistic system, though UUIDv7 gives up some margin for its ordering. *Engineering implication.* The practical risk is not mathematics but bad randomness: a VM image cloned with the same random-number-generator state, or a non-cryptographic generator seeded with the time, produces real duplicates. Use the operating system's cryptographic random source, and keep a unique constraint on the column.
+*Interpretation.* Both are safe for realistic systems. *Engineering implication.* The real risk is bad randomness (cloned VM random state, time-seeded generators); use the OS cryptographic source and keep a unique constraint.
 :::
 
 ### 17.10.3 Twitter Snowflake
 
-In 2010 Twitter moved tweets off a single MySQL database and needed 64-bit IDs that were roughly time-ordered and could be produced at high rate on many machines without coordination. Its answer, **Snowflake**, was a small Thrift service that composed IDs from a timestamp, a machine number and a counter. Its README listed the requirements as at least 10,000 IDs per second per process with a response time of 2 ms plus network latency [Twitter: Snowflake 2010].
+In 2010, as Twitter moved storage from MySQL toward Cassandra, it needed roughly time-ordered 64-bit IDs generated at high rate without coordination. **Snowflake**, a small Thrift service, composed IDs from a timestamp, a machine number and a counter, with requirements of at least 10,000 IDs per second per process and 2 ms response time plus network latency [Twitter: Snowflake 2010].
 
 **Figure 17.14 — The Snowflake 64-bit ID layout.**
 
@@ -1822,7 +1824,7 @@ flowchart LR
   M --- Q["bits 11 to 0<br/>12-bit sequence<br/>per ms, per machine"]
 ```
 
-**Reading the diagram.** The fields are concatenated from the most significant bit (left) to the least (right). The sign bit is always 0 so that IDs are positive in languages with signed 64-bit integers. The 41-bit timestamp counts milliseconds since a custom epoch (Twitter's is 1288834974657, 4 November 2010 at 01:42:54.657 UTC [Twitter: Snowflake IdWorker]); because it occupies the high bits, IDs sort by time across all machines, to within clock skew. The 10-bit machine ID (Twitter split it into 5 datacenter and 5 worker bits) makes IDs from different generators distinct, so no generator ever talks to another; the only coordination is assigning machine IDs once, by configuration or a coordination service (§26.8). The 12-bit sequence counts IDs within one millisecond on one machine. Failure points: two generators accidentally given the same machine ID produce duplicates; a clock that moves backward could reissue old timestamps; and a machine that exhausts 4,096 IDs in one millisecond must wait for the next.
+**Reading the diagram.** Fields run from the most significant bit (left) to the least. The sign bit stays 0 so IDs are positive in signed 64-bit types. The 41-bit timestamp counts milliseconds since a custom epoch (Twitter's is 1288834974657, 4 November 2010 01:42:54.657 UTC [Twitter: Snowflake IdWorker]); in the high bits it makes IDs sort by time across machines, within clock skew. The 10-bit machine ID separates generators, so they never communicate; the only coordination is assigning machine IDs once, by configuration or a coordination service (§26.8). The 12-bit sequence counts IDs per millisecond per machine. Failure points: duplicated machine IDs, a clock moving backward, and exhausting 4,096 IDs in one millisecond (wait for the next).
 
 ::: formula
 **Snowflake capacity and lifetime**
@@ -1844,9 +1846,9 @@ $$\text{rate}_{\text{machine}} = 2^{S} \times 1000 \ \text{IDs/s}, \qquad \text{
 1. Per machine: $2^{12} = 4{,}096$ IDs per millisecond, or $4{,}096{,}000$ IDs/s.
 2. Cluster: $2^{10} = 1{,}024$ machines × 4,096,000 = $4.19 \times 10^9$ IDs/s.
 3. Lifetime: $2^{41} = 2{,}199{,}023{,}255{,}552$ ms $= 2.199 \times 10^{12} / 3.156 \times 10^{10} = 69.7$ years. From Twitter's 2010 epoch, IDs run out in July 2080.
-4. Re-budgeting for a sharded database: Instagram described a variant with 41 timestamp bits, 13 bits of logical shard ID and 10 sequence bits, generated inside PostgreSQL [Instagram Engineering 2012]: $2^{13} = 8{,}192$ shards, each producing up to $2^{10} = 1{,}024$ IDs per millisecond.
+4. Instagram's variant uses 41 timestamp bits, 13 bits of logical shard ID and 10 sequence bits, generated inside PostgreSQL [Instagram Engineering 2012]: 8,192 shards × 1,024 IDs per millisecond each.
 
-*Interpretation.* Every bit moved from one field to another doubles one limit and halves another. *Engineering implication.* Choose the epoch as late as possible (the year you launch), size machine bits for the largest fleet you can imagine including restarts and short-lived containers, and write the layout down: the ID format is a public contract once clients store IDs.
+*Interpretation.* Moving a bit between fields doubles one limit and halves another. *Engineering implication.* Choose a late epoch, size machine bits for your largest fleet including short-lived containers, and document the layout: once clients store IDs it is a public contract.
 :::
 
 #### Code example
@@ -1952,17 +1954,17 @@ uuid7: 01a18b90-fa5a-78bc-a410-f69281e34317 version 7 | uuid4: 07ac5358-bdb5-42c
 What to notice:
 
 - 200,000 IDs from one generator are unique and strictly increasing, and decoding recovers the creation time, machine 37 and the sequence number.
-- Even an interpreted Python generator produces about 1.7 million IDs per second, well above Twitter's 10,000 per second requirement; the 4,096-per-millisecond sequence limit (4.1 million per second) is the real ceiling.
-- When the clock steps backward by 5 ms, the generator refuses to issue IDs instead of risking duplicates, which is what Twitter's original `IdWorker` does [Twitter: Snowflake IdWorker]. Alternatives are to wait out small steps, or to keep using the last timestamp and borrow sequence numbers. Configure NTP to slew rather than step the clock (§24.9).
+- Even this Python generator manages about 1.7 million IDs per second; the real ceiling is 4,096 per millisecond.
+- On a 5 ms backward clock step the generator refuses to issue IDs, as Twitter's `IdWorker` does [Twitter: Snowflake IdWorker]. Alternatives: wait out small steps, or reuse the last timestamp and borrow sequence numbers. Configure NTP to slew rather than step (§24.9).
 - This `uuid7()` does not guarantee ordering among IDs created in the same millisecond. RFC 9562 §6.2 describes counter-based methods that do.
 
 ### 17.10.4 ULID
 
-A **ULID** (universally unique lexicographically sortable identifier) is 128 bits: a 48-bit millisecond timestamp followed by 80 random bits, written as 26 characters of Crockford's base-32 [ULID Spec]. Its string form sorts in time order, which suits systems whose keys are strings (object-store paths, DynamoDB sort keys, log file names). The 48-bit timestamp lasts until the year 10889. In its "monotonic" mode, a generator increments the random part instead of drawing a new one when several IDs share a millisecond. UUIDv7 now provides the same properties in a standard UUID layout, so new systems that need a 128-bit sortable ID usually choose UUIDv7.
+A **ULID** is 128 bits: a 48-bit millisecond timestamp and 80 random bits, written as 26 Crockford base-32 characters that sort in time order [ULID Spec], convenient for string keys (object paths, sort keys). Its timestamp lasts until the year 10889, and a monotonic mode increments the random part within a millisecond. UUIDv7 now offers the same properties in standard form.
 
 ### 17.10.5 Database sequences and ticket servers
 
-The simplest unique ID is a database sequence. Flickr scaled it with **ticket servers**: dedicated MySQL instances whose only job is to hand out numbers [Flickr: Ticket Servers 2010]. Each request runs `REPLACE INTO Tickets64 (stub) VALUES ('a'); SELECT LAST_INSERT_ID();` against a one-row table with an auto-increment column. Two ticket servers run side by side, one configured to produce odd numbers and the other even numbers (`auto_increment_increment = 2` with offsets 1 and 2), so either can fail without stopping ID generation.
+Flickr scaled database sequences with **ticket servers**: dedicated MySQL instances that only hand out numbers via `REPLACE INTO Tickets64 (stub) VALUES ('a'); SELECT LAST_INSERT_ID();` on a one-row auto-increment table [Flickr: Ticket Servers 2010]. Two servers issue odd and even numbers (`auto_increment_increment = 2`, offsets 1 and 2), so either can fail without stopping ID generation.
 
 **Figure 17.15 — Flickr-style ticket servers.**
 
@@ -1976,7 +1978,7 @@ flowchart LR
   A2 -->|insert row with ID| S
 ```
 
-**Reading the diagram.** Application servers fetch an ID from either ticket database with one synchronous SQL round trip, then use it as the primary key when inserting into the sharded databases. The two ticket databases never communicate: odd and even numbers cannot collide, which removes coordination between them. If one fails, clients switch to the other (the cross arrows), at the cost of IDs that are no longer issued in global order. Failure points: every ID costs a network round trip, and the ticket tier is a dependency on the write path; its capacity is that of a single-row update on MySQL. A common scaling trick is to fetch **blocks** of IDs (for example 1,000 at a time) and hand them out locally, which divides ticket-server load by the block size but makes IDs only roughly ordered.
+**Reading the diagram.** App servers fetch an ID with one synchronous SQL round trip, then insert rows into the sharded databases. The ticket servers never communicate, since odd and even cannot collide; on failure clients switch servers (cross arrows), losing global ordering. Failure points: a round trip per ID and a write-path dependency whose capacity is one single-row MySQL update stream. Fetching **blocks** of, say, 1,000 IDs divides load by the block size at the cost of only rough ordering.
 
 **Table 17.9 — Unique ID schemes compared.**
 
@@ -1992,11 +1994,11 @@ flowchart LR
 | Choose when | Unguessable public IDs; low insert rates | Default 128-bit key | Compact keys at very high rates | String keys that must sort | Small systems; strict ordering needed |
 
 ::: mistake
-**"Time-ordered IDs give a total order of events."** Snowflake and UUIDv7 IDs from different machines are ordered only to within the clock skew between those machines, typically milliseconds (§24.9). Two events a millisecond apart on different servers may receive IDs in the opposite order. If you need causal order, use logical clocks or a single sequencer (§24.10).
+**"Time-ordered IDs give a total order of events."** IDs from different machines are ordered only within clock skew (§24.9); for causal order use logical clocks or a single sequencer (§24.10).
 :::
 
 ::: mistake
-**"Sequential IDs in URLs are harmless."** They reveal your growth rate and invite enumeration: anyone can try `/orders/1001`, `/orders/1002`. Authorization must stop enumeration either way (§10.7.1), but a random or opaque public ID mapped to the internal sequential key removes the information leak.
+**"Sequential IDs in URLs are harmless."** They reveal growth and invite enumeration. Authorization must stop access either way (§10.7.1), but an opaque public ID mapped to the internal key removes the leak.
 :::
 
 ## 17.11 Tries
