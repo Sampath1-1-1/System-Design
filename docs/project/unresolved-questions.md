@@ -111,3 +111,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-104 | 17 | RocksDB ribbon filters; default skip-list memtable | Open | |
 | UQ-105 | 17 | Citation form for Niemeyer (2008) geohash | Open | |
 | UQ-106 | 17 | xxHash speed claims from author's own benchmarks only | Accepted | Labeled in text |
+| UQ-107 | 18 | Kubernetes HPA defaults (tolerance 0.1, 15 s sync period, 300 s scale-down stabilization) and docs URL | Open | Version-dependent |
+| UQ-108 | 18 | Largest cloud instance sizes as of 2026 | Open | Time-sensitive |
+| UQ-109 | 18 | Stack Overflow server counts and URL of Craver (2016) architecture post | Open | |
+| UQ-110 | 18 | Publication years of Weiss & Furr and Netflix Scryer posts; exact title of AWS cell-based architecture whitepaper | Open | |
+| UQ-111 | 18 | Whether cited SRE book chapters contain the N+2 guidance and Auxon description | Open | |

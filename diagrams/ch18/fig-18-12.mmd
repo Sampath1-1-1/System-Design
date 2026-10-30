@@ -1,0 +1,11 @@
+%% Figure 18.12 — Stage S4: 2,000,000 DAU (one country)
+flowchart LR
+  C([Apps]) -->|HTTPS| LB[L7 load balancers]
+  LB -->|HTTP| CORE["Core service pods<br/>18 zone-safe"]
+  LB -->|"HTTP, WebSocket"| LOC["Location service pods"]
+  CORE -->|GET| MC[("Menu cache")]
+  CORE -->|SQL| PB[PgBouncer]
+  PB -->|SQL| PG[("Orders primary<br/>+ standby + 2 replicas")]
+  LOC -->|"SET, GET"| LS[("Location store<br/>partitioned by city")]
+  CORE -.->|order events| EV[[Event log]]
+  EV -.->|"courier on order"| LOC

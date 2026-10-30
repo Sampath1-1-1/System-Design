@@ -1,0 +1,9 @@
+%% Figure 18.8 — The capacity planning loop
+flowchart LR
+  F["Forecast demand<br/>organic + launches"] --> L["Load test:<br/>capacity per node at SLO"]
+  L --> M["Model: nodes =<br/>peak / capacity x headroom"]
+  M --> R["Add redundancy:<br/>N+2 or zone loss"]
+  R --> P["Provision, allowing<br/>for lead time"]
+  P --> O[(Utilization and<br/>demand history)]
+  O -.->|"monthly review"| F
+  O -.->|"tripwire crossed"| D["Architecture change:<br/>next scaling axis"]

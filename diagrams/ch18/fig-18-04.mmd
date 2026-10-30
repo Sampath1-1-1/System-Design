@@ -1,0 +1,11 @@
+%% Figure 18.4 — The shared-resource funnel
+flowchart LR
+  LB[Load balancer] -->|HTTP| P1[Pod 1]
+  LB -->|HTTP| P2[Pod 2]
+  LB -->|HTTP| PN[Pod 60]
+  P1 -->|SQL| PB["Connection pooler"]
+  P2 -->|SQL| PB
+  PN -->|SQL| PB
+  PB -->|SQL| DB[("Primary DB<br/>hot row: promo counter")]
+  P1 -.->|invalidate| P2
+  P2 -.->|invalidate| PN

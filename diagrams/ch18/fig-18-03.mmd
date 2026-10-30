@@ -1,0 +1,8 @@
+%% Figure 18.3 — Layers of load distribution
+flowchart TB
+  C([Clients]) -->|DNS query| G{{"DNS or global LB<br/>picks a region"}}
+  C -->|HTTPS| L4["L4 load balancer<br/>TCP, per connection"]
+  L4 -->|TCP| L7["L7 load balancers<br/>HTTP, per request"]
+  L7 -->|HTTP| S1[Service A pods]
+  S1 -->|"gRPC, client-side LB"| S2[Service B pods]
+  S2 -->|SQL| DB[(Database)]

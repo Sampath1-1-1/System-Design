@@ -1,0 +1,11 @@
+%% Figure 18.5 — The autoscaling control loop
+flowchart LR
+  P[Pods serving traffic] -.->|"CPU, RPS samples"| M[(Metrics pipeline)]
+  M -.->|"averages, every 15 s"| H[Autoscaler]
+  H -->|"set replicas"| D[Deployment controller]
+  D -->|"create pods"| SCH[Scheduler]
+  SCH -->|"no free node"| CA[Node autoscaler]
+  CA -->|"new VM, 1-3 min"| SCH
+  SCH -->|"place pod"| NEW["New pod: start,<br/>readiness, warm-up"]
+  NEW -->|"ready"| LB[Load balancer]
+  LB -->|traffic| P
