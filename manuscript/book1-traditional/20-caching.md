@@ -979,3 +979,340 @@ What to notice:
 | Segmented LRU | Recency with probation | Partly | Quickly | Segment flag | Memcached (HOT/WARM/COLD), InnoDB midpoint |
 | ARC | Recency and frequency, self-tuning | Yes | Yes | Ghost keys for $2C$ entries | OpenZFS (modified) |
 | W-TinyLFU | Frequency-based admission plus recency | Yes | Yes (aging, adaptive window) | ~8 bytes per entry sketch | Caffeine |
+
+## 20.10 Cache invalidation
+
+Invalidation keeps copies from outliving the truth. There are four mechanisms, and serious systems combine them.
+
+### 20.10.1 TTL and explicit deletes
+
+**TTL-only** invalidation is simple and self-healing but guarantees staleness up to the TTL. **Explicit deletes** from the code path that writes (cache-aside, §20.7.1) make data fresh within milliseconds, but every write path must remember to delete every affected key: the profile, the list it appears in, the rendered page fragment. A missed path is a staleness bug that the TTL eventually hides, which is why you always keep a TTL as a backstop.
+
+### 20.10.2 Event-driven invalidation from the change stream
+
+Instead of trusting every writer, derive deletes from the database's own log. A **change data capture** (CDC) process tails the commit log (MySQL binlog, PostgreSQL logical decoding, §32.6), maps each changed row to cache keys and issues deletes. Because the log contains only committed changes, in commit order, nothing is invalidated too early and no application crash can skip an invalidation.
+
+**Figure 20.13 — CDC-driven invalidation across regions (after Facebook's mcsqueal).**
+
+```mermaid
+flowchart LR
+  W([Web server]) -->|SQL write| DB[(MySQL primary)]
+  DB -->|commit log| SQ[Invalidation daemon<br/>tails log, extracts keys]
+  SQ -.->|batched deletes| MR[Delete router<br/>mcrouter]
+  MR -.->|DEL keys| C1[(Cache cluster 1)]
+  MR -.->|DEL keys| C2[(Cache cluster 2)]
+  DB -->|replication| RDB[(Replica, other region)]
+  RDB -->|commit log| SQ2[Invalidation daemon<br/>in that region]
+  SQ2 -.->|DEL keys| C3[(Region 2 caches)]
+```
+
+**Reading the diagram.** The web server writes only to the database (synchronous). An invalidation daemon on the database host reads the commit log, extracts the keys to delete, batches them and sends them asynchronously (dotted) through a routing layer to every cache cluster that may hold a copy. In another region, the replica's own log drives deletes for local caches, so caches there are invalidated only after the replica has the new data, avoiding a refill from a lagging replica. Storage boundaries: database, log, many cache clusters. Failure points: daemon lag (staleness grows with it), a lost batch (re-read from the log position), and a delete that overtakes replication (the reason for per-region daemons). Scaling: deletes are batched to reduce packet rates.
+
+::: industry
+**Facebook: mcsqueal and leases.** Facebook's Memcache deployment served billions of requests per second as a demand-filled look-aside cache in front of MySQL. Invalidation daemons called **mcsqueal** run on each database, extract deletes from committed transactions and broadcast them, batched, through **mcrouter** to all front-end clusters; in remote regions the replica's daemons do the same. **Leases** (64-bit tokens issued on a miss and voided by a delete) prevent stale sets, and, because a server returns a token only once every 10 seconds per key, they also throttle thundering herds; the paper reports a peak database query rate falling from 17K/s to 1.3K/s in one instance. A small **gutter** pool (about 1% of servers) takes over for failed cache servers with short TTLs, so a failure does not dump its load onto the databases [Nishtala et al. 2013].
+*Evidence: Primary* — [Nishtala et al. 2013]
+:::
+
+### 20.10.3 Versioned keys
+
+Instead of deleting, change the key. Store a version number per entity (or per namespace) and include it in every cache key: `product:42:v17`. A write increments the version in the database (or in a small, strongly consistent version store); readers fetch the current version, then the versioned key. Old entries become unreachable and age out by TTL or eviction. Versioned keys make invalidation of whole groups cheap (bump `catalog_version` to invalidate every catalog page) and never suffer the stale-set race, because a stale value is written under an old key nobody reads. The cost is an extra lookup for the version and wasted memory until old versions are evicted. Content-hashed asset URLs (§20.5.2) are the same idea.
+
+::: mistake
+**"There are only two hard things in computer science: cache invalidation and naming things."** The quip, usually attributed to Phil Karlton, is often used to excuse not designing invalidation. The hard part is enumerating which keys depend on which rows. Write the dependency down: for each cached object, list the tables and columns it is derived from and the mechanism (TTL, delete, CDC, version) that invalidates it.
+:::
+
+## 20.11 Cache stampede
+
+::: definition
+**Definition — Cache stampede (thundering herd, dog-piling).** When a popular entry expires or is evicted, many concurrent requests miss at once and all recompute or reload it, multiplying load on the backend exactly when it is busiest.
+:::
+
+If a key is read $\lambda$ times per second and recomputing it takes $\delta$ seconds, about $\lambda\delta$ requests miss before the first refill lands. For $\lambda = 2{,}000$ requests/s and a 500 ms query, that is 1,000 identical queries.
+
+### 20.11.1 Locks, leases and single-flight
+
+Let one request recompute and make the others wait or use a stale copy.
+
+- **Single-flight (request coalescing)** inside a process: concurrent misses for a key share one in-flight load (Go's `singleflight`, Caffeine's `LoadingCache`). Across $A$ app instances this still allows $A$ loads.
+- **Distributed lock**: the first misser sets `SET lock:k token NX PX 3000`; others wait briefly and retry the cache, or serve stale data. The lock needs a timeout in case the holder dies (§26.10).
+- **Leases** in Memcache (§20.10.2): the cache itself hands out one token per key per interval and tells other clients to retry shortly.
+
+**Figure 20.14 — Stampede protection with a lease: one recompute, others wait or serve stale.**
+
+```mermaid
+sequenceDiagram
+  participant A as Client A
+  participant B as Client B
+  participant C as Cache
+  participant D as Database
+  A->>C: GET k
+  C-->>A: miss, lease token 7
+  B->>C: GET k
+  C-->>B: miss, no token, retry in 50 ms
+  A->>D: expensive query
+  D-->>A: v2
+  A->>C: SET k v2 with token 7
+  C-->>A: stored
+  B->>C: GET k after backoff
+  C-->>B: v2 hit
+```
+
+**Reading the diagram.** The cache grants a lease token only to the first misser; later missers receive "retry" (or a stale value if one is kept), so only client A queries the database. The `SET` succeeds only with a valid token, which also blocks the stale-set race of Figure 20.7. All calls are synchronous; B's wait is a short backoff. Failure points: if A dies, the token expires after its lease time and another client gets one; waiting clients add latency. Scaling: database load per key is one query per refresh regardless of $\lambda$.
+
+### 20.11.2 Probabilistic early expiration (XFetch)
+
+Locks add coordination. **XFetch** avoids it: each reader independently decides, with a probability that rises as expiry approaches, to recompute *before* the entry expires, while everyone else keeps getting hits [Vattani, Chierichetti & Lowenstein 2015].
+
+::: formula
+**XFetch early-recomputation rule and its consequences (Poisson arrivals)**
+
+$$\text{recompute if } \; t - \delta\,\beta\,\ln(u) \ge t_{\text{exp}}, \quad u \sim \text{Uniform}(0,1] \qquad\Rightarrow\qquad P(\text{early} \mid r) = e^{-r/(\delta\beta)}$$
+
+$$\mathbb{E}[\text{lead}] \approx \delta\beta\left(\ln(\lambda\delta\beta) + \gamma\right), \qquad \mathbb{E}[\text{recomputes per refresh}] \approx e^{1/\beta}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $t$ | Current time | s |
+| $t_{\text{exp}}$ | Entry's expiry time | s |
+| $r = t_{\text{exp}} - t$ | Time remaining before expiry | s |
+| $\delta$ | Measured recompute time, stored with the value | s |
+| $\beta$ | Aggressiveness; 1 is the recommended default | dimensionless |
+| $u$ | Uniform random number per request | dimensionless |
+| $\lambda$ | Request rate for the key | requests/s |
+| $\gamma$ | Euler–Mascheroni constant, ≈ 0.5772 | dimensionless |
+:::
+
+Since $-\ln u$ is exponentially distributed, each request triggers with probability $e^{-r/(\delta\beta)}$. With Poisson arrivals, triggers form a process of intensity $\lambda e^{-r/(\delta\beta)}$, so the remaining time at the first trigger has a Gumbel distribution, giving the expected lead. Requests during the $\delta$ seconds that recompute takes may trigger again; the expected number of extra triggers is $e^{1/\beta} - 1$, independent of $\lambda$.
+
+::: example
+**Worked example — A hot key with a 2-second recompute.** $\lambda = 100$ requests/s, $\delta = 2$ s, $\beta = 1$, TTL 60 s.
+
+1. Per-request trigger probability with 10 s left: $e^{-10/2} = e^{-5} = 0.0067$; with 2 s left: $e^{-1} = 0.37$.
+2. Expected lead: $\lambda\delta\beta = 200$; $\ln 200 = 5.298$; $2 \times (5.298 + 0.577) = 11.75$ s before expiry.
+3. Recomputes per refresh: $e^{1} \approx 2.72$, against $\lambda\delta = 200$ with no protection.
+4. Extra cost: the entry is refreshed every $60 - 11.75 + 2 \approx 50$ s instead of 62 s, about 23% more refreshes.
+5. With $\beta = 2$: lead $4 \times (\ln 400 + 0.577) = 4 \times 6.569 = 26.3$ s and $e^{0.5} = 1.65$ recomputes; with $\beta = 0.5$: lead 5.2 s and $e^{2} = 7.4$ recomputes.
+
+**Interpretation.** $\beta$ trades earlier refreshes for fewer duplicate recomputations; the lead grows only logarithmically with traffic, so XFetch scales to any $\lambda$. **Engineering implication.** Store $\delta$ with each value, start with $\beta = 1$, and if duplicate recomputes are expensive combine XFetch with a non-blocking lock so only the first trigger recomputes; no request ever waits.
+:::
+
+The simulation below checks these numbers.
+
+```python
+"""One hot key under Poisson traffic: recomputations and misses per refresh for
+no protection, a recompute lock, and XFetch [Vattani et al. 2015]."""
+import math
+import random
+
+def simulate(policy, rate=100.0, ttl=60.0, delta=2.0, beta=1.0,
+             hours=3.0, seed=42):
+    rng = random.Random(seed)
+    expiry = ttl                         # value computed at t = 0
+    inflight = []                        # finish times of running recomputes
+    t, end = 0.0, hours * 3600
+    recomputes = misses = requests = episodes = 0
+    last_episode, leads = -1e9, []
+
+    def start(now):
+        nonlocal recomputes, episodes, last_episode
+        recomputes += 1
+        inflight.append(now + delta)
+        if now > last_episode + delta:   # first recompute of a new refresh
+            episodes += 1
+            last_episode = now
+            leads.append(expiry - now)   # > 0 means refreshed before expiry
+
+    while True:
+        t += rng.expovariate(rate)       # next request (Poisson arrivals)
+        if t >= end:
+            break
+        requests += 1
+        for f in [f for f in inflight if f <= t]:
+            inflight.remove(f)           # a recompute finished: store value
+            expiry = f + ttl
+        if t >= expiry:                  # value missing: the request misses
+            misses += 1
+            if policy == "none" or not inflight:
+                start(t)                 # "lock" lets only one recompute run
+        elif policy.startswith("xfetch"):
+            early = t - delta * beta * math.log(rng.random()) >= expiry
+            if early and (policy == "xfetch" or not inflight):
+                start(t)                 # "xfetch+lock" also skips duplicates
+    return dict(requests=requests, episodes=episodes,
+                per_refresh=recomputes / episodes, miss_ratio=misses / requests,
+                mean_lead=sum(leads) / len(leads))
+
+if __name__ == "__main__":
+    rate, delta = 100.0, 2.0
+    print(f"rate {rate:.0f} req/s, TTL 60 s, recompute time {delta:.0f} s, 3 hours")
+    print(f"{'policy':<14}{'beta':>5}{'recomputes/refresh':>20}{'miss ratio':>12}"
+          f"{'mean lead (s)':>15}{'theory lead':>13}")
+    runs = [("none", 1.0), ("lock", 1.0), ("xfetch", 0.5), ("xfetch", 1.0),
+            ("xfetch", 2.0), ("xfetch+lock", 1.0)]
+    for policy, beta in runs:
+        r = simulate(policy, rate=rate, delta=delta, beta=beta)
+        theory = (f"{delta * beta * (math.log(rate * delta * beta) + 0.5772):.2f}"
+                  if policy.startswith("xfetch") else "-")
+        print(f"{policy:<14}{beta:>5}{r['per_refresh']:>20.2f}{r['miss_ratio']:>12.4%}"
+              f"{r['mean_lead']:>15.2f}{theory:>13}")
+```
+
+Output:
+
+```text
+rate 100 req/s, TTL 60 s, recompute time 2 s, 3 hours
+policy         beta  recomputes/refresh  miss ratio  mean lead (s)  theory lead
+none            1.0              202.77     3.1517%          -0.01            -
+lock            1.0                1.00     3.2451%          -0.01            -
+xfetch          0.5                6.71     0.0000%           5.30         5.18
+xfetch          1.0                2.50     0.0000%          12.05        11.75
+xfetch          2.0                1.66     0.0000%          26.58        26.27
+xfetch+lock     1.0                1.00     0.0000%          11.83        11.75
+```
+
+What to notice:
+
+- Without protection each refresh costs about 200 recomputations ($\lambda\delta$) and 3.2% of requests miss ($\delta / (\text{TTL} + \delta) = 2/62$).
+- A lock fixes the duplicate work but not the misses: requests during the recompute still wait.
+- XFetch removes misses entirely, and its leads match the formula within half a second. Duplicate recomputes (6.71, 2.50, 1.66) sit within sampling error of $e^{1/\beta}$ (7.39, 2.72, 1.65); averaged over 40 simulated hours they are 7.50, 2.71 and 1.63.
+- XFetch plus a non-blocking lock gives exactly one recompute and no misses.
+
+### 20.11.3 Stale-while-revalidate
+
+Keep entries past their **soft TTL**: after it, serve the stale value immediately and trigger one background refresh; delete only at a later **hard TTL**. This is HTTP's `stale-while-revalidate` (§20.5.2) applied to an application cache, and it gives the same result as XFetch plus a lock when traffic is steady. It also enables **stale-if-error**: if the database is down, keep serving the last good value. The price is explicit staleness, so use it only where showing a value a few seconds old is acceptable.
+
+## 20.12 Cache penetration
+
+::: definition
+**Definition — Cache penetration.** Requests for keys that do not exist in the database. Because there is nothing to cache, every such request misses and reaches the database. A bug or an attacker iterating random IDs can push the database's full read load through the cache.
+:::
+
+Two defenses work together:
+
+1. **Negative caching**: cache the "not found" result under the key with a short TTL (for example 30–60 s), so repeated lookups of the same missing key hit. It fails against random keys, each requested once, and wastes memory on them.
+2. **A Bloom filter of existing keys** in front of the cache: if the filter says "definitely absent", return 404 without touching cache or database. False positives (1% at about 9.6 bits per key, §17.4.3) only let a small fraction through. The filter must be updated on insert and rebuilt periodically to remove deleted keys, or use a cuckoo filter that supports deletion (§17.4.7).
+
+**Figure 20.15 — Defenses against cache penetration.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|GET item 98765| S[App service]
+  S --> BF{Bloom filter<br/>may exist?}
+  BF -->|definitely absent| NF([404, no backend work])
+  BF -->|maybe| R[(Cache)]
+  R -->|hit, value or NULL marker| S
+  R -->|miss| DB[(Database)]
+  DB -->|not found| NEG[Store NULL marker<br/>TTL 60 s]
+  NEG -.-> R
+  DB -->|row| S
+```
+
+**Reading the diagram.** The in-memory Bloom filter rejects most nonexistent IDs before any network call. IDs that pass go to the cache, which may return a value or a cached "not found" marker; only true misses reach the database, and a not-found answer is stored as a marker with a short TTL (dotted fill). All checks are synchronous. Storage boundaries: filter in process memory (or Redis), cache, database. Failure points: a stale filter that does not know about new items would return false 404s, so new keys must be added to the filter before they are visible; negative markers must be deleted when the item is created. Scaling: at 1% false positives, an attack of 100,000 random IDs per second lets about 1,000 through to the cache tier.
+
+Rate limiting per client (§22.3) and validating ID formats before lookup complete the defense.
+
+## 20.13 Cache avalanche
+
+::: definition
+**Definition — Cache avalanche.** A large fraction of cache entries becomes unavailable at once, because many keys expire together or because cache nodes fail or restart, so the database suddenly receives the full read load.
+:::
+
+The arithmetic of §20.3.2 explains why this is fatal: at $h = 0.99$ the database sees 1% of reads; with the cache gone it sees 100%, a 100× jump that no database is provisioned for. A database that slows down under the load then causes timeouts and retries, which add more load (§22.12).
+
+Defenses:
+
+- **TTL jitter** (§20.8) so mass-written keys do not expire together.
+- **Replicated, highly available cache** (Redis replicas with automatic failover; a gutter pool, §20.10.2), so one node failure does not empty its share of keys.
+- **Warming**: before a new or restarted cache takes traffic, load the hottest keys from a key list, a snapshot (RDB) or a warm peer; Facebook warms a new cluster by letting it read from a warm cluster's caches instead of the database [Nishtala et al. 2013].
+- **Tiered fallback**: an in-process L1 (§20.5.4) and stale-if-error serving keep answering hot keys during an L2 outage.
+- **Protect the database**: admission control, load shedding and circuit breakers (§22.9, §22.13) so it degrades by rejecting a fraction of requests rather than collapsing.
+
+**Table 20.7 — The three classic cache failure modes.**
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Stampede | One hot key expires; $\lambda\delta$ concurrent recomputes | Spikes of identical queries; per-key miss bursts | Shed load; serve stale | Leases or single-flight, XFetch, stale-while-revalidate |
+| Penetration | Requests for nonexistent keys bypass the cache | High miss ratio with many "not found" results | Block abusive clients | Negative caching, Bloom filter, rate limits, ID validation |
+| Avalanche | Many keys expire together, or cache nodes fail | Hit ratio collapses; database QPS jumps | Throttle, warm caches, fail over | Jitter, replication, warming, L1 and stale-if-error, load shedding |
+
+## 20.14 Distributed caching and consistent hashing
+
+A single cache node is limited by its RAM (tens to hundreds of GB) and, for Redis, by one execution core. A distributed cache partitions keys over $N$ nodes. With `hash(key) mod N`, adding a node remaps about $N/(N+1)$ of keys, which for a cache means that fraction of entries effectively vanishes: a self-inflicted avalanche. **Consistent hashing** with virtual nodes moves only about $1/(N+1)$ of keys and spreads the moved load evenly; §14.8 derives it, and §3.3.2 works through a cache example. Three routing designs exist:
+
+- **Client-side routing**: the client library holds the ring (most Memcached clients, Ketama hashing).
+- **Proxy routing**: a proxy such as mcrouter or Twemproxy routes, replicates and fails over on behalf of thin clients.
+- **Server-assisted routing**: Redis Cluster's fixed 16,384 slots with `MOVED` redirects (§20.6.4), which moves whole slots on resharding rather than ring arcs.
+
+When a node fails, its keys move to their successors cold. Replication (Redis replicas, EVCache copies) or a gutter pool avoid that miss spike.
+
+## 20.15 Hot keys
+
+::: definition
+**Definition — Hot key.** A single key whose request rate exceeds what the node holding it can serve, so partitioning cannot help: all requests for one key go to one node.
+:::
+
+A celebrity's post, a flash-sale product or a global configuration key can draw hundreds of thousands of requests per second. **Detect** hot keys by sampling requests into a Count-Min sketch or top-$k$ structure per cache client or proxy (§17.6), or with server tools such as `redis-cli --hotkeys` (which needs an LFU eviction policy). Then **mitigate**:
+
+1. **Local L1 caches** with a short TTL in each app instance, so each instance asks the remote cache at most once per TTL. Redis 6's **client-side caching** sends invalidation messages to clients that track the keys they cached [Redis Docs: Client-side caching].
+2. **Key replication**: store copies under `k#0` … `k#r-1` on different nodes, read a random copy and write or delete all copies.
+3. **Request coalescing** at the proxy so concurrent identical gets become one.
+
+**Figure 20.16 — Hot-key mitigation with L1 caches and replicated keys.**
+
+```mermaid
+flowchart LR
+  U([Clients]) -->|HTTPS| LB[Load balancer]
+  LB --> S1[App 1<br/>L1 TTL 1 s]
+  LB --> S2[App 2<br/>L1 TTL 1 s]
+  LB --> S3[App n<br/>L1 TTL 1 s]
+  S1 -->|L1 miss: GET post:7 copy 0| N1[(Cache node A)]
+  S2 -->|L1 miss: GET post:7 copy 1| N2[(Cache node B)]
+  S3 -->|L1 miss: GET post:7 copy 2| N3[(Cache node C)]
+  HK[[Hot-key detector<br/>Count-Min top-k]] -.->|mark post:7 hot| S1
+  HK -.->|mark hot| S2
+  HK -.->|mark hot| S3
+```
+
+**Reading the diagram.** The load balancer spreads requests over $n$ app instances. Each keeps hot keys in its in-process L1 for one second, so it sends at most one request per second per hot key to the remote tier, and it picks one of three replicated copies at random, spreading that traffic over three cache nodes. A detector fed by sampled requests marks keys hot asynchronously (dotted), so only hot keys pay for replication. Storage boundaries: process memory and three cache nodes. Failure points: L1 staleness up to its TTL, and writes or deletes that must reach every copy. Scaling: more app instances raise the remote request rate linearly, so lengthen the L1 TTL or add copies.
+
+::: formula
+**Remote load from a hot key with L1 caches and replication**
+
+$$R_{\text{remote}} \le \min\!\left(\lambda_k,\ \frac{A}{T_{L1}}\right), \qquad R_{\text{per node}} = \frac{R_{\text{remote}}}{r}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda_k$ | Request rate for the hot key | requests/s |
+| $A$ | Number of app instances with an L1 cache | instances |
+| $T_{L1}$ | L1 TTL | s |
+| $r$ | Number of replicated copies of the key | copies |
+| $R_{\text{remote}}$, $R_{\text{per node}}$ | Requests to the remote tier, and to each node holding a copy | requests/s |
+:::
+
+::: example
+**Worked example — A viral post.** $\lambda_k = 600{,}000$ requests/s; one cache node can serve about 100,000 requests/s (illustrative).
+
+1. Without mitigation: 600,000 requests/s to one node, six times its capacity.
+2. Replication alone with $r = 8$: $600{,}000 / 8 = 75{,}000$ per node, under capacity but with little headroom.
+3. L1 caches on $A = 300$ instances with $T_{L1} = 1$ s: $R_{\text{remote}} \le 300 / 1 = 300$ requests/s.
+
+**Interpretation.** A one-second L1 cuts remote load by a factor of 2,000 at the cost of up to one second of staleness. **Engineering implication.** Use L1 caching for read-hot keys whenever a second of staleness is acceptable; reserve key replication for keys that must stay fresher or for write-hot counters (which need sharded counters instead, §14.10).
+:::
+
+## 20.16 Redis versus Memcached
+
+**Table 20.8 — Redis (and Valkey) versus Memcached.**
+
+| Aspect | Redis / Valkey | Memcached |
+|---|---|---|
+| What it is | In-memory data-structure server | In-memory cache of opaque blobs |
+| How it works | Single-threaded command execution; optional I/O threads | Multithreaded workers sharing one hash table; slab allocator |
+| Advantages | Rich types (hashes, sorted sets, streams), atomic scripts, persistence, replication, Cluster, pub/sub | Simple; scales vertically across cores; predictable memory; very mature |
+| Disadvantages | One core executes commands; fork for persistence; more to tune | Strings only; no persistence or replication (client or proxy must provide them) |
+| Performance | ~100,000+ ops/s per core; more with I/O threads or pipelining | Millions of ops/s per server with many threads |
+| Operational complexity | Medium–high (Sentinel or Cluster, persistence, memory policy) | Low (stateless nodes, client-side hashing) |
+| Cost | Higher memory overhead per small key; replicas double RAM | Low overhead; slab waste 10–20% |
+| Use cases | Sessions, leaderboards, rate limiters, queues, caches needing structure | Large look-aside caches of serialized objects |
+| Choose when | You need data structures, atomic operations or durability | You need a fast, simple, horizontally scaled cache |
+
+**Licensing (as of 2026).** Redis was BSD-licensed until March 2024, when Redis 7.4 moved to a dual RSALv2/SSPLv1 license, which is not an open-source license under the OSI definition. The Linux Foundation then launched **Valkey**, a BSD-licensed fork of Redis 7.2.4 supported by several cloud providers. Redis 8.0 (2025) added the OSI-approved AGPLv3 as a third licensing option [Redis Blog 2024; Redis Blog 2025; Linux Foundation 2024]. Managed services such as AWS ElastiCache offer Valkey, Redis OSS and Memcached engines. For system design the engines are protocol-compatible for the features in this chapter; check the license and feature set of the specific version you deploy.

@@ -175,16 +175,15 @@ flowchart TD
 
 #### First-principles explanation
 
-To learn where a colleague spends the working day you could follow them with a stopwatch, logging every task switch (instrumentation), or glance at their desk at random moments a few hundred times and tally what you see (sampling). The stopwatch is exact but exhausting and changes their behavior; the glances are cheap, barely disturb anyone, and after a few hundred observations give percentages accurate to a point or two. Production profiling almost always uses sampling, because its overhead is fixed by the sampling rate rather than by how many functions the program calls.
+To learn how a colleague spends the day you could follow them with a stopwatch (instrumentation) or glance at their desk a few hundred times at random and tally what you see (sampling). The stopwatch is exact but intrusive; the glances are cheap and give percentages accurate to a point or two. Production profiling almost always samples, because overhead is fixed by the sampling rate, not by how many functions the program calls.
 
 #### How it works internally
 
-1. A timer (or a hardware performance counter, such as "every 1 million CPU cycles") fires an interrupt or signal.
-2. The handler walks the stack of the running thread: user frames via frame pointers, DWARF unwind tables or a runtime's own API, plus kernel frames.
-3. The stack is stored as a list of addresses and later **symbolized** into function names.
-4. Identical stacks are counted. The count for each stack, divided by the total, estimates the fraction of CPU time spent there.
+1. A timer or hardware counter fires an interrupt or signal.
+2. The handler walks the running thread's stack (via frame pointers, DWARF unwind tables or a runtime API), including kernel frames.
+3. Addresses are later **symbolized** into function names, and identical stacks are counted; each count divided by the total estimates that stack's share of CPU time.
 
-Linux `perf` samples at, for example, `-F 99` (99 Hz per CPU). Gregg recommends 99 rather than 100 Hz so the sampler does not run in lockstep with periodic activity that fires at round frequencies [Gregg 2020].
+Linux `perf` typically samples at 99 Hz rather than 100 Hz to avoid lockstep with periodic activity [Gregg 2020].
 
 ::: formula
 **Sampling error of a profile**
@@ -212,7 +211,7 @@ $$n = f \times T \times c \qquad \hat{p} = \frac{k}{n} \qquad \mathrm{SE}(\hat{p
 **Interpretation.** Thirty seconds measures anything that matters (above 1%) precisely; tiny functions are noisy, but they are not where the time is. **Engineering implication.** Profile for tens of seconds under representative load, and do not chase differences smaller than two standard errors between two profiles.
 :::
 
-Instrumentation has the opposite profile: exact counts, but overhead proportional to call frequency. A function called 10 million times per second with 50 ns of hook cost per call adds 0.5 CPU-seconds per second, which distorts exactly the small, hot functions you are trying to measure. Instrumentation is best for call counts, for coarse spans (the basis of distributed tracing, §40.6) and for offline analysis.
+Instrumentation has exact counts but overhead proportional to call frequency: 10 million calls per second at 50 ns of hook cost adds 0.5 CPU-seconds per second, distorting exactly the small hot functions you want to measure. It suits call counts, coarse spans (distributed tracing, §40.6) and offline analysis.
 
 ### 23.4.2 Flame graphs
 
@@ -230,7 +229,7 @@ flowchart LR
   FG --> ENG([Engineer: widest<br/>plateaus first])
 ```
 
-**Reading the diagram.** The sampler observes the running service from outside (perf and eBPF in the kernel, py-spy by reading the process's memory, async-profiler inside the JVM) and writes raw stacks to a profile file, which is the storage boundary; everything to its right runs offline and cannot hurt production. Symbolization maps instruction addresses to function names and fails when symbols are stripped or JIT-compiled code lacks a symbol map, which shows up as frames labeled with hexadecimal addresses. Collapsing merges identical stacks into counts, and the flame graph renders those counts as widths. All arrows are batch hand-offs, not request paths. The analysis rule is to look for the widest **plateaus**, boxes with a lot of width and nothing on top: those functions consume CPU themselves rather than through callees. Collecting continuously from every host (continuous profiling) scales this from one server to a fleet.
+**Reading the diagram.** The sampler observes the service (perf and eBPF from the kernel, py-spy by reading process memory, async-profiler inside the JVM) and writes raw stacks to a profile file, the storage boundary; everything after it runs offline. Arrows are batch hand-offs, not request paths. Symbolization fails when symbols are stripped or JIT code lacks a symbol map, leaving hexadecimal frames. Collapsing merges identical stacks into counts that the flame graph draws as widths. Look first for wide **plateaus**, boxes with nothing on top, which burn CPU themselves. Continuous profiling on every host scales this to a fleet.
 
 ### 23.4.3 Off-CPU analysis
 
@@ -252,9 +251,9 @@ stateDiagram-v2
   OnCPU --> [*]: request done
 ```
 
-**Reading the diagram.** Only the `OnCPU` state appears in a CPU profile. Every other state is off-CPU, and each has a different cause and tool: time in `Runnable` is scheduler latency (measured by `runqlat`, caused by CPU saturation or container throttling); `BlockedIO` is time waiting on storage or network calls, synchronous from the thread's point of view even when the device works asynchronously; `BlockedLock` is contention on a mutex or a pool slot; `Sleeping` is voluntary. Transitions out of `OnCPU` are context switches (§6.4). **Off-CPU profiling** records the stack and duration at each switch-out, typically with eBPF (`offcputime` from the BCC tools), and renders an off-CPU flame graph where width is blocked *time*. Wall-clock profilers such as async-profiler's `wall` mode sample all threads regardless of state, combining both views. Failure point: in a thread-pool server, idle workers waiting for work dominate an off-CPU profile, so filter to threads serving requests.
+**Reading the diagram.** Only `OnCPU` appears in a CPU profile. `Runnable` time is scheduler latency (CPU saturation or throttling, measured by `runqlat`); `BlockedIO` is waiting on storage or network calls; `BlockedLock` is mutex or pool contention; `Sleeping` is voluntary. Transitions out of `OnCPU` are context switches (§6.4). **Off-CPU profiling** records the stack and blocked duration at each switch-out, typically with eBPF (`offcputime`), and draws a flame graph whose width is blocked *time*. Wall-clock profilers (async-profiler's `wall` mode) sample all threads in any state. Pitfall: idle pool workers dominate off-CPU profiles, so filter to threads serving requests.
 
-The relationship is simple: wall-clock latency of a request equals its on-CPU time plus its off-CPU time. Latency problems in I/O-heavy services are usually off-CPU; throughput and cost problems are usually on-CPU.
+Request latency equals on-CPU plus off-CPU time. Latency problems in I/O-heavy services are usually off-CPU; throughput and cost problems usually on-CPU.
 
 ### 23.4.4 Tools by runtime
 
@@ -271,13 +270,11 @@ The relationship is simple: wall-clock latency of a request equals its on-CPU ti
 | `cProfile` | CPython | Instrumentation | Exact call counts; high overhead on small functions |
 | `tracemalloc` | CPython | Allocation tracing | Live memory attributed to source lines; snapshot diffs |
 
-**Safepoint bias** deserves a note. Older JVM profilers could only sample threads at **safepoints**, points where the JVM can safely inspect a thread, so time in long loops without safepoints was misattributed; a study of four Java profilers found they often disagreed about the hottest method [Mytkowicz et al. 2010]. Profilers built on the JVM's asynchronous stack-walking API plus OS signals, such as async-profiler, avoid this.
+**Safepoint bias**: older JVM profilers sampled threads only at **safepoints**, so time in loops without safepoints was misattributed, and a study of four Java profilers found they often disagreed about the hottest method [Mytkowicz et al. 2010]. Signal-based asynchronous profilers such as async-profiler avoid this.
 
 ### 23.4.5 Allocation profiling
 
-In garbage-collected runtimes, the **allocation rate** (bytes allocated per second) determines how often the collector runs (§23.9). An allocation profiler samples allocations and attributes bytes to stacks, so you can find the code that creates garbage. Two different questions need two different views: *who allocates most* (drives GC frequency and CPU) and *who holds memory now* (drives heap size and leaks). Comparing two heap snapshots taken minutes apart finds leaks: lines whose live size keeps growing.
-
-The following program profiles CPU with `cProfile` and memory with `tracemalloc`. The function under test counts distinct users in a request log, once with a list (an O(n) membership test inside a loop) and once with a set.
+In garbage-collected runtimes the **allocation rate** sets how often the collector runs (§23.9). Allocation profilers answer two questions: *who allocates most* (drives GC frequency) and *who holds memory now* (drives heap size); diffing heap snapshots taken minutes apart finds leaks. The program below profiles CPU with `cProfile` and memory with `tracemalloc`, counting distinct users in a request log with a list (O(n) membership test) and with a set.
 
 ```python
 import cProfile
@@ -365,18 +362,9 @@ For a running production Python process you would use a sampling profiler instea
 :::
 
 ::: industry
-**Netflix — mixed-mode flame graphs for Java.** Netflix engineers described producing CPU flame graphs that show JVM (Java), JIT-compiled, kernel and native frames together, by running the JVM with frame pointers preserved and exporting a symbol map for JIT-compiled code so `perf` can name those frames. Trade-off: preserving frame pointers costs a small amount of CPU, accepted for the visibility it gives.
+**Netflix — mixed-mode flame graphs for Java.** Netflix engineers produced CPU flame graphs showing Java, JIT-compiled, kernel and native frames together by running the JVM with frame pointers preserved and exporting a symbol map for JIT code so `perf` can name it. Trade-off: frame pointers cost a little CPU, accepted for the visibility.
 *Evidence: Primary* — [Gregg and Spier 2015]
 :::
-
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Flame graph has broken, shallow stacks | Binaries compiled without frame pointers | Many stacks end at `[unknown]` | Rebuild with frame pointers or use DWARF unwinding | Keep frame pointers in production builds |
-| Optimized function shows no gain in production | Profiled a microbenchmark, not production workload | Production profile disagrees | Profile under real or replayed traffic | Continuous profiling |
-| Latency problem, CPU profile shows nothing | Time is off-CPU | Wall time ≫ CPU time per request | Off-CPU or wall-clock profile | Collect both views |
-| Profiler slows production noticeably | Instrumenting profiler on a hot path | Throughput drops when enabled | Switch to sampling | Use sampling at ≤ 100 Hz in production |
 
 ::: mistake
 **Mistake — Optimizing the function with the largest *total* time.** `main` has 100% total time and nothing to optimize. Look for large *self* time (the plateaus of a flame graph). Conversely, a function with small self time but huge total time is a good target only if you can avoid *calling* the expensive callees.
@@ -396,8 +384,6 @@ For a running production Python process you would use a sampling profiler instea
 | Soak (endurance) test | Does it degrade over hours? | Moderate load for 8–72 h; watch memory, handles, GC |
 | Spike test | Does it survive a sudden surge, and recover? | Step from normal to 3–10× for minutes |
 | Capacity benchmark | Throughput as a function of concurrency or nodes | Series of steady runs at increasing $N$ (§23.10) |
-
-All of them can be ruined by the same few mistakes, which this section covers in order of how much damage they do.
 
 ### 23.5.2 Open versus closed workload models
 
@@ -421,7 +407,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** In the open subgraph, a scheduler issues requests (for example, HTTP) at a fixed or Poisson rate $\lambda$ and never waits for responses, so if the system slows down, requests pile up inside it, exactly as with real internet traffic. Responses are recorded asynchronously (dotted arrow) into a latency histogram, the storage boundary of the test. In the closed subgraph, each of $N$ users is in a synchronous loop: send, wait, think, repeat. When the system slows down, users send *less*, so the load generator quietly reduces the load at exactly the moment the system is struggling. The failure point of the closed model is therefore the measurement itself: it cannot drive the system into the queueing regime that real users would. To scale an open test you add generator machines until the target rate is achieved; to scale a closed test you add users, which raises load only while the system keeps up.
+**Reading the diagram.** In the open model a scheduler issues requests (for example, HTTP) at rate $\lambda$ and never waits, so when the system slows down requests pile up inside it, as real internet traffic does; responses are recorded asynchronously (dotted) into a histogram, the test's storage boundary. In the closed model each of $N$ users loops synchronously: send, wait, think, repeat. When the system slows, users send *less*, so the generator reduces load exactly when the system struggles. That is the closed model's failure point: it cannot reach the queueing regime real users would cause. Open tests scale by adding generator machines; closed tests by adding users, which raises load only while the system keeps up.
 
 ::: formula
 **Interactive response time law (closed systems)**
@@ -447,7 +433,7 @@ This is Little's Law (§4.11) applied to the whole loop of users plus system [La
 **Interpretation.** The closed test turns an outage into a mild regression, because it measures the system at whatever rate the system can sustain. **Engineering implication.** To check an SLO at a target rate, use an open (constant-arrival-rate) generator. Use closed tests only for systems that really are closed (a fixed pool of batch workers, a connection-limited client) or to measure capacity curves as a function of concurrency (§23.10).
 :::
 
-Schroeder, Wierman and Harchol-Balter compared the two models analytically and with benchmarks and found the differences are not small: for the same load, mean response times differ greatly between the models, and techniques such as size-based scheduling help open systems far more than closed ones. They noted that many standard benchmarks used closed generators while real web traffic is better described as open or partly open [Schroeder et al. 2006].
+Schroeder, Wierman and Harchol-Balter showed that at the same load the two models give very different response times and respond differently to scheduling policies, and that many standard benchmarks used closed generators although web traffic is better described as open or partly open [Schroeder et al. 2006].
 
 ### 23.5.3 Coordinated omission
 
@@ -457,7 +443,7 @@ Schroeder, Wierman and Harchol-Balter compared the two models analytically and w
 
 #### First-principles explanation
 
-A supermarket manager measures checkout waits by sending one shopper through every two minutes and noting the time. At noon the till jams for 30 minutes. The shopper waits 30 minutes, reports one bad measurement, and then the next shopper goes at 12:32. Fifteen real customers who would have arrived during the jam, and waited between 2 and 30 minutes, were never sampled. The manager's report shows one bad wait out of hundreds: a p99 that looks perfect. Customers saw something very different.
+A manager measures checkout waits by sending one shopper through every two minutes. At noon the till jams for 30 minutes; the shopper reports one bad wait, and the next goes at 12:32. Fifteen real customers who would have waited 2–30 minutes were never sampled, so the report shows one bad wait in hundreds: a perfect-looking p99.
 
 **Figure 23.6 — How a closed-loop tester omits the stall.**
 
@@ -477,7 +463,7 @@ sequenceDiagram
   S-->>G: reply at t=1503 ms
 ```
 
-**Reading the diagram.** The generator intends to send one request every 2 ms over a single connection, synchronously waiting for each reply. When the server stalls for 1.5 s (a garbage-collection pause, a failover, a lock convoy), request 2 waits the whole time, and the 749 requests the plan scheduled during the stall are never sent. The generator records a single 1.5 s sample, then resumes as if nothing happened. In an open model those 749 requests would have queued at the server and each experienced a latency between 1.5 s and roughly 0 s, and the queue backlog would have delayed further requests after the stall ended. The failure point is the generator's coupling to the server; the fix is to decouple sending from receiving and to measure each request's latency from its *intended* send time.
+**Reading the diagram.** The generator plans one request every 2 ms over a single connection and waits synchronously for each reply. When the server stalls for 1.5 s (a GC pause, a failover), request 2 waits throughout, the ~750 requests scheduled during the stall are never sent, and one 1.5 s sample is recorded. In an open model those requests would have queued at the server, and the backlog would have delayed requests after the stall too. The failure point is coupling sending to receiving; the fix is to decouple them and measure each request from its *intended* send time.
 
 ::: formula
 **Damage done by a stall in an open system**
@@ -592,16 +578,16 @@ What to notice:
 
 ### 23.5.4 Warm-up, think time and other pitfalls
 
-- **Warm-up.** The first minutes of a test run against cold CPU caches, empty application caches, unfilled connection pools and, in JIT-compiled runtimes, interpreted code (§23.9.5). Discard a warm-up period, or better, report it separately: it is what users see after every deployment.
-- **Think time.** Closed tests with $Z = 0$ model nobody. If you model users, use measured think times; if you need a target rate, use an open model and ignore think time altogether.
-- **Generator saturation.** A generator at 100% CPU delays its own sends and timestamps; that is coordinated omission from the client side. Monitor the generators with USE as well.
-- **Unrealistic data.** Requests for the same key hit caches; production requests do not. Replay sampled production traffic or generate keys from the measured popularity distribution.
-- **Too-short runs.** Near saturation, averages converge slowly (§4.10.3), and a p99.9 needs thousands of samples per measurement window. Soak tests find leaks and GC behavior that 5-minute tests never see.
-- **Averaging percentiles.** A p99 cannot be averaged across generators or time windows. Merge histograms, then read the percentile (§4.8.3).
+- **Warm-up.** Early minutes run with cold caches, empty pools and interpreted code (§23.9.3). Report warm-up separately: it is what users see after every deployment.
+- **Think time.** Closed tests with $Z = 0$ model nobody. Use measured think times, or an open model if you need a target rate.
+- **Generator saturation.** A generator at 100% CPU delays its own sends, which is coordinated omission from the client side. Apply USE to generators too.
+- **Unrealistic data.** Repeated keys hit caches; replay production traffic or sample keys from the measured popularity distribution.
+- **Too-short runs.** Near saturation averages converge slowly (§4.10.3), and leaks and GC behavior appear only in soak tests.
+- **Averaging percentiles.** Merge histograms, then read the percentile (§4.8.3).
 
 ### 23.5.5 Recording latency with HDR histograms
 
-Storing every sample is impossible in long tests; fixed-width buckets lose resolution at either the low or high end. **HdrHistogram** keeps a configurable number of **significant decimal digits** across a wide dynamic range. Values are grouped into power-of-two "buckets", each split into a fixed number of linear "sub-buckets", so the absolute error grows with the value but the *relative* error stays below $10^{-d}$ [Tene, HdrHistogram].
+Fixed-width buckets lose resolution at one end of the range. **HdrHistogram** preserves a chosen number of **significant decimal digits** over a wide range by splitting power-of-two buckets into linear sub-buckets, so *relative* error stays below $10^{-d}$ [Tene, HdrHistogram].
 
 ::: formula
 **HdrHistogram footprint (simplified from the reference implementation)**
@@ -624,7 +610,7 @@ $$s = 2^{\lceil \log_2 (2 \times 10^{d}) \rceil} \qquad b = 1 + \left\lceil \log
 2. $H/(sL) = 3.6 \times 10^9 / 2{,}048 = 1.76 \times 10^6$; $\log_2$ of that is 20.7, so $b = 1 + 21 = 22$.
 3. Counters $= 23 \times 1{,}024 = 23{,}552$; memory $= 23{,}552 \times 8 = 188{,}416$ bytes ≈ 184 KiB.
 
-**Interpretation.** One fixed-size structure of under 200 KB records any latency from a microsecond to an hour with better than 0.1% relative error, and two such histograms merge by adding counters. **Engineering implication.** Record latency into HDR (or similar log-linear) histograms in both load generators and services, ship the histograms rather than precomputed percentiles, and merge them across hosts and time.
+**Interpretation.** Under 200 KB records any latency from 1 µs to an hour with 0.1% relative error, and histograms merge by adding counters. **Engineering implication.** Record latency in HDR or similar log-linear histograms in generators and services, and ship histograms, not precomputed percentiles.
 :::
 
 ### 23.5.6 Load-testing tools
@@ -639,15 +625,13 @@ $$s = 2^{\lceil \log_2 (2 \times 10^{d}) \rceil} \qquad b = 1 + \left\lceil \log
 | Locust | Python | Approximate via `constant_throughput` per user | Default: users with `wait_time` | Easy to write; one user per greenlet |
 | wrk (original) | Lua | — | Yes | Fast, but subject to coordinated omission |
 
-Whatever the tool, check three things before trusting a result: that the achieved rate equals the target rate, that latency is measured from the intended send time, and that the generators themselves were not saturated.
-
 ::: industry
-**Facebook — Kraken load tests with live traffic.** Rather than synthesize load, Facebook's Kraken system shifts a controlled share of *real* user traffic toward a target cluster or region (by adjusting load-balancer weights) while monitoring health metrics, and stops the test automatically if latency or error metrics degrade. Running such tests regularly revealed bottlenecks that synthetic tests had missed and let the company raise utilization safely. Trade-off: live-traffic tests need fast, automatic safety stops, because the "test load" is real users.
+**Facebook — Kraken load tests with live traffic.** Instead of synthetic load, Kraken shifts a controlled share of *real* user traffic onto a target cluster or region by adjusting load-balancer weights, monitors health metrics, and stops automatically if latency or errors degrade. Regular tests exposed bottlenecks synthetic tests missed. Trade-off: the "test load" is real users, so safety stops must be fast and automatic.
 *Evidence: Primary* — [Veeraraghavan et al. 2016]
 :::
 
 ::: mistake
-**Mistake — "The load test passed at 10,000 RPS" when the generator achieved 6,000.** Closed-loop generators report whatever rate the system allowed. Always print the *achieved* request rate next to the latency results, and fail the test if it falls short of the target.
+**Mistake — "The load test passed at 10,000 RPS" when the generator achieved 6,000.** Closed-loop generators report whatever rate the system allowed. Print the *achieved* rate next to latency results, and fail the test if it falls short.
 :::
 
 ## 23.6 Tail latency at scale
@@ -680,11 +664,11 @@ $$P(T_{\text{root}} \le t) = F(t)^{N} \qquad t_q^{\text{root}} = F^{-1}\!\left(q
 **Interpretation.** The root's *median* (49.8 ms) is worse than a single leaf's p99 (46.1 ms); the root's p99 is governed by the leaf's p99.99. **Engineering implication.** In a fan-out service, the leaf tail *is* the user-facing median. Either engineer leaves to an extreme percentile or use tail-tolerant techniques (§23.7) that break the $F^N$ law.
 :::
 
-Real leaves are not independent, which can help or hurt: a shared cause (a network switch hiccup) slows many leaves at once, while staggering background work keeps leaves from stalling together. Dean and Barroso measured a large fan-out service at Google and reported that waiting for the slowest 5% of leaf requests accounted for roughly half of the root's p99 latency [Dean and Barroso 2013].
+Real leaves are not fully independent: a shared cause (a switch hiccup) slows many at once. Dean and Barroso measured a large fan-out service at Google and reported that waiting for the slowest 5% of leaf requests accounted for roughly half of the root's p99 latency [Dean and Barroso 2013].
 
 ### 23.6.2 Sources of variability
 
-Dean and Barroso list the usual suspects: shared resources contended by co-located work, daemons and background activities, global resource sharing (switches, shared file systems), maintenance activities, queueing at many layers, CPU power and thermal throttling, SSD garbage collection, and garbage collection in the application runtime [Dean and Barroso 2013]. Figure 23.7 places them on a request path.
+Dean and Barroso list the usual suspects: contention with co-located work, daemons and background activities, shared global resources (switches, file systems), maintenance, queueing at many layers, power and thermal throttling, SSD garbage collection and runtime garbage collection [Dean and Barroso 2013].
 
 **Figure 23.7 — Where variability enters a request.**
 
@@ -700,7 +684,7 @@ flowchart LR
   N4["Compaction, SSD GC,<br/>backups, log rotation"] -.-> DB
 ```
 
-**Reading the diagram.** The solid arrows are the synchronous request path: TCP from client to load balancer, HTTP or RPC onward, and a storage read at the end (the storage boundary). Each dotted arrow is an asynchronous disturbance that does not belong to the request but delays it. On the network, a dropped packet costs at least a 200 ms retransmission timeout on Linux, hundreds of times a datacenter round trip (§7.7). On the instance, co-located tenants compete for caches and memory bandwidth, CPU quotas throttle bursts (§23.6.3), and runtime pauses stop all threads (§23.9). At the dependency, a request queued behind an expensive one inherits its delay (head-of-line blocking). At storage, compaction (§13.9), SSD garbage collection (§5.6) and backups steal I/O. Every box is a failure point for tail latency, and adding more of them in series or in parallel (scaling out) multiplies their effect.
+**Reading the diagram.** Solid arrows are the synchronous request path (TCP, then HTTP or RPC, then a storage read at the storage boundary). Each dotted arrow is an asynchronous disturbance that delays the request without belonging to it: a dropped packet costs a ≥ 200 ms retransmission timeout (§7.7); co-located tenants, CPU quotas (§23.6.3) and runtime pauses (§23.9) stall the instance; a request queued behind an expensive one inherits its delay; compaction (§13.9), SSD garbage collection (§5.6) and backups steal storage I/O. Every box is a tail-latency failure point, and scaling out multiplies their combined effect.
 
 **Table 23.6 — Common sources of tail latency.**
 
@@ -716,7 +700,7 @@ flowchart LR
 
 ### 23.6.3 A worked trap: CPU quota throttling
 
-Linux enforces container CPU limits with the CFS bandwidth controller: in every **period** $P$ (100 ms by default) a cgroup may run for at most its **quota** $Q$ of CPU time, summed over all its threads. Kubernetes CPU limits are implemented this way.
+Linux enforces container CPU limits (including Kubernetes limits) with the CFS bandwidth controller: in each **period** $P$ (100 ms by default) a cgroup may use at most its **quota** $Q$ of CPU time across all its threads.
 
 ::: formula
 **Throttling under a CPU quota**
@@ -742,7 +726,7 @@ $$t_{\text{run}} = \frac{Q}{k} \qquad t_{\text{throttled}} = P - \frac{Q}{k} \qq
 **Interpretation.** A limit expressed as an *average* (2 CPUs) is enforced over a short window, so bursty multi-threaded work is frozen for most of each period. **Engineering implication.** Watch throttled-period counters, size thread pools to the quota rather than the host's core count (runtimes such as the JVM and Go read the limit for this reason in recent versions), and consider CPU requests without hard limits for latency-sensitive services.
 :::
 
-Within a server, the main mitigations are **differentiated service classes** (serve interactive requests before batch requests), **breaking large requests** into smaller pieces so they do not block others, and **managing background activity** (throttle it, or synchronize it across machines so that it disturbs a short window rather than every request) [Dean and Barroso 2013]. Across servers, the more powerful approach is to *tolerate* variability rather than eliminate it, which is the subject of the next section.
+Within a server, mitigations are **service classes** (interactive before batch), **splitting large requests**, and **managing background activity** (throttle it, or synchronize it across machines so it disturbs one short window) [Dean and Barroso 2013]. Across servers, it is often better to *tolerate* variability, as the next section shows.
 
 ## 23.7 Hedged and tied requests
 
@@ -754,7 +738,7 @@ Within a server, the main mitigations are **differentiated service classes** (se
 
 #### First-principles explanation
 
-You order a taxi through one app. If no driver has accepted after five minutes, you order through a second app as well, and take whichever car arrives first. Most of the time the first app works and you never use the second. You pay a small cost (an occasional cancelled booking) to avoid the rare 40-minute wait. The key choice is the delay: order from both immediately and you double the load on drivers; wait too long and the hedge arrives too late to help.
+You order a taxi through one app; if no driver accepts within five minutes, you also order through a second and take whichever car comes first. An occasional cancelled booking buys protection from the rare 40-minute wait. The key choice is the delay: order from both at once and you double the load on drivers; wait too long and the hedge is useless.
 
 **Figure 23.8 — A hedged request.**
 
@@ -772,7 +756,7 @@ sequenceDiagram
   A-->>C: late value, discarded
 ```
 
-**Reading the diagram.** The client sends a synchronous RPC to replica A. Replica A is in a pause. When the hedge timer $d$ expires, the client sends the same idempotent read to replica B, which answers first; the client returns B's value to its caller. The cancellation to A is asynchronous and best effort: A may already have done the work, so the extra load is not fully recovered. Both replicas must hold the same data (a replication boundary), and the operation must be safe to execute twice, which is easy for reads and needs an idempotency key for writes (§22.15). The failure point is load: every hedge is extra work, so if many requests exceed $d$ because the whole system is slow, hedging adds load precisely when there is none to spare.
+**Reading the diagram.** The client sends a synchronous RPC to replica A, which is paused. When the hedge timer $d$ expires, the client sends the same idempotent read to replica B and uses B's earlier answer. The cancel to A is asynchronous and best effort, so A's work may be wasted. Both replicas must hold the data (a replication boundary), and the operation must be safe to run twice (reads, or writes with an idempotency key, §22.15). The failure point is load: if the whole system slows, many requests exceed $d$ and hedging adds load when there is none to spare.
 
 ::: formula
 **Hedged latency and extra load (independent replicas)**
@@ -915,7 +899,7 @@ sequenceDiagram
   A-->>C: response
 ```
 
-**Reading the diagram.** The client enqueues the same request on two servers, delaying the second send slightly (on the order of a network message delay) so that the two servers do not both start before the cancellation arrives. Each copy names its twin. When server A dequeues the request and starts work, it sends an asynchronous cancel message directly to server B, which removes its queued copy. Only one server performs the work, and the client receives one response. The failure window is the moment when both servers dequeue simultaneously, before the cancel arrives: then both execute, and the cost is one duplicate. The approach requires server-side support (queue manipulation and peer messages), unlike hedging, which is purely client-side.
+**Reading the diagram.** The client enqueues the request on two servers, delaying the second send by about one network message delay, and each copy names its twin. When A starts the request, it sends an asynchronous cancel to B, which drops its queued copy, so one server does the work and the client gets one response. If both dequeue before the cancel arrives, both execute (one duplicate). Unlike hedging, this needs server-side support for queue manipulation and peer messages.
 
 Dean and Barroso report that in a BigTable benchmark, tied requests made the latency of a cluster running a concurrent large sort job nearly as good as that of an idle cluster without tied requests, at a disk-utilization cost below 1% [Dean and Barroso 2013]. They also report the hedged-request benchmark quoted in §4.8.4: hedging after 10 ms reduced the p99.9 of a 1,000-key read across 100 servers from 1,800 ms to 74 ms with 2% more requests.
 
@@ -956,7 +940,7 @@ flowchart LR
   SEND -->|one RPC or write| SINK[(Broker or disk)]
 ```
 
-**Reading the diagram.** Producers append items asynchronously to an in-memory buffer (the subroutine shape), which is a failure point: anything in it is lost if the process crashes before the flush, unless callers wait for acknowledgment. A decision checks two triggers on every append and on a timer. When either fires, the batch is sent as a single synchronous RPC or write to the sink, which is the storage boundary. Under heavy load the size trigger fires first and batches are full, giving maximum throughput; under light load the time trigger fires first, bounding added latency at $T_{\max}$. Scaling options are more parallel batchers (one per partition or core) or a larger $B_{\max}$ when $t_0$ dominates.
+**Reading the diagram.** Producers append asynchronously to an in-memory buffer, a failure point: its contents are lost on a crash unless callers wait for acknowledgment. Two triggers are checked on every append and by a timer; when either fires, the batch goes as one synchronous RPC or write to the sink (the storage boundary). Heavy load fills batches (maximum throughput); light load fires the timer, bounding added latency at $T_{\max}$. Scale with parallel batchers (per partition or core).
 
 ::: formula
 **Batch size and latency with a time limit**
@@ -1008,7 +992,7 @@ $$T_{\text{seq}} = n\,(r + s) \qquad T_{\text{pipe}} \approx r + n\,s \quad (\te
 1. Sequential: $1{,}000 \times (0.5 + 0.005) = 505$ ms.
 2. Pipelined: $0.5 + 1{,}000 \times 0.005 = 5.5$ ms, 92× faster.
 
-**Interpretation.** For small operations the round trip, not the server, is the cost. **Engineering implication.** Use pipelining or multi-key commands (Redis pipelines, `MGET`) and multiplexed protocols such as HTTP/2 for many small requests. Strict in-order pipelining suffers head-of-line blocking: one slow response delays all later ones, which is why HTTP/1.1 pipelining failed and HTTP/2 multiplexes independent streams (§7.10).
+**Interpretation.** For small operations the round trip, not the server, is the cost. **Engineering implication.** Use pipelining or multi-key commands (Redis pipelines, `MGET`) and multiplexed protocols such as HTTP/2 for many small requests. Strict in-order pipelining suffers head-of-line blocking: one slow response delays all later ones, which is why HTTP/1.1 pipelining failed and HTTP/2 multiplexes independent streams (§7.9).
 :::
 
 ### 23.8.3 Compression: ratio versus CPU
@@ -1073,12 +1057,12 @@ flowchart LR
   OLD -.->|write barrier records<br/>old-to-young refs| CARD[[Card table]]
 ```
 
-**Reading the diagram.** New objects are allocated in Eden by bumping a pointer, which is nearly free. When Eden fills, a minor collection copies live objects to a survivor space; everything left in Eden is reclaimed without being touched, so the cost of a minor GC is proportional to *survivors*, not to garbage. Objects that survive several minor collections are promoted to the old generation. To collect the young generation without scanning the whole old generation, a **write barrier** (a few instructions added to every reference store) records old-to-young pointers in a card table (dotted, asynchronous bookkeeping). The old generation is collected by a major collection, either stop-the-world or largely concurrent. Failure points: a promotion rate higher than the old generation's collection rate leads to a full, long STW collection; a heap too small for the live set leads to back-to-back collections.
+**Reading the diagram.** Allocation in Eden is a nearly free pointer bump. A minor GC copies live objects to a survivor space and reclaims the rest without touching it, so its cost scales with *survivors*, not garbage. Long-lived objects are promoted to the old generation. A **write barrier** on reference stores records old-to-young pointers in a card table (dotted bookkeeping) so minor GCs need not scan the old generation, which is collected by a major collection, stop-the-world or largely concurrent. Failure points: promotion faster than old-generation collection forces a long full STW collection; a heap too small for the live set causes back-to-back collections.
 
 ::: formula
 **GC frequency and pause exposure**
 
-$$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p}{I_{\text{minor}}} \qquad \text{Go heap target} = H_{\text{live}} \times \left(1 + \frac{\text{GOGC}}{100}\right)$$
+$$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p + w}{I_{\text{minor}}} \qquad \text{Go heap target} = H_{\text{live}} \times \left(1 + \frac{\text{GOGC}}{100}\right)$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
@@ -1086,6 +1070,7 @@ $$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p}{I_{\text
 | $a$ | Allocation rate | MB/s |
 | $I_{\text{minor}}$ | Interval between minor collections | seconds |
 | $p$ | STW pause per minor collection | seconds |
+| $w$ | Request duration | seconds |
 | $f_{\text{hit}}$ | Approximate fraction of requests that overlap a pause | dimensionless |
 | $H_{\text{live}}$ | Live heap after the previous Go collection | MB |
 | GOGC | Go's GC percentage setting (default 100) | percent |
@@ -1095,7 +1080,7 @@ $$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p}{I_{\text
 **Worked example — GC in the tail.** A JVM service allocates $a = 500$ MB/s with a 2 GB Eden; minor pauses are $p = 30$ ms. Its requests take 5 ms.
 
 1. $I_{\text{minor}} = 2{,}000/500 = 4$ s between pauses.
-2. Requests overlapping a pause $\approx (30 + 5)/4{,}000 \approx 0.9\%$ (a request is delayed if it is in flight when the pause starts or arrives during it). They are delayed by up to 30 ms, 15 ms on average.
+2. Requests overlapping a pause: $f_{\text{hit}} \approx (30 + 5)/4{,}000 \approx 0.9\%$ (in flight when it starts, or arriving during it), each delayed by up to 30 ms.
 3. So the service's p99 sits at the edge of the GC effect and its p99.9 includes most of a full pause; at 100-way fan-out, nearly every root request ($1 - 0.991^{100} = 60\%$) sees one.
 4. Halving the allocation rate doubles the interval and halves the exposure. For a Go service with 1 GB live heap and GOGC = 100, the heap grows to $1 \times 2 = 2$ GB before the next cycle; GOGC = 50 caps it at 1.5 GB but runs GC twice as often.
 
@@ -1119,7 +1104,7 @@ Concurrent collectors are not free. They use barriers on every reference load or
 
 ### 23.9.3 JIT warm-up and other runtime effects
 
-A **just-in-time (JIT)** compiler, as in the JVM, .NET and JavaScript engines, starts by interpreting code, profiles it, and compiles hot methods with increasingly aggressive optimization, sometimes *deoptimizing* when an assumption breaks. A freshly started instance therefore runs several times slower for its first seconds to minutes. Effects: load tests without warm-up understate steady-state performance and overstate cold-start latency; every deployment and autoscaling event creates a p99 spike as new instances receive full traffic. Mitigations: replay warm-up traffic before marking an instance ready, use load-balancer **slow start** to ramp traffic onto new instances (§19.5), or reduce warm-up with ahead-of-time compilation and class-data sharing.
+A **just-in-time (JIT)** compiler, as in the JVM, .NET and JavaScript engines, starts by interpreting code, profiles it, and compiles hot methods with increasingly aggressive optimization, sometimes *deoptimizing* when an assumption breaks. A freshly started instance therefore runs several times slower for its first seconds to minutes. Effects: load tests without warm-up understate steady-state performance and overstate cold-start latency; every deployment and autoscaling event creates a p99 spike as new instances receive full traffic. Mitigations: replay warm-up traffic before marking an instance ready, use load-balancer **slow start** to ramp traffic onto new instances (Chapter 19), or reduce warm-up with ahead-of-time compilation and class-data sharing.
 
 ::: recommendation
 **GC and runtime tuning heuristics.**
@@ -1156,7 +1141,7 @@ flowchart LR
   FL -.->|production telemetry| M
 ```
 
-**Reading the diagram.** Each benchmark run is a closed-loop test at fixed concurrency $N$ (here the closed model is appropriate, because concurrency is the independent variable), long enough to reach steady state after warm-up. The measured throughputs are the stored data. The fit produces the three USL coefficients; the validation step sends you back to measure more points if the residuals are large or the predicted peak $N^*$ lies outside the measured range, because extrapolated peaks are unreliable. The operating point and fleet size follow by arithmetic. The dotted edge is the asynchronous feedback loop: production throughput and utilization per instance refine the model over time.
+**Reading the diagram.** Each run is a warm, steady-state closed-loop test at fixed concurrency $N$ (closed is right here, because concurrency is the independent variable); the throughputs are the stored data. If residuals are large or the fitted peak $N^*$ lies outside the measured range, measure more points, because extrapolated peaks are unreliable. Operating point and fleet size follow by arithmetic, and production telemetry (dotted, asynchronous) refines the model.
 
 ::: formula
 **USL for measured throughput, and its linearized form**
