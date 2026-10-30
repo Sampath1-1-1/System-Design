@@ -157,7 +157,7 @@ The creation-cost figures are orders of magnitude, not benchmarks; measure on yo
 #### Real-world industry applications
 
 ::: industry
-**PostgreSQL versus MySQL: process-per-connection versus thread-per-connection.** PostgreSQL forks one backend *process* per client connection, so a crash in one backend is contained and the server can reset shared memory and recover; the cost is per-connection memory and fork overhead, which is why deployments with thousands of clients put a connection pooler such as PgBouncer in front (see §14.13). MySQL's InnoDB server uses one *thread* per connection inside a single process, which makes connections cheaper but means all connections share fate.
+**PostgreSQL versus MySQL.** PostgreSQL forks one backend *process* per client connection, containing faults at the cost of per-connection memory, which is why large deployments put a pooler such as PgBouncer in front (§14.13). MySQL uses one *thread* per connection inside a single process: cheaper connections, shared fate.
 *Evidence: Primary* — [PostgreSQL Docs: Architectural Fundamentals]; [MySQL Docs: Connection Interfaces]
 :::
 
@@ -389,7 +389,7 @@ $s_X = 1024 / (1024 + 335) = 1024 / 1359 ≈ 0.753$; $s_Y ≈ 0.247$.
 #### Real-world industry applications
 
 ::: industry
-**CPU limits in containers cause throttling.** Kubernetes CPU limits are enforced with CFS **bandwidth control**: a cgroup gets a quota of CPU time per period (default period 100 ms, set in `cpu.max` under cgroup v2). A service with a limit of 1 CPU but 4 busy threads can consume its whole 100 ms quota in 25 ms of wall-clock time and is then **throttled** for the remaining 75 ms, adding up to 75 ms to any request in flight even though the node's CPUs may be idle. The kernel exposes `nr_throttled` and `throttled_usec` in `cpu.stat` to detect it. Common mitigations are raising the limit, removing CPU limits for latency-critical services while keeping requests, or matching thread-pool sizes to the limit rather than to the host's core count (see §42.13).
+**CPU limits in containers cause throttling.** Kubernetes CPU limits use CFS **bandwidth control**: a cgroup gets a CPU-time quota per period (default 100 ms, `cpu.max` in cgroup v2). A service limited to 1 CPU with 4 busy threads uses its quota in 25 ms and is **throttled** for the remaining 75 ms, delaying in-flight requests even on an idle node. `nr_throttled` in `cpu.stat` reveals it. Mitigations: raise or remove limits for latency-critical services, or size thread pools to the limit rather than the host's cores (§42.13).
 *Evidence: Primary* — [Linux Docs: CFS Bandwidth Control]
 :::
 
@@ -489,7 +489,7 @@ Linux allocates physical memory lazily: `malloc(1 GiB)` reserves only virtual ad
 When `fork()` creates a child, the kernel shares all the parent's pages with the child and marks them read-only in both. The first write by either side triggers a fault, and only then is that one page copied. This makes `fork` fast and allows a process to take a consistent **snapshot** of its memory cheaply.
 
 ::: industry
-**Redis background snapshots.** To save an RDB snapshot without stopping, Redis calls `fork()`; the child writes the dataset to disk from its frozen copy-on-write view while the parent keeps serving writes. Memory overhead is proportional to the pages the parent modifies during the snapshot, so a write-heavy instance can briefly need up to twice its dataset size. Redis's documentation also warns that **Transparent Huge Pages** make this worse: one small write then copies a 2 MiB page instead of 4 KiB, causing latency spikes and memory growth, so it recommends disabling THP.
+**Redis background snapshots.** Redis calls `fork()` to snapshot; the child writes its frozen copy-on-write view to disk while the parent keeps serving writes. Overhead is proportional to pages modified meanwhile, up to twice the dataset for write-heavy instances. Redis recommends disabling **Transparent Huge Pages**, because then one small write copies a 2 MiB page instead of 4 KiB, causing latency spikes.
 *Evidence: Primary* — [Redis Docs: Persistence]; [Redis Docs: Latency diagnosis]
 :::
 
@@ -504,7 +504,7 @@ Linux uses almost all otherwise-free RAM as page cache, so `free` reports little
 **`mmap`** maps a file directly into a process's address space: reading the memory reads the file through the page cache, with no `read()` system call and no copy into a user buffer. It is elegant for read-mostly data (shared libraries are loaded this way), but it hides I/O inside ordinary memory accesses: any pointer dereference may block on a major fault, I/O errors arrive as a `SIGBUS` signal instead of an error code, and the kernel, not the application, decides what to evict. Crotty, Leis and Pavlo argue that for these reasons database systems should usually manage their own buffer pool instead of relying on `mmap` [Crotty et al. 2022] (see §13.4).
 
 ::: industry
-**Apache Kafka relies on the page cache.** Kafka brokers deliberately do not keep a large in-process cache of messages. They append to log files and let the OS page cache hold recent data, which avoids double caching, survives broker process restarts, and keeps JVM heaps small to limit garbage-collection pauses. Consumers reading recent data are served from the page cache, and Kafka uses `sendfile` to move bytes from the page cache to the socket without copying them through user space (see §31.13).
+**Apache Kafka relies on the page cache.** Kafka brokers append to log files and let the OS page cache hold recent data instead of caching messages in the JVM, avoiding double caching, surviving process restarts and keeping heaps small. Consumers of recent data are served from the page cache via `sendfile`, without copying through user space (§31.13).
 *Evidence: Primary* — [Apache Kafka Docs: Design, Persistence]
 :::
 
@@ -1475,42 +1475,34 @@ CPU check: $2{,}000 \times 0.010$ s = 20 core-seconds per second, so at least **
 1. What is the difference between a program, a process and a thread?
 2. Name five pieces of information stored in a PCB.
 3. Why does a process go from Blocked to Ready rather than directly to Running?
-4. What does the **D** state in `ps` mean, and why can it inflate the load average?
-5. Distinguish the direct and indirect costs of a context switch.
-6. Three jobs of 100, 10 and 10 ms arrive together. What is the average turnaround time under FCFS (in that order) and under SJF?
-7. What problem does MLFQ's priority boost solve?
-8. How does a CPU limit in a container cause latency spikes on an idle host?
-9. Calculate the TLB reach of 2,048 entries with 4 KiB pages and with 2 MiB pages.
-10. What is the difference between a minor and a major page fault?
-11. Why is `clock_gettime` fast even though it needs kernel-maintained data?
-12. Why must a condition-variable wait be inside a `while` loop?
-13. Describe the ABA problem in one or two sentences and give one remedy.
-14. List the four Coffman conditions and the most practical way to break one.
-15. What is the difference between level-triggered and edge-triggered notifications?
-16. Why does `epoll` not help with reading regular files?
-17. List the three steps to durably replace a file and the consequence of skipping each.
-18. A service handles 1,000 requests/s, each holding a thread for 250 ms. How many threads are busy on average?
+4. Distinguish the direct and indirect costs of a context switch.
+5. Three jobs of 100, 10 and 10 ms arrive together. What is the average turnaround time under FCFS (in that order) and under SJF?
+6. How does a CPU limit in a container cause latency spikes on an idle host?
+7. Calculate the TLB reach of 2,048 entries with 4 KiB pages and with 2 MiB pages.
+8. What is the difference between a minor and a major page fault?
+9. Why must a condition-variable wait be inside a `while` loop?
+10. Describe the ABA problem in one or two sentences and give one remedy.
+11. List the four Coffman conditions and the most practical way to break one.
+12. Why does `epoll` not help with reading regular files?
+13. List the three steps to durably replace a file and the consequence of skipping each.
+14. A service handles 1,000 requests/s, each holding a thread for 250 ms. How many threads are busy on average?
 
 <details><summary>Answers</summary>
 
 1. A program is an executable file; a process is a running instance with its own address space and resources; a thread is one execution context (registers, stack) inside a process, sharing its memory.
 2. Any five of: PID and parent PID, state, saved registers and program counter, scheduling priority and accounting, page-table pointer and memory map, open file table, signal handlers, credentials, resource limits.
 3. The event that unblocked it does not mean a CPU is free; it must be chosen by the scheduler like any other ready task.
-4. Uninterruptible sleep, usually waiting on disk or network file system I/O. Linux counts D tasks in the load average, so stuck I/O raises load without using CPU.
-5. Direct: kernel work to save and restore state and choose the next task (~1–5 µs). Indirect: slower execution afterwards because caches, TLB and branch predictors hold the previous thread's state.
-6. FCFS: completions 100, 110, 120 → average 110 ms. SJF: 10, 20, 120 → average 50 ms.
-7. Starvation of CPU-bound jobs at low priority, and jobs that became interactive being stuck at low priority.
-8. CFS bandwidth control gives the cgroup a quota per period (default 100 ms). Multiple threads exhaust it early and the cgroup is throttled for the rest of the period, delaying requests by up to tens of milliseconds regardless of host load.
-9. 2,048 × 4 KiB = 8 MiB; 2,048 × 2 MiB = 4 GiB.
-10. A minor fault is resolved without I/O (the page is already in RAM, or is a fresh zero page); a major fault requires reading from storage and blocks the thread for 100 µs–10 ms.
-11. The vDSO maps kernel-maintained time data and code into every process, so it runs in user mode with no system call.
-12. Under Mesa semantics another thread may change the state between the notify and the waiter reacquiring the lock, and spurious wake-ups are allowed; the predicate must be re-checked.
-13. A CAS succeeds because a location holds the same value A it held earlier, even though it changed to B and back to A in between, so the CAS acts on stale assumptions. Remedies: version-tagged pointers, hazard pointers, epoch-based reclamation, or garbage collection for node reuse.
-14. Mutual exclusion, hold and wait, no preemption, circular wait. Break circular wait with a global lock-acquisition order.
-15. Level-triggered reports a descriptor as long as it remains ready; edge-triggered reports only on a transition to ready, so the program must drain it until `EAGAIN`.
-16. Regular files are always reported ready; the read can still block on disk. Use a thread pool or `io_uring` for file I/O.
-17. `fsync` the temporary file (else the new name may point at empty or partial data), atomically rename it (else readers may see a partial file), `fsync` the directory (else the rename may be lost and the old file reappear after a crash).
-18. Little's Law: 1,000 × 0.25 = 250 threads.
+4. Direct: kernel work to save and restore state and choose the next task (~1–5 µs). Indirect: slower execution afterwards because caches and TLB hold the previous thread's state.
+5. FCFS: completions 100, 110, 120 → average 110 ms. SJF: 10, 20, 120 → average 50 ms.
+6. CFS bandwidth control gives the cgroup a quota per period (default 100 ms). Several threads exhaust it early and the cgroup is throttled for the rest of the period, delaying requests regardless of host load.
+7. 2,048 × 4 KiB = 8 MiB; 2,048 × 2 MiB = 4 GiB.
+8. A minor fault needs no I/O (page already in RAM, or a fresh zero page); a major fault reads from storage and blocks the thread for 100 µs–10 ms.
+9. Under Mesa semantics another thread may change the state before the woken waiter reacquires the lock, and spurious wake-ups are allowed.
+10. A CAS succeeds because a location again holds value A, although it changed to B and back in between, so the CAS acts on stale assumptions. Remedies: version-tagged pointers, hazard pointers, epoch-based reclamation.
+11. Mutual exclusion, hold and wait, no preemption, circular wait. Break circular wait with a global lock order.
+12. Regular files are always reported ready, yet reads can block on disk. Use a thread pool or `io_uring`.
+13. `fsync` the temporary file (else the new name may point at empty data), rename atomically (else readers may see a partial file), `fsync` the directory (else the old file may reappear after a crash).
+14. Little's Law: 1,000 × 0.25 = 250 threads.
 </details>
 
 ## 6.18 Interview questions
@@ -1518,35 +1510,35 @@ CPU check: $2{,}000 \times 0.010$ s = 20 core-seconds per second, so at least **
 ### Basic
 
 **Q1. What is the difference between a process and a thread, and when would you choose processes?**
-**Answer.** A process has its own address space; threads within a process share memory and file descriptors but have their own stacks and registers. Threads communicate cheaply and switch faster; processes isolate faults and memory corruption. Choose processes when isolation matters (untrusted code, non-thread-safe libraries, browser tabs, PostgreSQL backends) or to bypass a GIL; choose threads for low-latency sharing of large in-memory state. Trade-off: isolation and robustness versus memory and communication cost.
+**Answer.** A process has its own address space; threads share their process's memory and file descriptors but have their own stacks and registers. Threads communicate cheaply and switch faster; processes isolate faults. Choose processes for isolation (untrusted code, non-thread-safe libraries, PostgreSQL backends) or to bypass a GIL; threads for low-latency sharing of large in-memory state.
 
 **Q2. What is a race condition? Give an example and two fixes.**
-**Answer.** A bug whose outcome depends on the interleaving of concurrent operations. Example: two threads both read a counter value of 5 and both write 6. Fixes: make the read-modify-write a critical section with a mutex, or use one atomic operation (atomic add or a CAS loop). At system level, use database transactions at a suitable isolation level or conditional writes. Mention that tests rarely reveal races, so use race detectors.
+**Answer.** A bug whose outcome depends on the interleaving of concurrent operations; e.g. two threads both read 5 and both write 6. Fixes: a mutex around the read-modify-write, or one atomic operation (atomic add, CAS loop); across services, transactions or conditional writes. Tests rarely reveal races, so use race detectors.
 
 **Q3. What is a deadlock and how do you prevent it in application code?**
-**Answer.** A cycle of threads each waiting for a resource held by the next. It requires mutual exclusion, hold and wait, no preemption and circular wait. In practice: acquire locks in a single global order, hold locks briefly and never across I/O or calls into unknown code, use `tryLock` with timeouts, and prefer designs that avoid multiple locks (one owner per state, message passing). Detect with thread dumps.
+**Answer.** A cycle of threads each waiting for a resource held by the next, requiring all four Coffman conditions. Acquire locks in one global order, never hold locks across I/O or unknown callbacks, use `tryLock` with timeouts, and prefer single-owner state or message passing. Detect with thread dumps.
 
 ### Intermediate
 
 **Q4. Your service's p99 latency doubled after you increased the worker pool from 64 to 2,000 threads on a 16-core machine. Why might that be?**
-**Answer.** If the work is CPU-bound, 2,000 runnable threads on 16 cores means each waits behind ~125 others; involuntary context switches multiply, each evicting caches, so useful throughput falls while queueing grows. More threads also intensify lock contention and memory use. Check `vmstat` (cs, run-queue length), voluntary versus involuntary switches, and lock profiles. Size the pool with Little's Law and the CPU/wait ratio, and add a bounded queue with load shedding. If the work is I/O-bound, a larger pool may be correct, but then an async model or virtual threads are cheaper.
+**Answer.** If the work is CPU-bound, 2,000 runnable threads on 16 cores each wait behind ~125 others; involuntary switches multiply and evict caches, so throughput falls while queueing grows, and lock contention rises. Check `vmstat` (cs, run queue), voluntary versus involuntary switches and lock profiles. Size the pool with Little's Law and the CPU/wait ratio, with a bounded queue and load shedding. If the work is I/O-bound, async or virtual threads are cheaper than a huge pool.
 
 **Q5. Explain how an event loop serves 10,000 connections on one thread, and what breaks it.**
-**Answer.** Sockets are non-blocking and registered with `epoll`/`kqueue`; the loop sleeps in one wait call and is woken with only the ready sockets, running short handlers for each. A waiting connection costs a small state object, not a thread. It breaks when any handler blocks or burns CPU (a synchronous DB driver, a large JSON parse, file I/O, password hashing), because every connection on that loop stalls. Mitigations: offload to worker pools, run one loop per core, monitor event-loop lag.
+**Answer.** Non-blocking sockets are registered with `epoll`/`kqueue`; the loop sleeps in one wait call and runs short handlers for the ready sockets, so a waiting connection costs a small state object, not a thread. It breaks when a handler blocks or burns CPU (synchronous DB driver, large JSON parse, file I/O), stalling every connection. Mitigations: worker pools, one loop per core, event-loop-lag monitoring.
 
 **Q6. A database acknowledges writes after `write()` but before `fsync()`. What can go wrong, and how do real databases make commits durable but fast?**
-**Answer.** A power failure or kernel crash loses data still in the page cache, so acknowledged commits disappear. Durable systems append to a write-ahead log and `fsync` (or `fdatasync`) before acknowledging, and use group commit to amortize one flush over many transactions ($X = B/t_{\text{fsync}}$). They also `fsync` directories after creating files, treat `fsync` errors as fatal and recover from the log, and rely on drives with power-loss protection. Alternatively, durability can come from replication to other machines before acknowledging, trading local flush latency for a network round trip and correlated-failure risk.
+**Answer.** A crash loses data still in the page cache, so acknowledged commits vanish. Durable systems append to a write-ahead log and `fdatasync` before acknowledging, using group commit to amortize flushes ($X = B/t_{\text{fsync}}$); they `fsync` directories after creating files, treat `fsync` errors as fatal, and use drives with power-loss protection. Alternatively, replicate to other machines before acknowledging, trading flush latency for a network round trip and correlated-failure risk.
 
 ### Advanced
 
 **Q7. Explain priority inversion with a real example and how to prevent it, including outside real-time systems.**
-**Answer.** A high-priority task blocks on a lock held by a low-priority task, and a medium-priority task preempts the low one, so the high task waits indefinitely. Mars Pathfinder (1997) suffered repeated resets because a VxWorks mutex shared by a low-priority weather task and a high-priority bus-management task lacked priority inheritance; JPL enabled it remotely. Prevention: priority inheritance or priority-ceiling locks; avoiding locks shared across priority levels; short critical sections. In servers the analogue is a background job holding a lock, connection or row needed by user traffic; isolate pools and resources by priority.
+**Answer.** A high-priority task blocks on a lock held by a low-priority task, which a medium-priority task preempts, so the high task waits indefinitely. Mars Pathfinder (1997) reset repeatedly because a VxWorks mutex shared by a low-priority weather task and a high-priority bus task lacked priority inheritance; JPL enabled it remotely. Prevention: priority inheritance or ceiling locks, no locks shared across priority levels, short critical sections. In servers, isolate pools and resources so background jobs cannot hold what user traffic needs.
 
 **Q8. Compare epoll and io_uring. When would you adopt io_uring?**
-**Answer.** `epoll` is readiness-based: it tells you a socket can be read; you then make a separate system call, and regular-file reads can still block. `io_uring` is completion-based: requests go into a shared submission ring and results come back in a completion ring, allowing batching, true asynchronous file I/O and, with SQPOLL, near-zero system calls. Adopt it for very high-IOPS storage engines or proxies on modern kernels where syscall overhead is a measured bottleneck. Costs: complexity, kernel-version dependence, and security restrictions (some platforms and container runtimes disable it). For typical web services `epoll` via a mature runtime is enough.
+**Answer.** `epoll` is readiness-based: it says a socket can be read, then a separate call reads it, and file reads can still block. `io_uring` is completion-based, with shared submission and completion rings, giving batching, asynchronous file I/O and, with SQPOLL, near-zero system calls. Adopt it for high-IOPS storage engines or proxies where syscall overhead is a measured bottleneck, accepting complexity, kernel-version dependence and security restrictions. For typical web services, `epoll` via a mature runtime is enough.
 
 **Q9. Design the concurrency model for a WebSocket gateway holding 1 million mostly idle connections across a fleet. Justify it with numbers.**
-**Answer.** Thread-per-connection costs ~100 KB per connection, i.e. ~100 GB for 1 million, plus a million kernel tasks: impractical. With an event loop or goroutines at ~1–8 KB plus ~10–20 KB of tuned socket buffers, the cost is ~20–30 KB per connection: 25–30 GB, which fits on a few large nodes; design for, say, 10 nodes × 100,000 connections so a node loss affects 10 %. Use one event loop per core (or Go with GOMAXPROCS equal to cores), raise file-descriptor limits, size socket buffers deliberately, push heavy work to separate services via queues, and handle `SIGTERM` by draining connections gradually to avoid a reconnect storm (see §9.9).
+**Answer.** Thread-per-connection at ~100 KB each needs ~100 GB and a million kernel tasks: impractical. An event loop or goroutines at ~1–8 KB plus ~20 KB of socket and TLS buffers needs ~25–30 GB in total; spread it over, say, 10 nodes × 100,000 connections so one node loss affects 10 %. Run one loop per core (or Go with GOMAXPROCS = cores), raise file-descriptor limits, size socket buffers deliberately, push heavy work to other services via queues, and drain connections gradually on `SIGTERM` to avoid reconnect storms (§9.9).
 
 ## 6.19 Practical exercises
 

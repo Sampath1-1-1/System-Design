@@ -954,6 +954,8 @@ flowchart LR
 **Definition — Mobile push notification.** A message sent by an application's server to a platform-operated push service — Apple Push Notification service (**APNs**) for Apple platforms, Firebase Cloud Messaging (**FCM**) for Android (and optionally iOS and web) — which delivers it, on a best-effort basis, over a single persistent connection that the operating system maintains to that service on behalf of all apps.
 :::
 
+Browsers have an analogous, standardized mechanism, Web Push [Thomson et al. 2016], in which a service worker receives messages relayed by the browser vendor's push service; the design principles below apply to it as well.
+
 #### First-principles explanation
 
 If every app kept its own background WebSocket, heartbeats would wake the cellular radio constantly and drain the battery in hours. So mobile operating systems suspend background apps and keep **one** connection to the platform push service, multiplexing every app's notifications over it — one mailroom for the whole apartment building. You hand your letter to the mailroom; it decides when to deliver, may combine or discard letters, and never sends a receipt.
@@ -966,7 +968,7 @@ If every app kept its own background WebSocket, heartbeats would wake the cellul
    - **APNs:** an HTTP/2 `POST /3/device/<token>` to `api.push.apple.com` (or `api.sandbox.push.apple.com` for development), authenticated by a JWT signed with your `.p8` key (token-based) or by a TLS client certificate. Headers include `apns-topic` (the app bundle ID), `apns-push-type` (`alert`, `background`, `voip`, …), `apns-priority` (10 = send immediately, 5 = send at a power-efficient time), `apns-expiration` and `apns-collapse-id` [Apple: Sending notification requests to APNs].
    - **FCM:** an HTTPS `POST https://fcm.googleapis.com/v1/projects/<project>/messages:send` (the HTTP v1 API) with an OAuth 2.0 access token from a service account. The JSON body names the token (or a topic) and carries `notification` and/or `data` payloads plus platform options such as `android.collapse_key`, `android.ttl` and `android.priority` [FCM Docs].
 4. **Store and forward.** If the device is offline, the provider stores the message for a limited time and delivers it when the device reconnects — with strict limits (below).
-5. **Feedback.** The provider's response tells you whether the token is still valid. APNs returns HTTP 410 (`Unregistered`) for a token that is no longer active; FCM returns `UNREGISTERED` (HTTP 404) or `INVALID_ARGUMENT` (HTTP 400). Delete or deactivate such tokens.
+5. **Feedback.** The provider's response tells you whether the token is still valid. APNs returns HTTP 410 (`Unregistered`) for a token that is no longer active [Apple: Handling notification responses from APNs]; FCM returns `UNREGISTERED` (HTTP 404) or `INVALID_ARGUMENT` (HTTP 400). Delete or deactivate such tokens.
 
 **Figure 9.8 — Mobile push architecture.**
 
@@ -1090,7 +1092,7 @@ flowchart LR
 
 ### 9.9.2 Memory per connection and capacity estimation
 
-An idle connection consumes almost no CPU — on an event-loop server (§6.13), it is a file descriptor registered with `epoll` — so gateways are usually **memory-bound** and **blast-radius-bound** rather than CPU-bound. The C10K problem of the late 1990s [Kegel] asked how to hold 10,000 connections on one server; modern kernels and runtimes routinely hold hundreds of thousands to millions.
+An idle connection consumes almost no CPU — on an event-loop server (§6.13), it is a file descriptor registered with `epoll` — so gateways are usually **memory-bound** and **blast-radius-bound** rather than CPU-bound. The C10K problem of the late 1990s [Kegel 1999] asked how to hold 10,000 connections on one server; modern kernels and runtimes routinely hold hundreds of thousands to millions.
 
 **Table 9.12 — Per-connection memory budget for a TLS WebSocket gateway (Illustrative assumptions; measure your own stack).**
 

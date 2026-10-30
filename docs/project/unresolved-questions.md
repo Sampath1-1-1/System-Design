@@ -57,3 +57,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-050 | 4 | AWS S3 "11 nines" durability wording and URL | Open | |
 | UQ-051 | 4 | Notation in Gunther's *Guerrilla Capacity Planning* (2007): α/β vs σ/κ | Open | |
 | UQ-052 | 4 | Current edition year of IEC 80000-13 | Open | |
+| UQ-053 | 9 | APNs details (latest-only coalescing, 64-byte apns-collapse-id, 5 KB VoIP payload, background-push guidance) and FCM 28-day max TTL / 4 KB payload (vendor docs unreachable) | Open | Time-sensitive |
+| UQ-054 | 9 | WHATWG rule: non-200 response stops EventSource reconnection | Open | |
+| UQ-055 | 9 | Default idle timeouts for AWS ALB, NGINX, Kubernetes ingress | Open | Version-dependent |
+| UQ-056 | 9 | Author lists for RFC 8489 (STUN) and RFC 8656 (TURN) | Open | |
+| UQ-057 | 9 | Per-connection memory figures are illustrative | Accepted | Labeled in text |
