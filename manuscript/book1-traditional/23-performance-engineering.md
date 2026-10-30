@@ -4,7 +4,7 @@
 
 A checkout page that was fast last month now takes two seconds for one user in fifty. The dashboards show 40% CPU. Someone suggests doubling the instance count; someone else blames the database; a third engineer wants to rewrite the JSON serializer. All three are guessing. Performance engineering replaces the guessing with method: a checklist that finds the saturated resource, a profiler that finds the hot code, a load test that measures what users actually experience, and a model that predicts how many machines next year's traffic will need.
 
-Chapter 4 gave you the mathematics: percentiles (§4.8), queueing (§4.10), Little's Law (§4.11), Amdahl's Law and the Universal Scalability Law (§4.12–§4.13). Chapter 2 introduced the bottleneck and the utilization law (§2.6). This chapter turns those tools into an engineering practice. You will learn where to look first, how to measure without fooling yourself, why the slowest 1% of requests dominates large systems, and how to cut that tail with hedged requests, batching and runtime tuning. Every technique ends in numbers you can check, and four runnable Python programs reproduce the key effects.
+Chapter 4 gave you the mathematics (percentiles, queueing, Little's Law, the Universal Scalability Law) and Chapter 2 the bottleneck and the utilization law. This chapter turns them into a practice: where to look first, how to measure without fooling yourself, why the slowest 1% of requests dominates large systems, and how to cut that tail. Four runnable Python programs reproduce the key effects.
 
 ## 23.1 Learning objectives
 
@@ -39,9 +39,9 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-A doctor facing a patient with a fever does not start by prescribing antibiotics. She takes vital signs in a fixed order, forms a hypothesis, orders a targeted test, and only then treats. Performance work is the same. The vital signs are a handful of metrics per resource and per service; the targeted tests are profilers and tracers; the treatment is a code, configuration or capacity change; and the follow-up is a measurement that confirms the change helped.
+A doctor facing a fever does not start with antibiotics. She takes vital signs in a fixed order, forms a hypothesis, orders a targeted test, treats, and follows up. In performance work the vital signs are a few metrics per resource and per service, the tests are profilers and tracers, and the follow-up is a measurement confirming the fix.
 
-Brendan Gregg catalogs the **anti-methods** that replace this discipline in practice [Gregg 2020]: the *streetlight anti-method* (look only where your favorite tool shines), the *random change anti-method* (tweak settings until the problem goes away) and the *blame-someone-else anti-method* (declare it a network problem). Each wastes time because it is not driven by evidence. The methods below are driven by evidence, and each one is cheap enough to run in minutes.
+Brendan Gregg names the **anti-methods** that replace this discipline [Gregg 2020]: the *streetlight* anti-method (look only where your favorite tool shines), *random change* (tweak settings until the problem goes away) and *blame-someone-else* ("it's the network"). The methods below are evidence-driven and take minutes.
 
 ### 23.3.2 The USE method
 
@@ -51,15 +51,15 @@ Brendan Gregg catalogs the **anti-methods** that replace this discipline in prac
 
 #### Why does this exist?
 
-Most monitoring dashboards were built by adding whatever metric was easy to collect, so they are both overwhelming and incomplete. USE inverts the process: start from the list of resources (which is finite and known in advance), ask three questions of each, and you will not miss a saturated resource just because nobody graphed it. Chapter 2 introduced USE as a bottleneck finder (§2.6); here it becomes a complete procedure.
+Dashboards built from whatever metrics were easy to collect are both overwhelming and incomplete. USE inverts the process: start from the finite list of resources and ask three questions of each, so no saturated resource is missed because nobody graphed it. Chapter 2 introduced USE as a bottleneck finder (§2.6); here it becomes a complete procedure.
 
 #### How it works internally
 
-1. **Enumerate resources.** Draw the functional block diagram of the server: CPUs, memory, each disk and controller, each network interface, plus software resources.
-2. **Pick a resource and check errors first.** Errors are often the quickest to interpret (a disk reporting retries, a NIC dropping packets) and can explain everything else.
-3. **Check utilization.** Use per-device and per-CPU numbers, not machine averages: an average of 25% across eight cores can hide one core at 100% serving a single-threaded event loop.
-4. **Check saturation.** Run-queue length for CPUs, swapping or page scanning for memory, average queue size for disks, drops and retransmits for networks, waiters for locks and pools. Any sustained saturation is a problem, because queued work is latency (§4.10).
-5. **Iterate** until a problem is identified or every resource is cleared; if every resource is clear, the bottleneck is outside this server (a dependency) or in the workload itself.
+1. **Enumerate resources** from a block diagram of the server: CPUs, memory, disks and controllers, network interfaces, plus software resources.
+2. **Check errors first.** They are quick to interpret (disk retries, NIC drops) and can explain everything else.
+3. **Check utilization** per device and per CPU: an 8-core average of 25% can hide one core at 100% running a single-threaded event loop.
+4. **Check saturation**: run-queue length, swapping, disk queue size, drops and retransmits, waiters on locks and pools. Sustained saturation is always a problem, because queued work is latency (§4.10).
+5. **Iterate** until the problem is found or every resource is cleared.
 
 **Figure 23.1 — The USE method procedure.**
 
@@ -81,7 +81,7 @@ flowchart TD
   ALL -->|yes| OUT[Bottleneck is external<br/>or in the workload]
 ```
 
-**Reading the diagram.** This is a reasoning loop, not a running system, so there are no protocols or storage boundaries; every arrow is a step the engineer takes in order. The loop iterates over a finite resource list, which is what makes the method complete. Each check is cheap (one counter or tool per question), so a full pass on one server takes minutes. A positive finding does not end the procedure automatically: a busy disk may be a *symptom* of memory pressure causing swapping, so the "Problem explained?" check sends you back to the loop if the finding does not account for the complaint. The failure point of the method is the resource list itself: a resource you forget to enumerate (a connection pool, a per-process file-descriptor limit, a cloud API rate limit) can never be found. When all resources are clear, the "outside" exit points you to dependencies or to the RED view of §23.3.3. The method scales to fleets by running the same checks per instance and per resource class.
+**Reading the diagram.** This is a reasoning loop, not a running system: there are no protocols or storage boundaries, and every arrow is a step the engineer takes. Iterating over a finite resource list is what makes the method complete, and each check is one counter, so a pass takes minutes. A finding must *explain* the complaint (a busy disk may be a symptom of swapping), otherwise the loop continues. The method's failure point is the resource list: a forgotten resource (a connection pool, a file-descriptor limit, a cloud API quota) can never be found. If every resource is clear, look outside the host (§23.3.3). The same checks scale to fleets per instance and resource class.
 
 **Table 23.1 — USE metrics for common resources (Linux tools in parentheses).**
 
@@ -95,11 +95,11 @@ flowchart TD
 | Thread / connection pool | Busy workers / pool size | Requests waiting for a worker | Rejected tasks, acquisition timeouts |
 | Lock | Fraction of time held | Waiting threads; contention time | Deadlock detections, timeouts |
 
-The container row deserves emphasis. A container whose CPU **quota** is exhausted is **throttled**: it cannot run for the rest of the scheduling period even if the host is idle (§23.6.3). Host-level CPU utilization will look low while request latency spikes. Saturation for a quota is the count and duration of throttled periods, which every cgroup exposes.
+The container row deserves emphasis: a container that exhausts its CPU **quota** is **throttled** for the rest of the period even if the host is idle (§23.6.3), so host CPU looks low while latency spikes.
 
 ### 23.3.3 The RED method and the four golden signals
 
-USE looks at a system from the inside, resource by resource. Users experience it from the outside, request by request. Two closely related request-centric checklists cover that view.
+USE looks at a system from the inside; users experience it request by request. Two request-centric checklists cover that view.
 
 ::: definition
 **Definition — RED method.** For every **service**, monitor **R**ate (requests per second), **E**rrors (failed requests per second) and **D**uration (the distribution of request latency, as a histogram from which percentiles are read). Tom Wilkie proposed it while at Weaveworks as a service-level complement to USE [Wilkie 2018].
@@ -109,7 +109,7 @@ USE looks at a system from the inside, resource by resource. Users experience it
 **Definition — Four golden signals.** Google's site reliability engineering guidance says that if you can measure only four metrics of a user-facing system, measure **latency** (time to serve a request, tracking successful and failed requests separately), **traffic** (demand, such as requests per second), **errors** (rate of failed requests, explicit or implicit) and **saturation** (how "full" the service is, emphasizing its most constrained resource) [Beyer et al. 2016, ch. 6].
 :::
 
-The golden signals are RED plus saturation. The advice to separate latencies of successes and failures matters: a backend that fails fast after 2 ms makes the overall latency histogram look *better* while users suffer. Saturation is the forward-looking signal; latency and errors tell you users are already hurting, whereas a connection pool at 90% occupancy tells you they are about to.
+The golden signals are RED plus saturation. Separating success and failure latency matters: a backend failing fast in 2 ms makes the latency histogram look *better* while users suffer. Saturation is the leading signal: a pool at 90% occupancy says users are *about* to hurt.
 
 **Table 23.2 — USE, RED and the four golden signals compared.**
 
@@ -124,7 +124,7 @@ The golden signals are RED plus saturation. The advice to separate latencies of 
 
 ### 23.3.4 From symptom to cause
 
-The checklists answer different questions, so a real investigation chains them. RED narrows the problem to a service and an endpoint; USE on that service's hosts finds the saturated resource; a profiler (§23.4) or a trace (§40.6) finds the code or call responsible; a load test (§23.5) confirms the fix. Figure 23.2 is the workflow used throughout this chapter.
+A real investigation chains the checklists: RED narrows the problem to a service and endpoint, USE finds the saturated resource, a profiler (§23.4) or trace (§40.6) finds the responsible code or call, and a load test (§23.5) confirms the fix.
 
 **Figure 23.2 — Workflow from symptom to cause.**
 
@@ -148,7 +148,7 @@ flowchart TD
   VER -.->|not fixed| SCOPE
 ```
 
-**Reading the diagram.** The procedure starts from a user-visible symptom and first asks *what changed*, because most regressions follow a deployment, configuration change or traffic shift, and rolling back is the fastest fix. Otherwise RED metrics across the service call graph (gathered by middleware or a service mesh, typically over HTTP or gRPC) locate the slowest contributing service. USE on that service's resources then selects the instrument: a CPU flame graph if CPUs are busy, off-CPU analysis and distributed traces if nothing is busy but requests wait (the classic signature of locks, pools or slow dependencies), allocation profiles and GC logs if memory or pauses dominate. All solid steps are synchronous actions by the investigator; the dotted edge is the asynchronous feedback loop that reopens the investigation if verification fails. The main failure point is skipping the scoping step: an investigation of "the site is slow" without an endpoint, a percentile and a start time cannot converge.
+**Reading the diagram.** Start from a user-visible symptom and first ask *what changed*: most regressions follow a deployment, configuration change or traffic shift, and rollback is the fastest fix. Otherwise RED metrics across the call graph (from middleware or a service mesh, over HTTP or gRPC) locate the slowest service, and USE on its resources selects the instrument: a CPU flame graph if CPUs are busy; off-CPU analysis and traces if nothing is busy but requests wait (locks, pools, dependencies); allocation profiles and GC logs if memory dominates. Solid steps are synchronous actions; the dotted edge reopens the investigation if verification fails. The main failure point is skipping scoping: "the site is slow" without an endpoint, percentile and start time cannot converge.
 
 ::: example
 **Worked example — Locating the bottleneck with the utilization law.** RED shows the `/search` endpoint's p99 rose from 120 ms to 900 ms at 2,400 RPS across 12 instances. USE on one instance (200 RPS) shows 8 CPUs at 35%, and a database connection pool of 16 connections reporting 14.8 busy on average with 40 waiters. Each request holds a connection for 74 ms.
@@ -160,15 +160,6 @@ flowchart TD
 
 **Interpretation.** The CPU dashboard (35%) said "plenty of capacity"; the pool said "saturated". **Engineering implication.** Software resources must be in your USE list and on your dashboards. The fix is to make the query faster or move it off the request path, not to add instances: twelve more instances would double the connection count the database must serve.
 :::
-
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Investigation stalls on "high CPU" | Machine-average CPU hides one hot core or a throttled container | Per-CPU and cgroup throttling metrics | Profile the hot thread; raise or remove the quota | Dashboards with per-CPU max and throttled time |
-| Latency SLO burns, every resource looks idle | Bottleneck is a lock, pool or dependency | Off-CPU profile; pool waiters; traces | Shorten hold times; add bulkheads (§22.14) | Instrument every pool with occupancy and waiters |
-| Overall latency improves while users complain | Fast failures mixed into the latency histogram | Separate histograms per outcome | Fix the failing dependency | Golden-signal rule: split success and error latency |
-| "Fix" deployed, problem returns | Change was not verified under realistic load | Post-fix percentiles unchanged | Re-open the investigation | Verification step with a load test (§23.5) |
 
 ::: mistake
 **Mistake — Treating utilization as the only signal.** A disk at 60% utilization can still be the bottleneck if its queue is long and its requests are bursty, and a CPU at 100% may be harmless for a batch job. Utilization tells you how busy a resource is; saturation tells you whether work is *waiting* for it. Latency comes from waiting.
@@ -1324,3 +1315,121 @@ $$n = \left\lceil \frac{\lambda_{\text{peak}}\,(1 + g)}{u \cdot X_{\max}} \right
 ::: mistake
 **Mistake — Planning to the peak of the curve.** $X_{\max}$ is reached in a closed test at concurrency $N^*$, where latency is already several times its unloaded value; in production, arrivals are open and bursty, so running an instance near $X_{\max}$ puts it on the steep part of the queueing curve (§4.10.3). Plan to a fraction of the peak and verify the latency at that point with an open-model load test.
 :::
+
+## 23.11 Summary and revision notes
+
+::: summary
+- **Method beats intuition.** USE (utilization, saturation, errors per resource) finds saturated resources, including locks and pools; RED and the four golden signals (rate, errors, duration, plus saturation) find the slow service. Scope the symptom, check what changed, then profile.
+- **Profiling.** Sampling profilers have overhead fixed by frequency and error $\sqrt{p(1-p)/n}$; instrumenting profilers give exact counts but distort hot paths. Flame-graph width is sample share; look for wide plateaus. CPU profiles miss off-CPU time (I/O, locks, run-queue waits), which usually dominates latency problems.
+- **Load testing.** Closed generators reduce load when the system slows and hide outages; use open (constant-arrival-rate) generators for SLO tests. Coordinated omission can understate p99 by orders of magnitude: measure from the intended send time. Record latency in HDR histograms and merge, never average, percentiles.
+- **Tail at scale.** For $N$-way fan-out, root percentiles are leaf percentiles at $q^{1/N}$; the leaf tail becomes the user median. Variability comes from GC, queueing, background work, noisy neighbors, CPU throttling and packet loss.
+- **Hedging.** Hedge idempotent requests after about the p95 for about 5% extra load; tied requests with cancellation do better. Without budgets and cancellation, hedging can collapse a loaded system.
+- **Batching, pipelining, compression.** Bound batch latency with a timer; pipeline small requests to amortize round trips; compress when bytes, not CPU, are the bottleneck (fast compressors help on 1 Gb/s links and hurt on 10 Gb/s single streams).
+- **Runtimes.** GC exposure is pause frequency (allocation rate / young size) times pause length; reduce allocation first, then choose a collector for the goal. Warm up JIT runtimes before they take traffic.
+- **Capacity.** Fit the USL to measured throughput, plan to a fraction of the fitted peak, then add growth and zone redundancy.
+:::
+
+## 23.12 Knowledge checkpoint
+
+1. What are the three USE questions, and why are software resources part of the resource list?
+2. How do the four golden signals differ from RED, and why should successful and failed request latencies be tracked separately?
+3. A 20 s profile at 49 Hz on 4 busy CPUs shows a function in 5% of samples. What is the standard error?
+4. Why can a CPU flame graph show nothing useful for a service whose p99 is 2 s?
+5. State the interactive response time law and explain why a closed load test understates an overload.
+6. Define coordinated omission and give two ways to avoid or correct it.
+7. Why must percentiles from several load generators be computed from merged histograms?
+8. Leaves have exponential latency with a 5 ms mean. What is the root's median with 50-way fan-out?
+9. A container has a 1-CPU quota per 100 ms period and 4 runnable threads. How long is it throttled each period?
+10. A replica answers in 5 ms with probability 0.97 and 300 ms otherwise. Hedging after 6 ms, what fraction of requests exceeds 11 ms, and what is the extra load?
+11. Why did hedging without cancellation collapse at 80% utilization in the simulation of §23.7.2?
+12. When does compression increase transfer time?
+13. A JVM allocates 1 GB/s with a 4 GB young generation and 20 ms minor pauses. How often do pauses occur, and roughly what fraction of 10 ms requests overlap one?
+14. Why is the location of the USL peak $N^*$ less reliable than its height?
+
+<details><summary>Answers</summary>
+
+1. Utilization, saturation, errors. Locks, pools and descriptor limits are finite and can saturate while hardware is idle, so omitting them hides real bottlenecks.
+2. The golden signals add saturation, a leading indicator. Fast failures pull the latency distribution down, hiding user pain.
+3. $n = 49 \times 20 \times 4 = 3{,}920$; $\mathrm{SE} = \sqrt{0.05 \times 0.95/3{,}920} = 0.0035$, i.e. ±0.35 percentage points.
+4. The time is off-CPU: waiting on I/O, locks, pools or the run queue. Use off-CPU or wall-clock profiling and traces.
+5. $X = N/(R + Z)$. When $R$ rises, a fixed population sends less, so offered load falls instead of queueing.
+6. The generator waits for slow replies and so skips sends during stalls, omitting the worst samples. Use an open-model generator that measures from the intended send time (wrk2, k6 arrival-rate executors), or apply expected-interval correction.
+7. Percentiles are not additive; averaging p99s from generators with different sample counts or distributions gives a number that is not the p99 of anything.
+8. $0.5^{1/50} = 0.98623$; $t = 5 \ln(1/0.01377) = 5 \times 4.285 = 21.4$ ms.
+9. $t_{\text{run}} = 100/4 = 25$ ms, so it is throttled for 75 ms per period.
+10. $P(T > 11) = 0.03 \times 0.03 = 0.0009$ (0.09%); extra load is $P(X > 6) = 3\%$.
+11. Hedges raised utilization, which raised latency, which pushed more requests past the fixed hedge delay, a positive feedback loop that drove demand above capacity.
+12. When CPU time to compress and decompress exceeds the bandwidth time saved: $1/C_c + 1/(\rho W) + 1/C_d > 1/W$, typically on fast links with a single stream.
+13. Every $4/1 = 4$ s; about $(20 + 10)/4{,}000 = 0.75\%$ of requests.
+14. Throughput is flat near the peak, so many values of $N$ give nearly the same $X$; small noise moves $N^*$ a lot but $X_{\max}$ little.
+</details>
+
+## 23.13 Interview questions
+
+### Basic
+
+**Q1. A service's average latency is fine but users complain. Where do you start?** **Answer.** Look at percentiles (p99, p99.9) per endpoint from histograms, separated by success and error, and check what changed when the complaints began. Then apply RED across the call graph to find the slow service and USE on its resources. Averages hide tails; percentiles show what the unlucky fraction sees, and fan-out means that fraction is often most users.
+
+**Q2. What is coordinated omission?** **Answer.** A load generator that waits for each response before sending the next stops sending during a stall, so the requests that would have suffered are never measured. Reported percentiles can be orders of magnitude too low. Use a constant-rate open generator that timestamps from the intended send time, and record into HDR histograms.
+
+### Intermediate
+
+**Q3. Design hedging for a key-value read path with a p99 problem.** **Answer.** Hedge only idempotent reads. Set the delay from a rolling histogram near the p95, cap hedges at about 5% of requests with a token-bucket budget, choose the second replica in a different failure domain, and cancel the loser. Disable hedging when the service is overloaded (rising queue depth or error rate) to avoid feedback. Measure p99, p99.9 and hedge rate before and after; consider tied requests if the storage servers can cancel queued work.
+
+**Q4. CPU is at 30% but p99 is ten times the SLO. What could it be?** **Answer.** Off-CPU causes: a saturated connection or thread pool, lock contention, a slow dependency, GC pauses, CPU quota throttling (host CPU low, cgroup throttled), or packet retransmissions. Check pool waiters, cgroup `nr_throttled`, GC logs and retransmit counters, then take an off-CPU or wall-clock profile and traces of slow requests.
+
+### Advanced
+
+**Q5. How would you produce a capacity plan for a new service?** **Answer.** Build a representative workload from production traces; run warm, steady-state closed tests at increasing concurrency on the target instance type; fit the USL; check residuals and that the peak lies within the measured range. Choose an operating point at a fraction of the fitted peak, verified by an open-model test at that rate against the latency SLO. Size $n = \lceil \lambda_{\text{peak}}(1+g)/(u X_{\max}) \rceil$, add zone redundancy, and refit after every major change, comparing with production telemetry.
+
+**Q6. A Java service's p99.9 spikes every few seconds. Walk through diagnosis and fixes.** **Answer.** Correlate spikes with GC logs. If they match minor pauses, measure the allocation rate and young-generation size: frequency is $E/a$, and pause length scales with survivors. Reduce allocation using an allocation profiler, size the heap with headroom, or move to a concurrent collector (ZGC or Shenandoah) for sub-millisecond pauses at some throughput and memory cost. If spikes follow deployments, the cause may be JIT warm-up: add warm-up traffic and load-balancer slow start. Also rule out container throttling and background jobs.
+
+## 23.14 Practical exercises
+
+1. Run the coordinated-omission program of §23.5.3 with the stall moved to $t = 5$ s and lengthened to 5 s. Predict the true p99 with the formula of §23.5.3 before running.
+2. Modify the hedging simulation to use an adaptive delay (the running p95 of the last 10,000 requests) and a budget capping hedges at 5% of requests. Does it remain stable at 80% and 90% utilization?
+3. Profile a Python program of your own with `py-spy record` and with `cProfile`. Compare the hottest functions and explain any differences.
+4. Use k6 with a `constant-vus` executor and then a `constant-arrival-rate` executor against a test server that sleeps 1 s every 10 s. Compare reported p99 and achieved rates.
+5. Collect throughput at eight concurrency levels from any local service (for example, a database with a benchmark tool) and fit the USL with the program of §23.10.2.
+
+## 23.15 Design challenges
+
+1. **Search fan-out.** A query fans out to 200 index partitions with leaf p99 = 20 ms and p99.9 = 120 ms. The product requires root p99 ≤ 80 ms. Choose a combination of replication, hedging, tied requests and partial results, and quantify the extra load.
+2. **Load-test platform.** Design an internal load-testing service for 100 teams: open-model generators, HDR histogram aggregation, safety limits for tests against shared dependencies, and automatic comparison with the previous release.
+
+## 23.16 References
+
+1. Apache Cassandra. *Apache Cassandra Documentation — CREATE TABLE: `speculative_retry` option*. https://cassandra.apache.org/doc/latest/
+2. Beyer, B., Jones, C., Petoff, J., Murphy, N. R. (eds.). *Site Reliability Engineering: How Google Runs Production Systems*, ch. 6 "Monitoring Distributed Systems." O'Reilly Media, 2016. https://sre.google/sre-book/monitoring-distributed-systems/
+3. Dean, J., Barroso, L. A. "The Tail at Scale." *Communications of the ACM* 56(2):74–80, 2013.
+4. Dean, J., Ghemawat, S. "MapReduce: Simplified Data Processing on Large Clusters." *USENIX Symposium on Operating Systems Design and Implementation (OSDI)*, 2004.
+5. The Go Authors. *A Guide to the Go Garbage Collector*. https://go.dev/doc/gc-guide
+6. Gregg, B. "The Flame Graph." *Communications of the ACM* 59(6):48–57, 2016.
+7. Gregg, B. *Systems Performance: Enterprise and the Cloud*, 2nd ed. Addison-Wesley, 2020.
+8. Gregg, B. *The USE Method*. brendangregg.com. https://www.brendangregg.com/usemethod.html
+9. Gregg, B., Spier, M. "Java in Flames." Netflix Technology Blog, 2015.
+10. gRPC Authors. *gRFC A6: gRPC Retry Design* (includes hedging policy). https://github.com/grpc/proposal/blob/master/A6-client-retries.md
+11. Gunther, N. J. *Guerrilla Capacity Planning: A Tactical Approach to Planning for Highly Scalable Applications and Services*. Springer, 2007.
+12. Howarth, J. "Why Discord Is Switching from Go to Rust." Discord Blog, 2020. https://discord.com/blog/why-discord-is-switching-from-go-to-rust
+13. Jones, R., Hosking, A., Moss, E. *The Garbage Collection Handbook: The Art of Automatic Memory Management*, 2nd ed. CRC Press, 2023.
+14. Lazowska, E. D., Zahorjan, J., Graham, G. S., Sevcik, K. C. *Quantitative System Performance: Computer System Analysis Using Queueing Network Models*. Prentice Hall, 1984.
+15. Mytkowicz, T., Diwan, A., Hauswirth, M., Sweeney, P. F. "Evaluating the Accuracy of Java Profilers." *ACM SIGPLAN Conference on Programming Language Design and Implementation (PLDI)*, 2010.
+16. Ren, G., Tune, E., Moseley, T., Shi, Y., Rus, S., Hundt, R. "Google-Wide Profiling: A Continuous Profiling Infrastructure for Data Centers." *IEEE Micro* 30(4):65–79, 2010.
+17. Schroeder, B., Wierman, A., Harchol-Balter, M. "Open Versus Closed: A Cautionary Tale." *USENIX Symposium on Networked Systems Design and Implementation (NSDI)*, 2006.
+18. Tene, G. "How NOT to Measure Latency." Conference talk, presented at several venues (e.g., Strange Loop 2015).
+19. Tene, G. *HdrHistogram: A High Dynamic Range Histogram*. http://hdrhistogram.org/
+20. Ungar, D. "Generation Scavenging: A Non-disruptive High Performance Storage Reclamation Algorithm." *ACM SIGSOFT/SIGPLAN Software Engineering Symposium on Practical Software Development Environments*, 1984.
+21. Veeraraghavan, K., et al. "Kraken: Leveraging Live Traffic Tests to Identify and Resolve Resource Utilization Bottlenecks in Large Scale Web Services." *USENIX OSDI*, 2016.
+22. Wilkie, T. "The RED Method: How to Instrument Your Services." Talk and Grafana Labs blog post, 2018.
+23. Meta Platforms. *Zstandard (zstd) README — benchmark table*. https://github.com/facebook/zstd (accessed 2026).
+
+## 23.17 Open verification items
+
+- RED method: confirm Wilkie's original venue and date (Weaveworks-era talk, reportedly 2015; Grafana Labs blog 2018) and the exact title.
+- Dean and Barroso (2013): confirm that the slowest 5% of leaves account for about half of root p99; the tied-request result (sort-job cluster near idle-cluster latency, disk overhead below 1%); and the hedging delay wording.
+- Gregg and Spier "Java in Flames": confirm authorship, date and URL.
+- Kraken (OSDI 2016): confirm the description of traffic shifting and safety stops; no numeric claims are made.
+- Discord (2020): confirm the two-minute forced-GC explanation.
+- Table 23.7: values copied from the zstd README as read in 2026; re-check before publication.
+- JVM collector release versions (G1 default JDK 9; ZGC and Shenandoah production JDK 15; generational ZGC JDK 21) and Go's 25% marking CPU target.
+- Tene talk: confirm a canonical venue and year.

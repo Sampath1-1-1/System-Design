@@ -45,11 +45,11 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Picture a large post office with twenty counters. An L4 balancer is the doorman: he looks only at the envelope (who sent it, which door it came through) and points each arriving customer to a counter, and that customer stays at the counter for the whole visit, however many errands they have. An L7 balancer is a receptionist who opens each letter, reads what it asks for ("passport renewal", "parcel pickup"), and sends each errand to the counter that handles it, possibly a different counter for each errand. The receptionist is far more flexible but must open every letter, which takes time and trust: she must hold the keys to the envelopes (TLS keys).
+Picture a post office with twenty counters. An L4 balancer is a doorman who looks only at the envelope (sender, entrance) and sends each customer to a counter for the whole visit, however many errands they have. An L7 balancer is a receptionist who opens each letter, reads the errand, and sends each errand to the right counter. She is far more flexible, but opening letters takes time and trust: she must hold the keys to the envelopes (TLS keys).
 
 #### Why does this exist?
 
-Both kinds exist because there is a trade-off between **cost per byte** and **intelligence per request**. Network-level balancers in front of Google, Meta or a cloud region carry terabits per second; touching only packet headers lets them do that on commodity servers [Eisenbud et al. 2016]. Application-level routing (send `/api/search` to the search service, retry a failed idempotent `GET` on another backend, spread gRPC calls that share one HTTP/2 connection) needs the request itself. Large sites therefore stack both: L4 in front for scale and resilience, L7 behind it for routing (§19.8, Figure 19.9).
+Both exist because of a trade-off between **cost per byte** and **intelligence per request**. Network-level balancers carry terabits per second by touching only packet headers on commodity servers [Eisenbud et al. 2016]. Routing by path, retrying an idempotent `GET` elsewhere, or spreading gRPC calls that share one HTTP/2 connection needs the request itself. Large sites stack both: L4 in front for scale, L7 behind for routing (Figure 19.9).
 
 #### How it works internally
 
@@ -84,7 +84,7 @@ flowchart LR
   S2 --> DB[(Cart database)]
 ```
 
-**Reading the diagram.** The client opens one TCP connection to the VIP. The L4 balancer sees only packet headers; it hashes the 5-tuple, remembers the choice in its connection table, and sends every packet of this flow to the same L7 proxy. The proxy terminates TCP and TLS, reads each HTTP request, and routes `/api/search` and `/api/cart` to different services over pooled HTTP/2 connections. All arrows are synchronous request/response paths. The cart database is the only storage boundary; both balancer tiers are stateless apart from soft connection state. Failure points: losing the L4 node breaks the flows it carries unless its peers can rebuild the mapping (§19.8); losing an L7 proxy breaks the connections it terminated, and clients reconnect. Scaling: add L4 nodes behind ECMP and add L7 proxies behind the L4 tier.
+**Reading the diagram.** The client opens one TCP connection to the VIP. The L4 balancer hashes the 5-tuple, records the choice in its connection table, and sends every packet of the flow to the same L7 proxy. The proxy terminates TCP and TLS, reads each HTTP request, and routes `/api/search` and `/api/cart` to different services over pooled HTTP/2 connections. All arrows are synchronous. The cart database is the only storage boundary. Failure points: a lost L4 node breaks its flows unless peers can rebuild the mapping (§19.8); a lost L7 proxy breaks the connections it terminated. Scaling: add L4 nodes behind ECMP and L7 proxies behind the L4 tier.
 
 #### Forwarding modes and direct server return
 
@@ -112,7 +112,7 @@ sequenceDiagram
   B->>C: response sent directly from VIP on loopback
 ```
 
-**Reading the diagram.** In the upper half every byte, in both directions, passes through the balancer, which rewrites addresses each way; the backend may not even know the client's address unless the balancer passes it (PROXY protocol or `X-Forwarded-For`). In the lower half the balancer forwards only requests. It either rewrites the destination MAC address (backend on the same layer-2 segment) or wraps the packet in an outer IP header (IP-in-IP, GRE or GUE tunnels, which can cross subnets). The backend has the VIP configured on a loopback interface, so it accepts the packet and replies from the VIP straight to the client. All flows are synchronous. Failure point: with DSR the balancer never sees responses, so it cannot detect a backend that accepts requests but never answers, and tunnel headers shrink the usable MTU. Scaling benefit: response bytes, often ten or more times request bytes, never load the balancer.
+**Reading the diagram.** In the upper half every byte, in both directions, passes through the balancer, which rewrites addresses each way; the backend learns the client's address only if the balancer passes it (PROXY protocol or `X-Forwarded-For`). In the lower half the balancer forwards only requests, by rewriting the destination MAC address (same layer-2 segment) or by wrapping the packet in an outer IP header (IP-in-IP, GRE, GUE). The backend holds the VIP on a loopback interface and replies from it straight to the client. All flows are synchronous. Failure points: with DSR the balancer never sees responses, so it cannot notice a backend that never answers, and tunnel headers shrink the usable MTU. Scaling: response bytes never load the balancer.
 
 ::: formula
 **Balancer bandwidth by forwarding mode**
@@ -164,15 +164,6 @@ These are the modes of Linux Virtual Server (LVS-NAT, LVS-DR and LVS-TUN), which
 | Operational complexity | Routing integration (BGP, ECMP), tunnels | Configuration surface: routes, timeouts, retries |
 | Choose when | Non-HTTP protocols, extreme volume, first tier of a stack | HTTP/gRPC services, microservices, canary routing |
 
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| gRPC traffic piles onto one backend | L4 balances HTTP/2 connections, and one connection carries thousands of calls | Per-backend request rate skewed; one hot CPU | Recycle connections | L7 or client-side per-call balancing (§19.10); maximum connection age |
-| Large uploads fail through a DSR tunnel | Encapsulation overhead exceeds path MTU; ICMP blocked | Hung connections at specific payload sizes | Lower MSS | MSS clamping; jumbo frames inside the datacenter |
-| Rate limits apply to the balancer, not users | Full NAT hides client IPs | Every request "comes from" a few balancer IPs | Read client IP from PROXY protocol or trusted headers | Enable PROXY protocol; trust headers only from your own proxies |
-| Connection-table exhaustion | SYN flood or very many idle flows | Table-full counters; new flows dropped | Shorter idle timeouts | SYN cookies; size tables for peak flows; DDoS scrubbing (§10.11) |
-
 ::: mistake
 **"An L4 balancer cannot handle HTTPS."** It can: with passthrough it forwards encrypted bytes and never needs keys, and with SNI it can even pick a pool per hostname. What it cannot do is route on anything *inside* the encrypted stream, such as the URL path.
 :::
@@ -197,7 +188,7 @@ A teacher handing out exam papers walks along the row giving one to each desk in
 
 #### Why does this exist?
 
-Round robin needs no state beyond a counter and no feedback from backends, so it is cheap, predictable and easy to debug. It is the default in NGINX, HAProxy (`roundrobin`), Envoy and AWS ALB. It works well when backends are identical and requests cost about the same. Weights handle the commonest exception: a mixed fleet in which some machines have more cores.
+Round robin needs only a counter and no feedback from backends, so it is cheap and predictable; it is the default in NGINX, HAProxy, Envoy and AWS ALB. Weights handle the commonest exception: a mixed fleet.
 
 #### How it works internally
 
@@ -369,8 +360,7 @@ $$S_k = \alpha\, x_k + (1 - \alpha)\, S_{k-1}, \qquad S_k - x^{*} = (1-\alpha)^k
 3. $k = 22$: $0.9^{22} = 0.098$, $S = 200 - 17.7 = 182$ ms, within 10% of the truth.
 4. At 100 requests/s to this backend, 22 samples arrive in 0.22 s; at 1 request/s, it takes 22 s.
 
-*Interpretation.* Per-sample smoothing reacts at the speed of traffic; a backend that receives little traffic (because it looked slow) updates slowly. The time-based form $\alpha = 1 - e^{-\Delta t/\tau}$ makes the memory a fixed duration $\tau$ instead. *Engineering implication.* Choose $\tau$ near the timescale of the problems you want to dodge (seconds for GC pauses), and make a backend's estimate decay back toward the pool average when it gets no samples, so a once-slow backend is retried.
-:::
+*Interpretation.* Per-sample smoothing reacts at the speed of traffic, so a backend that gets little traffic (because it looked slow) updates slowly; the time-based form fixes the memory at $\tau$. *Engineering implication.* Choose $\tau$ near the timescale of the problems to dodge (seconds for GC pauses), and decay idle estimates toward the pool average so a once-slow backend is retried.
 
 ::: industry
 **Twitter Finagle and Linkerd: power of two choices with peak EWMA.** Finagle, Twitter's RPC library, offers a "peak EWMA" balancer: it tracks an EWMA of round-trip time that jumps *up* immediately on a slow response and decays slowly, multiplies it by the outstanding request count, and compares two randomly chosen backends. Linkerd, which grew out of Finagle, uses the same latency-aware power-of-two-choices approach.
@@ -410,7 +400,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** On the left, three balancers receive the same load report asynchronously (dotted arrows) every 2 seconds. Server 3 looked idlest in the last report, so all three send every new request to it (solid, synchronous forwarding) until the next report, by which time Server 3 is the busiest and the herd moves on. On the right, each balancer samples two different random servers per request and picks the lighter one; the choices scatter across the pool, so stale or partial information cannot concentrate load. There is no storage boundary; the failure point is the shared, stale view on the left. Scaling: P2C needs no coordination between balancers, so it scales to any number of them.
+**Reading the diagram.** On the left, three balancers receive the same load report asynchronously (dotted) every 2 seconds. Server 3 looked idlest, so all three forward every new request to it (solid, synchronous) until the next report, by which time it is the busiest and the herd moves on. On the right, each balancer samples two random servers per request and picks the lighter, so choices scatter even with stale information. No storage is involved; the failure point is the shared stale view. P2C needs no coordination, so it scales to any number of balancers.
 
 #### Mathematical foundations
 
@@ -460,7 +450,6 @@ $$s_i = \lambda^{i} \;\; (d = 1), \qquad s_i = \lambda^{\frac{d^{i} - 1}{d - 1}}
 
 1. Random ($d = 1$): $s_5 = 0.9^5 = 0.59$, so 59% of servers have 5 or more requests. $s_{10} = 0.9^{10} = 0.35$.
 2. Two choices: $s_5 = 0.9^{2^5 - 1} = 0.9^{31} = 0.038$, so 3.8%. $s_{10} = 0.9^{1023} \approx 10^{-47}$: effectively never.
-3. Three choices: $s_5 = 0.9^{(3^5-1)/2} = 0.9^{121} \approx 2.9 \times 10^{-6}$.
 
 *Interpretation.* With one choice the tail decays geometrically; with two it decays **doubly exponentially**. *Engineering implication.* At high utilization the difference is between a long tail of overloaded servers and none, which is exactly what p99 latency measures.
 :::
@@ -512,7 +501,6 @@ What to notice:
 
 - Going from $10^3$ to $10^6$ bins, the one-choice maximum grows from 5.4 to 9.0; the two-choice maximum barely moves (3.0 to 4.0).
 - The measured values sit above the leading terms by a roughly constant amount, the $\Theta(1)$ and $o(1)$ terms.
-- `min(..., key=bins.__getitem__)` keeps the code to one line per ball; sampling with replacement (a ball may sample the same bin twice) does not change the result measurably.
 
 ::: industry
 **Envoy and NGINX ship P2C.** Envoy's default least-request balancer, when all hosts have equal weight, picks two random hosts and chooses the one with fewer active requests; the number of choices is configurable. NGINX supports `random two least_conn`, which its documentation recommends for setups in which several balancers serve the same backends (as of 2026).
@@ -666,16 +654,15 @@ PowerOfTwo              2.53         8        15      2.58    11.26
 What to notice:
 
 - **Load-oblivious policies fail on mixed fleets.** At 60% total load, random and round robin send 0.9 requests per time unit to each slow server, so the slow servers run at 90% while the fast ones idle at 45%. The p99 queue length is 19 for RR and 35 for random, against 1 to 4 for the others. At 85%, they send 1.275 per time unit to servers that can do 1.0: those queues grow without bound, and the numbers simply reflect how long the run was.
-- **Round robin beats random** at the same shares because its arrivals are evenly spaced instead of bursty, but spacing cannot fix a wrong share.
 - **Least connections with a live, global view is best**, with p99 queue length 1 at 60% and 3 at 85%. It is the shared-queue ideal of §4.10.4, achievable by a single balancer.
 - **With a 2-second-old view, least connections is the worst load-aware policy** (p99 queue 27, p99 latency 25.4) because of the herd effect; P2C degrades only from 6 to 8, and still beats a perfectly tuned weighted RR (15).
-- Weighted RR is excellent when weights match capacity exactly. In production they rarely do for long: noisy neighbors, cache warm-up and GC change effective capacity by the minute.
+- Weighted RR is excellent only while weights match capacity, which in production drifts with noisy neighbors, cache warm-up and GC.
 
 ### 19.4.6 Consistent hashing for request routing
 
-Hash-based balancing sends all requests with the same **key** (a user ID, a cache key, a video ID) to the same backend, so that the backend's cache, local state or open session is reused. Plain `hash(key) mod N` remaps nearly every key when $N$ changes. **Consistent hashing** places backends and keys on a ring so that adding or removing one of $N$ backends moves only about $1/N$ of keys; virtual nodes even out the arcs. The derivations, code and alternatives (jump hash, rendezvous hashing) are in §14.8 and are not repeated here.
+Hash-based balancing sends all requests with the same **key** (user ID, cache key, video ID) to the same backend, so its cache or local state is reused. **Consistent hashing** places backends and keys on a ring so that adding or removing one of $N$ backends moves only about $1/N$ of keys, where `hash mod N` would move nearly all; the derivations, code and alternatives (jump, rendezvous hashing) are in §14.8.
 
-For load balancing, two limits of the plain ring matter. First, **balance depends on keys, not just arcs**: a ring can split the key *space* evenly and still send a hot key's traffic to one server. Second, **lookups cost $O(\log M)$** binary search over $M$ ring points, and per-packet L4 balancers want $O(1)$. The next two techniques address these limits. Ring hashing is available in HAProxy (`hash-type consistent`), NGINX (`hash ... consistent`, Ketama-compatible) and Envoy (`RING_HASH`).
+Two limits of the plain ring matter here. **Balance depends on keys, not arcs**: an even split of the key space still sends a hot key's traffic to one server. And **lookups cost $O(\log M)$** over $M$ ring points, while per-packet L4 balancers want $O(1)$. The next two techniques address these limits. Ring hashing is available in HAProxy (`hash-type consistent`), NGINX (`hash ... consistent`, Ketama) and Envoy (`RING_HASH`).
 
 ### 19.4.7 Consistent hashing with bounded loads
 
@@ -685,11 +672,11 @@ For load balancing, two limits of the plain ring matter. First, **balance depend
 
 #### First-principles explanation
 
-Each customer has a favorite checkout (her hash). Normally she goes there. The store sets a rule: no line may be more than 25% longer than the average. If her favorite line is at the limit, she walks to the next checkout along the row, and the next, until she finds one under the limit. Most customers still get their favorite, regulars still mostly see the same cashier, and no line can grow past the cap even when one cashier is everyone's favorite.
+Each customer has a favorite checkout (her hash). The store rules that no line may exceed the average by more than 25%; if her favorite is at the limit, she walks on to the next checkout under it. Most customers still get their favorite, and no line passes the cap even when one cashier is everyone's favorite.
 
 #### Why does this exist?
 
-Hash-based routing exists for locality: a video's segments cached on one server, a user's state in one process. But popularity is skewed (§14.10): one viral video can draw a third of all requests and melt its server. Bounded loads keep most of the locality while making overload impossible by construction. The paper proves that when an item or backend is added or removed, the expected number of items that move exceeds the minimum by only a factor $O(1/\varepsilon^2)$ for $\varepsilon \le 1$, and by $1 + O(\log c / c)$ for $c = 1 + \varepsilon \ge 2$ [Mirrokni, Thorup & Zadimoghaddam 2018].
+Hash routing exists for locality, but popularity is skewed (§14.10): one viral video can draw a large share of requests and melt its server. Bounded loads keep most of the locality while making overload impossible by construction. When an item or backend is added or removed, the expected number of moved items exceeds the minimum by only a factor $O(1/\varepsilon^2)$ for $\varepsilon \le 1$, and $1 + O(\log c / c)$ for $c = 1 + \varepsilon \ge 2$ [Mirrokni, Thorup & Zadimoghaddam 2018].
 
 ::: formula
 **Bounded-load capacity**
@@ -807,7 +794,7 @@ What to notice:
 
 #### First-principles explanation
 
-Think of a school assigning 7 lockers to 3 students. Each student has a private, shuffled list of locker preferences. In rounds, each student claims the first locker on their list that is still free. Everyone ends up with almost the same number of lockers (rounds give each student one per round), and if one student leaves and the process is rerun, most lockers go to the same owners as before, because everyone's preference list is unchanged.
+Picture 3 students sharing 7 lockers. Each has a private, shuffled preference list; in rounds, each claims the first free locker on their list. Everyone gets almost the same number, and if one student leaves and the rounds are rerun, most lockers keep their owners, because the preference lists have not changed.
 
 #### Why does this exist?
 
@@ -816,7 +803,7 @@ Google's Maglev is a software L4 balancer that has served Google's traffic since
 1. **Any Maglev machine must route any packet of a flow to the same backend**, even if the packet reaches a different Maglev machine after a router change, so the choice must be a deterministic function of the 5-tuple and the backend set.
 2. **Per-packet cost must be tiny**: the paper reports a single machine saturating a 10 Gbit/s link with small packets, which leaves no room for a binary search per packet.
 
-A ring with virtual nodes gives (1) but $O(\log M)$ lookups and imperfect balance unless the vnode count is large. Maglev hashing gives near-perfect balance and $O(1)$ lookup, at the price of slightly more disruption than the theoretical minimum.
+A ring gives (1) but $O(\log M)$ lookups and imperfect balance; Maglev hashing gives near-perfect balance and $O(1)$ lookup, at the price of slightly more than minimal disruption.
 
 #### How it works internally
 
@@ -838,7 +825,7 @@ flowchart LR
   M2 -->|BGP announce VIP| RT
 ```
 
-**Reading the diagram.** Each Maglev machine announces the service VIPs to the router by BGP; the router spreads packets across all announcing machines by hashing headers (ECMP, §19.8.3). A Maglev machine looks the flow up in its local connection-tracking table; on a miss it reads `table[hash(5-tuple) mod M]`, records the result, and forwards the packet to the backend inside a GRE tunnel. Backends reply directly to clients (dotted, to mark the asymmetric return path that bypasses Maglev; it is still synchronous TCP). No storage is involved: tables are computed from configuration, and connection state is soft. Failure points: if a Maglev machine dies, the router drops its BGP route and rehashes its flows to other machines, which have no connection-table entries but compute the same table, so most flows land on the same backend. Scaling: add Maglev machines (ECMP) or backends (table rebuild).
+**Reading the diagram.** Each Maglev machine announces the VIPs to the router by BGP, and the router spreads packets across them with ECMP (§19.8.3). A Maglev machine looks the flow up in its connection-tracking table; on a miss it reads `table[hash(5-tuple) mod M]`, records the result and forwards the packet in a GRE tunnel. Backends reply directly to clients (dotted: the asymmetric return path, still synchronous TCP). Tables are computed from configuration and connection state is soft, so there is no storage boundary. Failure point: if a Maglev machine dies, its flows rehash to machines with no connection entries, but those compute the same table, so most flows keep their backend. Scaling: add Maglev machines or backends.
 
 The table is filled as follows:
 
@@ -973,10 +960,6 @@ What to notice:
 **A default ladder.** Start with round robin for identical stateless backends. Move to least request with P2C (Envoy's default, NGINX `random two least_conn`, HAProxy `leastconn` or `random(2)`) as soon as requests vary in cost or several balancers share backends. Use a hash, bounded if keys are skewed, only when locality pays for itself, and measure the cache hit ratio to prove it.
 :::
 
-::: mistake
-**"Least connections is always better than round robin."** With a single balancer, a live count and homogeneous backends, it is. With many balancers that each see a fraction of traffic, or with load counts that lag, it herds (19.4.5 measured p99 queue 27 versus 8 for P2C). And it rewards backends that fail fast.
-:::
-
 ## 19.5 Health checks
 
 ### 19.5.1 Active and passive checks
@@ -1011,7 +994,7 @@ stateDiagram-v2
   Draining --> [*]: connections closed or timeout
 ```
 
-**Reading the diagram.** A new backend starts unhealthy and must pass $R$ probes before it gets traffic, so a half-started process is not flooded. A single failed probe makes it *suspect* but keeps it in rotation; only $F$ consecutive failures remove it. These thresholds give **hysteresis**, which prevents flapping on one lost packet. In parallel, passive outlier detection on live responses can eject a backend immediately, for a time that grows with repeat offenses. *Draining* is the orderly exit (§19.8.4). Transitions are driven asynchronously by probe timers and response observations; state is per balancer, so two balancers may briefly disagree. Failure point: a probe path that does not exercise the real dependency path reports healthy while users fail. Scaling: probe traffic grows with balancers × backends (below).
+**Reading the diagram.** A new backend starts unhealthy and must pass $R$ probes before receiving traffic. One failed probe makes it *suspect* but keeps it in rotation; only $F$ consecutive failures remove it. This **hysteresis** prevents flapping on one lost packet. Passive outlier detection can eject a backend immediately, for a time that grows with repeat offenses. *Draining* is the orderly exit (§19.8.4). Transitions are asynchronous (probe timers, response observations), and state is per balancer, so balancers may briefly disagree. Failure point: a probe that skips the real dependency path reports healthy while users fail. Scaling: probe traffic grows with balancers × backends.
 
 ::: formula
 **Detection time and requests lost to a dead backend**
@@ -1040,7 +1023,7 @@ $$T_{\text{detect}} \approx F \cdot I + T_{o}, \qquad N_{\text{lost}} \approx \f
 
 ### 19.5.2 What a health check should test
 
-A **shallow** check (process up, port open) misses a backend whose database connection pool is exhausted. A **deep** check that calls every dependency has the opposite failure: when a *shared* dependency slows down, every backend fails its check at once and the balancer ejects the whole pool, turning a partial degradation into a full outage. The common compromise: health endpoints test the backend's own ability to serve (threads available, local caches loaded, not shutting down), report dependency trouble through metrics rather than through health, and rely on the panic threshold as a backstop. Kubernetes separates the two ideas into **liveness** (restart me) and **readiness** (send me traffic) probes (§42.7).
+A **shallow** check (process up, port open) misses a backend whose database pool is exhausted. A **deep** check that calls every dependency fails the other way: when a *shared* dependency slows, every backend fails at once and the balancer ejects the whole pool, turning degradation into outage. The usual compromise: check the backend's own ability to serve (threads free, caches loaded, not shutting down), report dependency trouble as metrics, and keep the panic threshold as a backstop. Kubernetes separates **liveness** (restart me) from **readiness** (send me traffic) probes (§42.7).
 
 Probe load is real at scale: 1,000 sidecar proxies each checking 100 backends every 5 s generate $1{,}000 \times 100 / 5 = 20{,}000$ probes per second. Meshes therefore lean on passive detection and on health status pushed by the control plane.
 
@@ -1084,7 +1067,7 @@ sequenceDiagram
   LB-->>C: 200 OK, Set-Cookie srv=B, cart state lost
 ```
 
-**Reading the diagram.** The first request has no cookie, so the balancer chooses normally and adds a cookie naming the backend (in practice an opaque or encrypted value, so clients cannot pick backends). Later requests carry the cookie and go to A. When A fails, the balancer must break affinity and send the client to B, and any state held only in A's memory is lost. All calls are synchronous. The storage boundary is A's process memory, which is exactly the problem. Scaling: affinity skews load, because a few heavy sessions stay pinned to one backend.
+**Reading the diagram.** The first request has no cookie, so the balancer chooses normally and sets a cookie naming the backend (in practice an opaque or encrypted value). Later requests carry it and go to A. When A fails, the balancer must break affinity and pick B, and state held only in A's memory, the storage boundary here, is lost. All calls are synchronous. Scaling cost: heavy sessions stay pinned, so load skews.
 
 **Table 19.5 — Session affinity methods.**
 
@@ -1128,7 +1111,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** Left: all traffic for the VIP reaches the active balancer; the standby receives only heartbeat advertisements (dotted, asynchronous) and claims the VIP when they stop. Right: a router spreads flows across three active balancers; a failed balancer's route is withdrawn and its flows rehash to the others. Both tiers are stateless toward the backends except for connection tables. Failure points: on the left, failover time and split brain (both claim the VIP); on the right, flows that move between balancers (§19.8.3). Scaling: active–passive scales only vertically; active–active scales by adding members.
+**Reading the diagram.** Left: the active balancer carries all VIP traffic; the standby receives only heartbeat advertisements (dotted, asynchronous) and claims the VIP when they stop. Right: a router spreads flows across three active balancers and rehashes a failed member's flows to the others. Neither tier stores data beyond connection tables. Failure points: failover time and split brain on the left; flows moving between balancers on the right (§19.8.3). Scaling: active–passive grows only vertically; active–active by adding members.
 
 ::: formula
 **Safe utilization for active–active with $k$ tolerated failures**
@@ -1226,16 +1209,15 @@ $$f_{\text{mod}} \approx 1 - \frac{1}{N}, \qquad \tfrac{1}{4} \lesssim f_{\text{
 1. Modulo hashing: $1 - 1/8 = 87.5\%$ of flows land on a different balancer.
 2. Hash-threshold: between 28.6% (a middle region removed) and 50% (an end region removed), computed for $N = 8$.
 3. Resilient hashing: only the failed balancer's $12.5\%$.
-4. With 1 million active flows: 875,000, 286,000–500,000, or 125,000 flows arrive at a balancer that has no connection-table entry for them.
 
-*Interpretation.* Rehashing moves many flows that were on healthy balancers. *Engineering implication.* Balancers behind ECMP must choose backends with a **consistent** function of the 5-tuple (Maglev hashing, §19.4.8) so that a flow that changes balancer still reaches the same backend, and switches should use resilient ECMP hashing where available.
+*Interpretation.* With 1 million flows, 875,000 land on a balancer with no connection entry for them. *Engineering implication.* Balancers behind ECMP must choose backends with a **consistent** function of the 5-tuple (Maglev hashing, §19.4.8) so that a flow that changes balancer still reaches the same backend, and switches should use resilient ECMP hashing where available.
 :::
 
 **Figure 19.9 — A layered, redundant front end.**
 
 ```mermaid
 flowchart LR
-  C([Clients]) -->|DNS answer| DNS{{GSLB DNS}}
+  C([Clients]) -->|DNS query| DNS{{GSLB DNS}}
   C -->|anycast VIP| E1[Edge site A]
   C -->|anycast VIP| E2[Edge site B]
   E1 -->|ECMP| L4A[L4 Maglev tier]
@@ -1247,7 +1229,7 @@ flowchart LR
   SVC --> DB[(Data stores)]
 ```
 
-**Reading the diagram.** DNS (§19.9) picks a region or returns an anycast address; anycast picks the nearest edge site; ECMP spreads flows across the L4 tier; the L4 tier consistently hashes flows to L7 proxies; L7 proxies balance requests across service backends with a load-aware algorithm. Every arrow is a synchronous path for requests. Each layer's redundancy covers the layer below's single points of failure: anycast covers site loss, ECMP covers balancer loss, consistent hashing covers rehashing, health checks cover backend loss. The data stores are the storage boundary. Scaling: each tier scales horizontally and independently. This is the shape Google describes for its frontend (DNS, Maglev, then Google Front End proxies) [Beyer et al. 2016, ch. 19].
+**Reading the diagram.** DNS (§19.9) picks a region or returns an anycast address; anycast picks the nearest edge site; ECMP spreads flows across the L4 tier, which consistently hashes them to L7 proxies; the proxies balance requests across backends with a load-aware algorithm. All arrows are synchronous request paths, and the data stores are the storage boundary. Each layer covers a failure the next cannot: anycast covers site loss, ECMP balancer loss, consistent hashing rehashing, health checks backend loss. Each tier scales horizontally. Google describes this shape for its frontend: DNS, Maglev, then Google Front End proxies [Beyer et al. 2016, ch. 19].
 
 ### 19.8.4 Connection draining
 
@@ -1258,10 +1240,6 @@ Removing a backend or balancer on purpose (deploy, scale-in) should break nothin
 3. Wait until in-flight requests reach zero or a drain timeout expires (set it above the p99.9 request duration).
 4. Close remaining long-lived connections (WebSockets, streams), preferably with a reconnect hint and jitter, so clients do not reconnect in one wave (§9.6).
 
-::: mistake
-**"The load balancer is the one component that doesn't need redundancy because it's so simple."** Balancers fail through software bugs, configuration pushes, certificate expiry, connection-table exhaustion and capacity. Every balancer tier needs at least two members, a tested failover path, and staged configuration rollouts.
-:::
-
 **Table 19.6 — Balancer-tier failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
@@ -1269,7 +1247,6 @@ Removing a backend or balancer on purpose (deploy, scale-in) should break nothin
 | Bad configuration everywhere | Global push of a broken rule | Error spike across all sites at once | Roll back | Staged rollout; config validation; canary balancers |
 | Split brain | VRRP adverts lost while both nodes live | Duplicate-IP alerts; ARP flapping | Fence one node | Dedicated heartbeat links; unicast VRRP; managed VIPs |
 | Mass connection resets | ECMP rehash after a balancer change | Reset spike on scale events | Clients reconnect | Consistent hashing; resilient ECMP; graceful BGP withdraw |
-| Certificate expiry | Manual renewal forgotten | TLS handshake failures | Deploy new certificate | Automated issuance (ACME); expiry alerts |
 
 ## 19.9 DNS and global server load balancing
 
@@ -1290,7 +1267,7 @@ flowchart LR
 
 **Reading the diagram.** The client's resolver asks the GSLB's authoritative server, which chooses a region from the resolver's location (or the client subnet, if the resolver sends EDNS Client Subnet), from latency measurements, configured weights, and region health fed asynchronously by probes. The answer is cached for its TTL by the resolver, then used by the client to connect synchronously to that region's balancers. Failure point: when a region fails, clients keep using cached answers until the TTL expires, and some clients and resolvers keep them longer. Scaling: DNS answers are cheap; the regional balancer stack (Figure 19.9) does the heavy lifting.
 
-Policies include **geo-DNS** (nearest region by location), **latency-based** routing (the region with the lowest measured latency from the resolver's network; AWS Route 53 offers this), **weighted** answers (send 5% to a new region), and **failover** (primary unless unhealthy). The limits are those of §7.6.5: caching makes control coarse and failover TTL-bound, the resolver is not the client, and DNS sees no server load. Anycast (§19.8.2) is the main alternative for picking a site and fails over at BGP speed; many providers combine the two.
+Policies include **geo-DNS** (nearest region), **latency-based** routing (lowest measured latency from the resolver's network, as in AWS Route 53), **weighted** answers and **failover**. The limits are those of §7.6.5: caching makes control coarse and failover TTL-bound, the resolver is not the client, and DNS sees no server load. Anycast (§19.8.2) is the main alternative and fails over at BGP speed; many providers combine both.
 
 ## 19.10 Client-side load balancing
 
@@ -1322,9 +1299,9 @@ flowchart TB
   end
 ```
 
-**Reading the diagram.** Solid arrows are synchronous request paths; dotted arrows are asynchronous control traffic. The **proxy** puts a shared hop in every request. The **library** model (gRPC's `round_robin`, `least_request`, `weighted_round_robin` and `ring_hash` policies) balances per call inside the client, using endpoints from a registry (storage boundary). The **sidecar** model moves the library into a local proxy that every language can use, configured by a control plane through Envoy's xDS APIs (§34.10). The **lookaside** model centralizes the *decision* while keeping traffic direct: backends report load to the lookaside service, which hands clients weighted backend lists [gRPC Docs: Load balancing]. Failure points: a stale registry (clients call dead endpoints) and a control plane outage (sidecars keep their last configuration, which is why they must fail static, not fail closed). Scaling: no proxy tier to provision; costs move into every client.
+**Reading the diagram.** Solid arrows are synchronous requests; dotted arrows are asynchronous control traffic. The **proxy** adds a shared hop. The **library** (gRPC's `round_robin`, `least_request`, `weighted_round_robin`, `ring_hash` policies) balances per call inside the client, using endpoints from a registry, the storage boundary. The **sidecar** moves that logic into a local proxy usable from any language, configured by a control plane over Envoy's xDS APIs (§34.10). **Lookaside** centralizes the decision but keeps traffic direct: backends report load to a service that hands clients weighted backend lists [gRPC Docs: Load balancing]. Failure points: a stale registry, and a control-plane outage, during which sidecars must keep their last configuration. Scaling: no proxy tier; the cost moves into every client.
 
-Client-side balancing gives per-request (not per-connection) balancing for gRPC, saves a hop (often 0.1–1 ms inside a datacenter), and removes a tier. Its costs: every client needs the logic (or a sidecar); clients must be trusted to behave; and connections multiply. With 1,000 client instances and 1,000 backends, full mesh means $10^6$ connections. Google's answer is **subsetting**: each client connects to a deterministic subset of backends (the SRE book discusses subsets of 20 to 100), chosen so that every backend gets about the same number of clients [Beyer et al. 2016, ch. 20]. With a subset of 20, the connection count falls to 20,000. P2C works well inside a subset because it needs no global view.
+Client-side balancing gives per-call balancing for gRPC, saves a hop (often 0.1–1 ms in a datacenter) and removes a tier. The costs: every client needs the logic (or a sidecar), and connections multiply. With 1,000 clients and 1,000 backends, a full mesh is $10^6$ connections. Google's answer is **subsetting**: each client connects to a deterministic subset of backends, chosen so every backend gets about the same number of clients; the SRE book discusses subsets of 20 to 100 [Beyer et al. 2016, ch. 20]. With subsets of 20, connections fall to 20,000, and P2C works well inside a subset because it needs no global view.
 
 ::: industry
 **Kubernetes Services.** A Kubernetes `ClusterIP` Service is a form of client-side L4 balancing: `kube-proxy` on every node programs iptables, IPVS or nftables rules so that connections to the Service IP are spread over pod endpoints on the *client's* node, with no central balancer. Because it balances connections, long-lived gRPC connections still need L7 or library balancing (§42.9).
@@ -1349,14 +1326,14 @@ Two other open designs are worth knowing: IPVS (in the Linux kernel, used by kee
 ## 19.12 Summary and revision notes
 
 ::: summary
-- **L4 versus L7.** L4 balances flows from packet headers (line rate, any protocol, DSR possible); L7 terminates TLS and balances requests (content routing, retries, per-call gRPC balancing). Large sites stack ECMP → L4 → L7. DSR keeps response bytes off the balancer: $B = R\,s_{\text{req}}$ instead of $R(s_{\text{req}} + s_{\text{resp}})$.
-- **Algorithms.** Every algorithm approximates one shared queue. RR and smooth WRR ignore load: unweighted RR drove a slow server to 187% while the pool sat at 80%. Least connections equalizes $L_i = \lambda_i W_i$, so rate is inversely proportional to latency; it herds on stale data and rewards fast failures. EWMA latency adapts at the speed of traffic.
-- **Power of two choices.** Max load falls from $\approx \ln n / \ln\ln n$ to $\ln\ln n / \ln 2 + O(1)$; queue tails fall from $\lambda^i$ to $\lambda^{2^i - 1}$. In the simulation, P2C's p99 queue was 6 (live) and 8 (stale view), against 27 for least connections on a stale view.
-- **Hashing.** Consistent hashing (§14.8) gives locality; bounded loads cap each backend at $\lceil (1+\varepsilon)m/n \rceil$ for a little extra movement; Maglev gives $O(1)$ lookup and balance within one entry, at the cost of ~0.66% collateral disruption for 100 backends.
-- **Health.** Active checks detect in $\approx F \cdot I + T_o$ (8 s with HAProxy defaults); passive outlier detection in milliseconds. Use hysteresis, cap ejections, fail open below a panic threshold, keep readiness checks shallow.
-- **Affinity.** Cookies, source-IP or key hashing; all trade balance and resilience for locality. Externalize state so affinity is only an optimization.
-- **Redundancy.** Active–passive wastes 50%; active–active wastes $k/N$. VRRP fails over in $3A + (256-P)A/256$ (3.61 s by default). ECMP rehashing moves up to $1 - 1/N$ of flows, so L4 tiers need consistent hashing. Drain before removal.
-- **Global and client-side.** DNS GSLB picks regions, limited by TTLs and resolver location; anycast fails over at BGP speed. Client-side, sidecar and lookaside balancing remove a hop and balance per call; subsetting bounds connection counts.
+- **L4 versus L7.** L4 balances flows on headers (line rate, any protocol, DSR: $B = R\,s_{\text{req}}$); L7 terminates TLS and balances requests (routing, retries, per-call gRPC). Large sites stack ECMP → L4 → L7.
+- **Algorithms approximate one shared queue.** RR and smooth WRR ignore load; unweighted RR drove a slow server to 187% at 80% pool load. Least connections equalizes $L_i = \lambda_i W_i$, so rate $\propto 1/W_i$, but herds on stale data and rewards fast failures. EWMA latency adapts at the speed of traffic.
+- **Power of two choices.** Max load falls from $\approx \ln n/\ln\ln n$ to $\ln\ln n/\ln 2 + O(1)$; queue tails from $\lambda^i$ to $\lambda^{2^i-1}$. Simulated p99 queue: 6 live, 8 stale, versus 27 for least connections on a stale view.
+- **Hashing.** Consistent hashing (§14.8) gives locality; bounded loads cap backends at $\lceil (1+\varepsilon)m/n \rceil$; Maglev gives $O(1)$ lookup and balance within one entry, with ~0.66% collateral disruption at 100 backends.
+- **Health.** Active detection $\approx F \cdot I + T_o$ (8 s with HAProxy defaults); passive in milliseconds. Use hysteresis, ejection caps, panic thresholds and shallow readiness checks.
+- **Affinity** trades balance and resilience for locality; externalize state.
+- **Redundancy.** Active–passive wastes 50%, active–active $k/N$. VRRP fails over in $3A + (256-P)A/256$ (3.61 s by default). ECMP rehash can move $1 - 1/N$ of flows, so L4 tiers hash consistently. Drain before removal.
+- **Global and client-side.** DNS GSLB picks regions within TTL limits; anycast fails over at BGP speed. Library, sidecar and lookaside balancing remove a hop; subsetting bounds connections.
 :::
 
 ## 19.13 Knowledge checkpoint
@@ -1371,11 +1348,8 @@ Two other open designs are worth knowing: IPVS (in the Linux kernel, used by kee
 8. Why must the Maglev table size be prime?
 9. A pool uses $I = 5$ s, $F = 3$, timeout 1 s, and receives 200 requests/s per backend. How many requests reach a dead backend before removal?
 10. Why can deep health checks cause a full outage?
-11. Name two problems with source-IP affinity.
-12. Six active–active balancers must survive two failures. What is the highest safe utilization?
-13. Compute the VRRP master-down interval for $A = 0.5$ s and backup priority 150.
-14. Why do balancers behind ECMP need consistent hashing to backends?
-15. What is the difference between client-side and lookaside load balancing?
+11. Six active–active balancers must survive two failures. What is the highest safe utilization?
+12. Why do balancers behind ECMP need consistent hashing to backends?
 
 <details>
 <summary>Answers</summary>
@@ -1390,11 +1364,8 @@ Two other open designs are worth knowing: IPVS (in the Linux kernel, used by kee
 8. So that every skip value in $1..M-1$ is coprime with $M$, making each preference list a full permutation of positions.
 9. $T_{\text{detect}} \approx 3 \times 5 + 1 = 16$ s; $200 \times 16 = 3{,}200$ requests.
 10. When a shared dependency degrades, every backend fails its check together and the balancer ejects all of them.
-11. Many users share one IP behind carrier-grade NAT, causing hot spots; mobile clients change IP and lose affinity.
-12. $(6-2)/6 = 66.7\%$.
-13. $T_{\text{skew}} = 106 \times 0.5/256 = 0.207$ s; $T_{\text{down}} = 1.5 + 0.207 = 1.71$ s.
-14. A router rehash moves flows to other balancers that have no connection state; only a deterministic, consistent mapping sends those flows to the same backend.
-15. Client-side: the client chooses backends itself from a registry. Lookaside: a central service decides backends and weights (from load reports) and tells clients, while traffic still goes directly to backends.
+11. $(6-2)/6 = 66.7\%$.
+12. A router rehash moves flows to other balancers that have no connection state; only a deterministic, consistent mapping sends those flows to the same backend.
 
 </details>
 
@@ -1416,18 +1387,15 @@ Two other open designs are worth knowing: IPVS (in the Linux kernel, used by kee
 **Q4. Design health checking for 300 backends behind a fleet of balancers.**
 **Answer.** Active HTTP readiness checks (2–5 s interval, fall 3, rise 2) testing the backend's own ability to serve, plus passive outlier detection (eject after 5 consecutive 5xx, exponential ejection time, at most 10% ejected). A panic threshold fails open if more than half look unhealthy. Slow start on recovery. Retries of idempotent requests on another backend. Watch probe volume and prefer passive signals at mesh scale.
 
-**Q5. How do you remove a backend without dropping requests?**
-**Answer.** Deregister it so the balancer stops sending new requests, send `Connection: close` or HTTP/2 `GOAWAY`, wait for in-flight requests up to a drain timeout above p99.9 duration, then close long-lived connections with jittered reconnect hints, and only then stop the process.
-
 ### Advanced
 
-**Q6. Design the front-end load-balancing stack for a global service at 5 Tbit/s.**
+**Q5. Design the front-end load-balancing stack for a global service at 5 Tbit/s.**
 **Answer.** GSLB DNS or anycast to pick a site; within the site, ECMP across a software L4 tier (Maglev-style hashing plus connection tracking, DSR or encapsulation) sized for $N-k$ survivors; an L7 proxy tier that terminates TLS and routes by path with least request/P2C; client-side or mesh balancing inside. Discuss consistent hashing across ECMP changes, connection draining, staged configuration rollouts, DDoS absorption, and failure domains per site.
 
-**Q7. A cache tier uses consistent hashing on object ID and one server is at 100% CPU during a viral event. What do you do?**
+**Q6. A cache tier uses consistent hashing on object ID and one server is at 100% CPU during a viral event. What do you do?**
 **Answer.** The hot key is pinned to one point on the ring. Switch to consistent hashing with bounded loads ($\varepsilon \approx 0.25$) so overflow spills to the next servers, or replicate hot keys to several servers and choose among them with P2C; add a small in-process cache in front for the hottest objects. Accept slightly lower hit ratio for a capped load.
 
-**Q8. Your gRPC service sits behind an AWS NLB and one pod receives most of the traffic. Why, and how do you fix it?**
+**Q7. Your gRPC service sits behind an AWS NLB and one pod receives most of the traffic. Why, and how do you fix it?**
 **Answer.** NLB balances TCP connections, and gRPC multiplexes all calls from a client over one long-lived HTTP/2 connection, so a few clients pin to a few pods. Fixes: an L7 balancer that balances per call (ALB with gRPC, Envoy), client-side balancing with a gRPC policy over headless-service endpoints, or a mesh sidecar; as a stopgap, a maximum connection age forcing periodic reconnects.
 
 ## 19.15 Practical exercises

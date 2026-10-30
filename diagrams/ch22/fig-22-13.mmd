@@ -1,0 +1,10 @@
+%% Figure 22.13 — Bulkheads isolating dependencies in the feed service
+flowchart LR
+  C([Requests]) --> F[Feed service]
+  F --> P1["Pool A: 10<br/>profile calls"]
+  F --> P2["Pool B: 25<br/>recommendation calls"]
+  F --> P3["Pool C: 15<br/>payment-status calls"]
+  P1 -->|gRPC| S1[Profile service]
+  P2 -->|gRPC| S2[Recommendation service]
+  P3 -->|HTTPS| S3[Payments service]
+  S2 -.->|slow: 3 s| X[Pool B full, fail fast]

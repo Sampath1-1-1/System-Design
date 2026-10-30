@@ -664,3 +664,318 @@ sequenceDiagram
 ::: mistake
 **"Write-through means the cache and database are always consistent."** Only for writers that go through that cache layer, and only if the database is written first. Concurrent writers, a second cache tier, or a batch job writing the database directly all reintroduce staleness. No pattern gives you linearizability across two stores without a protocol (Chapter 25); pick the pattern whose failure mode you can tolerate.
 :::
+
+## 20.8 Time to live (TTL)
+
+::: definition
+**Definition — Time to live (TTL).** The maximum time an entry may be served after it was stored. After the TTL the entry is treated as absent (or, with stale-while-revalidate, as stale). Redis removes expired keys lazily when they are accessed and actively by periodically sampling keys that have a TTL [Redis Docs: EXPIRE].
+:::
+
+A TTL is your **staleness budget** and your safety net: even if every invalidation mechanism fails, no entry is wrong for longer than its TTL. Choose it per data type from the question "how wrong may a user see this, and for how long?": seconds for prices and inventory, minutes for profiles, hours for rendered public pages, a year for content-addressed assets. Shorter TTLs cost more misses: an entry read $\lambda$ times per second with TTL $T$ misses about once per $T$ seconds, a miss ratio near $1/(\lambda T)$ for hot keys.
+
+The danger is synchronized expiry. If a deploy, a batch job or a cache restart writes a million keys in one minute with the same TTL, they all expire in the same minute an hour later, and the database receives a million refills at once. **Jitter** spreads them out.
+
+::: formula
+**TTL with uniform jitter**
+
+$$T_i = T_{\text{base}} + U_i, \quad U_i \sim \text{Uniform}(0, J), \qquad \text{peak refills/s} \approx \frac{K}{\max(J, t_{\text{write}})}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_i$ | TTL given to key $i$ | s |
+| $T_{\text{base}}$ | Base TTL | s |
+| $J$ | Jitter range | s |
+| $K$ | Keys written together | keys |
+| $t_{\text{write}}$ | Time span over which the keys were originally written | s |
+:::
+
+::: example
+**Worked example — Choosing a jitter range.** A nightly job writes $K = 1{,}200{,}000$ product keys in 60 s with $T_{\text{base}} = 3{,}600$ s. The database can absorb 2,000 extra refill queries/s.
+
+1. Without jitter: $1{,}200{,}000 / 60 = 20{,}000$ refills/s for a minute, an hour later. Ten times the safe level.
+2. Required spread: $J \ge 1{,}200{,}000 / 2{,}000 = 600$ s.
+3. Use $T_i = 3{,}600 + \text{Uniform}(0, 600)$ s. Peak refill rate: $1{,}200{,}000 / 600 = 2{,}000$ queries/s.
+4. The cost: the longest-lived entries are now 4,200 s old, so the staleness bound grows from 60 to 70 minutes.
+
+**Interpretation.** Jitter converts a spike into a plateau whose height you choose. **Engineering implication.** Add jitter of 10–20% to every TTL by default; for the very hottest keys combine it with the stampede defenses of §20.11, because jitter spreads *different* keys but cannot help one key that everyone reads.
+:::
+
+## 20.9 Eviction: LRU, LFU, ARC and TinyLFU
+
+When memory is full, the cache must choose a **victim**. The ideal is Belady's MIN: evict the entry whose next use is furthest in the future [Belady 1966]. It needs knowledge of the future, so real policies predict the future from the past using **recency** (used lately?), **frequency** (used often?) or both. §13.4.2 covered LRU, clock and LRU-K inside databases; here we focus on policies used by application caches.
+
+### 20.9.1 LRU and LFU
+
+**LRU** (least recently used) keeps entries in a list ordered by last access, moving an entry to the head on each hit and evicting from the tail; a hash map plus a doubly linked list gives $O(1)$ operations. It adapts instantly to change but is polluted by **scans** and one-hit wonders: a burst of keys read once pushes out keys that are read every second.
+
+**LFU** (least frequently used) evicts the entry with the smallest access count. It protects consistently popular keys from scans but has two flaws: it must store counts, and old counts never fade, so yesterday's hits keep today's useless entries in the cache (**cache pollution by history**). Practical LFUs age counts by halving or decay.
+
+### 20.9.2 ARC
+
+**ARC** (Adaptive Replacement Cache) keeps two LRU lists of cached entries, $T_1$ for keys seen once recently and $T_2$ for keys seen at least twice, plus two **ghost lists** $B_1$ and $B_2$ that remember only the *keys* recently evicted from each [Megiddo & Modha 2003]. A hit in ghost list $B_1$ means "$T_1$ was too small" and shifts the target size $p$ toward recency; a hit in $B_2$ shifts it toward frequency. ARC therefore tunes itself between LRU and LFU with no parameters, resists scans, and costs $O(1)$ per access with metadata for $2C$ keys. OpenZFS's ARC is a modified version of it [OpenZFS Docs]. IBM held a patent on ARC, which kept it out of some open-source projects.
+
+### 20.9.3 TinyLFU and W-TinyLFU
+
+::: definition
+**Definition — TinyLFU.** An **admission policy**: when the cache is full and a new candidate arrives, admit it only if its estimated access frequency exceeds that of the victim the eviction policy would remove. Frequencies are estimated by a small approximate sketch (a Count-Min sketch with 4-bit counters, §17.6) over a sample of recent requests, and **aged** by halving every counter after a fixed number of requests [Einziger, Friedman & Manes 2017].
+:::
+
+Admission solves LRU's problem from the other side: instead of choosing a better victim, it refuses to let a one-hit wonder in at all. Pure TinyLFU, however, rejects new keys that are about to become popular, because they have no history yet. **W-TinyLFU** adds a small **window** LRU (1% of capacity by default) that admits everything; entries leaving the window compete through TinyLFU for a place in the **main** area, a segmented LRU with a probation and a protected segment. A **doorkeeper** Bloom filter can absorb first occurrences so they do not take sketch counters. Caffeine, the standard Java cache library, uses W-TinyLFU and adapts the window size with a hill-climbing algorithm [Caffeine Wiki: Efficiency].
+
+**Figure 20.12 — W-TinyLFU: window, admission filter and segmented main cache.**
+
+```mermaid
+flowchart LR
+  REQ([Access key]) -->|record| CMS[[Frequency sketch<br/>4-bit Count-Min, aged]]
+  REQ -->|miss: insert| WIN[Window LRU<br/>1% of capacity]
+  WIN -->|window victim = candidate| ADM{TinyLFU admission<br/>freq candidate above<br/>freq victim?}
+  CMS -.->|estimates| ADM
+  ADM -->|yes: admit| PROB[Probation SLRU<br/>20% of main]
+  ADM -->|no| DROP([Candidate dropped])
+  PROB -->|hit: promote| PROT[Protected SLRU<br/>80% of main]
+  PROT -->|overflow: demote| PROB
+  PROB -->|victim on admission| EV([Evicted])
+```
+
+**Reading the diagram.** Every access updates the frequency sketch. A missed key first enters the small window LRU, which gives new keys a chance to prove themselves. When the window overflows, its LRU entry becomes a candidate and is compared with the probation segment's LRU victim; the one with the higher estimated frequency stays. Hits in probation promote entries to the protected segment, whose overflow is demoted back to probation. All of this is in-process memory and synchronous; the sketch is shared state read by the admission decision (dotted). Failure points: a stale sketch (fixed by periodic halving) and hash-flooding attacks on admission (Caffeine adds a little randomness). Scaling: sketch memory is about 8 bytes per cache entry.
+
+### 20.9.4 Redis's approximated LRU and LFU
+
+Redis does not keep a global LRU list, which would cost two pointers per key and a list update on every read. Each object header instead stores a 24-bit clock of its last access. When memory exceeds `maxmemory`, Redis **samples** `maxmemory-samples` keys (5 by default), adds the best candidates to a small pool of 16, and evicts the one idle longest; 10 samples come very close to true LRU [Redis Docs: Key eviction]. In LFU mode the same 24 bits hold a 16-bit decay timestamp and an 8-bit **logarithmic counter** (a Morris counter), incremented with probability that falls as the counter grows (`lfu-log-factor`, default 10) and decremented as time passes (`lfu-decay-time`, default 1 minute); new keys start at 5 so they are not evicted immediately. The policy is chosen with `maxmemory-policy`: `noeviction` (the default, which rejects writes when full), `allkeys-lru`, `allkeys-lfu`, `allkeys-random`, and `volatile-*` variants that consider only keys with a TTL, plus `volatile-ttl`.
+
+::: warning
+**A Redis used as a cache must not run with `noeviction`.** With the default policy a full Redis rejects writes with an out-of-memory error, so cache fills fail and every request becomes a miss. Set `maxmemory` below physical RAM (leave room for fork copy-on-write and fragmentation) and choose `allkeys-lru` or `allkeys-lfu`.
+:::
+
+### 20.9.5 Measuring policies on a Zipf trace
+
+The program implements LRU, LFU (with least-recently-used tie-breaking), ARC from the paper's pseudocode, and a simplified W-TinyLFU (no doorkeeper or hill climbing), and runs them on three traces of 400,000 requests over 50,000 keys: stationary Zipf ($s = 0.9$); the same Zipf interrupted every 8,000 requests by a scan of 2,000 never-repeated keys; and Zipf whose popularity ranks are reshuffled four times.
+
+```python
+"""Hit ratios of LRU, LFU, ARC and a simplified W-TinyLFU on three synthetic traces."""
+import itertools
+import random
+from collections import OrderedDict, defaultdict
+
+class LRU:
+    def __init__(self, capacity):
+        self.c, self.d = capacity, OrderedDict()
+    def access(self, key):                       # returns True on a hit
+        if key in self.d:
+            self.d.move_to_end(key)
+            return True
+        self.d[key] = None
+        if len(self.d) > self.c:
+            self.d.popitem(last=False)
+        return False
+
+class LFU:
+    """O(1) in-cache LFU: evict the lowest count, least recent among ties."""
+    def __init__(self, capacity):
+        self.c, self.freq = capacity, {}
+        self.buckets, self.min_f = defaultdict(OrderedDict), 0
+    def access(self, key):
+        if key in self.freq:
+            f = self.freq[key]
+            del self.buckets[f][key]
+            if not self.buckets[f] and self.min_f == f:
+                self.min_f = f + 1
+            self.freq[key] = f + 1
+            self.buckets[f + 1][key] = None
+            return True
+        if len(self.freq) >= self.c:
+            victim, _ = self.buckets[self.min_f].popitem(last=False)
+            del self.freq[victim]
+        self.freq[key], self.min_f = 1, 1
+        self.buckets[1][key] = None
+        return False
+
+class ARC:
+    """Adaptive Replacement Cache [Megiddo & Modha 2003]: T1/T2 hold data,
+    B1/B2 are ghost lists of recently evicted keys, p is T1's target size."""
+    def __init__(self, capacity):
+        self.c, self.p = capacity, 0
+        self.t1, self.t2, self.b1, self.b2 = (OrderedDict() for _ in range(4))
+    def _replace(self, in_b2):
+        if self.t1 and (not self.t2 or len(self.t1) > self.p
+                        or (in_b2 and len(self.t1) == self.p)):
+            k, _ = self.t1.popitem(last=False)
+            self.b1[k] = None
+        else:
+            k, _ = self.t2.popitem(last=False)
+            self.b2[k] = None
+    def access(self, x):
+        if x in self.t1:                         # second hit: recency -> frequency
+            del self.t1[x]
+            self.t2[x] = None
+            return True
+        if x in self.t2:
+            self.t2.move_to_end(x)
+            return True
+        if x in self.b1:                         # T1 was too small: grow p
+            self.p = min(self.c, self.p + max(len(self.b2) // len(self.b1), 1))
+            self._replace(False)
+            del self.b1[x]
+            self.t2[x] = None
+            return False
+        if x in self.b2:                         # T2 was too small: shrink p
+            self.p = max(0, self.p - max(len(self.b1) // len(self.b2), 1))
+            self._replace(True)
+            del self.b2[x]
+            self.t2[x] = None
+            return False
+        l1 = len(self.t1) + len(self.b1)
+        if l1 == self.c:
+            if len(self.t1) < self.c:
+                self.b1.popitem(last=False)
+                self._replace(False)
+            else:
+                self.t1.popitem(last=False)
+        else:
+            total = l1 + len(self.t2) + len(self.b2)
+            if total >= self.c:
+                if total == 2 * self.c:
+                    self.b2.popitem(last=False)
+                self._replace(False)
+        self.t1[x] = None
+        return False
+
+SEEDS = (0x9E3779B97F4A7C15, 0xC2B2AE3D27D4EB4F, 0x165667B19E3779F9, 0xD6E8FEB86659FD93)
+
+class CountMin4:
+    """Count-Min sketch (4 rows) with 4-bit counters (cap 15) and periodic halving."""
+    def __init__(self, capacity):
+        self.bits = max(4, (capacity * 4 - 1).bit_length())   # width >= 4 x capacity
+        self.rows = [[0] * (1 << self.bits) for _ in SEEDS]
+        self.samples, self.reset_at = 0, 10 * capacity
+    def _cols(self, key):                        # multiplicative hashing of int keys
+        return [(((key + 1) * s) & 0xFFFFFFFFFFFFFFFF) >> (64 - self.bits) for s in SEEDS]
+    def add(self, key):
+        for row, col in zip(self.rows, self._cols(key)):
+            if row[col] < 15:
+                row[col] += 1
+        self.samples += 1
+        if self.samples >= self.reset_at:        # aging: halve every counter
+            self.rows = [[v >> 1 for v in row] for row in self.rows]
+            self.samples //= 2
+    def estimate(self, key):
+        return min(row[col] for row, col in zip(self.rows, self._cols(key)))
+
+class WTinyLFU:
+    """1% window LRU, then a TinyLFU admission filter guarding a segmented LRU
+    main area (20% probation, 80% protected), as in Caffeine (simplified)."""
+    def __init__(self, capacity):
+        self.wcap = max(1, capacity // 100)
+        main = capacity - self.wcap
+        self.prot_cap = int(main * 0.8)
+        self.main_cap = main
+        self.window, self.prob, self.prot = OrderedDict(), OrderedDict(), OrderedDict()
+        self.sketch = CountMin4(capacity)
+    def access(self, key):
+        self.sketch.add(key)
+        if key in self.window:
+            self.window.move_to_end(key)
+            return True
+        if key in self.prot:
+            self.prot.move_to_end(key)
+            return True
+        if key in self.prob:                     # promote on second hit
+            del self.prob[key]
+            self.prot[key] = None
+            if len(self.prot) > self.prot_cap:
+                k, _ = self.prot.popitem(last=False)
+                self.prob[k] = None              # demote to probation MRU
+            return True
+        self.window[key] = None
+        if len(self.window) > self.wcap:
+            cand, _ = self.window.popitem(last=False)
+            if len(self.prob) + len(self.prot) < self.main_cap:
+                self.prob[cand] = None
+            elif self.prob or self.prot:
+                seg = self.prob if self.prob else self.prot
+                victim = next(iter(seg))
+                if self.sketch.estimate(cand) > self.sketch.estimate(victim):
+                    del seg[victim]              # admit candidate, evict victim
+                    self.prob[cand] = None       # else: candidate is dropped
+        return False
+
+def zipf_cum(n, s):
+    return list(itertools.accumulate(1.0 / i ** s for i in range(1, n + 1)))
+
+def stationary(n, length, rng, s=0.9):
+    return rng.choices(range(n), cum_weights=zipf_cum(n, s), k=length)
+
+def with_scans(n, length, rng, s=0.9, burst=8_000, scan=2_000):
+    """Zipf bursts interleaved with scans of keys that are never seen again."""
+    cum, out, fresh = zipf_cum(n, s), [], n
+    while len(out) < length:
+        out += rng.choices(range(n), cum_weights=cum, k=burst)
+        out += range(fresh, fresh + scan)
+        fresh += scan
+    return out[:length]
+
+def shifting(n, length, rng, s=0.9, phases=4):
+    """Popularity ranks are reshuffled at the start of every phase."""
+    cum, out = zipf_cum(n, s), []
+    for _ in range(phases):
+        perm = list(range(n))
+        rng.shuffle(perm)
+        out += [perm[r] for r in rng.choices(range(n), cum_weights=cum,
+                                             k=length // phases)]
+    return out
+
+def hit_ratio(policy, trace, warmup):
+    hits = 0
+    for t, key in enumerate(trace):
+        if policy.access(key) and t >= warmup:
+            hits += 1
+    return hits / (len(trace) - warmup)
+
+if __name__ == "__main__":
+    N, LENGTH = 50_000, 400_000
+    rng = random.Random(7)
+    traces = {"stationary Zipf": stationary(N, LENGTH, rng),
+              "Zipf + scans": with_scans(N, LENGTH, rng),
+              "shifting Zipf": shifting(N, LENGTH, rng)}
+    policies = [("LRU", LRU), ("LFU", LFU), ("ARC", ARC), ("W-TinyLFU", WTinyLFU)]
+    for cap in (500, 2_500):
+        print(f"cache = {cap:,} entries ({cap / N:.0%} of {N:,} keys)")
+        print(f"  {'trace':<17}" + "".join(f"{name:>11}" for name, _ in policies))
+        for tname, trace in traces.items():
+            row = [hit_ratio(cls(cap), trace, LENGTH // 10) for _, cls in policies]
+            print(f"  {tname:<17}" + "".join(f"{h:>11.1%}" for h in row))
+```
+
+Output (about 13 s):
+
+```text
+cache = 500 entries (1% of 50,000 keys)
+  trace                    LRU        LFU        ARC  W-TinyLFU
+  stationary Zipf        32.3%      42.5%      43.0%      43.5%
+  Zipf + scans           25.2%      33.8%      34.3%      34.6%
+  shifting Zipf          32.1%      14.8%      42.1%      41.9%
+cache = 2,500 entries (5% of 50,000 keys)
+  trace                    LRU        LFU        ARC  W-TinyLFU
+  stationary Zipf        50.1%      58.3%      58.3%      59.4%
+  Zipf + scans           36.4%      46.2%      46.9%      47.1%
+  shifting Zipf          49.7%      33.3%      55.7%      54.2%
+```
+
+What to notice:
+
+- On the stationary trace the ideal top-$C$ hit ratios are 45.8% (1%) and 62.0% (5%). W-TinyLFU gets within 2.5 points of ideal; LRU is 12–13 points behind.
+- Scans hurt LRU most (−7 to −14 points); in this trace 20% of requests are unrepeatable scan keys, so 80% of the ideal, about 36.6% at 1%, is the ceiling, and ARC and W-TinyLFU reach about 34%.
+- In-cache LFU collapses on the shifting trace (14.8%) because entries that were hot in an earlier phase keep their high counts. Aging in W-TinyLFU and adaptation in ARC avoid this.
+- The sketch's hash matters. An earlier version of this program that indexed rows with Python's tuple `hash((row, key))` produced correlated rows and lost 2–7 points; a multiplicative hash per row fixed it (§17.3).
+- These are synthetic traces. Caffeine's published comparisons on real traces (database, search, analytics) show the same ordering in most cases, with W-TinyLFU at or near the top [Caffeine Wiki: Efficiency], but you should replay a trace of your own before switching.
+
+**Table 20.6 — Eviction and admission policies.**
+
+| Policy | Signal | Scan resistant | Adapts to change | Metadata | Used in |
+|---|---|---|---|---|---|
+| LRU | Recency | No | Instantly | List pointers per entry | Defaults in many libraries |
+| Sampled LRU | Approximate recency | No | Instantly | 24-bit clock per key | Redis `allkeys-lru` |
+| LFU with decay | Frequency | Yes | Slowly | Counter per entry | Redis `allkeys-lfu` |
+| Segmented LRU | Recency with probation | Partly | Quickly | Segment flag | Memcached (HOT/WARM/COLD), InnoDB midpoint |
+| ARC | Recency and frequency, self-tuning | Yes | Yes | Ghost keys for $2C$ entries | OpenZFS (modified) |
+| W-TinyLFU | Frequency-based admission plus recency | Yes | Yes (aging, adaptive window) | ~8 bytes per entry sketch | Caffeine |

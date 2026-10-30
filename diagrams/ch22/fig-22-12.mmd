@@ -1,0 +1,9 @@
+%% Figure 22.12 — Circuit breaker state machine
+stateDiagram-v2
+  [*] --> Closed
+  Closed --> Closed: success or failure below threshold
+  Closed --> Open: failure rate at or above threshold
+  Open --> Open: calls fail fast
+  Open --> HalfOpen: cool-down elapsed
+  HalfOpen --> Closed: all trial calls succeed
+  HalfOpen --> Open: any trial call fails

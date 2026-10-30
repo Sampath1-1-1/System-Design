@@ -1144,3 +1144,435 @@ $$Q_{\max} = \mu \times D_{\text{queue}}$$
 **Interpretation.** A queue longer than $\mu \times$ (timeout) holds only requests that are doomed to time out. **Engineering implication.** Default queue sizes in frameworks (often thousands, or unbounded) are almost always too large for interactive services.
 :::
 
+## 22.11 Timeouts and deadlines
+
+::: definition
+**Definition — Timeout and deadline.** A **timeout** is a relative duration after which a caller stops waiting for one operation (for example 300 ms). A **deadline** is an absolute point in time by which the *whole* request must complete; it is passed along the call chain so that every downstream call knows how much time remains.
+:::
+
+Without a timeout, a caller waiting on a dead or hung dependency waits forever, holding a thread, a connection and memory; by Little's Law (§4.11) the pool of held resources grows until the caller itself stops responding. Every network call therefore needs a timeout: connection establishment (short, about one round trip plus margin), and the request as a whole.
+
+**Choosing a timeout.** Set it from the dependency's measured latency distribution, not from intuition. The AWS Builders' Library recommends choosing an acceptable rate of false timeouts (for example 0.1%) and using the corresponding latency percentile (p99.9) of the downstream service, plus padding for network variance [Brooker: timeouts and retries]. Too short, and healthy-but-slow requests are cut off and retried, adding load; too long, and resources are held by requests nobody is waiting for.
+
+**Why deadlines must propagate.** Suppose each hop independently uses a 1 s timeout. The user's app gives up after 1 s, but a service three hops down started 600 ms late and keeps working for its full second, then the database query beneath it keeps running too. All of that work is wasted. With **deadline propagation**, the edge sets an absolute deadline and each hop passes the *remaining* time downstream; gRPC does this automatically, sending the remaining time in the `grpc-timeout` header and failing calls with `DEADLINE_EXCEEDED` once it passes [gRPC Docs: deadlines]. Over HTTP you carry it in a header of your own. Each service should check the remaining budget before starting expensive work and refuse work it cannot finish in time [Beyer et al. 2016, ch. 22].
+
+::: formula
+**Timeout budget along a call chain**
+
+$$B_{i+1} = B_i - e_i - m_i, \qquad \text{start the call only if } B_{i+1} > \hat{s}_{i+1}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $B_i$ | Remaining budget when hop $i$ receives the request | ms |
+| $e_i$ | Time hop $i$ spends before calling hop $i+1$ (local work, earlier calls) | ms |
+| $m_i$ | Margin hop $i$ reserves to build and return its own response | ms |
+| $B_{i+1}$ | Budget passed to hop $i+1$ | ms |
+| $\hat{s}_{i+1}$ | Typical latency of hop $i+1$ (for example its p50) | ms |
+:::
+
+**Figure 22.10 — Deadline propagation through the PhotoShare Pro purchase path.**
+
+```mermaid
+sequenceDiagram
+  participant A as Mobile app
+  participant G as API gateway
+  participant O as Order service
+  participant P as Payment service
+  participant X as Payment provider
+  A->>G: POST /subscriptions, timeout 1000 ms
+  Note over G: budget 1000, spends 20, keeps 10
+  G->>O: deadline in 970 ms
+  Note over O: DB and fraud check 120, keeps 20
+  O->>P: deadline in 830 ms
+  Note over P: spends 30, keeps 20
+  P->>X: charge, timeout 780 ms
+  X--xP: no answer by 780 ms
+  P-->>O: 504, outcome unknown
+  O-->>G: 503 with retry hint
+  G-->>A: 503 within 1000 ms
+```
+
+**Reading the diagram.** The mobile app waits at most 1,000 ms. Each hop subtracts the time it has already spent and a margin for its own response before passing the remaining budget downstream: 970, 830, then 780 ms for the external payment provider (hexagon in the architecture view; here a participant). All calls are synchronous. When the provider fails to answer within its budget, the payment service stops waiting and reports an *unknown outcome* (the charge may or may not have happened), and every hop still has its reserved margin to return an error before the app gives up. The storage boundary that matters is at the provider: its state is unknown, which is why the retry must carry an idempotency key (§22.15). Scaling: budgets are per request and need no shared state.
+
+::: example
+**Worked example — Budget for the purchase path, client deadline 1,000 ms.**
+
+1. Gateway: $B_1 = 1{,}000$; $e_1 = 20$ (authentication, rate-limit check), $m_1 = 10$ → $B_2 = 970$ ms.
+2. Order service: $e_2 = 120$ (database read, fraud check), $m_2 = 20$ → $B_3 = 830$ ms.
+3. Payment service: $e_3 = 30$, $m_3 = 20$ → $B_4 = 780$ ms for the provider call. The provider's p50 is 300 ms and p99.9 is 900 ms, so $B_4 > \hat{s}_4$ and the call starts.
+4. Contrast with fixed per-hop timeouts of 1 s, 1 s and 2 s: when the provider hangs, the payment service, which started the call at 170 ms, waits until 2,170 ms: 1,170 ms after the app has given up; every thread on the path is held for work nobody receives.
+
+**Interpretation.** The provider gets 78% of the user's budget, the most that is consistent with the earlier hops. **Engineering implication.** Propagate absolute deadlines (or remaining durations), subtract as you go, and make inner timeouts shorter than outer ones. Note the provider's p99.9 (900 ms) exceeds its budget, so roughly 0.1–1% of purchases will hit the deadline; either raise the client budget or make the purchase asynchronous (accept with 202 and confirm by push).
+:::
+
+::: mistake
+**Mistake — "A timeout means the operation failed."** It means *you do not know*. The request may never have arrived, may have failed, or may have succeeded with the response lost. For reads this ambiguity is harmless; for writes it is the central problem that idempotency keys solve (§22.15).
+:::
+
+## 22.12 Retries with exponential backoff and jitter
+
+### 22.12.1 When to retry
+
+Most failures in distributed systems are transient: a packet lost, a node restarting, a leader election (§26.5). Retrying converts many of these into successes at the cost of latency. But a retry is also *extra load sent to a system that just failed*, often because it was overloaded. Retry only when all of these hold:
+
+1. The error is **retryable**: timeouts, connection resets, 429, 502, 503, 504, gRPC `UNAVAILABLE`. Never retry 400, 401, 403, 404 or 422; they will fail again.
+2. The operation is **idempotent** or carries an idempotency key (§22.15).
+3. **Time remains** in the deadline (§22.11).
+4. The **retry budget** is not exhausted (§22.12.4).
+
+### 22.12.2 Exponential backoff and jitter
+
+Waiting a fixed time before retrying keeps pressure constant on a struggling server. **Exponential backoff** doubles the wait after each failure, up to a cap. But if many clients failed at the same moment (because the server hiccupped for all of them), they all back off by identical amounts and retry in synchronized waves. **Jitter** randomizes the wait to spread the waves out. Brooker's analysis for the AWS Architecture Blog compared three variants [Brooker 2015]:
+
+::: formula
+**Backoff with jitter (attempt $k = 1, 2, \dots$)**
+
+$$s_k = \min(\text{cap},\ \text{base} \cdot 2^{k})$$
+
+$$\text{full: } U(0, s_k) \qquad \text{equal: } \tfrac{s_k}{2} + U\!\left(0, \tfrac{s_k}{2}\right) \qquad \text{decorrelated: } \min\bigl(\text{cap},\ U(\text{base},\ 3\,w_{k-1})\bigr)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $k$ | Retry number | count |
+| base | Initial backoff unit | ms |
+| cap | Maximum wait | ms |
+| $s_k$ | Exponential backoff ceiling for retry $k$ | ms |
+| $U(a, b)$ | A uniformly random value between $a$ and $b$ | ms |
+| $w_{k-1}$ | The previous wait for decorrelated jitter ($w_0 = \text{base}$) | ms |
+:::
+
+::: example
+**Worked example — base 100 ms, cap 20 s.**
+
+1. Ceilings $s_k$ for $k = 1 \dots 8$: 200, 400, 800, 1,600, 3,200, 6,400, 12,800, 20,000 (capped) ms.
+2. Full jitter at $k = 3$: a wait anywhere in 0–800 ms, mean 400 ms. Equal jitter: 400–800 ms, mean 600 ms.
+3. Cumulative worst-case wait before the 5th retry with full jitter: $200 + 400 + 800 + 1{,}600 + 3{,}200 = 6{,}200$ ms, so five retries do not fit a 1 s user deadline; they fit a background job.
+
+**Interpretation.** Exponential growth reaches the cap quickly; jitter decides how evenly clients are spread within each ceiling. **Engineering implication.** For interactive requests, one or two retries with small bases are all the deadline allows; long backoff sequences belong to asynchronous work.
+:::
+
+#### Code example: measuring contention
+
+The simulation has $N$ clients each needing one successful write to a contended resource with optimistic concurrency: a write conflicts and fails if another started less than 1 ms earlier. All clients begin within the same millisecond, as after a brief outage.
+
+```python
+"""N clients each need one successful write to a contended resource (optimistic
+concurrency: if another write started less than WORK ms earlier, this one conflicts).
+Compare backoff strategies by total calls (work) and time until every client succeeds."""
+import heapq
+import random
+
+BASE, CAP, WORK = 5.0, 2000.0, 1.0               # milliseconds
+
+
+def no_jitter(attempt, prev, rng):
+    return min(CAP, BASE * 2 ** attempt)
+
+def full_jitter(attempt, prev, rng):
+    return rng.uniform(0, min(CAP, BASE * 2 ** attempt))
+
+def equal_jitter(attempt, prev, rng):
+    v = min(CAP, BASE * 2 ** attempt)
+    return v / 2 + rng.uniform(0, v / 2)
+
+def decorrelated_jitter(attempt, prev, rng):
+    return min(CAP, rng.uniform(BASE, prev * 3))
+
+
+def simulate(strategy, clients, seed, max_attempts=200):
+    rng = random.Random(seed)
+    # every client makes its first call within the same 1 ms (a synchronized wave)
+    queue = [(rng.uniform(0, 1.0), c, 0, BASE) for c in range(clients)]
+    heapq.heapify(queue)
+    busy_until, calls, finish = -1.0, 0, 0.0
+    while queue:
+        t, c, attempt, prev = heapq.heappop(queue)
+        calls += 1
+        if t >= busy_until:                      # no conflicting write in flight: success
+            busy_until, finish = t + WORK, t
+        elif attempt + 1 < max_attempts:         # conflict: back off and try again
+            sleep = strategy(attempt + 1, prev, rng)
+            heapq.heappush(queue, (t + WORK + sleep, c, attempt + 1, sleep))
+    return calls, finish
+
+
+if __name__ == "__main__":
+    strategies = [("exponential, no jitter", no_jitter), ("full jitter", full_jitter),
+                  ("equal jitter", equal_jitter), ("decorrelated jitter", decorrelated_jitter)]
+    seeds = range(20)
+    for n in (25, 100):
+        print(f"{n} clients (mean of {len(seeds)} runs)     calls   calls/client   time to finish")
+        results = {}
+        for name, fn in strategies:
+            runs = [simulate(fn, n, s) for s in seeds]
+            calls = sum(r[0] for r in runs) / len(runs)
+            finish = sum(r[1] for r in runs) / len(runs)
+            results[name] = calls
+            print(f"  {name:24s} {calls:8.0f}   {calls / n:10.1f}   {finish:10.0f} ms")
+        print()
+        assert results["full jitter"] < results["exponential, no jitter"] / 3
+```
+
+Output:
+
+```text
+25 clients (mean of 20 runs)     calls   calls/client   time to finish
+  exponential, no jitter        325         13.0        34575 ms
+  full jitter                    76          3.1           93 ms
+  equal jitter                   83          3.3          139 ms
+  decorrelated jitter            73          2.9          108 ms
+
+100 clients (mean of 20 runs)     calls   calls/client   time to finish
+  exponential, no jitter       5050         50.5       184650 ms
+  full jitter                   459          4.6          498 ms
+  equal jitter                  475          4.8          636 ms
+  decorrelated jitter           450          4.5          406 ms
+```
+
+What to notice:
+
+- **Without jitter, contention is quadratic.** The clients stay synchronized forever, so each wave lets exactly one through: $100 + 99 + \dots + 1 = 5{,}050$ calls, and the last client finishes after three minutes because waits hit the 2 s cap.
+- **Any jitter cuts work by 11×** (5,050 → about 460 calls) and completion time by over 300×. Full and decorrelated jitter are slightly better than equal jitter, matching Brooker's qualitative result; the exact numbers depend on the model.
+- The workload is pessimistic (one success per conflict window), but the shape of the result holds whenever many clients fail together.
+
+### 22.12.3 Retry storms and amplification
+
+**Figure 22.11 — Retry amplification in a four-layer call graph.**
+
+```mermaid
+flowchart LR
+  U([User request]) --> L1["App SDK<br/>3 attempts"]
+  L1 -->|up to 3| L2["API gateway<br/>3 attempts each"]
+  L2 -->|up to 9| L3["Feed service<br/>3 attempts each"]
+  L3 -->|up to 27| L4["Profile service<br/>3 attempts each"]
+  L4 -->|up to 81| DB[(Overloaded database)]
+```
+
+**Reading the diagram.** One user request enters at the left. Every layer is configured, reasonably in isolation, to make up to three attempts (one try plus two retries). When the database at the bottom fails every call, each layer's attempts multiply: 3 calls from the SDK to the gateway, 9 from the gateway to the feed service, 27 to the profile service and 81 to the database. All calls are synchronous. The failure point is the database, and the retries aim the multiplied load precisely at it, preventing recovery: a **retry storm**. The fix is structural: retry at one layer only (usually the one closest to the user or the one that knows the operation is idempotent), cap retries with budgets, and stop retrying when a circuit breaker opens (§22.13).
+
+::: formula
+**Retry amplification**
+
+$$A = \prod_{i=1}^{d} a_i = a^{d}\ \ \text{(identical layers)}, \qquad \mathbb{E}[\text{attempts per layer}] = \sum_{j=0}^{a-1} p^{j} = \frac{1 - p^{a}}{1 - p}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $A$ | Worst-case calls reaching the bottom layer per user request | calls |
+| $a_i$ | Maximum attempts (1 + retries) at layer $i$ | attempts |
+| $d$ | Number of layers that retry | layers |
+| $p$ | Probability that one attempt fails ($p < 1$) | dimensionless |
+:::
+
+::: example
+**Worked example — 10,000 user RPS through four retrying layers.**
+
+1. Database hard down ($p = 1$): $A = 3^4 = 81$; the database receives $10{,}000 \times 81 = 810{,}000$ RPS of doomed calls.
+2. Database partly overloaded, $p = 0.5$: expected attempts per layer $= (1 - 0.5^3)/(1 - 0.5) = 1.75$; if failures compound through layers, the multiplier approaches $1.75^4 \approx 9.4$, a 9× load increase on a system already failing half its calls.
+3. Retry only at the SDK: $A = 3$, so 30,000 RPS at worst.
+4. Retry budget of 10% at every layer: each layer adds at most 10%, so $A \le 1.1^4 = 1.46$, about 14,600 RPS.
+
+**Interpretation.** Per-layer retries look harmless locally but compound exponentially with depth. **Engineering implication.** Retry at one layer, or bound retries by a budget that is a fraction of normal traffic; never let every layer retry independently.
+:::
+
+### 22.12.4 Retry budgets
+
+A **retry budget** caps retries as a fraction of successful or total requests, rather than per request. Google's SRE book describes a per-request limit (at most three attempts) combined with a per-client budget (retries no more than 10% of requests) [Beyer et al. 2016, ch. 21]. A simple implementation is a token bucket for retries: each success deposits 0.1 token, each retry spends 1, and when the bucket is empty the error is returned to the caller without a retry. When the dependency is healthy, occasional retries always find tokens; when it fails broadly, retries are limited to 10% extra load. The AWS SDKs implement a comparable client-side retry quota, and Envoy offers a retry budget expressed as a percentage of active requests [AWS SDK Docs: retry behavior; Envoy Docs: retry budgets].
+
+::: industry
+**AWS guidance on retries.** The Builders' Library article on timeouts and retries recommends capped exponential backoff with jitter, retrying at a single point in the stack, local retry limits implemented with a token bucket so that retries stop when most calls fail, and treating timeouts as signals to be measured; it also warns that retries are "selfish": they spend server resources to raise one client's chance of success [Brooker: timeouts and retries].
+*Evidence: Primary* — [Brooker: timeouts and retries]
+:::
+
+**Table 22.6 — Retry failure scenarios.**
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Outage worsens as clients retry | Every layer retries; no budget | Request rate rises while success rate falls | Disable retries via configuration; open breakers; shed | One retrying layer, budgets, jitter |
+| Synchronized retry waves every few seconds | Backoff without jitter; reconnect after a shared failure | Periodic spikes at backoff intervals | Add jitter, server-side shedding | Full or decorrelated jitter (§9.9 reconnect storms) |
+| Duplicate side effects | Retried non-idempotent `POST` after a timeout | Duplicate rows seconds apart | Reconcile and refund | Idempotency keys (§22.15) |
+| Retries outlive the user | Retry delays ignore the deadline | Work completing after client timeout | Check remaining budget before retrying | Deadline propagation (§22.11) |
+
+## 22.13 Circuit breakers
+
+::: definition
+**Definition — Circuit breaker.** A client-side proxy for calls to a dependency that tracks recent failures and, when they cross a threshold, **opens**: it fails calls immediately without contacting the dependency for a cool-down period, then lets a few trial calls through (**half-open**) and **closes** again only if they succeed.
+:::
+
+An electrical circuit breaker cuts power when current is dangerous, so a fault in one appliance does not burn down the house; you reset it once the fault is fixed. The software version, popularized by Nygard's *Release It!* [Nygard 2018] and Fowler's description [Fowler 2014], protects two parties: the *caller*, which stops tying up threads waiting on a dead dependency, and the *dependency*, which gets breathing room to recover instead of a retry storm.
+
+**Figure 22.12 — Circuit breaker state machine.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Closed
+  Closed --> Closed: success or failure below threshold
+  Closed --> Open: failure rate at or above threshold
+  Open --> Open: calls fail fast
+  Open --> HalfOpen: cool-down elapsed
+  HalfOpen --> Closed: all trial calls succeed
+  HalfOpen --> Open: any trial call fails
+```
+
+**Reading the diagram.** In **Closed**, calls pass through and outcomes are recorded in a sliding window (the last $n$ calls, or the last $t$ seconds). When the window's failure rate reaches the threshold (and a minimum number of calls has been seen), the breaker moves to **Open**, where every call fails immediately with a local error, costing microseconds and no network traffic. After the cool-down, the next caller moves it to **HalfOpen**, where a small fixed number of trial calls reach the dependency; one failure reopens it, success of all trials closes it. Transitions are local to each client instance (no shared storage), so different instances may briefly disagree. Failure points: thresholds set too low trip on normal noise; too high trip only after the damage is done. Fallbacks (cached data, a default, a degraded page) decide what the user sees while open.
+
+**Choosing thresholds.**
+
+- **Window and minimum volume.** Count-based (last 20–100 calls) or time-based (last 10 s). Require a minimum number of calls so that 2 failures out of 3 at 3 a.m. do not trip it. Netflix's Hystrix library, for example, documented defaults of a 10 s rolling window, a minimum of 20 requests and a 50% error threshold, with a 5 s sleep window [Netflix Hystrix wiki]; Hystrix has been in maintenance mode since 2018, and Resilience4j is a common successor on the JVM.
+- **What counts as failure.** Timeouts, connection errors and 5xx, but not 4xx: a client's bad request says nothing about the dependency's health. Slow calls above a latency threshold can also count.
+- **Cool-down.** Long enough for typical recovery (seconds to a minute), ideally with jitter so that many instances do not probe in unison.
+
+### 22.13.1 Implementation and simulation
+
+```python
+import time
+from collections import deque
+
+
+class CircuitOpenError(Exception):
+    """Raised instead of calling the dependency while the breaker is open."""
+
+
+class CircuitBreaker:
+    def __init__(self, failure_rate=0.5, window=20, open_for=5.0, probes=3,
+                 clock=time.monotonic):
+        self.failure_rate, self.window = failure_rate, window
+        self.open_for, self.probes, self.clock = open_for, probes, clock
+        self.state, self.opened_at = "closed", 0.0
+        self.results = deque(maxlen=window)          # outcomes of the last `window` calls
+        self.probes_sent = self.probe_successes = 0
+        self.transitions = []
+
+    def _move(self, state):
+        self.transitions.append((round(self.clock(), 1), state))
+        self.state = state
+
+    def _allow(self):
+        if self.state == "open":
+            if self.clock() - self.opened_at < self.open_for:
+                return False                         # fail fast: do not touch the dependency
+            self._move("half_open")
+            self.probes_sent = self.probe_successes = 0
+        if self.state == "half_open":
+            if self.probes_sent >= self.probes:      # only a few trial calls at a time
+                return False
+            self.probes_sent += 1
+        return True
+
+    def _record(self, ok):
+        now = self.clock()
+        if self.state == "half_open":
+            if not ok:                               # dependency still sick: reopen
+                self.opened_at = now
+                self._move("open")
+            else:
+                self.probe_successes += 1
+                if self.probe_successes >= self.probes:
+                    self.results.clear()
+                    self._move("closed")
+            return
+        self.results.append(ok)
+        failures = self.results.count(False)
+        if len(self.results) == self.window and failures / self.window >= self.failure_rate:
+            self.opened_at = now
+            self._move("open")
+
+    def call(self, fn, *args, **kwargs):
+        if not self._allow():
+            raise CircuitOpenError("circuit open")
+        try:
+            result = fn(*args, **kwargs)
+        except Exception:
+            self._record(False)
+            raise
+        self._record(True)
+        return result
+
+
+if __name__ == "__main__":
+    from itertools import count
+
+    class Clock:
+        t = 0.0
+        def __call__(self):
+            return self.t
+
+    clock = Clock()
+    breaker = CircuitBreaker(clock=clock)
+    reached = short_circuited = failed = 0
+
+    def dependency():
+        global reached
+        reached += 1
+        if 10.0 <= clock.t < 28.0:                   # outage from t = 10 s to t = 28 s
+            raise ConnectionError("upstream down")
+        return "ok"
+
+    for i in count():                                # 20 requests per second for 60 s
+        clock.t = i * 0.05
+        if clock.t >= 60.0:
+            break
+        try:
+            breaker.call(dependency)
+        except CircuitOpenError:
+            short_circuited += 1
+        except ConnectionError:
+            failed += 1
+
+    print(f"requests 1200, reached dependency {reached}, failed {failed}, "
+          f"short-circuited {short_circuited}")
+    print("transitions:", breaker.transitions)
+    assert breaker.state == "closed" and short_circuited > 350 and failed < 20
+```
+
+Output:
+
+```text
+requests 1200, reached dependency 804, failed 13, short-circuited 396
+transitions: [(10.5, 'open'), (15.5, 'half_open'), (15.5, 'open'), (20.5, 'half_open'), (20.5, 'open'), (25.5, 'half_open'), (25.5, 'open'), (30.5, 'half_open'), (30.6, 'closed')]
+```
+
+What to notice:
+
+- The breaker trips 0.5 s into the 18 s outage (10 failures out of the last 20 calls) and probes every 5 s; only 13 calls fail against the dead dependency instead of 360.
+- It closes at 30.6 s, 2.6 s after recovery: the cool-down trades recovery speed against probing load.
+- Little's Law shows the saving: if each failed call had hung for a 2 s timeout, 360 calls over 18 s would have held $(360/18) \times 2 = 40$ threads continuously; with the breaker, almost none.
+
+::: mistake
+**Mistake — Using a breaker instead of a timeout.** A breaker learns only from completed calls. If calls hang with no timeout, nothing is ever recorded as failed and the breaker never opens. Timeouts come first; breakers build on them.
+:::
+
+## 22.14 Bulkheads
+
+::: definition
+**Definition — Bulkhead.** Partitioning a service's limited resources (threads, connections, memory, instances) into isolated pools, one per dependency, tenant or workload class, so that exhaustion of one pool cannot starve the others.
+:::
+
+A ship's hull is divided into watertight compartments (bulkheads): a breach floods one compartment, not the whole ship [Nygard 2018]. In a service, the classic failure is a shared thread pool: one slow dependency holds every thread, and requests that never touch that dependency also stall. Bulkheads give each dependency its own pool (or a semaphore limiting concurrent calls to it) sized from Little's Law, so that when a pool is full, calls to that dependency are rejected immediately while the rest of the service carries on. The same idea applies at larger scale: separate connection pools per database, separate instance groups for internal and public traffic, and cell-based architectures that confine a failure to one cell of customers (§33.12).
+
+**Figure 22.13 — Bulkheads isolating dependencies in the feed service.**
+
+```mermaid
+flowchart LR
+  C([Requests]) --> F[Feed service]
+  F --> P1["Pool A: 10<br/>profile calls"]
+  F --> P2["Pool B: 25<br/>recommendation calls"]
+  F --> P3["Pool C: 15<br/>payment-status calls"]
+  P1 -->|gRPC| S1[Profile service]
+  P2 -->|gRPC| S2[Recommendation service]
+  P3 -->|HTTPS| S3[Payments service]
+  S2 -.->|slow: 3 s| X[Pool B full, fail fast]
+```
+
+**Reading the diagram.** The feed service makes synchronous calls to three dependencies, each through its own bounded pool of concurrent slots. When the recommendation service slows to 3 s, its 25 slots fill and further calls fail fast (the feed is rendered without recommendations, a graceful degradation), while profile and payment-status calls keep their own slots and continue normally. There is no shared storage between pools. Failure points: pools sized too small reject healthy traffic; too large a sum exhausts the host. Scaling: pools are per instance, so fleet capacity for a dependency is pool size × instances.
+
+::: example
+**Worked example — Sizing the pools with Little's Law ($L = \lambda W$) and 1.5–2× headroom.**
+
+1. Profile: 300 RPS × 0.020 s = 6 in flight → pool 10.
+2. Recommendations: 100 RPS × 0.150 s = 15 → pool 25.
+3. Payment status: 20 RPS × 0.400 s = 8 → pool 15.
+4. Incident: recommendations slow to 3 s. Demand becomes $100 \times 3 = 300$ concurrent calls. In a single shared 200-thread pool, all 200 threads would block on recommendations within about 2 s and the whole feed would stop. With bulkheads, 25 slots are busy, about 275 RPS-worth of recommendation calls fail fast, and profile and payment calls use their own 25 slots normally.
+
+**Interpretation.** Bulkheads convert a total outage into a partial degradation. **Engineering implication.** Give every remote dependency its own concurrency limit, combine it with timeouts and a breaker, and design the fallback the user sees when the bulkhead rejects.
+:::
+

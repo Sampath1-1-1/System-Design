@@ -1,0 +1,11 @@
+%% Figure 20.12 — W-TinyLFU: window, admission filter and segmented main cache
+flowchart LR
+  REQ([Access key]) -->|record| CMS[[Frequency sketch<br/>4-bit Count-Min, aged]]
+  REQ -->|miss: insert| WIN[Window LRU<br/>1% of capacity]
+  WIN -->|window victim = candidate| ADM{TinyLFU admission<br/>freq candidate above<br/>freq victim?}
+  CMS -.->|estimates| ADM
+  ADM -->|yes: admit| PROB[Probation SLRU<br/>20% of main]
+  ADM -->|no| DROP([Candidate dropped])
+  PROB -->|hit: promote| PROT[Protected SLRU<br/>80% of main]
+  PROT -->|overflow: demote| PROB
+  PROB -->|victim on admission| EV([Evicted])
