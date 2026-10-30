@@ -1,0 +1,10 @@
+%% Figure 20.3 — Redis's event loop with I/O threads
+flowchart LR
+  C1([Client A]) -->|RESP over TCP| IO1[I/O thread 1<br/>read and parse]
+  C2([Client B]) -->|RESP over TCP| IO2[I/O thread 2<br/>read and parse]
+  IO1 -->|parsed command| M[Main thread<br/>execute commands in order]
+  IO2 -->|parsed command| M
+  M -->|lookup and mutate| KS[(Keyspace<br/>hash table in RAM)]
+  M -->|reply buffers| IO1
+  M -.->|free large values, fsync| BIO[Background threads]
+  M -.->|fork for RDB or AOF rewrite| CH[Child process]

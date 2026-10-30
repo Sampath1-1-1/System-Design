@@ -1,0 +1,12 @@
+%% Figure 23.8 — A hedged request
+sequenceDiagram
+  participant C as Client
+  participant A as Replica A
+  participant B as Replica B
+  C->>A: GET key
+  Note over A: GC pause
+  Note over C: no reply within d = p95
+  C->>B: GET key (hedge)
+  B-->>C: value
+  C-)A: cancel (best effort)
+  A-->>C: late value, discarded

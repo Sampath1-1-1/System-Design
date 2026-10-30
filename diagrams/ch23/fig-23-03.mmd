@@ -1,0 +1,8 @@
+%% Figure 23.3 — From samples to a flame graph
+flowchart LR
+  APP[Running service] -->|timer interrupt 99 Hz| PERF["Sampler<br/>perf, eBPF, py-spy,<br/>async-profiler"]
+  PERF -->|raw stacks| RAW[(Profile file)]
+  RAW --> SYM[Symbolize:<br/>addresses to names]
+  SYM --> COL["Collapse: one line per<br/>unique stack + count"]
+  COL --> FG[Flame graph SVG]
+  FG --> ENG([Engineer: widest<br/>plateaus first])

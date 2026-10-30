@@ -1,0 +1,12 @@
+%% Figure 23.4 — On-CPU and off-CPU thread states
+stateDiagram-v2
+  [*] --> Runnable
+  Runnable --> OnCPU: scheduled
+  OnCPU --> Runnable: preempted or quota throttled
+  OnCPU --> BlockedIO: read, write, RPC wait
+  OnCPU --> BlockedLock: mutex or pool wait
+  OnCPU --> Sleeping: timer, poll
+  BlockedIO --> Runnable: I/O completes
+  BlockedLock --> Runnable: lock released
+  Sleeping --> Runnable: wakeup
+  OnCPU --> [*]: request done

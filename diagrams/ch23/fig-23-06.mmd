@@ -1,0 +1,14 @@
+%% Figure 23.6 — How a closed-loop tester omits the stall
+sequenceDiagram
+  participant G as Load generator
+  participant S as Server
+  Note over G,S: Plan: one request every 2 ms
+  G->>S: request 1 at t=0
+  S-->>G: reply at t=1 ms
+  G->>S: request 2 at t=2 ms
+  Note over S: stall 1.5 s
+  Note over G: requests due at 4, 6, 8 ms... never sent
+  S-->>G: reply at t=1502 ms
+  Note over G: records ONE slow sample
+  G->>S: request 3 at t=1502 ms
+  S-->>G: reply at t=1503 ms

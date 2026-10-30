@@ -1,0 +1,13 @@
+%% Figure 20.10 — Write-back
+sequenceDiagram
+  participant A as App
+  participant L as Cache with dirty set
+  participant D as Database
+  A->>L: put counter:7 plus 1
+  L-->>A: ok, 0.2 ms
+  A->>L: put counter:7 plus 1
+  L-->>A: ok
+  Note over L: flush every 5 s, coalescing writes
+  L-)D: UPDATE counter 7 by 2 in one batch
+  D--)L: committed
+  L->>L: mark clean

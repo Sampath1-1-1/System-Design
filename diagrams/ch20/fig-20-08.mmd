@@ -1,0 +1,13 @@
+%% Figure 20.8 — Read-through
+sequenceDiagram
+  participant A as App
+  participant L as Cache with loader
+  participant D as Database
+  A->>L: get user:42
+  L->>L: lookup misses
+  L->>D: loader reads row 42
+  D-->>L: row v1
+  L->>L: store v1 with TTL
+  L-->>A: v1
+  A->>L: get user:42 again
+  L-->>A: v1 from memory

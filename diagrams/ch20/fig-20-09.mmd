@@ -1,0 +1,12 @@
+%% Figure 20.9 — Write-through
+sequenceDiagram
+  participant A as App
+  participant L as Cache layer
+  participant D as Database
+  A->>L: put user:42 v2
+  L->>D: UPDATE row 42 to v2
+  D-->>L: committed
+  L->>L: store v2
+  L-->>A: ok
+  A->>L: get user:42
+  L-->>A: v2, fresh

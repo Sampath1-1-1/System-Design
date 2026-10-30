@@ -2402,3 +2402,889 @@ $$P(\text{item } i \text{ in sample after } n \text{ items}) = \frac{k}{i} \time
 | $i$ | Arrival position of a particular item ($i > k$) | position |
 | $1 - 1/j$ | Probability that item $j$ does not evict this item: it is chosen with probability $k/j$ and then evicts one of $k$ slots | probability |
 :::
+
+## Chapter 18 — Scalability
+
+*From §18.3.1*
+
+::: formula
+**Relative cost per unit of throughput on one node**
+
+$$k(N) = \frac{N}{C(N)} = 1 + \alpha (N - 1) + \beta N (N - 1)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Cores (or vCPUs) in the node; price assumed proportional to $N$ | count |
+| $C(N)$ | USL relative capacity: throughput at $N$ cores divided by throughput at 1 core | dimensionless |
+| $\alpha$ | Contention coefficient inside the node | dimensionless |
+| $\beta$ | Coherency coefficient inside the node | dimensionless |
+| $k(N)$ | Cost per unit of throughput relative to a 1-core node | dimensionless (×) |
+:::
+
+*From §18.7.1*
+
+::: formula
+**Marginal throughput of the $N$-th node**
+
+$$\Delta X(N) = X_1 \left[ C(N) - C(N-1) \right] \qquad E(N) = \frac{C(N)}{N}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $X_1$ | Throughput of one node (measured) | requests/s |
+| $C(N)$ | USL relative capacity at $N$ nodes (§4.13) | dimensionless |
+| $\Delta X(N)$ | Extra throughput gained by adding node $N$ | requests/s |
+| $E(N)$ | Scaling efficiency: fraction of linear scaling achieved | dimensionless (0–1) |
+:::
+
+*From §18.8.3*
+
+::: formula
+**Target-tracking replica count (Kubernetes HPA)**
+
+$$n_{desired} = \left\lceil n_{current} \times \frac{m_{current}}{m_{target}} \right\rceil \quad \text{if } \left| \frac{m_{current}}{m_{target}} - 1 \right| > \tau$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n_{current}$ | Current number of replicas | pods |
+| $n_{desired}$ | Replica count the autoscaler requests, clamped to [min, max] | pods |
+| $m_{current}$ | Current per-replica metric, averaged over replicas | metric units (e.g. % CPU, RPS) |
+| $m_{target}$ | Target per-replica metric | same units |
+| $\tau$ | Tolerance band within which no action is taken (default 0.1 as of 2026) | dimensionless |
+:::
+
+*From §18.8.4*
+
+::: formula
+**Target utilization that survives reaction time**
+
+$$u_{target} \le \frac{u_{safe}}{1 + r \times T_{react}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $u_{target}$ | Utilization set point for the autoscaler | fraction |
+| $u_{safe}$ | Highest utilization at which latency still meets the objective (from load tests and §4.10) | fraction |
+| $r$ | Fastest expected load growth, relative to current load | fraction per minute |
+| $T_{react}$ | Reaction time: metric delay + evaluation + provisioning + start + warm-up | minutes |
+:::
+
+*From §18.8.5*
+
+::: formula
+**Connection budget**
+
+$$n_{max} \times p + \sum_j n_j p_j \le M - R$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n_{max}$ | Maximum replicas of the scaled service (autoscaler `maxReplicas`) | pods |
+| $p$ | Maximum pool size per replica | connections |
+| $n_j, p_j$ | Replicas and pool size of every other client service $j$ | pods, connections |
+| $M$ | Database `max_connections` | connections |
+| $R$ | Connections reserved for superusers, replication, monitoring and migrations | connections |
+:::
+
+*From §18.11.2*
+
+::: formula
+**Provisioned capacity with headroom**
+
+$$N = \left\lceil \frac{R_{peak} \, (1 + g)^{L}}{c \times u_{target}} \right\rceil \qquad N_{total} = N + k \quad \text{or} \quad N_{total} = \left\lceil N \times \frac{Z}{Z - f} \right\rceil$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $R_{peak}$ | Current design peak load | requests/s |
+| $g$ | Demand growth rate per period | fraction per month |
+| $L$ | Lead time to add capacity | months |
+| $c$ | Per-node throughput at which latency meets the objective (measured) | requests/s per node |
+| $u_{target}$ | Target utilization (queueing and reaction-time headroom, §18.8.4) | fraction |
+| $N$ | Nodes needed to serve the load with headroom | nodes |
+| $k$ | Spare nodes for failures and deploys (N+1: $k = 1$; N+2: $k = 2$) | nodes |
+| $Z, f$ | Failure domains (zones) used, and how many may fail at once | count |
+| $N_{total}$ | Nodes to provision | nodes |
+:::
+
+*From §18.11.3*
+
+::: formula
+**Peak-to-average ratio and average fleet utilization**
+
+$$PAR = \frac{R_{peak}}{R_{avg}} \qquad \bar{u} = \frac{R_{avg}}{N_{total} \times c}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $R_{avg}$ | Average load over a day (or week) | requests/s |
+| $PAR$ | Peak-to-average ratio | dimensionless |
+| $\bar{u}$ | Average utilization of a statically provisioned fleet | fraction |
+:::
+
+*From §18.11.4*
+
+::: formula
+**Time until a component's capacity is exhausted**
+
+$$D(t) = D_0 (1 + g)^t \qquad t_{exhaust} = \frac{\ln (C_{usable} / D_0)}{\ln (1 + g)} \qquad t_{start} = t_{exhaust} - L_{fix}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $D_0$ | Current peak demand on the component | operations/s |
+| $g$ | Compound growth rate per period | fraction per month |
+| $C_{usable}$ | Usable capacity: limit × target utilization | operations/s |
+| $t_{exhaust}$ | Periods until demand reaches usable capacity | months |
+| $L_{fix}$ | Lead time of the fix, including a safety margin | months |
+| $t_{start}$ | Latest month to start the fix | months |
+:::
+
+## Chapter 19 — Load Balancing
+
+*From §19.3.1*
+
+::: formula
+**Balancer bandwidth by forwarding mode**
+
+$$B_{\text{proxy}} = R\,(s_{\text{req}} + s_{\text{resp}}), \qquad B_{\text{DSR}} = R\,s_{\text{req}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $B_{\text{proxy}}$ | Bandwidth through the balancer when both directions cross it | bytes/second |
+| $B_{\text{DSR}}$ | Bandwidth through the balancer with direct server return | bytes/second |
+| $R$ | Request rate | requests/second |
+| $s_{\text{req}}$, $s_{\text{resp}}$ | Average request and response size on the wire | bytes |
+:::
+
+*From §19.4.1*
+
+::: formula
+**Weighted round-robin share**
+
+$$\lambda_i = \lambda \cdot \frac{w_i}{\sum_{j=1}^{N} w_j}, \qquad \rho_i = \frac{\lambda_i}{\mu_i}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda$ | Total request rate into the pool | requests/second |
+| $\lambda_i$ | Request rate sent to backend $i$ | requests/second |
+| $w_i$ | Configured weight of backend $i$ | dimensionless |
+| $N$ | Number of backends | count |
+| $\mu_i$ | Capacity (service rate) of backend $i$ | requests/second |
+| $\rho_i$ | Utilization of backend $i$ | dimensionless |
+:::
+
+*From §19.4.2*
+
+::: formula
+**Little's Law per backend (§4.11)**
+
+$$L_i = \lambda_i \, W_i \quad\Longrightarrow\quad \lambda_i = \frac{L_i}{W_i}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $L_i$ | Average in-flight requests at backend $i$ (its "connections") | requests |
+| $\lambda_i$ | Request rate sent to backend $i$ | requests/second |
+| $W_i$ | Average time a request spends at backend $i$ | seconds |
+:::
+
+*From §19.4.3*
+
+::: formula
+**Exponentially weighted moving average**
+
+$$S_k = \alpha\, x_k + (1 - \alpha)\, S_{k-1}, \qquad S_k - x^{*} = (1-\alpha)^k (S_0 - x^{*}) \text{ after a step to } x^{*}, \qquad \alpha = 1 - e^{-\Delta t/\tau}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S_k$ | Latency estimate after $k$ samples | ms |
+| $x_k$ | The $k$-th observed latency | ms |
+| $\alpha$ | Smoothing factor, $0 < \alpha \le 1$ | dimensionless |
+| $x^{*}$ | New steady latency after a sudden change | ms |
+| $\Delta t$, $\tau$ | Time since previous sample; decay time constant (time-based variant) | seconds |
+:::
+
+*From §19.4.4*
+
+::: formula
+**Maximum load with one and with $d$ random choices** [Azar et al. 1999]
+
+$$\text{one choice: } \max \text{load} = \frac{\ln n}{\ln \ln n}\,(1 + o(1)), \qquad d \ge 2 \text{ choices: } \max \text{load} = \frac{\ln \ln n}{\ln d} + \Theta(1) \quad \text{(with high probability)}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of balls (requests) and of bins (servers) | count |
+| $d$ | Number of random bins examined per ball | count |
+| $\max \text{load}$ | Largest number of balls in any bin | balls |
+| $o(1)$, $\Theta(1)$ | A term that vanishes as $n$ grows; a bounded constant | — |
+:::
+
+*From §19.4.4*
+
+::: formula
+**Queue-length tail in the supermarket model (large $n$)**
+
+$$s_i = \lambda^{i} \;\; (d = 1), \qquad s_i = \lambda^{\frac{d^{i} - 1}{d - 1}} \;\; (d \ge 2), \qquad \text{so for } d = 2:\; s_i = \lambda^{2^{i} - 1}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $s_i$ | Fraction of servers with at least $i$ requests (queued or in service) | dimensionless |
+| $\lambda$ | Utilization: arrival rate per server divided by service rate | dimensionless |
+| $d$ | Number of queues sampled per request | count |
+| $i$ | Queue-length threshold | requests |
+:::
+
+*From §19.4.7*
+
+::: formula
+**Bounded-load capacity**
+
+$$\text{cap} = \left\lceil (1 + \varepsilon)\,\frac{m}{n} \right\rceil$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\text{cap}$ | Maximum items any backend may hold | items |
+| $\varepsilon$ | Allowed overload above the average, $\varepsilon > 0$ | dimensionless |
+| $m$ | Items currently assigned (for request routing: in-flight requests) | items |
+| $n$ | Number of backends | count |
+:::
+
+*From §19.4.8*
+
+::: formula
+**Maglev preference permutation**
+
+$$\text{offset}_i = h_1(\text{name}_i) \bmod M, \qquad \text{skip}_i = h_2(\text{name}_i) \bmod (M - 1) + 1, \qquad \text{perm}_i[j] = (\text{offset}_i + j \cdot \text{skip}_i) \bmod M$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M$ | Lookup-table size, a prime | entries |
+| $h_1$, $h_2$ | Two independent hash functions | — |
+| $\text{offset}_i$ | Backend $i$'s first preferred position | entry index |
+| $\text{skip}_i$ | Step between backend $i$'s successive preferences, $1 \le \text{skip}_i \le M-1$ | entries |
+| $\text{perm}_i[j]$ | Backend $i$'s $j$-th preferred position | entry index |
+:::
+
+*From §19.5.1*
+
+::: formula
+**Detection time and requests lost to a dead backend**
+
+$$T_{\text{detect}} \approx F \cdot I + T_{o}, \qquad N_{\text{lost}} \approx \frac{\lambda}{n}\, T_{\text{detect}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_{\text{detect}}$ | Worst-case time from failure to removal | seconds |
+| $F$ | Consecutive failures required (fall threshold) | count |
+| $I$ | Probe interval | seconds |
+| $T_o$ | Probe timeout | seconds |
+| $N_{\text{lost}}$ | Requests sent to the dead backend meanwhile (without retries) | requests |
+| $\lambda$, $n$ | Total request rate; number of backends | requests/second; count |
+:::
+
+*From §19.7*
+
+::: formula
+**Safe utilization for active–active with $k$ tolerated failures**
+
+$$U_{\max} = \frac{N - k}{N}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $U_{\max}$ | Highest normal utilization per balancer that still fits all traffic after $k$ failures | dimensionless |
+| $N$ | Balancers in the active–active group | count |
+| $k$ | Simultaneous failures to tolerate | count |
+:::
+
+*From §19.8.1*
+
+::: formula
+**VRRP failover time** [RFC 5798, §6.1]
+
+$$T_{\text{skew}} = \frac{(256 - P)\, A}{256}, \qquad T_{\text{down}} = 3A + T_{\text{skew}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $A$ | Advertisement interval (VRRPv3 allows centisecond values) | seconds |
+| $P$ | Backup router's priority, 1–254 | dimensionless |
+| $T_{\text{skew}}$ | Extra wait so higher-priority backups take over first | seconds |
+| $T_{\text{down}}$ | Master-down interval: silence before a backup takes over | seconds |
+:::
+
+*From §19.8.3*
+
+::: formula
+**Flows remapped when one of $N$ next hops is removed**
+
+$$f_{\text{mod}} \approx 1 - \frac{1}{N}, \qquad \tfrac{1}{4} \lesssim f_{\text{threshold}} \le \tfrac{1}{2}, \qquad f_{\min} = \frac{1}{N}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $f_{\text{mod}}$ | Fraction of flows that change next hop with `hash mod N` | dimensionless |
+| $f_{\text{threshold}}$ | Same, for the hash-threshold method analyzed in RFC 2992 (depends on which region is removed) | dimensionless |
+| $f_{\min}$ | Minimum: only the failed hop's flows move (resilient or consistent hashing) | dimensionless |
+| $N$ | Next hops (balancers) before the failure | count |
+:::
+
+## Chapter 20 — Caching
+
+*From §20.3.2*
+
+::: formula
+**Effective latency and backend load of a look-aside cache**
+
+$$T_{\text{eff}} = t_c + (1 - h)\, t_b \qquad\qquad R_{\text{db}} = (1 - h)\, R_{\text{read}} + R_{\text{write}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_{\text{eff}}$ | Mean latency of a read through the cache | ms |
+| $t_c$ | Cache lookup latency (paid on hits and misses) | ms |
+| $t_b$ | Backend read latency, including the fill | ms |
+| $h$ | Cache hit ratio | dimensionless (0–1) |
+| $R_{\text{read}}$ | Read requests reaching the cache | requests/s |
+| $R_{\text{write}}$ | Writes, which go to the database regardless | requests/s |
+| $R_{\text{db}}$ | Requests reaching the database | requests/s |
+:::
+
+*From §20.3.3*
+
+::: formula
+**Zipf request probability and the hit ratio of an ideal top-C cache**
+
+$$p_i = \frac{1/i^{s}}{H_{N,s}}, \qquad H_{n,s} = \sum_{j=1}^{n} \frac{1}{j^{s}}, \qquad h_{\text{ideal}}(C) = \frac{H_{C,s}}{H_{N,s}} \;\overset{s=1}{\approx}\; \frac{\ln C + \gamma}{\ln N + \gamma}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Number of distinct keys | keys |
+| $C$ | Cache capacity | entries |
+| $i$ | Popularity rank (1 = most popular) | dimensionless |
+| $s$ | Zipf skew exponent | dimensionless |
+| $p_i$ | Probability that a request is for rank $i$ | dimensionless |
+| $H_{n,s}$ | Generalized harmonic number | dimensionless |
+| $h_{\text{ideal}}(C)$ | Hit ratio of a cache that always holds the top $C$ keys | dimensionless |
+| $\gamma$ | Euler–Mascheroni constant, ≈ 0.5772 | dimensionless |
+:::
+
+*From §20.6.5*
+
+::: formula
+**Slab internal fragmentation**
+
+$$c_{k+1} \approx f \cdot c_k, \qquad \text{waste}(x) = c_k - x \text{ for } c_{k-1} < x \le c_k, \qquad \frac{\text{waste}}{c_k} < 1 - \frac{1}{f}, \qquad \mathbb{E}\!\left[\frac{\text{waste}}{c_k}\right] \approx \frac{1}{2}\left(1 - \frac{1}{f}\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $c_k$ | Chunk size of slab class $k$ (rounded to 8 bytes) | bytes |
+| $f$ | Growth factor between classes (`-f`) | dimensionless |
+| $x$ | Item size, including header | bytes |
+| waste | Unused bytes in the chunk | bytes |
+:::
+
+*From §20.7.5*
+
+::: formula
+**Data at risk under write-back**
+
+$$W_{\text{risk}} \approx r_w \times T_{\text{flush}}, \qquad \text{write reduction} = \frac{r_w}{r_{\text{flush}}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $W_{\text{risk}}$ | Acknowledged writes that a crash can lose | writes |
+| $r_w$ | Write rate into the cache | writes/s |
+| $T_{\text{flush}}$ | Maximum time a dirty entry waits before flushing | s |
+| $r_{\text{flush}}$ | Database writes per second after coalescing | writes/s |
+:::
+
+## Chapter 21 — Content Delivery Networks
+
+*From §21.3.1*
+
+::: formula
+**Time to fetch an object over a new connection**
+
+$$T_{\text{fetch}} \approx \left(n_{\text{hs}} + \left\lceil \log_2\!\left(\frac{S}{W_0} + 1\right)\right\rceil\right) \times \text{RTT} + t_{\text{server}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n_{\text{hs}}$ | Handshake round trips before the request (TCP + TLS 1.3 = 2; QUIC = 1; reused connection = 0) | round trips |
+| $S$ | Response size | bytes |
+| $W_0$ | Initial congestion window (typically 10 segments × 1,460 B ≈ 14.6 KB) | bytes |
+| $\lceil \log_2(S/W_0 + 1) \rceil$ | Slow-start rounds to deliver $S$, the first of which carries the request (§7.7.7) | round trips |
+| RTT | Round-trip time between client and server | s |
+| $t_{\text{server}}$ | Server processing time | s |
+:::
+
+*From §21.5.1*
+
+::: formula
+**Request and byte offload**
+
+$$O_R = 1 - \frac{N_{\text{origin}}}{N_{\text{total}}} \qquad O_B = 1 - \frac{V_{\text{origin}}}{V_{\text{total}}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $O_R$, $O_B$ | Request offload, byte offload | dimensionless (0–1) |
+| $N_{\text{origin}}$ | Requests the CDN sent to the origin | requests |
+| $N_{\text{total}}$ | Requests users sent to the CDN | requests |
+| $V_{\text{origin}}$ | Bytes the origin sent to the CDN | bytes |
+| $V_{\text{total}}$ | Bytes the CDN sent to users | bytes |
+:::
+
+*From §21.5.2*
+
+::: formula
+**Origin fraction and origin bandwidth across tiers**
+
+$$f_{\text{origin}} = \prod_{i=1}^{k} (1 - h_i) \qquad B_{\text{origin}} = B_{\text{users}} \times (1 - O_B)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $h_i$ | Hit ratio of tier $i$, measured on the requests that *reach* that tier | dimensionless |
+| $k$ | Number of cache tiers (browser, edge, mid-tier, …) | count |
+| $f_{\text{origin}}$ | Fraction of all requests that reach the origin, $1 - O_R$ | dimensionless |
+| $B_{\text{users}}$ | Bandwidth delivered to users | Gb/s |
+| $B_{\text{origin}}$ | Bandwidth the origin must serve | Gb/s |
+:::
+
+*From §21.5.3*
+
+::: formula
+**Origin fetches per object per TTL window, without and with a shield**
+
+$$F_{\text{no shield}} \approx N\left(1 - e^{-\lambda T / N}\right) \qquad F_{\text{shield}} \approx 1$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Number of edge PoPs, with requests spread evenly among them | count |
+| $\lambda$ | Global request rate for the object | requests/s |
+| $T$ | Freshness lifetime (TTL) of the object | s |
+| $1 - e^{-\lambda T/N}$ | Probability that a given PoP sees at least one request in $T$ (Poisson arrivals) | dimensionless |
+| $F$ | Expected origin fetches for the object per window $T$ | fetches |
+:::
+
+*From §21.5.4*
+
+::: formula
+**Monthly delivery cost**
+
+$$C = V \times p_{\text{cdn}} + V \times (1 - O_B) \times p_{\text{origin}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $V$ | Bytes delivered to users per month | GB |
+| $p_{\text{cdn}}$ | CDN delivery price | \$/GB |
+| $p_{\text{origin}}$ | Origin egress price (cloud Internet egress) | \$/GB |
+| $O_B$ | Byte offload | dimensionless |
+| $C$ | Monthly delivery cost (excluding request fees and commitments) | \$ |
+:::
+
+*From §21.6.1*
+
+::: formula
+**Freshness test in a shared cache**
+
+$$\text{fresh} \iff a < L, \qquad L = \begin{cases}\texttt{s-maxage} & \text{if present}\\ \texttt{max-age} & \text{otherwise}\end{cases}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $a$ | Current age of the stored response, including time spent in upstream caches (`Age`) | s |
+| $L$ | Freshness lifetime for a shared cache (RFC 9111 §4.2.1; `Expires` or heuristics apply if neither directive is present) | s |
+:::
+
+*From §21.7.2*
+
+::: formula
+**Time to first byte, direct versus through an edge**
+
+$$T_{\text{direct}} = (n_{\text{hs}} + 1)\,\text{RTT}_{uo} + t_{\text{app}} \qquad T_{\text{edge}} = (n_{\text{hs}} + 1)\,\text{RTT}_{ue} + \text{RTT}_{eo} + t_{\text{app}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n_{\text{hs}}$ | Client handshake round trips (2 for TCP + TLS 1.3, 0 if reused) | round trips |
+| $\text{RTT}_{uo}$ | Round trip, user to origin | ms |
+| $\text{RTT}_{ue}$ | Round trip, user to edge | ms |
+| $\text{RTT}_{eo}$ | Round trip, edge to origin over a warm, already-open connection | ms |
+| $t_{\text{app}}$ | Origin processing time | ms |
+:::
+
+*From §21.8.2*
+
+::: formula
+**Edge egress and storage for a bitrate ladder**
+
+$$B_{\text{edge}} = V \times \sum_r s_r b_r \qquad B_{\text{origin,live}} \approx M \times \sum_r b_r \qquad S_{\text{title}} = \frac{D}{8} \sum_r b_r$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $V$ | Concurrent viewers | viewers |
+| $b_r$ | Bitrate of rendition $r$ | Mb/s |
+| $s_r$ | Share of viewers on rendition $r$ ($\sum s_r = 1$) | dimensionless |
+| $M$ | Number of shields (or PoPs, if unshielded) fetching each live rendition | count |
+| $D$ | Title duration | s |
+| $S_{\text{title}}$ | Stored size of one encoding of the full ladder | Mb ÷ 8 = MB |
+:::
+
+*From §21.8.3*
+
+::: formula
+**Throughput rule and buffer-based rate map**
+
+$$\hat{C} = \frac{n}{\sum_{i=1}^{n} 1/c_i}, \quad R_{\text{tput}} = \max\{b_r \le \beta \hat{C}\} \qquad R_{\text{BBA}}(x) = \begin{cases} b_{\min} & x \le x_r\\ b_{\min} + \frac{x - x_r}{x_c}(b_{\max} - b_{\min}) & x_r < x < x_r + x_c\\ b_{\max} & x \ge x_r + x_c\end{cases}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $c_i$ | Measured throughput of the $i$-th most recent segment download | Mb/s |
+| $n$ | Number of recent segments averaged | count |
+| $\hat{C}$ | Harmonic-mean throughput estimate | Mb/s |
+| $\beta$ | Safety factor (e.g. 0.8) | dimensionless |
+| $x$ | Current buffer level | s |
+| $x_r$, $x_c$ | Reservoir and cushion | s |
+| $b_{\min}$, $b_{\max}$ | Lowest and highest ladder rates; the BBA result is rounded down to a ladder rung | Mb/s |
+:::
+
+*From §21.8.4*
+
+::: formula
+**Glass-to-glass latency of segmented live video**
+
+$$L \approx t_{\text{enc}} + k \times D_{\text{seg}} + t_{\text{poll}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $t_{\text{enc}}$ | Capture, encode and package delay | s |
+| $k$ | Segments (or parts) held back by the player | count |
+| $D_{\text{seg}}$ | Segment (or part) duration | s |
+| $t_{\text{poll}}$ | Delay before the player learns a new segment exists, plus download | s |
+| $L$ | Delay from camera to screen | s |
+:::
+
+## Chapter 22 — API and Traffic Management
+
+*From §22.4.1*
+
+::: formula
+**Token bucket state and admission bound**
+
+$$\text{tokens}(t) = \min\bigl(b,\ \text{tokens}(t_0) + r\,(t - t_0)\bigr) \qquad\qquad A(T) \le b + rT$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $r$ | Refill rate (sustained allowed rate) | tokens/s (= requests/s at unit cost) |
+| $b$ | Bucket capacity (maximum burst) | tokens |
+| $t_0$, $t$ | Time of last update, current time | s |
+| $A(T)$ | Maximum requests admitted in any interval of length $T$ | requests |
+:::
+
+*From §22.5.2*
+
+::: formula
+**GCRA (virtual scheduling form)**
+
+$$T = \frac{1}{r}, \qquad \tau = (b-1)\,T, \qquad \text{admit at time } t \iff t \ge \text{TAT} - \tau, \qquad \text{then } \text{TAT} \leftarrow \max(\text{TAT}, t) + T$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $r$ | Sustained allowed rate | requests/s |
+| $T$ | Emission interval: ideal spacing between requests | s |
+| $b$ | Burst size (requests that may arrive back to back) | requests |
+| $\tau$ | Tolerance: how early a request may be relative to its ideal schedule | s |
+| TAT | Theoretical arrival time of the next request (the only stored state) | s (timestamp) |
+| $t$ | Arrival time of the current request | s (timestamp) |
+:::
+
+*From §22.6.1*
+
+::: formula
+**Worst-case burst of a fixed window**
+
+$$A_{\max}(W) = 2L \qquad\qquad \text{peak short-term rate} \approx \frac{2L}{\delta}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $L$ | Limit per window | requests |
+| $W$ | Window length | s |
+| $A_{\max}(W)$ | Most requests admitted in some interval of length $W$ that straddles a boundary | requests |
+| $\delta$ | Duration of the straddling burst (can be arbitrarily small) | s |
+:::
+
+*From §22.7.2*
+
+::: formula
+**Sliding window counter estimate**
+
+$$\hat{N}(t) = C_{\text{prev}} \cdot \frac{W - e}{W} + C_{\text{curr}}, \qquad \text{admit if } \hat{N}(t) + 1 \le L$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\hat{N}(t)$ | Estimated requests in the sliding interval $(t-W, t]$ | requests |
+| $C_{\text{prev}}$ | Count in the previous fixed window | requests |
+| $C_{\text{curr}}$ | Count so far in the current fixed window | requests |
+| $e$ | Time elapsed since the current window started | s |
+| $W$ | Window length | s |
+| $L$ | Limit per sliding window | requests |
+:::
+
+*From §22.8.3*
+
+::: formula
+**Overshoot of local counting with synchronization interval $\Delta$**
+
+$$E_{\max} \approx \lambda \cdot \Delta \qquad\qquad M_{\text{sync}} = \frac{N(N-1)}{\Delta}\ \text{(all-to-all)} \quad \text{or} \quad \frac{2N}{\Delta}\ \text{(via a store or coordinator)}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $E_{\max}$ | Worst-case requests admitted beyond the limit per window | requests |
+| $\lambda$ | Offered rate for the key across all nodes | requests/s |
+| $\Delta$ | Synchronization interval | s |
+| $N$ | Number of gateway nodes | nodes |
+| $M_{\text{sync}}$ | Coordination messages per second (each message can carry all keys) | messages/s |
+:::
+
+*From §22.9.1*
+
+::: formula
+**Time until goodput collapses without shedding**
+
+$$q(t) = (\lambda - \mu)\,t, \qquad w(t) = \frac{q(t)}{\mu}, \qquad t_{\text{collapse}} = \frac{\mu \, T_{\text{out}}}{\lambda - \mu} \quad (\lambda > \mu)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda$ | Offered request rate | requests/s |
+| $\mu$ | Server capacity (maximum completion rate) | requests/s |
+| $q(t)$ | Queue length after $t$ seconds of overload (unbounded FIFO) | requests |
+| $w(t)$ | Queueing delay seen by a request arriving at $t$ | s |
+| $T_{\text{out}}$ | Client timeout | s |
+| $t_{\text{collapse}}$ | Time after which every completed request is already too late | s |
+:::
+
+*From §22.9.2*
+
+::: formula
+**Client-side adaptive throttling (Google SRE)**
+
+$$P_{\text{reject}} = \max\!\left(0,\ \frac{\text{requests} - K \cdot \text{accepts}}{\text{requests} + 1}\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| requests | Requests the client attempted in the recent window | count |
+| accepts | Requests the backend accepted (did not reject for overload) | count |
+| $K$ | Multiplier; how many requests per accept the client may still send (typically 2) | dimensionless |
+| $P_{\text{reject}}$ | Probability the client rejects a new request locally, without sending it | dimensionless |
+:::
+
+*From §22.10*
+
+::: formula
+**Bounding a queue by time (Little's Law)**
+
+$$Q_{\max} = \mu \times D_{\text{queue}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $Q_{\max}$ | Maximum queue length | items |
+| $\mu$ | Rate at which the consumer drains the queue | items/s |
+| $D_{\text{queue}}$ | Maximum acceptable time an item may wait in the queue | s |
+:::
+
+## Chapter 23 — Performance Engineering
+
+*From §23.4.1*
+
+::: formula
+**Sampling error of a profile**
+
+$$n = f \times T \times c \qquad \hat{p} = \frac{k}{n} \qquad \mathrm{SE}(\hat{p}) = \sqrt{\frac{\hat{p}\,(1 - \hat{p})}{n}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $f$ | Sampling frequency per CPU | samples/second |
+| $T$ | Profiling duration | seconds |
+| $c$ | Number of busy CPUs sampled | count |
+| $n$ | Total samples collected | samples |
+| $k$ | Samples whose stack contains the function | samples |
+| $\hat{p}$ | Estimated fraction of CPU time in the function | dimensionless |
+| $\mathrm{SE}$ | Standard error of the estimate (binomial approximation) | dimensionless |
+:::
+
+*From §23.5.2*
+
+::: formula
+**Interactive response time law (closed systems)**
+
+$$X = \frac{N}{R + Z} \qquad\Longleftrightarrow\qquad R = \frac{N}{X} - Z$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Number of users (or load-generator threads) in the closed loop | count |
+| $X$ | Throughput | requests/second |
+| $R$ | Mean response time | seconds |
+| $Z$ | Mean think time between a response and the next request | seconds |
+:::
+
+*From §23.5.3*
+
+::: formula
+**Damage done by a stall in an open system**
+
+$$\text{missed by closed tester} \approx \frac{T_s}{\Delta} \qquad t_{\text{drain}} = \frac{\lambda T_s}{\mu - \lambda} \qquad \text{affected requests} = \lambda\,(T_s + t_{\text{drain}}) = \frac{\lambda\,\mu\,T_s}{\mu - \lambda}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_s$ | Duration of the stall | seconds |
+| $\Delta = 1/\lambda$ | Intended interval between requests | seconds |
+| $\lambda$ | Intended (open) arrival rate | requests/second |
+| $\mu$ | Service rate once the server resumes ($> \lambda$) | requests/second |
+| $t_{\text{drain}}$ | Time to drain the backlog after the stall | seconds |
+:::
+
+*From §23.5.5*
+
+::: formula
+**HdrHistogram footprint (simplified from the reference implementation)**
+
+$$s = 2^{\lceil \log_2 (2 \times 10^{d}) \rceil} \qquad b = 1 + \left\lceil \log_2 \frac{H}{s \cdot L} \right\rceil \qquad \text{counters} = (b + 1)\,\frac{s}{2} \qquad \text{memory} \approx 8 \times \text{counters}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $d$ | Significant decimal digits preserved | digits |
+| $s$ | Sub-buckets per bucket | count |
+| $L$, $H$ | Lowest discernible and highest trackable values | e.g. µs |
+| $b$ | Number of power-of-two buckets | count |
+| memory | Size with 64-bit counters | bytes |
+:::
+
+*From §23.6.1*
+
+::: formula
+**Percentiles of a fan-out request**
+
+$$P(T_{\text{root}} \le t) = F(t)^{N} \qquad t_q^{\text{root}} = F^{-1}\!\left(q^{1/N}\right) \qquad \text{exponential leaves: } t_q^{\text{root}} = m \ln \frac{1}{1 - q^{1/N}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $F(t)$ | CDF of one leaf's latency | dimensionless |
+| $N$ | Number of leaves the root waits for | count |
+| $q$ | Desired root percentile (as a fraction) | dimensionless |
+| $t_q^{\text{root}}$ | Root latency at percentile $q$ | ms |
+| $m$ | Mean leaf latency for exponentially distributed leaves | ms |
+:::
+
+*From §23.6.3*
+
+::: formula
+**Throttling under a CPU quota**
+
+$$t_{\text{run}} = \frac{Q}{k} \qquad t_{\text{throttled}} = P - \frac{Q}{k} \qquad (\text{when } k > Q/P)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $P$ | Enforcement period | ms |
+| $Q$ | CPU-time quota per period (2 CPUs = $2P$) | CPU·ms |
+| $k$ | Threads runnable at the same time | count |
+| $t_{\text{run}}$ | Wall time until the quota is exhausted | ms |
+| $t_{\text{throttled}}$ | Wall time the whole cgroup is frozen | ms |
+:::
+
+*From §23.7.1*
+
+::: formula
+**Hedged latency and extra load (independent replicas)**
+
+$$T = \min(X_1,\; d + X_2) \qquad P(T > t) = \begin{cases} P(X > t) & t < d \\ P(X > t)\,P(X > t - d) & t \ge d \end{cases} \qquad \text{extra load} = P(X > d)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $X_1, X_2$ | Latencies of the primary and the hedge, same distribution as $X$ | ms |
+| $d$ | Hedge delay | ms |
+| $T$ | Latency seen by the client | ms |
+| extra load | Fraction of requests that send a second copy | dimensionless |
+:::
+
+*From §23.8.1*
+
+::: formula
+**Batch size and latency with a time limit**
+
+$$B_{\text{eff}} \approx \min\!\left(B_{\max},\; \max(1, \lambda T_{\max})\right) \qquad X_{\max} = \frac{B_{\text{eff}}}{t_0 + B_{\text{eff}}\,t_1} \qquad W_{\text{worst}} \approx T_{\max} + t_0 + B_{\text{eff}}\,t_1$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda$ | Item arrival rate | items/second |
+| $B_{\max}$, $T_{\max}$ | Size and time limits of the batcher | items, seconds |
+| $B_{\text{eff}}$ | Typical batch size actually sent | items |
+| $t_0$, $t_1$ | Fixed cost per batch, marginal cost per item | seconds, seconds/item |
+| $X_{\max}$ | Throughput one sender can sustain | items/second |
+| $W_{\text{worst}}$ | Worst-case latency added by batching and sending | seconds |
+:::
+
+*From §23.8.2*
+
+::: formula
+**Sequential versus pipelined requests**
+
+$$T_{\text{seq}} = n\,(r + s) \qquad T_{\text{pipe}} \approx r + n\,s \quad (\text{window} \ge n)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of requests | count |
+| $r$ | Network round-trip time | seconds |
+| $s$ | Server processing time per request | seconds |
+:::
+
+*From §23.8.3*
+
+::: formula
+**When compression reduces transfer time (store-and-forward)**
+
+$$t_{\text{plain}} = \frac{S}{W} \qquad t_{\text{comp}} = \frac{S}{C_c} + \frac{S}{\rho\,W} + \frac{S}{C_d} \qquad \text{compress if } \frac{1}{C_c} + \frac{1}{\rho W} + \frac{1}{C_d} < \frac{1}{W}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S$ | Uncompressed size | MB |
+| $W$ | Network (or disk) bandwidth | MB/s |
+| $\rho$ | Compression ratio (original / compressed) | dimensionless |
+| $C_c$, $C_d$ | Compression and decompression speed | MB/s |
+:::
+
+*From §23.9.1*
+
+::: formula
+**GC frequency and pause exposure**
+
+$$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p}{I_{\text{minor}}} \qquad \text{Go heap target} = H_{\text{live}} \times \left(1 + \frac{\text{GOGC}}{100}\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $E$ | Young-generation (Eden) size | MB |
+| $a$ | Allocation rate | MB/s |
+| $I_{\text{minor}}$ | Interval between minor collections | seconds |
+| $p$ | STW pause per minor collection | seconds |
+| $f_{\text{hit}}$ | Approximate fraction of requests that overlap a pause | dimensionless |
+| $H_{\text{live}}$ | Live heap after the previous Go collection | MB |
+| GOGC | Go's GC percentage setting (default 100) | percent |
+:::
+
+*From §23.10.1*
+
+::: formula
+**USL for measured throughput, and its linearized form**
+
+$$X(N) = \frac{\gamma N}{1 + \alpha (N - 1) + \beta N (N - 1)} \qquad \frac{\gamma N}{X(N)} - 1 = \alpha (N - 1) + \beta N (N - 1)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Concurrency (client threads, cores or nodes) | count |
+| $X(N)$ | Measured throughput at concurrency $N$ | requests/second |
+| $\gamma$ | Throughput at $N = 1$ (the slope of ideal linear scaling) | requests/second |
+| $\alpha$, $\beta$ | Contention and coherency coefficients (§4.13) | dimensionless |
+:::
+
+*From §23.10.3*
+
+::: formula
+**Fleet size from per-instance capacity**
+
+$$n = \left\lceil \frac{\lambda_{\text{peak}}\,(1 + g)}{u \cdot X_{\max}} \right\rceil \qquad n_{\text{zones}} = Z \cdot \left\lceil \frac{n}{Z - 1} \right\rceil$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda_{\text{peak}}$ | Forecast peak request rate | requests/second |
+| $g$ | Growth allowance over the planning horizon | dimensionless |
+| $X_{\max}$ | Fitted peak throughput of one instance | requests/second |
+| $u$ | Target fraction of $X_{\max}$ at peak (headroom for queueing and variance) | dimensionless |
+| $Z$ | Number of availability zones, sized to survive the loss of one | count |
+:::

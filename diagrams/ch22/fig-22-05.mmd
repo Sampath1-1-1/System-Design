@@ -1,0 +1,11 @@
+%% Figure 22.5 — The read-modify-write race in a shared counter
+sequenceDiagram
+  participant G1 as Gateway 1
+  participant G2 as Gateway 2
+  participant R as Redis
+  G1->>R: GET count - returns 99
+  G2->>R: GET count - returns 99
+  Note over G1,G2: both see 99, below limit 100
+  G1->>R: SET count 100
+  G2->>R: SET count 100
+  Note over R: two requests admitted, count shows 100

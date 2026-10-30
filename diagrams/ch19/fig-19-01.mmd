@@ -1,0 +1,10 @@
+%% Figure 19.1 — An L4 balancer forwards flows; an L7 balancer terminates connections and routes requests
+flowchart LR
+  C([Client]) -->|TCP SYN to VIP| L4["L4 balancer<br/>5-tuple hash, conntrack"]
+  L4 -->|same flow, packets rewritten| P1[L7 proxy 1]
+  L4 -->|other flows| P2[L7 proxy 2]
+  P1 -->|HTTP/2 /api/search| S1[Search service]
+  P1 -->|HTTP/2 /api/cart| S2[Cart service]
+  P2 -->|HTTP/2 /api/search| S1
+  P2 -->|HTTP/2 /api/cart| S2
+  S2 --> DB[(Cart database)]

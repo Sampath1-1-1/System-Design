@@ -1,0 +1,8 @@
+%% Figure 22.2 — Token bucket admission decision
+flowchart LR
+  R([Request for key k]) --> F["Refill lazily<br/>tokens += elapsed x r, cap b"]
+  F --> D{tokens at least cost?}
+  D -->|yes| A["Subtract cost<br/>admit request"]
+  D -->|no| X["Reject 429<br/>Retry-After = deficit / r"]
+  A --> S[(Store tokens, last)]
+  X --> S

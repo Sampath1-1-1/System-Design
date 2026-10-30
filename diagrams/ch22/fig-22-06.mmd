@@ -1,0 +1,16 @@
+%% Figure 22.6 — Centralized rate limiting with an atomic script
+sequenceDiagram
+  participant C as Client
+  participant G as Gateway node
+  participant R as Redis shard for key
+  participant S as Upload service
+  C->>G: POST /v1/photos with API key
+  G->>R: EVALSHA token_bucket key 10 20 1
+  R-->>G: allowed 1, retry_after 0
+  G->>S: forward request
+  S-->>G: 201 Created
+  G-->>C: 201 plus RateLimit headers
+  C->>G: next request, bucket empty
+  G->>R: EVALSHA token_bucket key 10 20 1
+  R-->>G: allowed 0, retry_after 0.1
+  G-->>C: 429 Retry-After 1

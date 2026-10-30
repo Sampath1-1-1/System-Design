@@ -1,0 +1,10 @@
+%% Figure 23.7 — Where variability enters a request
+flowchart LR
+  C([Client]) -->|TCP| LB[Load balancer]
+  LB -->|"loss: 200 ms RTO"| APP[Service instance]
+  APP -->|RPC| DEP[Dependency]
+  DEP --> DB[(Storage)]
+  N1["Noisy neighbor,<br/>CPU quota throttling"] -.-> APP
+  N2["GC pause, JIT,<br/>lock convoy"] -.-> APP
+  N3["Queueing behind<br/>a large request"] -.-> DEP
+  N4["Compaction, SSD GC,<br/>backups, log rotation"] -.-> DB

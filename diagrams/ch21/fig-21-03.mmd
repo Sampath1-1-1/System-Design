@@ -1,0 +1,21 @@
+%% Figure 21.3 — A cache hit and a cache miss at an edge PoP
+sequenceDiagram
+  participant C as Client
+  participant E as Edge PoP
+  participant S as Origin shield
+  participant O as Origin
+  C->>E: GET /p/42.jpg over TLS, nearby
+  alt Hit and fresh
+    E-->>C: 200 OK, Age 120, from cache
+  else Miss at edge
+    E->>S: GET /p/42.jpg over warm connection
+    alt Hit at shield
+      S-->>E: 200 OK
+    else Miss at shield
+      S->>O: GET /p/42.jpg
+      O-->>S: 200 OK, Cache-Control, ETag
+      S-->>E: 200 OK
+    end
+    E->>E: store under cache key
+    E-->>C: 200 OK, streamed as it arrives
+  end

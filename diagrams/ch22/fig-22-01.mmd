@@ -1,0 +1,9 @@
+%% Figure 22.1 — Layered rate limiting for the PhotoShare API
+flowchart LR
+  C([Third-party app<br/>SDK self-pacing]) -->|HTTPS| EDGE["CDN and WAF<br/>per-IP flood limits"]
+  EDGE -->|HTTPS| GW["API gateway<br/>per-key and per-tenant quotas"]
+  GW -->|check and count| RL[(Shared counters<br/>Redis)]
+  GW -->|HTTP| UP["Upload service<br/>cost-based limit"]
+  UP -->|SQL| DB[(Metadata DB)]
+  UP -.->|async| Q[[Thumbnail queue]]
+  GW -->|429 plus Retry-After| C

@@ -1,0 +1,9 @@
+%% Figure 22.9 — Backpressure through a processing pipeline
+flowchart LR
+  P[Producer service] -->|push up to n items| B1[[Bounded buffer 100]]
+  B1 --> T[Transformer]
+  T -->|push| B2[[Bounded buffer 100]]
+  B2 --> K[Sink writer]
+  K -->|writes| DB[(Database)]
+  K -.->|request n| T
+  T -.->|request n| P

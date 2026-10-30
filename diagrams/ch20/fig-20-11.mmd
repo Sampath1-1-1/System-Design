@@ -1,0 +1,14 @@
+%% Figure 20.11 — Write-around
+sequenceDiagram
+  participant A as App
+  participant R as Cache
+  participant D as Database
+  A->>D: INSERT log row 9001
+  D-->>A: committed
+  A->>R: DEL row:9001 if present
+  Note over R: nothing new is cached on write
+  A->>R: GET row:9001 on first read
+  R-->>A: miss
+  A->>D: SELECT row 9001
+  D-->>A: row
+  A->>R: SET row:9001 with TTL

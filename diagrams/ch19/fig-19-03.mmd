@@ -1,0 +1,15 @@
+%% Figure 19.3 — Herd behavior with stale load information, and how two random choices avoid it
+flowchart LR
+  subgraph Stale["Least loaded from a stale report"]
+    B1[Balancer 1] -->|all pick S3| S3[Server 3<br/>reported 2 in flight]
+    B2[Balancer 2] -->|all pick S3| S3
+    B3[Balancer 3] -->|all pick S3| S3
+    R[[Load report<br/>every 2 s]] -.->|stale view| B1
+    R -.-> B2
+    R -.-> B3
+  end
+  subgraph P2C["Power of two choices"]
+    D1[Balancer 1] -->|sample S1 and S3| T3[Server 3]
+    D2[Balancer 2] -->|sample S2 and S4| T2[Server 2]
+    D3[Balancer 3] -->|sample S1 and S4| T4[Server 4]
+  end

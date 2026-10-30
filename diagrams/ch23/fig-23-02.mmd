@@ -1,0 +1,18 @@
+%% Figure 23.2 — Workflow from symptom to cause
+flowchart TD
+  SYM([Symptom: SLO burn or user report]) --> SCOPE[Scope it: which endpoint,<br/>which percentile, since when?]
+  SCOPE --> CHG{Correlates with a<br/>deploy, config or traffic change?}
+  CHG -->|yes| ROLL[Roll back or bisect the change]
+  CHG -->|no| RED[RED per service in the call graph]
+  RED --> SVC[Slowest contributing service]
+  SVC --> USE[USE on its resources]
+  USE --> SAT{Resource saturated?}
+  SAT -->|CPU busy| ON[On-CPU profile:<br/>flame graph]
+  SAT -->|nothing busy| OFF["Off-CPU profile, traces,<br/>lock and pool waits"]
+  SAT -->|memory or GC| MEM[Allocation profile, GC logs]
+  ON --> HYP[Hypothesis and fix]
+  OFF --> HYP
+  MEM --> HYP
+  ROLL --> VER
+  HYP --> VER[Verify with load test<br/>and production percentiles]
+  VER -.->|not fixed| SCOPE

@@ -1,0 +1,11 @@
+%% Figure 23.9 — Tied requests with cross-server cancellation
+sequenceDiagram
+  participant C as Client
+  participant A as Server A
+  participant B as Server B
+  C->>A: req tied to B
+  C->>B: req tied to A, after ~1 ms
+  Note over A: dequeues first
+  A-)B: cancel req
+  Note over B: removes queued copy
+  A-->>C: response

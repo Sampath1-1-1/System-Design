@@ -1,0 +1,16 @@
+%% Figure 23.1 — The USE method procedure
+flowchart TD
+  S([Start: performance complaint]) --> ID[Identify resources:<br/>hardware and software]
+  ID --> CH[Choose next resource]
+  CH --> E{Errors present?}
+  E -->|yes| INV[Investigate discovery]
+  E -->|no| U{High utilization?}
+  U -->|yes| INV
+  U -->|no| SA{Saturation present?}
+  SA -->|yes| INV
+  SA -->|no| ALL{All resources checked?}
+  INV --> OK{Problem explained?}
+  OK -->|yes| DONE([Fix, then re-measure])
+  OK -->|no| ALL
+  ALL -->|no| CH
+  ALL -->|yes| OUT[Bottleneck is external<br/>or in the workload]

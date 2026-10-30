@@ -1,0 +1,12 @@
+%% Figure 19.8 — VRRP failover between two balancers
+sequenceDiagram
+  participant A as LB1 priority 200
+  participant B as LB2 priority 100
+  participant SW as LAN switch
+  A->>SW: VRRP advertisement every 1 s
+  SW->>B: advertisement, LB1 alive
+  Note over A: LB1 crashes
+  Note over B: no advert for Master_Down_Interval
+  B->>SW: gratuitous ARP, VIP now at LB2 MAC
+  B->>SW: VRRP advertisement every 1 s
+  Note over SW: traffic to VIP now reaches LB2

@@ -1,0 +1,17 @@
+%% Figure 19.7 — Active–passive versus active–active balancer tiers
+flowchart LR
+  subgraph AP["Active-passive"]
+    C1([Clients]) -->|VIP| A1[LB active]
+    A1 -.->|VRRP adverts| P1[LB standby]
+    A1 --> S1[Backends]
+    P1 -.->|takes VIP on failure| S1
+  end
+  subgraph AA["Active-active"]
+    C2([Clients]) -->|ECMP or anycast| R{{Router}}
+    R --> X1[LB 1]
+    R --> X2[LB 2]
+    R --> X3[LB 3]
+    X1 --> S2[Backends]
+    X2 --> S2
+    X3 --> S2
+  end

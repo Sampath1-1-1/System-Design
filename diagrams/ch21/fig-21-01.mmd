@@ -1,0 +1,17 @@
+%% Figure 21.1 — A CDN: users, PoPs, mid-tier and origin
+flowchart LR
+  U1([User in Sydney]) -->|HTTPS| P1
+  U2([User in Paris]) -->|HTTPS| P2
+  subgraph P1["PoP Sydney"]
+    L1[L4 load balancer] --> S1[Cache servers]
+  end
+  subgraph P2["PoP Paris"]
+    L2[L4 load balancer] --> S2[Cache servers]
+  end
+  S1 -->|miss| M1[Mid-tier Singapore]
+  S2 -->|miss| M2[Mid-tier Frankfurt]
+  M1 -->|miss| SH[Origin shield Virginia]
+  M2 -->|miss| SH
+  SH -->|miss, HTTPS| O[(Origin: object storage<br/>or app servers)]
+  CTL[CDN control plane] -.->|config, purges| P1
+  CTL -.->|config, purges| P2

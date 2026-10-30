@@ -1,0 +1,9 @@
+%% Figure 22.4 — The fixed-window boundary burst
+flowchart LR
+  subgraph W1["Window 1: 00:00 to 00:59"]
+    A["00:00 to 00:58<br/>0 requests"] --> B["00:59<br/>100 requests, count 100"]
+  end
+  subgraph W2["Window 2: 01:00 to 01:59"]
+    C["01:00<br/>counter reset, 100 more"] --> D["01:01 to 01:59<br/>all rejected"]
+  end
+  B -->|boundary| C

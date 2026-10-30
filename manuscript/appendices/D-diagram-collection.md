@@ -3396,3 +3396,1072 @@ flowchart TD
   SYN -->|c| SYNC["sync (end, weight 60)"]
   SYN -->|t| SYNT["synt ... syntax"]
 ```
+
+## Chapter 18 — Scalability
+
+**Figure 18.1 — Vertical versus horizontal scaling.**
+
+```mermaid
+flowchart LR
+  subgraph V["Vertical: one bigger node"]
+    C1([Clients]) -->|HTTPS| BIG["App node<br/>8 to 64 cores"]
+    BIG -->|SQL| DB1[(Database)]
+  end
+  subgraph H["Horizontal: more identical nodes"]
+    C2([Clients]) -->|HTTPS| LB[Load balancer]
+    LB -->|HTTP| A1[App node 1]
+    LB -->|HTTP| A2[App node 2]
+    LB -->|HTTP| AN[App node N]
+    A1 -->|SQL| DB2[(Shared database)]
+    A2 -->|SQL| DB2
+    AN -->|SQL| DB2
+  end
+```
+
+**Figure 18.2 — Sticky sessions versus an externalized session store.**
+
+```mermaid
+flowchart LR
+  subgraph S["Sticky: state in instance memory"]
+    U1([User A]) -->|"HTTPS, cookie srv=1"| LB1[Load balancer]
+    LB1 -->|always| I1["Instance 1<br/>sessions in RAM"]
+    LB1 -.->|other users| I2["Instance 2<br/>sessions in RAM"]
+  end
+  subgraph E["Stateless: state in a store"]
+    U2([User A]) -->|"HTTPS, session ID"| LB2[Load balancer]
+    LB2 -->|any| J1[Instance 1]
+    LB2 -->|any| J2[Instance 2]
+    J1 -->|GET session| SS[("Session store<br/>replicated")]
+    J2 -->|GET session| SS
+  end
+```
+
+**Figure 18.3 — Layers of load distribution.**
+
+```mermaid
+flowchart TB
+  C([Clients]) -->|DNS query| G{{"DNS or global LB<br/>picks a region"}}
+  C -->|HTTPS| L4["L4 load balancer<br/>TCP, per connection"]
+  L4 -->|TCP| L7["L7 load balancers<br/>HTTP, per request"]
+  L7 -->|HTTP| S1[Service A pods]
+  S1 -->|"gRPC, client-side LB"| S2[Service B pods]
+  S2 -->|SQL| DB[(Database)]
+```
+
+**Figure 18.4 — The shared-resource funnel.**
+
+```mermaid
+flowchart LR
+  LB[Load balancer] -->|HTTP| P1[Pod 1]
+  LB -->|HTTP| P2[Pod 2]
+  LB -->|HTTP| PN[Pod 60]
+  P1 -->|SQL| PB["Connection pooler"]
+  P2 -->|SQL| PB
+  PN -->|SQL| PB
+  PB -->|SQL| DB[("Primary DB<br/>hot row: promo counter")]
+  P1 -.->|invalidate| P2
+  P2 -.->|invalidate| PN
+```
+
+**Figure 18.5 — The autoscaling control loop.**
+
+```mermaid
+flowchart LR
+  P[Pods serving traffic] -.->|"CPU, RPS samples"| M[(Metrics pipeline)]
+  M -.->|"averages, every 15 s"| H[Autoscaler]
+  H -->|"set replicas"| D[Deployment controller]
+  D -->|"create pods"| SCH[Scheduler]
+  SCH -->|"no free node"| CA[Node autoscaler]
+  CA -->|"new VM, 1-3 min"| SCH
+  SCH -->|"place pod"| NEW["New pod: start,<br/>readiness, warm-up"]
+  NEW -->|"ready"| LB[Load balancer]
+  LB -->|traffic| P
+```
+
+**Figure 18.6 — Two hundred pods against one connection limit.**
+
+```mermaid
+flowchart LR
+  subgraph K["API deployment, HPA 14 to 200 pods"]
+    A1["Pod 1<br/>pool 20"]
+    A2["Pod 2<br/>pool 20"]
+    AN["Pod 200<br/>pool 20"]
+  end
+  W["Workers<br/>10 pods x 5"] -->|"50 conns"| PG
+  A1 -->|"20 conns"| PG[("PostgreSQL primary<br/>max_connections 500")]
+  A2 -->|"20 conns"| PG
+  AN -.->|"refused: too many clients"| PG
+  A1 -.->|"alternative: via pooler"| PB["PgBouncer<br/>transaction mode"]
+  PB -.->|"40 server conns"| PG
+```
+
+**Figure 18.7 — The scale cube applied to QuickBite.**
+
+```mermaid
+flowchart TB
+  O["One monolith,<br/>one database"] -->|"X: clone"| X["N identical app nodes<br/>plus read replicas"]
+  O -->|"Y: split by function"| Y["Catalog, orders, dispatch,<br/>location services"]
+  O -->|"Z: split by customer key"| Z["Cells per country or city<br/>each with its own data"]
+  X --> ALL["X within Y within Z:<br/>cloned pods of each service<br/>in each regional cell"]
+  Y --> ALL
+  Z --> ALL
+```
+
+**Figure 18.8 — The capacity planning loop.**
+
+```mermaid
+flowchart LR
+  F["Forecast demand<br/>organic + launches"] --> L["Load test:<br/>capacity per node at SLO"]
+  L --> M["Model: nodes =<br/>peak / capacity x headroom"]
+  M --> R["Add redundancy:<br/>N+2 or zone loss"]
+  R --> P["Provision, allowing<br/>for lead time"]
+  P --> O[(Utilization and<br/>demand history)]
+  O -.->|"monthly review"| F
+  O -.->|"tripwire crossed"| D["Architecture change:<br/>next scaling axis"]
+```
+
+**Figure 18.9 — Stage S1: 1,000 DAU.**
+
+```mermaid
+flowchart LR
+  C([Apps]) -->|HTTPS| LB[Managed load balancer]
+  LB -->|HTTP| A1["Monolith<br/>zone a"]
+  LB -->|HTTP| A2["Monolith<br/>zone b"]
+  A1 -->|SQL| DB[("Managed PostgreSQL<br/>daily backups")]
+  A2 -->|SQL| DB
+  A1 -->|HTTPS| PAY{{Payment provider}}
+  A2 -->|"HTTPS, images"| OS[(Object storage)]
+```
+
+**Figure 18.10 — Stage S2: 20,000 DAU (one city).**
+
+```mermaid
+flowchart LR
+  C([Apps]) -->|HTTPS images| CDN[CDN]
+  CDN -->|origin fetch| OS[(Object storage)]
+  C -->|HTTPS API| LB[Load balancer]
+  LB -->|HTTP| A1["Monolith<br/>zone a"]
+  LB -->|HTTP| A2["Monolith<br/>zone b"]
+  A1 -->|SQL| PG[("PostgreSQL primary")]
+  A2 -->|SQL| PG
+  PG -.->|"replication"| SB[("Standby<br/>zone b")]
+  A1 -.->|jobs| Q[[Job queue]]
+  Q -.-> W["Worker: notifications,<br/>payouts"]
+```
+
+**Figure 18.11 — Stage S3: 200,000 DAU (one region).**
+
+```mermaid
+flowchart LR
+  C([Apps]) -->|HTTPS| LB[Load balancer]
+  LB -->|HTTP| API["API pods, 3 zones<br/>autoscaled 3 to 6"]
+  API -->|"GET, SET"| R[("In-memory store:<br/>menu cache, sessions,<br/>courier locations")]
+  API -->|SQL| PB[PgBouncer]
+  PB -->|SQL| PG[("Primary")]
+  PG -.->|replication| SB[("Standby")]
+  PG -.->|replication| RR[("Read replica:<br/>reports")]
+  API -.->|jobs| Q[[Queue]] -.-> W[Workers]
+```
+
+**Figure 18.12 — Stage S4: 2,000,000 DAU (one country).**
+
+```mermaid
+flowchart LR
+  C([Apps]) -->|HTTPS| LB[L7 load balancers]
+  LB -->|HTTP| CORE["Core service pods<br/>18 zone-safe"]
+  LB -->|"HTTP, WebSocket"| LOC["Location service pods"]
+  CORE -->|GET| MC[("Menu cache")]
+  CORE -->|SQL| PB[PgBouncer]
+  PB -->|SQL| PG[("Orders primary<br/>+ standby + 2 replicas")]
+  LOC -->|"SET, GET"| LS[("Location store<br/>partitioned by city")]
+  CORE -.->|order events| EV[[Event log]]
+  EV -.->|"courier on order"| LOC
+```
+
+**Figure 18.13 — Stage S5: 10,000,000 DAU (several countries).**
+
+```mermaid
+flowchart TB
+  C([Apps]) -->|DNS| GR{{"Geo DNS and<br/>global load balancer"}}
+  GR -->|HTTPS| CA["Cell A: S4 stack<br/>21 core pods"]
+  GR -->|HTTPS| CB["Cell B: S4 stack<br/>21 core pods"]
+  GR -->|HTTPS| CN["Cells C and D"]
+  CA -->|SQL| DA[("Orders, region A")]
+  CB -->|SQL| DB[("Orders, region B")]
+  CA -->|lookup| DIR[("Global account<br/>directory")]
+  CB -->|lookup| DIR
+  CA -.->|events| WH[(Analytics warehouse)]
+  CB -.->|events| WH
+```
+
+## Chapter 19 — Load Balancing
+
+**Figure 19.1 — An L4 balancer forwards flows; an L7 balancer terminates connections and routes requests.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|TCP SYN to VIP| L4["L4 balancer<br/>5-tuple hash, conntrack"]
+  L4 -->|same flow, packets rewritten| P1[L7 proxy 1]
+  L4 -->|other flows| P2[L7 proxy 2]
+  P1 -->|HTTP/2 /api/search| S1[Search service]
+  P1 -->|HTTP/2 /api/cart| S2[Cart service]
+  P2 -->|HTTP/2 /api/search| S1
+  P2 -->|HTTP/2 /api/cart| S2
+  S2 --> DB[(Cart database)]
+```
+
+**Figure 19.2 — Full-proxy (NAT) forwarding versus direct server return.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant LB as Load balancer
+  participant B as Backend
+  Note over C,B: Full proxy or NAT: both directions cross the balancer
+  C->>LB: request to VIP
+  LB->>B: request, destination rewritten
+  B->>LB: response
+  LB->>C: response, source rewritten to VIP
+  Note over C,B: DSR: only requests cross the balancer
+  C->>LB: request to VIP
+  LB->>B: request encapsulated or MAC-rewritten
+  B->>C: response sent directly from VIP on loopback
+```
+
+**Figure 19.3 — Herd behavior with stale load information, and how two random choices avoid it.**
+
+```mermaid
+flowchart LR
+  subgraph Stale["Least loaded from a stale report"]
+    B1[Balancer 1] -->|all pick S3| S3[Server 3<br/>reported 2 in flight]
+    B2[Balancer 2] -->|all pick S3| S3
+    B3[Balancer 3] -->|all pick S3| S3
+    R[[Load report<br/>every 2 s]] -.->|stale view| B1
+    R -.-> B2
+    R -.-> B3
+  end
+  subgraph P2C["Power of two choices"]
+    D1[Balancer 1] -->|sample S1 and S3| T3[Server 3]
+    D2[Balancer 2] -->|sample S2 and S4| T2[Server 2]
+    D3[Balancer 3] -->|sample S1 and S4| T4[Server 4]
+  end
+```
+
+**Figure 19.4 — Maglev: ECMP spreads packets over balancer machines; each machine maps flows to backends with the same lookup table.**
+
+```mermaid
+flowchart LR
+  C([Clients]) -->|packets to VIP| RT{{"Router<br/>ECMP over Maglevs"}}
+  RT --> M1["Maglev 1<br/>conntrack + table"]
+  RT --> M2["Maglev 2<br/>conntrack + table"]
+  M1 -->|GRE encapsulated| B1[Backend 1]
+  M1 -->|GRE encapsulated| B2[Backend 2]
+  M2 -->|GRE encapsulated| B2
+  M2 -->|GRE encapsulated| B3[Backend 3]
+  B1 -.->|direct return| C
+  B2 -.->|direct return| C
+  B3 -.->|direct return| C
+  M1 -->|BGP announce VIP| RT
+  M2 -->|BGP announce VIP| RT
+```
+
+**Figure 19.5 — Health state of one backend as seen by the balancer.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Unhealthy
+  Unhealthy --> Recovering: probe succeeds
+  Recovering --> Healthy: R successes in a row
+  Recovering --> Unhealthy: probe fails
+  Healthy --> Suspect: probe fails
+  Suspect --> Healthy: probe succeeds
+  Suspect --> Unhealthy: F failures in a row
+  Healthy --> Ejected: outlier detection trips
+  Ejected --> Healthy: ejection time expires
+  Healthy --> Draining: deregistered
+  Draining --> [*]: connections closed or timeout
+```
+
+**Figure 19.6 — Balancer-inserted affinity cookie.**
+
+```mermaid
+sequenceDiagram
+  participant C as Browser
+  participant LB as L7 balancer
+  participant A as Backend A
+  participant B as Backend B
+  C->>LB: GET /cart, no affinity cookie
+  LB->>A: chosen by least request
+  A-->>LB: 200 OK
+  LB-->>C: 200 OK, Set-Cookie srv=A
+  C->>LB: POST /cart/items, cookie srv=A
+  LB->>A: cookie names A
+  Note over LB,A: A fails health checks
+  C->>LB: GET /cart, cookie srv=A
+  LB->>B: A unavailable, rebalance
+  LB-->>C: 200 OK, Set-Cookie srv=B, cart state lost
+```
+
+**Figure 19.7 — Active–passive versus active–active balancer tiers.**
+
+```mermaid
+flowchart LR
+  subgraph AP["Active-passive"]
+    C1([Clients]) -->|VIP| A1[LB active]
+    A1 -.->|VRRP adverts| P1[LB standby]
+    A1 --> S1[Backends]
+    P1 -.->|takes VIP on failure| S1
+  end
+  subgraph AA["Active-active"]
+    C2([Clients]) -->|ECMP or anycast| R{{Router}}
+    R --> X1[LB 1]
+    R --> X2[LB 2]
+    R --> X3[LB 3]
+    X1 --> S2[Backends]
+    X2 --> S2
+    X3 --> S2
+  end
+```
+
+**Figure 19.8 — VRRP failover between two balancers.**
+
+```mermaid
+sequenceDiagram
+  participant A as LB1 priority 200
+  participant B as LB2 priority 100
+  participant SW as LAN switch
+  A->>SW: VRRP advertisement every 1 s
+  SW->>B: advertisement, LB1 alive
+  Note over A: LB1 crashes
+  Note over B: no advert for Master_Down_Interval
+  B->>SW: gratuitous ARP, VIP now at LB2 MAC
+  B->>SW: VRRP advertisement every 1 s
+  Note over SW: traffic to VIP now reaches LB2
+```
+
+**Figure 19.9 — A layered, redundant front end.**
+
+```mermaid
+flowchart LR
+  C([Clients]) -->|DNS answer| DNS{{GSLB DNS}}
+  C -->|anycast VIP| E1[Edge site A]
+  C -->|anycast VIP| E2[Edge site B]
+  E1 -->|ECMP| L4A[L4 Maglev tier]
+  L4A -->|consistent hash| L7A[L7 proxy tier]
+  L7A -->|least request| SVC[Service backends]
+  E2 -->|ECMP| L4B[L4 tier site B]
+  L4B --> L7B[L7 tier site B]
+  L7B --> SVC
+  SVC --> DB[(Data stores)]
+```
+
+**Figure 19.10 — DNS-based global server load balancing.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|query api.example.com| RR[Recursive resolver]
+  RR -->|query with ECS subnet| G{{GSLB authoritative DNS}}
+  HC[Health and latency probes] -.->|region status| G
+  G -->|"A record: region VIP, TTL 30 s"| RR
+  RR -->|cached answer| C
+  C -->|HTTPS| R1[Region EU balancers]
+  C -.->|after failover| R2[Region US balancers]
+```
+
+**Figure 19.11 — Four places to put the balancing decision.**
+
+```mermaid
+flowchart TB
+  subgraph Proxy["Proxy"]
+    A1[Client] --> P1[Shared L7 proxy] --> B1[Backends]
+  end
+  subgraph Library["Client library"]
+    A2["Client + gRPC LB policy"] --> B2[Backends]
+    D2[(Service registry)] -.->|endpoints| A2
+  end
+  subgraph Sidecar["Service-mesh sidecar"]
+    A3[Client] -->|localhost| E3[Envoy sidecar] --> B3[Backends]
+    CP3[Mesh control plane] -.->|xDS config| E3
+  end
+  subgraph Lookaside["Lookaside"]
+    A4[Client] --> B4[Backends]
+    LA4[Lookaside LB service] -.->|backend list and weights| A4
+    B4 -.->|load reports| LA4
+  end
+```
+
+## Chapter 20 — Caching
+
+**Figure 20.1 — The hit and miss paths of a cache in front of a database.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|HTTPS| S[App service]
+  S -->|1 GET key| R[(Cache<br/>RAM, about 0.3 ms)]
+  R -->|2a hit: value| S
+  S -->|2b miss: SQL query| DB[(Database<br/>2 to 20 ms)]
+  DB -->|3 rows| S
+  S -.->|4 SET key value TTL| R
+```
+
+**Figure 20.2 — Cache layers from the client to the database.**
+
+```mermaid
+flowchart LR
+  C([Browser or app<br/>HTTP cache]) -->|HTTPS| CDN{{CDN edge<br/>Chapter 21}}
+  CDN -->|cache miss| GW[API gateway<br/>response cache]
+  GW --> S[App service<br/>in-process L1]
+  S -->|TCP RESP| R[(Remote cache L2<br/>Redis or Memcached)]
+  S -->|SQL on miss| DB[(Database<br/>buffer pool, §13.4)]
+  DB --> DISK[(Disk<br/>OS page cache)]
+```
+
+**Figure 20.3 — Redis's event loop with I/O threads.**
+
+```mermaid
+flowchart LR
+  C1([Client A]) -->|RESP over TCP| IO1[I/O thread 1<br/>read and parse]
+  C2([Client B]) -->|RESP over TCP| IO2[I/O thread 2<br/>read and parse]
+  IO1 -->|parsed command| M[Main thread<br/>execute commands in order]
+  IO2 -->|parsed command| M
+  M -->|lookup and mutate| KS[(Keyspace<br/>hash table in RAM)]
+  M -->|reply buffers| IO1
+  M -.->|free large values, fsync| BIO[Background threads]
+  M -.->|fork for RDB or AOF rewrite| CH[Child process]
+```
+
+**Figure 20.4 — Redis Cluster: hash slots, redirects and replicas.**
+
+```mermaid
+flowchart LR
+  C([Cluster-aware client<br/>slot map cache]) -->|"GET user:42, slot 9334"| P2[Primary B<br/>slots 5461-10922]
+  C -->|stale map: wrong node| P1[Primary A<br/>slots 0-5460]
+  P1 -->|MOVED 9334 to B| C
+  P3[Primary C<br/>slots 10923-16383]
+  P1 -.->|async replication| R1[(Replica A1)]
+  P2 -.->|async replication| R2[(Replica B1)]
+  P3 -.->|async replication| R3[(Replica C1)]
+  P1 <-.->|gossip cluster bus| P2
+  P2 <-.->|gossip cluster bus| P3
+```
+
+**Figure 20.5 — Memcached's slab allocator and per-class LRUs.**
+
+```mermaid
+flowchart LR
+  SET([set key, 110-byte item]) --> PICK{Smallest class<br/>with chunk at least 110 B}
+  PICK -->|class 2| C2[Slab class 2<br/>120-byte chunks]
+  C2 --> PG1[1 MB page<br/>8,738 chunks]
+  C2 --> LRU2[Class 2 LRU<br/>HOT, WARM, COLD]
+  C1[Slab class 1<br/>96-byte chunks] --> PG0[1 MB page]
+  C3[Slab class 3<br/>152-byte chunks] --> PG2[1 MB page]
+  LRU2 -.->|class full: evict COLD tail| C2
+  AUTO[Slab rebalancer] -.->|move pages between classes| C3
+```
+
+**Figure 20.6 — Cache-aside read and write paths.**
+
+```mermaid
+sequenceDiagram
+  participant A as App
+  participant R as Cache
+  participant D as Database
+  A->>R: GET user:42
+  R-->>A: miss
+  A->>D: SELECT row 42
+  D-->>A: row v1
+  A->>R: SET user:42 v1 with TTL
+  Note over A,D: later, a write
+  A->>D: UPDATE row 42 to v2
+  D-->>A: committed
+  A->>R: DEL user:42
+```
+
+**Figure 20.7 — The stale-set race in cache-aside.**
+
+```mermaid
+sequenceDiagram
+  participant R1 as Reader
+  participant C as Cache
+  participant D as Database
+  participant W as Writer
+  R1->>C: GET k
+  C-->>R1: miss
+  R1->>D: SELECT k
+  D-->>R1: v1
+  W->>D: UPDATE k to v2
+  D-->>W: committed
+  W->>C: DEL k
+  R1->>C: SET k v1
+  Note over C: cache holds v1 until TTL, database holds v2
+```
+
+**Figure 20.8 — Read-through.**
+
+```mermaid
+sequenceDiagram
+  participant A as App
+  participant L as Cache with loader
+  participant D as Database
+  A->>L: get user:42
+  L->>L: lookup misses
+  L->>D: loader reads row 42
+  D-->>L: row v1
+  L->>L: store v1 with TTL
+  L-->>A: v1
+  A->>L: get user:42 again
+  L-->>A: v1 from memory
+```
+
+**Figure 20.9 — Write-through.**
+
+```mermaid
+sequenceDiagram
+  participant A as App
+  participant L as Cache layer
+  participant D as Database
+  A->>L: put user:42 v2
+  L->>D: UPDATE row 42 to v2
+  D-->>L: committed
+  L->>L: store v2
+  L-->>A: ok
+  A->>L: get user:42
+  L-->>A: v2, fresh
+```
+
+**Figure 20.10 — Write-back.**
+
+```mermaid
+sequenceDiagram
+  participant A as App
+  participant L as Cache with dirty set
+  participant D as Database
+  A->>L: put counter:7 plus 1
+  L-->>A: ok, 0.2 ms
+  A->>L: put counter:7 plus 1
+  L-->>A: ok
+  Note over L: flush every 5 s, coalescing writes
+  L-)D: UPDATE counter 7 by 2 in one batch
+  D--)L: committed
+  L->>L: mark clean
+```
+
+**Figure 20.11 — Write-around.**
+
+```mermaid
+sequenceDiagram
+  participant A as App
+  participant R as Cache
+  participant D as Database
+  A->>D: INSERT log row 9001
+  D-->>A: committed
+  A->>R: DEL row:9001 if present
+  Note over R: nothing new is cached on write
+  A->>R: GET row:9001 on first read
+  R-->>A: miss
+  A->>D: SELECT row 9001
+  D-->>A: row
+  A->>R: SET row:9001 with TTL
+```
+
+## Chapter 21 — Content Delivery Networks
+
+**Figure 21.1 — A CDN: users, PoPs, mid-tier and origin.**
+
+```mermaid
+flowchart LR
+  U1([User in Sydney]) -->|HTTPS| P1
+  U2([User in Paris]) -->|HTTPS| P2
+  subgraph P1["PoP Sydney"]
+    L1[L4 load balancer] --> S1[Cache servers]
+  end
+  subgraph P2["PoP Paris"]
+    L2[L4 load balancer] --> S2[Cache servers]
+  end
+  S1 -->|miss| M1[Mid-tier Singapore]
+  S2 -->|miss| M2[Mid-tier Frankfurt]
+  M1 -->|miss| SH[Origin shield Virginia]
+  M2 -->|miss| SH
+  SH -->|miss, HTTPS| O[(Origin: object storage<br/>or app servers)]
+  CTL[CDN control plane] -.->|config, purges| P1
+  CTL -.->|config, purges| P2
+```
+
+**Figure 21.2 — Request routing with DNS mapping versus anycast.**
+
+```mermaid
+flowchart TB
+  subgraph DNSMode["DNS-based mapping"]
+    C1([Client]) -->|1 query| R1[Recursive resolver]
+    R1 -->|2 query + client subnet| A1{{CDN authoritative DNS}}
+    MAP[Mapping system] -.->|measurements, load| A1
+    A1 -->|3 IP of chosen PoP, TTL 20 s| R1
+    R1 -->|4 answer| C1
+    C1 -->|5 HTTPS to unicast IP| PA[PoP A]
+  end
+  subgraph AnyMode["Anycast"]
+    C2([Client]) -->|1 query| R2[Recursive resolver]
+    R2 -->|2 same IP for everyone| C2
+    C2 -->|3 HTTPS to anycast IP| BGP{BGP best path}
+    BGP --> PB[Nearest PoP B]
+    BGP -.->|if B withdraws| PC[Next PoP C]
+  end
+```
+
+**Figure 21.3 — A cache hit and a cache miss at an edge PoP.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant E as Edge PoP
+  participant S as Origin shield
+  participant O as Origin
+  C->>E: GET /p/42.jpg over TLS, nearby
+  alt Hit and fresh
+    E-->>C: 200 OK, Age 120, from cache
+  else Miss at edge
+    E->>S: GET /p/42.jpg over warm connection
+    alt Hit at shield
+      S-->>E: 200 OK
+    else Miss at shield
+      S->>O: GET /p/42.jpg
+      O-->>S: 200 OK, Cache-Control, ETag
+      S-->>E: 200 OK
+    end
+    E->>E: store under cache key
+    E-->>C: 200 OK, streamed as it arrives
+  end
+```
+
+**Figure 21.4 — Origin traffic without and with a shield.**
+
+```mermaid
+flowchart LR
+  subgraph NoShield["Without shield"]
+    A1[PoP Tokyo] -->|miss| O1[(Origin)]
+    A2[PoP Paris] -->|miss| O1
+    A3[PoP Lima] -->|miss| O1
+  end
+  subgraph WithShield["With shield"]
+    B1[PoP Tokyo] -->|miss| SH[Shield near origin]
+    B2[PoP Paris] -->|miss| SH
+    B3[PoP Lima] -->|miss| SH
+    SH -->|one fetch, collapsed| O2[(Origin)]
+  end
+```
+
+**Figure 21.5 — Life of a cached response at the edge.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Fresh: stored after 200 OK
+  Fresh --> Fresh: hit, served from cache
+  Fresh --> Stale: age reaches s-maxage
+  Stale --> Revalidating: request arrives
+  Stale --> Evicted: LRU pressure
+  Revalidating --> Fresh: 304, reset age
+  Revalidating --> Fresh: 200, new body
+  Revalidating --> ServedStale: origin 5xx, within stale-if-error
+  ServedStale --> Revalidating: retry later
+  Fresh --> Evicted: purge
+  Evicted --> [*]
+```
+
+**Figure 21.6 — Tag-based purge propagation.**
+
+```mermaid
+sequenceDiagram
+  participant App as PhotoShare app
+  participant API as CDN purge API
+  participant Bus as CDN control plane
+  participant P1 as PoP Tokyo
+  participant P2 as PoP Paris
+  App->>API: POST purge tag photo-42
+  API-->>App: 200 accepted, purge id
+  API-)Bus: publish purge photo-42
+  Bus-)P1: purge photo-42
+  Bus-)P2: purge photo-42
+  P1->>P1: drop or mark stale all keys tagged photo-42
+  P2->>P2: drop or mark stale all keys tagged photo-42
+  Note over P1,P2: next request misses and refetches
+```
+
+**Figure 21.7 — Dynamic site acceleration.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client, Sydney
+  participant E as Edge, Sydney
+  participant O as Origin, Virginia
+  Note over E,O: pooled TLS connections, open for hours
+  C->>E: TCP SYN, 10 ms RTT
+  E-->>C: SYN-ACK
+  C->>E: TLS 1.3 handshake, 1 RTT
+  E-->>C: handshake done
+  C->>E: POST /api/like
+  E->>O: forward on warm connection, 200 ms RTT
+  O-->>E: 200 OK
+  E-->>C: 200 OK
+```
+
+**Figure 21.8 — HLS and DASH structure on a CDN.**
+
+```mermaid
+flowchart TB
+  P([Player]) -->|1 GET master.m3u8 or .mpd| CDN[CDN edge]
+  P -->|2 GET 720p/playlist.m3u8| CDN
+  P -->|3 GET 720p/seg_101.m4s| CDN
+  P -->|4 GET 1080p/seg_102.m4s| CDN
+  CDN -->|miss| SH[Shield]
+  SH -->|miss| PKG[Packager]
+  ENC[Encoder: ladder of renditions] -.->|CMAF segments| PKG
+  PKG -->|store VOD| OS[(Object storage)]
+```
+
+**Figure 21.9 — The ABR control loop.**
+
+```mermaid
+flowchart LR
+  NET{{Network path}} -->|segment bytes| DL[Downloader]
+  DL -->|throughput sample| EST[Throughput estimator]
+  DL -->|adds seconds| BUF[(Playback buffer)]
+  BUF -->|drains in real time| PLAY[Decoder and screen]
+  BUF -->|buffer level| ABR{ABR rule}
+  EST -->|estimate| ABR
+  ABR -->|next rendition| DL
+```
+
+**Figure 21.10 — Open Connect: control plane in the cloud, bytes from the ISP.**
+
+```mermaid
+flowchart LR
+  C([Netflix client]) -->|1 browse, press play| AWS[Control plane in AWS]
+  AWS -->|2 URLs of chosen OCAs| C
+  C -->|3 HTTPS video segments| OCA1[Embedded OCA in ISP]
+  C -.->|fallback| OCA2[OCA at exchange point]
+  S3[(Origin storage in AWS)] -.->|nightly fill window| OCA2
+  OCA2 -.->|tier fill| OCA1
+  OCA1 -.->|health, cache contents| AWS
+```
+
+## Chapter 22 — API and Traffic Management
+
+**Figure 22.1 — Layered rate limiting for the PhotoShare API.**
+
+```mermaid
+flowchart LR
+  C([Third-party app<br/>SDK self-pacing]) -->|HTTPS| EDGE["CDN and WAF<br/>per-IP flood limits"]
+  EDGE -->|HTTPS| GW["API gateway<br/>per-key and per-tenant quotas"]
+  GW -->|check and count| RL[(Shared counters<br/>Redis)]
+  GW -->|HTTP| UP["Upload service<br/>cost-based limit"]
+  UP -->|SQL| DB[(Metadata DB)]
+  UP -.->|async| Q[[Thumbnail queue]]
+  GW -->|429 plus Retry-After| C
+```
+
+**Figure 22.2 — Token bucket admission decision.**
+
+```mermaid
+flowchart LR
+  R([Request for key k]) --> F["Refill lazily<br/>tokens += elapsed x r, cap b"]
+  F --> D{tokens at least cost?}
+  D -->|yes| A["Subtract cost<br/>admit request"]
+  D -->|no| X["Reject 429<br/>Retry-After = deficit / r"]
+  A --> S[(Store tokens, last)]
+  X --> S
+```
+
+**Figure 22.3 — Leaky bucket as a queue versus as a meter.**
+
+```mermaid
+flowchart LR
+  subgraph AsQueue["Leaky bucket as a queue"]
+    A1([Bursty arrivals]) --> B1[[FIFO buffer size Q]]
+    B1 -->|drain at rate r| S1[Downstream]
+    B1 -->|buffer full| X1[Drop]
+  end
+  subgraph AsMeter["Leaky bucket as a meter - GCRA"]
+    A2([Bursty arrivals]) --> M2{"Arrived after<br/>TAT minus tau?"}
+    M2 -->|yes, TAT += T| S2[Downstream]
+    M2 -->|no| X2[Reject 429]
+  end
+```
+
+**Figure 22.4 — The fixed-window boundary burst.**
+
+```mermaid
+flowchart LR
+  subgraph W1["Window 1: 00:00 to 00:59"]
+    A["00:00 to 00:58<br/>0 requests"] --> B["00:59<br/>100 requests, count 100"]
+  end
+  subgraph W2["Window 2: 01:00 to 01:59"]
+    C["01:00<br/>counter reset, 100 more"] --> D["01:01 to 01:59<br/>all rejected"]
+  end
+  B -->|boundary| C
+```
+
+**Figure 22.5 — The read-modify-write race in a shared counter.**
+
+```mermaid
+sequenceDiagram
+  participant G1 as Gateway 1
+  participant G2 as Gateway 2
+  participant R as Redis
+  G1->>R: GET count - returns 99
+  G2->>R: GET count - returns 99
+  Note over G1,G2: both see 99, below limit 100
+  G1->>R: SET count 100
+  G2->>R: SET count 100
+  Note over R: two requests admitted, count shows 100
+```
+
+**Figure 22.6 — Centralized rate limiting with an atomic script.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as Gateway node
+  participant R as Redis shard for key
+  participant S as Upload service
+  C->>G: POST /v1/photos with API key
+  G->>R: EVALSHA token_bucket key 10 20 1
+  R-->>G: allowed 1, retry_after 0
+  G->>S: forward request
+  S-->>G: 201 Created
+  G-->>C: 201 plus RateLimit headers
+  C->>G: next request, bucket empty
+  G->>R: EVALSHA token_bucket key 10 20 1
+  R-->>G: allowed 0, retry_after 0.1
+  G-->>C: 429 Retry-After 1
+```
+
+**Figure 22.7 — Local enforcement with synchronization or quota leases.**
+
+```mermaid
+flowchart LR
+  LB[Load balancer] --> N1["Gateway 1<br/>local bucket"]
+  LB --> N2["Gateway 2<br/>local bucket"]
+  LB --> N3["Gateway N<br/>local bucket"]
+  N1 -.->|demand report every delta| CO["Quota coordinator"]
+  N2 -.->|demand report| CO
+  N3 -.->|demand report| CO
+  CO -.->|new allowance| N1
+  CO -.->|new allowance| N2
+  CO -.->|new allowance| N3
+  CO --> ST[(Quota state)]
+```
+
+**Figure 22.8 — Overload control at a service: priority shedding and an adaptive queue.**
+
+```mermaid
+flowchart LR
+  C([Requests with<br/>criticality tag]) --> AC{"Utilization above<br/>shed threshold?"}
+  AC -->|no| Q[[Request queue]]
+  AC -->|yes, sheddable| R503[Reject 503 fast]
+  AC -->|yes, critical| Q
+  Q --> M{"Queue non-empty<br/>for 100 ms?"}
+  M -->|no: FIFO, max wait 100 ms| W[Worker pool]
+  M -->|yes: LIFO, max wait 5 ms| W
+  Q -->|wait limit exceeded| R503
+  W --> DB[(Data store)]
+```
+
+**Figure 22.9 — Backpressure through a processing pipeline.**
+
+```mermaid
+flowchart LR
+  P[Producer service] -->|push up to n items| B1[[Bounded buffer 100]]
+  B1 --> T[Transformer]
+  T -->|push| B2[[Bounded buffer 100]]
+  B2 --> K[Sink writer]
+  K -->|writes| DB[(Database)]
+  K -.->|request n| T
+  T -.->|request n| P
+```
+
+## Chapter 23 — Performance Engineering
+
+**Figure 23.1 — The USE method procedure.**
+
+```mermaid
+flowchart TD
+  S([Start: performance complaint]) --> ID[Identify resources:<br/>hardware and software]
+  ID --> CH[Choose next resource]
+  CH --> E{Errors present?}
+  E -->|yes| INV[Investigate discovery]
+  E -->|no| U{High utilization?}
+  U -->|yes| INV
+  U -->|no| SA{Saturation present?}
+  SA -->|yes| INV
+  SA -->|no| ALL{All resources checked?}
+  INV --> OK{Problem explained?}
+  OK -->|yes| DONE([Fix, then re-measure])
+  OK -->|no| ALL
+  ALL -->|no| CH
+  ALL -->|yes| OUT[Bottleneck is external<br/>or in the workload]
+```
+
+**Figure 23.2 — Workflow from symptom to cause.**
+
+```mermaid
+flowchart TD
+  SYM([Symptom: SLO burn or user report]) --> SCOPE[Scope it: which endpoint,<br/>which percentile, since when?]
+  SCOPE --> CHG{Correlates with a<br/>deploy, config or traffic change?}
+  CHG -->|yes| ROLL[Roll back or bisect the change]
+  CHG -->|no| RED[RED per service in the call graph]
+  RED --> SVC[Slowest contributing service]
+  SVC --> USE[USE on its resources]
+  USE --> SAT{Resource saturated?}
+  SAT -->|CPU busy| ON[On-CPU profile:<br/>flame graph]
+  SAT -->|nothing busy| OFF["Off-CPU profile, traces,<br/>lock and pool waits"]
+  SAT -->|memory or GC| MEM[Allocation profile, GC logs]
+  ON --> HYP[Hypothesis and fix]
+  OFF --> HYP
+  MEM --> HYP
+  ROLL --> VER
+  HYP --> VER[Verify with load test<br/>and production percentiles]
+  VER -.->|not fixed| SCOPE
+```
+
+**Figure 23.3 — From samples to a flame graph.**
+
+```mermaid
+flowchart LR
+  APP[Running service] -->|timer interrupt 99 Hz| PERF["Sampler<br/>perf, eBPF, py-spy,<br/>async-profiler"]
+  PERF -->|raw stacks| RAW[(Profile file)]
+  RAW --> SYM[Symbolize:<br/>addresses to names]
+  SYM --> COL["Collapse: one line per<br/>unique stack + count"]
+  COL --> FG[Flame graph SVG]
+  FG --> ENG([Engineer: widest<br/>plateaus first])
+```
+
+**Figure 23.4 — On-CPU and off-CPU thread states.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Runnable
+  Runnable --> OnCPU: scheduled
+  OnCPU --> Runnable: preempted or quota throttled
+  OnCPU --> BlockedIO: read, write, RPC wait
+  OnCPU --> BlockedLock: mutex or pool wait
+  OnCPU --> Sleeping: timer, poll
+  BlockedIO --> Runnable: I/O completes
+  BlockedLock --> Runnable: lock released
+  Sleeping --> Runnable: wakeup
+  OnCPU --> [*]: request done
+```
+
+**Figure 23.5 — Open and closed load generators.**
+
+```mermaid
+flowchart LR
+  subgraph Open["Open model"]
+    SCH([Arrival schedule<br/>λ requests/s]) -->|HTTP, never waits| SUT1[System under test]
+    SUT1 -.->|responses recorded| REC1[(Latency histogram)]
+  end
+  subgraph Closed["Closed model"]
+    U([N users]) -->|request| SUT2[System under test]
+    SUT2 -->|response| TH[Think time Z]
+    TH -->|next request| U
+    SUT2 -.-> REC2[(Latency histogram)]
+  end
+```
+
+**Figure 23.6 — How a closed-loop tester omits the stall.**
+
+```mermaid
+sequenceDiagram
+  participant G as Load generator
+  participant S as Server
+  Note over G,S: Plan: one request every 2 ms
+  G->>S: request 1 at t=0
+  S-->>G: reply at t=1 ms
+  G->>S: request 2 at t=2 ms
+  Note over S: stall 1.5 s
+  Note over G: requests due at 4, 6, 8 ms... never sent
+  S-->>G: reply at t=1502 ms
+  Note over G: records ONE slow sample
+  G->>S: request 3 at t=1502 ms
+  S-->>G: reply at t=1503 ms
+```
+
+**Figure 23.7 — Where variability enters a request.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|TCP| LB[Load balancer]
+  LB -->|"loss: 200 ms RTO"| APP[Service instance]
+  APP -->|RPC| DEP[Dependency]
+  DEP --> DB[(Storage)]
+  N1["Noisy neighbor,<br/>CPU quota throttling"] -.-> APP
+  N2["GC pause, JIT,<br/>lock convoy"] -.-> APP
+  N3["Queueing behind<br/>a large request"] -.-> DEP
+  N4["Compaction, SSD GC,<br/>backups, log rotation"] -.-> DB
+```
+
+**Figure 23.8 — A hedged request.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant A as Replica A
+  participant B as Replica B
+  C->>A: GET key
+  Note over A: GC pause
+  Note over C: no reply within d = p95
+  C->>B: GET key (hedge)
+  B-->>C: value
+  C-)A: cancel (best effort)
+  A-->>C: late value, discarded
+```
+
+**Figure 23.9 — Tied requests with cross-server cancellation.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant A as Server A
+  participant B as Server B
+  C->>A: req tied to B
+  C->>B: req tied to A, after ~1 ms
+  Note over A: dequeues first
+  A-)B: cancel req
+  Note over B: removes queued copy
+  A-->>C: response
+```
+
+**Figure 23.10 — A batcher with size and time triggers.**
+
+```mermaid
+flowchart LR
+  P([Producers]) -->|items at rate λ| BUF[[Batch buffer]]
+  BUF --> D{"Size ≥ B_max<br/>or age ≥ T_max?"}
+  D -->|yes| SEND[Flush one batch:<br/>cost t0 + B·t1]
+  D -->|no| BUF
+  SEND -->|one RPC or write| SINK[(Broker or disk)]
+```
+
+**Figure 23.11 — Generational heap.**
+
+```mermaid
+flowchart LR
+  A([Allocation]) -->|bump pointer| E[Eden]
+  E -->|minor GC: copy live| SV[Survivor spaces]
+  SV -->|survives N collections| OLD[Old generation]
+  E -.->|dead objects| FREE([Reclaimed])
+  OLD -->|major or concurrent GC| FREE
+  OLD -.->|write barrier records<br/>old-to-young refs| CARD[[Card table]]
+```
+
+**Figure 23.12 — Capacity modeling workflow.**
+
+```mermaid
+flowchart LR
+  B["Steady-state runs<br/>at N = 1, 2, 4 ... 64"] --> M[(Throughput per N)]
+  M --> F["Fit USL:<br/>γ, α, β"]
+  F --> V{Residuals small,<br/>N* inside range?}
+  V -->|no| B
+  V -->|yes| K["Peak N* and X_max;<br/>choose operating point"]
+  K --> FL["Fleet size: peak RPS,<br/>growth, headroom, zones"]
+  FL -.->|production telemetry| M
+```

@@ -1,0 +1,12 @@
+%% Figure 22.3 — Leaky bucket as a queue versus as a meter
+flowchart LR
+  subgraph AsQueue["Leaky bucket as a queue"]
+    A1([Bursty arrivals]) --> B1[[FIFO buffer size Q]]
+    B1 -->|drain at rate r| S1[Downstream]
+    B1 -->|buffer full| X1[Drop]
+  end
+  subgraph AsMeter["Leaky bucket as a meter - GCRA"]
+    A2([Bursty arrivals]) --> M2{"Arrived after<br/>TAT minus tau?"}
+    M2 -->|yes, TAT += T| S2[Downstream]
+    M2 -->|no| X2[Reject 429]
+  end
