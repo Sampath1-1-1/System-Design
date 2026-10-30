@@ -132,3 +132,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-125 | 23 | Facebook Kraken (OSDI 2016) description; Discord two-minute forced GC (Go) | Open | |
 | UQ-126 | 23 | Compression table values (zstd README, 2026); JVM collector version dates; Go GC 25% marking CPU target | Open | Time-sensitive |
 | UQ-127 | 23 | Venue/year for Tene's "How NOT to Measure Latency" talk | Open | |
+| UQ-128 | 20 | Nishtala et al. (NSDI 2013) figures: one lease token per 10 s per key; peak DB queries 17K/s → 1.3K/s; gutter pool ≈1% of servers (secondary summaries only) | Open | |
+| UQ-129 | 20 | Zipf exponent range reported by Breslau et al. (1999) | Open | |
+| UQ-130 | 20 | Valkey 8.0 1.2M req/s figure (vendor benchmark on AWS r7g); Redis license timeline (dual license from 7.4, AGPLv3 option from 8.0) | Open | Time-sensitive |
+| UQ-131 | 20 | Whether Caffeine randomizes admission to resist hash flooding | Open | |
+| UQ-132 | 20 | URLs: MySQL query-cache removal post; Linux Foundation Valkey press release; Redis licensing blog posts | Open | Merge with UQ-082 |

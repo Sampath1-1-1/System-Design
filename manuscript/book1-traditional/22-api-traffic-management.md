@@ -991,7 +991,7 @@ What to notice:
 **Definition — Load shedding and throttling.** **Load shedding** is a server rejecting some requests early and cheaply (usually with 503) because accepting them would push it past capacity, regardless of whether each client is within its quota. **Throttling** is slowing a client down, by delaying or rejecting its requests; rate limiting is the quota-based form. **Goodput** is the rate of requests completed *usefully*: correctly and before the client gave up.
 :::
 
-A restaurant kitchen that accepts every order on a busy night ends up serving every dish late and cold; customers leave before their food arrives, so the kitchen works at full speed while producing nothing useful. A kitchen that tells new arrivals "45-minute wait, or try tomorrow" keeps serving the seated customers well. That is load shedding. The AWS Builders' Library describes exactly this failure: once latency exceeds client timeouts, a server can be 100% busy with throughput at its maximum while goodput falls toward zero, because every response arrives after the client stopped waiting [Yanacek: load shedding].
+A kitchen that accepts every order on a busy night serves every dish late; diners leave before food arrives, so it works flat out producing nothing useful. Turning new arrivals away keeps the seated diners served. The AWS Builders' Library describes this failure: once latency exceeds client timeouts, a server can run at maximum throughput while goodput falls toward zero [Yanacek: load shedding].
 
 ::: formula
 **Time until goodput collapses without shedding**
@@ -1016,14 +1016,14 @@ $$q(t) = (\lambda - \mu)\,t, \qquad w(t) = \frac{q(t)}{\mu}, \qquad t_{\text{col
 3. From then on the server still completes 1,000 requests/s, but goodput is roughly zero. Worse, clients retry, raising $\lambda$ further (§22.12).
 4. With shedding (a queue bounded at 200 requests, i.e. at most $200/1{,}000 = 200$ ms of waiting), the server rejects the excess 500 RPS in microseconds and goodput stays at 1,000 RPS.
 
-**Interpretation.** Unbounded queueing turns a 50% overload into a 100% outage in two seconds. **Engineering implication.** Bound every queue by *time* (the client's timeout), reject at the front door when the bound is reached, and make rejection far cheaper than service.
+**Interpretation.** Unbounded queueing turns a 50% overload into a total outage in two seconds. **Engineering implication.** Bound queues by *time*, and make rejection far cheaper than service.
 :::
 
 ### 22.9.2 Priority-based shedding
 
-Not all requests are equal. When PhotoShare is overloaded, a user's photo upload and checkout matter more than a background prefetch of recommendations or an analytics ping. **Priority-based shedding** assigns each request a **criticality** class at the edge and propagates it through the call graph; as load rises, the server sheds the lowest class first. Google's SRE book describes four classes: `CRITICAL_PLUS`, `CRITICAL`, `SHEDDABLE_PLUS` and `SHEDDABLE`, propagated automatically with RPCs [Beyer et al. 2016, ch. 21]. Stripe's worker-utilization load shedder similarly sheds test-mode and other lower-priority traffic before critical API methods [Tarjan 2017].
+An upload or checkout matters more than a recommendations prefetch. **Priority-based shedding** tags each request with a **criticality** class at the edge, propagates it, and sheds the lowest class first. Google's SRE book describes four classes: `CRITICAL_PLUS`, `CRITICAL`, `SHEDDABLE_PLUS` and `SHEDDABLE`, propagated automatically with RPCs [Beyer et al. 2016, ch. 21]. Stripe's worker-utilization load shedder similarly sheds test-mode and other lower-priority traffic before critical API methods [Tarjan 2017].
 
-Clients can shed load too. The SRE book's **client-side adaptive throttling** has each client track, over the last two minutes, how many requests it sent and how many the backend accepted, and drop requests locally with a probability that rises as rejections grow.
+Clients can shed too. In the SRE book's **client-side adaptive throttling**, each client tracks requests sent and accepted over the last two minutes and drops requests locally as rejections grow.
 
 ::: formula
 **Client-side adaptive throttling (Google SRE)**
@@ -1045,14 +1045,14 @@ $$P_{\text{reject}} = \max\!\left(0,\ \frac{\text{requests} - K \cdot \text{acce
 2. $P_{\text{reject}} = (10{,}000 - 8{,}000)/10{,}001 = 0.20$.
 3. The client now drops 20% of new requests locally at zero network cost. If the backend recovers and accepts everything, $\text{requests} < 2 \times \text{accepts}$ and $P_{\text{reject}}$ returns to 0.
 
-**Interpretation.** The client keeps sending until it sends about $K$ times what the backend accepts, so the backend still sees enough traffic to signal recovery. **Engineering implication.** Lower $K$ sheds more aggressively (less wasted backend work, slower recovery); $K = 2$ is a sensible default.
+**Interpretation.** The client sends about $K$ times what the backend accepts, enough to detect recovery. **Engineering implication.** Lower $K$ sheds harder but recovers slower; $K = 2$ is a sensible default.
 :::
 
 ### 22.9.3 Controlling queue delay: CoDel and adaptive LIFO
 
-Queue *length* is a poor overload signal because a long queue of fast requests is harmless and a short queue of slow ones is not. **CoDel** (Controlled Delay), designed by Nichols and Jacobson for network routers, watches the time packets spend in the queue (their *sojourn time*). If the *minimum* sojourn time over an interval (100 ms by default) stays above a target (5 ms), the queue is a standing queue rather than a passing burst, and CoDel starts dropping, with the gap between drops shrinking as $\text{interval}/\sqrt{n}$ for the $n$-th drop: 100 ms, 70.7 ms, 57.7 ms, 50 ms, until the delay falls below target [Nichols and Jacobson 2012].
+Queue *length* is a poor overload signal; queue *delay* is better. **CoDel** (Controlled Delay), designed by Nichols and Jacobson for network routers, watches the time packets spend in the queue (their *sojourn time*). If the *minimum* sojourn time over an interval (100 ms by default) stays above a target (5 ms), the queue is a standing queue rather than a passing burst, and CoDel starts dropping, with the gap between drops shrinking as $\text{interval}/\sqrt{n}$ for the $n$-th drop: 100 ms, 70.7 ms, 57.7 ms, 50 ms, until the delay falls below target [Nichols and Jacobson 2012].
 
-Facebook adapted the idea to RPC server queues and combined it with **adaptive LIFO** [Maurer 2015]. Normally the queue is FIFO. When the queue has not been empty for the last $N$ ms (100 ms worked well for Facebook), each request may wait at most $M$ ms (5 ms) before being rejected, and the queue switches to **LIFO**, serving the newest request first. The newest request is the one whose client is most likely still waiting; the oldest have probably timed out already, so serving them first would produce work nobody receives.
+Facebook adapted this to RPC queues with **adaptive LIFO** [Maurer 2015]: when the queue has not been empty for $N$ ms (100 ms), requests may wait at most $M$ ms (5 ms), and the queue switches to **LIFO**, because the newest request's client is the one most likely still waiting.
 
 **Figure 22.8 — Overload control at a service: priority shedding and an adaptive queue.**
 
@@ -1069,10 +1069,10 @@ flowchart LR
   W --> DB[(Data store)]
 ```
 
-**Reading the diagram.** Requests arrive tagged with a criticality class set at the edge. An admission check compares current utilization (for example, busy workers over pool size) with a threshold: below it everything is queued; above it sheddable requests are rejected with a fast 503, while critical ones are still queued. The queue's discipline adapts: while it drains regularly it is FIFO with a generous wait limit; once it has stayed non-empty for 100 ms it switches to LIFO with a 5 ms limit, and requests exceeding their wait limit are rejected. Workers process requests synchronously against the data store. Failure points: misclassified traffic (everything tagged critical defeats the scheme), and a threshold set above the point where latency explodes. Scaling: these controls are local to each instance and need no coordination.
+**Reading the diagram.** Requests carry a criticality tag. Above a utilization threshold, sheddable requests get a fast 503 while critical ones are queued. The queue is FIFO while it drains regularly and LIFO with a 5 ms wait limit once it has stayed non-empty for 100 ms; requests over their limit are rejected. Workers call the data store synchronously. Failure points: tagging everything critical, or a threshold above where latency explodes. Scaling: all controls are per instance.
 
 ::: mistake
-**Mistake — "Autoscaling makes load shedding unnecessary."** New instances take tens of seconds to minutes to start and warm up, while a queue can blow past client timeouts in two seconds (§22.9.1). Autoscaling fixes sustained overload; shedding survives the minutes until it does. You need both.
+**Mistake — "Autoscaling makes load shedding unnecessary."** Instances take minutes to start; a queue passes client timeouts in seconds (§22.9.1). You need both.
 :::
 
 ## 22.10 Backpressure
@@ -1081,9 +1081,9 @@ flowchart LR
 **Definition — Backpressure.** A flow-control mechanism in which a slower downstream component signals upstream components to reduce their sending rate, by blocking, by advertising available capacity, or by rejecting, so that work in progress stays bounded instead of piling up in unbounded buffers.
 :::
 
-On a factory assembly line, if the packing station falls behind, the line stops feeding it rather than heaping unpacked goods on the floor. The heap is an unbounded queue: it hides the problem, consumes space, and makes everything in it late. Backpressure is the stop signal travelling upstream.
+When a packing station falls behind, the assembly line stops feeding it rather than heaping goods on the floor (an unbounded queue). Backpressure is that stop signal travelling upstream.
 
-TCP is the canonical example (§7.7.6): the receiver advertises its free buffer space as the receive window; when the application stops reading, the window drops to zero and the sender's `write()` blocks. Backpressure propagates automatically from a slow consumer to the producer's application. Systems break this chain whenever they insert an **unbounded** buffer: an in-memory list that a request handler appends to, an `asyncio` task created per message without limit, a broker topic with no consumer-lag alerting. Each turns backpressure into memory growth and latency.
+TCP is the canonical example (§7.7.6): when the receiver stops reading, its advertised window drops to zero and the sender's `write()` blocks. Systems break the chain by inserting **unbounded** buffers (a list a handler appends to, a task per message), turning backpressure into memory growth and latency.
 
 Three rules give you backpressure at the application level:
 
@@ -1104,7 +1104,7 @@ flowchart LR
   T -.->|request n| P
 ```
 
-**Reading the diagram.** Items flow left to right from a producer through a transformer to a sink that writes to a database. Each hop has a bounded in-memory buffer (100 items). Demand flows right to left as asynchronous `request(n)` signals (dotted arrows): the sink requests more only when it has written what it holds, the transformer requests more from the producer only when it has demand from the sink. If the database slows, the sink's requests slow, the buffers fill and stay full, and the producer stops being asked for data, so memory use is bounded at about 200 items in flight. Failure points: any component that accepts data without demand (an unbounded buffer) breaks the chain. Scaling: add parallel sinks; the demand signal automatically lets the producer go faster.
+**Reading the diagram.** Items flow left to right through bounded in-memory buffers (100 items) to a sink that writes to a database. Demand flows right to left as asynchronous `request(n)` signals (dotted). If the database slows, the sink requests less, buffers fill, and the producer stops being asked, so at most about 200 items are in flight. Failure point: any component accepting data without demand. Scaling: add parallel sinks; demand rises automatically.
 
 ::: formula
 **Bounding a queue by time (Little's Law)**
@@ -1125,7 +1125,7 @@ $$Q_{\max} = \mu \times D_{\text{queue}}$$
 2. A request arriving behind 100 others waits $100/500 = 0.2$ s, the full budget; request 101 should be rejected immediately rather than queued to time out.
 3. If workers slow to $\mu = 250$/s (a slow database), the same 100-item queue now means 400 ms of waiting. Bound queues by *measured wait time* (as CoDel does) rather than by item count when service time varies.
 
-**Interpretation.** A queue longer than $\mu \times$ (timeout) holds only requests that are doomed to time out. **Engineering implication.** Default queue sizes in frameworks (often thousands, or unbounded) are almost always too large for interactive services.
+**Interpretation.** A queue longer than $\mu \times$ timeout holds only doomed requests. **Engineering implication.** Framework default queue sizes are usually far too large for interactive services.
 :::
 
 ## 22.11 Timeouts and deadlines
@@ -1134,9 +1134,9 @@ $$Q_{\max} = \mu \times D_{\text{queue}}$$
 **Definition — Timeout and deadline.** A **timeout** is a relative duration after which a caller stops waiting for one operation (for example 300 ms). A **deadline** is an absolute point in time by which the *whole* request must complete; it is passed along the call chain so that every downstream call knows how much time remains.
 :::
 
-Without a timeout, a caller waiting on a dead or hung dependency waits forever, holding a thread, a connection and memory; by Little's Law (§4.11) the pool of held resources grows until the caller itself stops responding. Every network call therefore needs a timeout: connection establishment (short, about one round trip plus margin), and the request as a whole.
+Without a timeout, a caller waits forever on a hung dependency, holding a thread and a connection; by Little's Law (§4.11) held resources grow until the caller itself stops. Every network call needs connect and request timeouts.
 
-**Choosing a timeout.** Set it from the dependency's measured latency distribution, not from intuition. The AWS Builders' Library recommends choosing an acceptable rate of false timeouts (for example 0.1%) and using the corresponding latency percentile (p99.9) of the downstream service, plus padding for network variance [Brooker: timeouts and retries]. Too short, and healthy-but-slow requests are cut off and retried, adding load; too long, and resources are held by requests nobody is waiting for.
+**Choosing a timeout.** Set it from the dependency's measured latency distribution, not from intuition. The AWS Builders' Library recommends choosing an acceptable rate of false timeouts (for example 0.1%) and using the corresponding latency percentile (p99.9) of the downstream service, plus padding for network variance [Brooker: timeouts and retries]. 
 
 **Why deadlines must propagate.** Suppose each hop independently uses a 1 s timeout. The user's app gives up after 1 s, but a service three hops down started 600 ms late and keeps working for its full second, then the database query beneath it keeps running too. All of that work is wasted. With **deadline propagation**, the edge sets an absolute deadline and each hop passes the *remaining* time downstream; gRPC does this automatically, sending the remaining time in the `grpc-timeout` header and failing calls with `DEADLINE_EXCEEDED` once it passes [gRPC Docs: deadlines]. Over HTTP you carry it in a header of your own. Each service should check the remaining budget before starting expensive work and refuse work it cannot finish in time [Beyer et al. 2016, ch. 22].
 
@@ -1176,7 +1176,7 @@ sequenceDiagram
   G-->>A: 503 within 1000 ms
 ```
 
-**Reading the diagram.** The mobile app waits at most 1,000 ms. Each hop subtracts the time it has already spent and a margin for its own response before passing the remaining budget downstream: 970, 830, then 780 ms for the external payment provider (hexagon in the architecture view; here a participant). All calls are synchronous. When the provider fails to answer within its budget, the payment service stops waiting and reports an *unknown outcome* (the charge may or may not have happened), and every hop still has its reserved margin to return an error before the app gives up. The storage boundary that matters is at the provider: its state is unknown, which is why the retry must carry an idempotency key (§22.15). Scaling: budgets are per request and need no shared state.
+**Reading the diagram.** The app waits at most 1,000 ms. Each hop subtracts elapsed time and a response margin before passing the budget on: 970, 830, then 780 ms for the external provider. All calls are synchronous. When the provider misses its budget, the payment service reports an *unknown outcome*, and every hop still has its margin to answer before the app gives up. The provider's state is the critical storage boundary, which is why retries need an idempotency key (§22.15). Budgets are per request and need no shared state.
 
 ::: example
 **Worked example — Budget for the purchase path, client deadline 1,000 ms.**
@@ -1197,7 +1197,7 @@ sequenceDiagram
 
 ### 22.12.1 When to retry
 
-Most failures in distributed systems are transient: a packet lost, a node restarting, a leader election (§26.5). Retrying converts many of these into successes at the cost of latency. But a retry is also *extra load sent to a system that just failed*, often because it was overloaded. Retry only when all of these hold:
+Retries turn transient failures (lost packets, restarts, elections) into successes, but each is *extra load on a system that just failed*. Retry only when all hold:
 
 1. The error is **retryable**: timeouts, connection resets, 429, 502, 503, 504, gRPC `UNAVAILABLE`. Never retry 400, 401, 403, 404 or 422; they will fail again.
 2. The operation is **idempotent** or carries an idempotency key (§22.15).
@@ -1206,7 +1206,7 @@ Most failures in distributed systems are transient: a packet lost, a node restar
 
 ### 22.12.2 Exponential backoff and jitter
 
-Waiting a fixed time before retrying keeps pressure constant on a struggling server. **Exponential backoff** doubles the wait after each failure, up to a cap. But if many clients failed at the same moment (because the server hiccupped for all of them), they all back off by identical amounts and retry in synchronized waves. **Jitter** randomizes the wait to spread the waves out. Brooker's analysis for the AWS Architecture Blog compared three variants [Brooker 2015]:
+**Exponential backoff** doubles the wait after each failure, up to a cap. Clients that failed together still retry in synchronized waves; **jitter** randomizes the wait to spread them. Brooker's analysis for the AWS Architecture Blog compared three variants [Brooker 2015]:
 
 ::: formula
 **Backoff with jitter (attempt $k = 1, 2, \dots$)**
@@ -1317,7 +1317,6 @@ What to notice:
 
 - **Without jitter, contention is quadratic.** The clients stay synchronized forever, so each wave lets exactly one through: $100 + 99 + \dots + 1 = 5{,}050$ calls, and the last client finishes after three minutes because waits hit the 2 s cap.
 - **Any jitter cuts work by 11×** (5,050 → about 460 calls) and completion time by over 300×. Full and decorrelated jitter are slightly better than equal jitter, matching Brooker's qualitative result; the exact numbers depend on the model.
-- The workload is pessimistic (one success per conflict window), but the shape of the result holds whenever many clients fail together.
 
 ### 22.12.3 Retry storms and amplification
 
@@ -1332,7 +1331,7 @@ flowchart LR
   L4 -->|up to 81| DB[(Overloaded database)]
 ```
 
-**Reading the diagram.** One user request enters at the left. Every layer is configured, reasonably in isolation, to make up to three attempts (one try plus two retries). When the database at the bottom fails every call, each layer's attempts multiply: 3 calls from the SDK to the gateway, 9 from the gateway to the feed service, 27 to the profile service and 81 to the database. All calls are synchronous. The failure point is the database, and the retries aim the multiplied load precisely at it, preventing recovery: a **retry storm**. The fix is structural: retry at one layer only (usually the one closest to the user or the one that knows the operation is idempotent), cap retries with budgets, and stop retrying when a circuit breaker opens (§22.13).
+**Reading the diagram.** Each layer, reasonably in isolation, makes up to three attempts. When the database fails every call, attempts multiply synchronously down the chain: 3, 9, 27, then 81 calls at the database, aimed precisely at the failing component: a **retry storm**. The fix is structural: retry at one layer, cap retries with budgets, and stop when a circuit breaker opens (§22.13).
 
 ::: formula
 **Retry amplification**
