@@ -87,3 +87,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-080 | 12 | DynamoDB limits and 89.2M requests/s Prime Day figure (Elhemali et al. 2022) | Open | |
 | UQ-081 | 12 | Cassandra ~100 MB partition guideline (community practice); tombstone thresholds and gc_grace_seconds defaults by version | Accepted | Labeled as guideline |
 | UQ-082 | 12 | Redis 8 AGPLv3 licensing option; InfluxDB 3 architecture (as of 2026) | Open | Time-sensitive |
+| UQ-083 | 13 | PostgreSQL debug_io_direct (v16) and v18 asynchronous I/O details; PG18 data checksums on by default; MySQL 8.4 O_DIRECT default on Linux (secondary sources) | Open | Version-dependent |
+| UQ-084 | 13 | PostgreSQL clock-sweep usage-count cap (5) and ring-buffer behavior | Open | |
+| UQ-085 | 13 | Matsunobu et al. (VLDB 2020, MyRocks) storage savings — number intentionally not quoted | Accepted | |
+| UQ-086 | 13 | Cassandra ~50% free-disk guidance for STCS; Cassandra 5.0 Unified Compaction Strategy | Open | |
+| UQ-087 | 13 | Uber blog URL (Postgres→MySQL migration post) still live | Open | |
+| UQ-088 | 13 | Compaction write-amplification formulas are a simplified average-case model by the author | Accepted | Labeled in text |

@@ -2,7 +2,7 @@
 
 > **Level:** 3 · **Track:** A (Traditional) · **Estimated reading time:** 3.5 h
 
-When you call `INSERT` on PostgreSQL, `Put` on RocksDB or `save()` on an ORM, a piece of software called the **storage engine** decides where those bytes live on disk, how they are found again, and what happens if the power fails halfway through. Two databases with the same SQL dialect can differ tenfold in write volume, disk space or tail latency purely because of their storage engines. This chapter opens the box: pages, buffer pools, write-ahead logs, B-trees and log-structured merge (LSM) trees, and the numbers that let you choose an engine for a workload instead of by reputation.
+When you call `INSERT` on PostgreSQL, `Put` on RocksDB or `save()` on an ORM, a piece of software called the **storage engine** decides where those bytes live on disk, how they are found again, and what happens if the power fails halfway through. Two databases with the same SQL dialect can differ tenfold in write volume, disk space or tail latency purely because of their storage engines. This chapter opens the box: pages, buffer pools, write-ahead logs, B-trees and log-structured merge (LSM) trees, and the numbers that let you choose an engine for a workload instead of by reputation. For book-length treatments, see [Petrov 2019] and chapter 3 of [Kleppmann 2017].
 
 ## 13.1 Learning objectives
 
@@ -501,7 +501,7 @@ flowchart TB
     P1["Parent: 30, 60"] --> L1["Leaf A: 30 32 34 36 38<br/>full"]
   end
   subgraph AFTER["After the split"]
-    P2["Parent: 30, 34, 60"] --> L2["Leaf A: 30 32 34"]
+    P2["Parent: 30, 35, 60"] --> L2["Leaf A: 30 32 34"]
     P2 --> L3["New leaf B: 35 36 38"]
     L2 -->|sibling link| L3
   end
@@ -1000,8 +1000,8 @@ Every byte is rewritten by compaction several times on its way down. Merging eag
 flowchart LR
   subgraph TIER["Size-tiered, T = 4"]
     direction TB
-    A1[(64 MB)] & A2[(64 MB)] & A3[(64 MB)] & A4[(64 MB)] -.->|merge 4 similar runs| B1[(256 MB run)]
-    B1 & B2[(256 MB)] & B3[(256 MB)] & B4[(256 MB)] -.->|merge 4 runs| C1[(1 GB run)]
+    A1[(64 MB)] & A2[(64 MB)] & A3[(64 MB)] & A4[(64 MB)] -.-> B1[(256 MB run<br/>merged from 4)]
+    B1 & B2[(256 MB)] & B3[(256 MB)] & B4[(256 MB)] -.-> C1[(1 GB run<br/>merged from 4)]
   end
   subgraph LEVEL["Leveled, T = 10"]
     direction TB
@@ -1154,7 +1154,7 @@ $$RA = \frac{\text{bytes read from storage}}{\text{bytes returned}}, \qquad WA =
 
 ### 13.12.1 Checksums
 
-Storage can return data that is not what was written: **bit rot**, firmware bugs, **misdirected writes** (correct data written to the wrong place) and **lost writes** (the device acknowledges a write that never happened). Engines detect these with checksums at every layer: a checksum in each page header verified on every read from disk (InnoDB uses CRC-32C by default; PostgreSQL stores a 16-bit page checksum, enabled by default by `initdb` from PostgreSQL 18); a CRC on every WAL record, so recovery stops at the first torn or corrupt record (as the toy LSM does in §13.8); and per-block checksums in SSTables, verified on read and during compaction. Page checksums detect corruption; they do not repair it. Repair comes from a replica, a backup, or — for torn writes — the mechanisms below.
+Storage can return the wrong bytes: **bit rot**, firmware bugs, **misdirected writes** and **lost writes** (acknowledged but never made). Engines checksum every layer: page headers, verified on each read (InnoDB CRC-32C by default; PostgreSQL's 16-bit page checksum, enabled by default by `initdb` from version 18); every WAL record, so recovery stops at the first torn record (as the toy LSM does); and every SSTable block. Checksums detect; repair comes from a replica, a backup or, for torn writes, the mechanisms below.
 
 ### 13.12.2 Torn writes
 
@@ -1162,13 +1162,13 @@ Storage can return data that is not what was written: **bit rot**, firmware bugs
 **Definition — Torn write (torn page).** A page write that is interrupted by a crash so that part of the page on disk is new and part is old. It arises because the database page (8 or 16 KiB) is larger than the unit the device or file system writes atomically (commonly 4 KiB or 512 bytes).
 :::
 
-A torn page is worse than an old page. Redo records are physiological ("insert at slot 3 of page 7"), so they assume a page that is internally consistent; applied to a half-old, half-new page they produce garbage. The engine needs an intact copy of the page from somewhere.
+Physiological redo records assume an internally consistent page; applied to a half-old, half-new page they produce garbage, so the engine needs an intact copy from somewhere.
 
 ### 13.12.3 Full-page writes and the doublewrite buffer
 
-**PostgreSQL full-page writes.** With `full_page_writes = on` (the default), the first modification of each page after a checkpoint writes an image of the *whole* page into the WAL. Recovery restores that image and then replays later records onto it, so a torn data page is simply overwritten [PostgreSQL Docs: WAL Configuration]. The cost is extra WAL right after every checkpoint, quantified in §13.5.3.
+**PostgreSQL full-page writes.** With `full_page_writes = on` (default), the first change to each page after a checkpoint logs the *whole* page; recovery restores the image and replays later records onto it [PostgreSQL Docs: WAL Configuration]. The cost is extra WAL after each checkpoint (§13.5.3).
 
-**InnoDB doublewrite buffer.** Before writing dirty pages to their home locations, InnoDB writes them to a sequential **doublewrite** area and flushes it; only then does it write each page in place. If a crash tears a page in place, recovery finds an intact copy in the doublewrite area. Data is written twice, but the doublewrite writes are large sequential batches with one flush, so the throughput cost is much less than 2× [MySQL Docs: Doublewrite Buffer].
+**InnoDB doublewrite buffer.** Dirty pages are first written sequentially to a **doublewrite** area and flushed, then written in place; a page torn in place is restored from its intact copy. Because the extra writes are sequential batches with one flush, the cost is well under 2× [MySQL Docs: Doublewrite Buffer].
 
 **Figure 13.10 — InnoDB doublewrite protecting against a torn page.**
 
@@ -1187,9 +1187,9 @@ sequenceDiagram
   R->>TS: restore page 7, then apply redo log
 ```
 
-**Reading the diagram.** Three storage participants and the recovery procedure; every arrow is synchronous. The buffer pool first writes a batch of dirty pages sequentially to the doublewrite area (a separate file since MySQL 8.0.20) and flushes it, so an intact copy of each page is durable before any home location is touched. Only then are pages written in place, where a crash can tear one. During recovery a checksum failure identifies the torn page; the intact copy from the doublewrite area replaces it, and the redo log is then applied normally. If the crash happens *before* the doublewrite flush completes, the home page is still the intact old version and redo alone suffices. Scaling: the doublewrite area is written sequentially, so its cost is bandwidth rather than IOPS. Failure point: disabling doublewrite on storage without atomic page writes silently re-opens the torn-page window.
+**Reading the diagram.** Every arrow is synchronous. An intact copy of each page is durable in the doublewrite area (separate files since MySQL 8.0.20) before any home location is touched. At recovery, a checksum failure flags the torn page, its copy replaces it, and redo proceeds. A crash before the doublewrite flush leaves the home page intact, so redo alone suffices. The doublewrite area costs bandwidth, not IOPS. Failure point: disabling it on storage without atomic page writes silently reopens the torn-page window.
 
-Both mechanisms can be turned off when the layer below guarantees atomic page writes: copy-on-write file systems such as ZFS never overwrite in place, and some SSDs and cloud block devices offer atomic writes of 16 KiB. LSM trees and Bitcask largely avoid the problem because they never overwrite: a torn SSTable is one that was never added to the manifest, and a torn log tail fails its CRC.
+Both can be disabled when the layer below writes pages atomically (ZFS, some SSDs and cloud volumes). LSM trees and Bitcask never overwrite: a torn SSTable never entered the manifest, and a torn log tail fails its CRC.
 
 **Table 13.7 — Durability mechanisms in storage engines.**
 
@@ -1212,7 +1212,7 @@ Both mechanisms can be turned off when the layer below guarantees atomic page wr
 
 #### First-principles explanation
 
-A school keeps a card per student with name, age, grades and address. To find one student's address, cards are perfect. To compute the average age of 10,000 students, you must handle 10,000 cards and ignore most of each. If instead the school kept one sheet listing every student's age in order, you would read one sheet. Transaction processing (OLTP) reads and writes whole rows by key: rows win. Analytics (OLAP) aggregates a few columns over millions of rows: columns win.
+A school keeps one card per student. To find one address, cards are perfect; to average 10,000 ages you handle 10,000 cards and ignore most of each, whereas one sheet of ages would do. Transaction processing (OLTP) touches whole rows by key: rows win. Analytics (OLAP) aggregates a few columns over millions of rows: columns win.
 
 **Figure 13.11 — Row-oriented versus column-oriented layout of the same table.**
 
@@ -1232,7 +1232,7 @@ flowchart TB
   Q --> C3
 ```
 
-**Reading the diagram.** The same three rows are stored two ways. In the row store, a page contains complete rows, so the query must read every field of every row it scans. In the column store, each column is a separate storage unit, so the query reads only `country` and `amount`, and each column is encoded to suit its values — dictionary and bit-packing for the low-cardinality `country`, run-length encoding for the sorted `date`. Arrows are synchronous reads. Failure point: a point lookup or single-row update in the column store touches every column file, which is why column stores batch writes (often through a small row-oriented buffer that is periodically converted). Scaling: columns can be scanned in parallel and skipped entirely by queries that do not reference them.
+**Reading the diagram.** The same rows stored two ways; arrows are synchronous reads. The row store must read every field of every scanned row; the column store reads only `country` and `amount`, each encoded to suit its values. Failure point: a single-row insert or update touches every column file, so column stores buffer writes in a small row-oriented store and convert in batches. Scaling: columns are scanned in parallel or skipped entirely.
 
 ### 13.13.2 Encoding, vectorized execution and Parquet
 
@@ -1338,7 +1338,7 @@ A table has $N = 10^9$ rows and 20 columns averaging 8 bytes: $1.6 \times 10^{11
 3. Column store, `amount`: $10^9 \times 8 = 8$ GB. Total: $9$ GB.
 4. At 2 GB/s of scan bandwidth: row store $160 / 2 = 80$ s; column store $9 / 2 = 4.5$ s, about 18× faster before any further compression of `amount` or skipping of blocks.
 
-**Interpretation.** Reading only the needed columns and encoding them tightly cuts bytes scanned by an order of magnitude. **Engineering implication.** Use column formats for analytics, and keep min/max statistics per block (**zone maps**) so that filters on sorted columns skip whole blocks; the remaining bottleneck then moves from I/O to CPU.
+**Interpretation.** Reading only needed columns, tightly encoded, cuts bytes scanned by an order of magnitude. **Engineering implication.** Use column formats for analytics, with per-block min/max statistics (**zone maps**) so filters skip blocks; the bottleneck then moves to CPU.
 :::
 
 That CPU bottleneck is attacked with **vectorized execution**: operators process batches of about a thousand values from one column in tight loops, instead of one row at a time through a chain of virtual function calls. The loops stay in the CPU cache, avoid branch mispredictions and use SIMD instructions (§5.11) [Boncz et al. 2005]. **Late materialization** keeps data as column positions as long as possible and assembles full rows only for the final result.
@@ -1346,7 +1346,7 @@ That CPU bottleneck is attacked with **vectorized execution**: operators process
 **Apache Parquet**, the most widely used open columnar file format, applies all of this to files: a file is divided into **row groups**, each row group stores one **column chunk** per column, chunks are divided into pages with dictionary, RLE and bit-packed encodings, and a footer holds the schema and per-chunk statistics used to skip data [Apache Parquet Docs]. Parquet, ORC, and lakehouse table formats built on them are treated in Chapter 61; distributed scans over them in Chapter 29.
 
 ::: mistake
-**"A column store is just a row store with column indexes."** An index helps find rows; a column store changes what is read, how it is compressed and how operators execute. The flip side is real: single-row inserts, updates and point lookups are expensive in column stores, so OLTP workloads belong in row stores, often with changes streamed into a column store for analytics (§32.6).
+**"A column store is just a row store with column indexes."** A column store changes what is read, how it is compressed and how operators execute. Single-row writes and lookups are expensive in it, so OLTP stays in row stores, with changes streamed to a column store for analytics (§32.6).
 :::
 
 ## 13.14 Case studies: InnoDB, RocksDB and the PostgreSQL heap
