@@ -175,3 +175,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-168 | 29 | Magnet push-based shuffle shipped in Spark 3.2; author list | Open | |
 | UQ-169 | 29 | Flink 2.0 ForSt state backend; unaligned checkpoints since Flink 1.11; Structured Streaming latency (~100 ms micro-batch, ~1 ms continuous) | Open | Version-dependent |
 | UQ-170 | 15 / 29 | S3 per-prefix request rates | Open | Merge with Ch 15 items |
+| UQ-171 | 30 | SQS FIFO quotas; SQS "fair queues" (2025); whether DLQ moves preserve enqueue timestamp | Open | Time-sensitive |
+| UQ-172 | 30 | RabbitMQ 4.0: classic mirroring removed; default quorum-queue delivery limit 20; 30-min consumer timeout | Open | Version-dependent |
+| UQ-173 | 30 | Google Pub/Sub limits: ack deadline 10–600 s; retention 7/31 days; 5–100 delivery attempts | Open | Time-sensitive |
+| UQ-174 | 30 | Slack 2020 incident details/URL; Uber (Xia 2018) post URL | Open | |
+| UQ-175 | 30 / 31 | KIP-932 share groups status in Kafka 4.x; Pulsar metadata-store alternatives by release | Open | Time-sensitive |
