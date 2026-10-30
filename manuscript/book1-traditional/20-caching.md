@@ -314,7 +314,7 @@ The database already caches pages in its buffer pool (§13.4) and the operating 
 
 ## 20.6 Redis and Memcached internals
 
-Redis and Memcached are the two dominant remote caches. Both keep data in RAM, speak simple protocols over TCP and answer in well under a millisecond. They differ in what they are: Memcached is a deliberately minimal, multithreaded cache of opaque byte strings; Redis is a single-threaded data-structure server that also persists and replicates. This section covers the internals that explain their behavior; §20.16 compares them.
+Redis and Memcached are the two dominant remote caches. Memcached is a deliberately minimal, multithreaded cache of opaque byte strings; Redis is a single-threaded data-structure server that also persists and replicates. §20.16 compares them.
 
 ### 20.6.1 Redis: a single-threaded event loop
 
@@ -324,7 +324,7 @@ Redis and Memcached are the two dominant remote caches. Both keep data in RAM, s
 
 #### First-principles explanation
 
-Picture one very fast chef who never waits: while one order's water heats, he chops for the next. Because only he touches the kitchen, nobody needs to lock the knife drawer. Redis executes every command on one main thread. Each command runs to completion before the next starts, so every command is **atomic** without locks, and operations such as `INCR`, `LPUSH` or a Lua script never interleave.
+Picture one very fast chef who never waits: while one pot heats, he chops for the next order, and because only he touches the kitchen, nobody locks the knife drawer. Redis executes every command on one main thread, to completion, so every command (including a Lua script) is **atomic** without locks.
 
 #### How it works internally
 
@@ -333,7 +333,7 @@ Picture one very fast chef who never waits: while one order's water heats, he ch
 3. It executes the command against the in-memory data structure and appends the reply to the client's output buffer.
 4. Before sleeping again it writes pending replies and runs timers: **active expiry**, which samples keys with TTLs and deletes expired ones, background rehashing and replication bookkeeping.
 
-Two kinds of helper threads relieve the main thread. **Background I/O threads** free large values (`UNLINK`, lazy freeing), close files and `fsync` the append-only file. **I/O threads** (Redis 6.0 onward, `io-threads`) read and parse requests and write replies in parallel, while command execution stays single-threaded [Redis Docs: Redis configuration]. Valkey 8.0 reworked this design so the main thread and I/O threads run concurrently; its maintainers report up to about 1.2 million requests per second on one AWS r7g instance (as of 2024) [Valkey Blog 2024].
+**Background threads** free large values (`UNLINK`) and `fsync` the append-only file. **I/O threads** (Redis 6.0 onward, `io-threads`) parse requests and write replies in parallel while execution stays single-threaded [Redis Docs: Redis configuration]. Valkey 8.0 reworked them to run concurrently with the main thread and reports about 1.2 million requests/s on one AWS r7g instance (as of 2024) [Valkey Blog 2024].
 
 **Figure 20.3 — Redis's event loop with I/O threads.**
 
@@ -349,11 +349,7 @@ flowchart LR
   M -.->|fork for RDB or AOF rewrite| CH[Child process]
 ```
 
-**Reading the diagram.** Clients send RESP commands over TCP. I/O threads (optional) do socket reads, parsing and reply writes in parallel; the single main thread executes every command against the in-RAM keyspace, which is why commands are atomic. Slow side work runs asynchronously (dotted): background threads free memory and `fsync` the log, and a forked child writes snapshots. Storage boundary: RAM for the dataset; disk only for persistence files. Failure points: any slow command (`KEYS *`, a huge `DEL`, a long Lua script) blocks *all* clients; `fork` of a large process can pause the main thread for milliseconds. Scaling: one Redis process uses essentially one core for execution, so you scale out with Redis Cluster (§20.6.4) or run several processes per machine.
-
-::: warning
-**One slow command stalls everyone.** `KEYS *` on 10 million keys, `HGETALL` on a hash of a million fields, or `DEL` of a huge set (use `UNLINK`) blocks the event loop for tens to hundreds of milliseconds, and every other client waits. Use `SCAN`, bounded ranges and `SLOWLOG` to find the culprits.
-:::
+**Reading the diagram.** Clients send RESP commands over TCP. Optional I/O threads parse and write in parallel; the single main thread executes every command against the in-RAM keyspace. Side work runs asynchronously (dotted): background threads free memory and `fsync`, a forked child writes snapshots. Storage boundary: RAM for data, disk only for persistence files. Failure points: one slow command (`KEYS *`, a huge `DEL`, a long script) blocks *all* clients for tens of milliseconds, so use `SCAN`, `UNLINK` and `SLOWLOG`; forking a large process pauses the main thread. Scaling: execution uses one core, so scale out with Redis Cluster (§20.6.4).
 
 ### 20.6.2 Data structures and encodings
 
@@ -361,7 +357,7 @@ Redis values are typed. **Strings** (binary-safe, up to 512 MB) hold serialized 
 
 ### 20.6.3 Persistence: RDB and AOF
 
-A cache can lose its contents, but a cold restart of a large cache is expensive (§20.13), and Redis is also used for data that must survive restarts.
+A cold restart of a large cache is expensive (§20.13), and Redis also holds data that must survive restarts.
 
 **Table 20.4 — Redis persistence options.**
 
@@ -377,13 +373,13 @@ A cache can lose its contents, but a cold restart of a large cache is expensive 
 
 ### 20.6.4 Replication and Redis Cluster
 
-**Replication** is asynchronous: a primary streams its command stream to replicas, which acknowledge offsets. A replica that disconnects briefly resumes from a **replication backlog** (`PSYNC` with a replication ID and offset); otherwise it receives a full RDB snapshot. Because acknowledgments arrive after the client's reply, a failover can lose the last writes; `WAIT` reduces but does not eliminate this [Redis Docs: Replication]. **Redis Sentinel** monitors a primary and promotes a replica for unpartitioned deployments.
+**Replication** is asynchronous: a primary streams its writes to replicas; a briefly disconnected replica resumes from a **replication backlog** (`PSYNC` with replication ID and offset), otherwise it receives a full snapshot. A failover can lose the last acknowledged writes; `WAIT` reduces but does not eliminate this [Redis Docs: Replication]. **Redis Sentinel** handles failover for unpartitioned deployments.
 
 ::: definition
 **Definition — Hash slot (Redis Cluster).** One of 16,384 buckets into which Redis Cluster divides the keyspace: `slot = CRC16(key) mod 16384`. Each primary owns a set of slots. If a key contains `{...}`, only the substring inside the braces (a **hash tag**) is hashed, so related keys can be forced into one slot [Redis Docs: Cluster specification].
 :::
 
-Clients cache the slot-to-node map. A node that receives a request for a slot it does not own replies `MOVED <slot> <host:port>`; during resharding a slot being migrated returns `ASK` for keys already moved. Nodes exchange state over a gossip **cluster bus** (by default the client port + 10,000), detect failures, and a majority of primaries authorizes a replica to take over a failed primary's slots. Multi-key commands and transactions work only when all keys share a slot.
+A node asked for a slot it does not own replies `MOVED <slot> <host:port>`; a slot under migration returns `ASK` for keys already moved. Nodes gossip over a **cluster bus** (client port + 10,000), and a majority of primaries authorizes a replica to take over a failed primary's slots. Multi-key commands work only within one slot.
 
 **Figure 20.4 — Redis Cluster: hash slots, redirects and replicas.**
 
@@ -400,15 +396,15 @@ flowchart LR
   P2 <-.->|gossip cluster bus| P3
 ```
 
-**Reading the diagram.** The client hashes the key with CRC16, takes it modulo 16,384 and sends the command directly to the owning primary (here slot 9334 on B). If its cached map is stale it reaches the wrong node, which answers `MOVED`; the client updates its map and retries. Each primary replicates asynchronously (dotted) to at least one replica; primaries and replicas gossip on the cluster bus. Storage boundaries: each primary holds only its slots' data. Failure points: a primary failure loses writes not yet replicated; a minority side of a network partition stops accepting writes after the node timeout; keys without a shared hash tag cannot be used together. Scaling: add primaries and move slots to them; because slots, not keys, move, resharding is incremental. The slot space is a fixed-partition scheme (§14.9.2) rather than a hash ring (§20.14).
+**Reading the diagram.** The client computes the slot and sends the command directly to the owning primary (slot 9334 on B). With a stale map it reaches the wrong node, which answers `MOVED`; the client updates its map and retries. Primaries replicate asynchronously (dotted) and gossip on the cluster bus. Storage boundaries: each primary holds only its slots. Failure points: failover loses unreplicated writes; the minority side of a network partition stops accepting writes. Scaling: add primaries and move slots, a fixed-partition scheme (§14.9.2) rather than a hash ring (§20.14).
 
 ### 20.6.5 Memcached: threads, slabs and segmented LRU
 
-Memcached stores opaque values (1 MB maximum by default) under string keys and supports `get`, `set`, `add`, `delete`, `incr`, compare-and-set (`cas`) and, since 1.6, a **meta protocol** with flags for serving stale items and electing a single client to refresh them [Memcached Docs: Meta commands]. It has no persistence across restarts by default and no built-in replication; clients spread keys over servers by consistent hashing (§20.14).
+Memcached stores opaque values (1 MB maximum by default) with `get`, `set`, `delete`, `incr`, compare-and-set (`cas`) and a **meta protocol** whose flags can serve stale items while electing one client to refresh them [Memcached Docs: Meta commands]. It has no built-in persistence or replication; clients spread keys by consistent hashing (§20.14).
 
-**Threads.** One listener thread accepts connections and hands each to one of `-t` worker threads (4 by default), each running its own `libevent` loop. Workers share one hash table protected by striped item locks, so one Memcached process uses many cores [Memcached Docs: Overview].
+**Threads.** A listener thread hands connections to `-t` worker threads (4 by default), each with its own `libevent` loop, sharing one hash table under striped locks, so one process uses many cores [Memcached Docs: Overview].
 
-**The slab allocator.** Calling `malloc` and `free` for millions of objects of varying sizes fragments the heap. Memcached instead carves memory into 1 MB **pages**, assigns each page to a **slab class**, and cuts the page into equal **chunks**. Chunk sizes grow geometrically by the growth factor `-f` (1.25 by default): 96, 120, 152, 192, 240, 304 bytes and so on. An item (key, value and a header of about 50 bytes) goes into the smallest chunk that fits.
+**The slab allocator.** `malloc` and `free` on millions of variable-size objects fragment the heap. Memcached instead carves memory into 1 MB **pages**, assigns each to a **slab class** and cuts it into equal **chunks** whose sizes grow by the factor `-f` (1.25 by default): 96, 120, 152, 192, 240, 304 bytes and so on. An item (key, value and a header of about 50 bytes) takes the smallest chunk that fits.
 
 **Figure 20.5 — Memcached's slab allocator and per-class LRUs.**
 
@@ -424,7 +420,7 @@ flowchart LR
   AUTO[Slab rebalancer] -.->|move pages between classes| C3
 ```
 
-**Reading the diagram.** A 110-byte item does not fit a 96-byte chunk, so it goes to class 2 (120-byte chunks); a 1 MB page holds $\lfloor 1{,}048{,}576 / 120 \rfloor = 8{,}738$ of them. Each class has its own LRU, so when class 2 is full Memcached evicts the coldest class-2 item, even if other classes have free chunks (dotted, asynchronous maintenance). Storage boundary: all in RAM (optional flash extension: extstore). Failure point: **slab calcification**, where pages assigned long ago to one size class cannot serve a new size mix; the background slab rebalancer moves pages to classes under eviction pressure. Scaling: add memory or servers; workers scale with cores.
+**Reading the diagram.** A 110-byte item goes to class 2; a 1 MB page holds $\lfloor 1{,}048{,}576 / 120 \rfloor = 8{,}738$ such chunks. Each class has its own LRU, so a full class evicts its coldest item even if other classes have free chunks. Background maintenance is dotted. Storage boundary: RAM (optional flash extension, extstore). Failure point: **slab calcification**, pages stuck in classes the current size mix no longer needs, which the slab rebalancer fixes by moving pages. Scaling: add memory or servers.
 
 ::: formula
 **Slab internal fragmentation**
@@ -444,13 +440,12 @@ $$c_{k+1} \approx f \cdot c_k, \qquad \text{waste}(x) = c_k - x \text{ for } c_{
 
 1. Classes near 390 bytes: 304, then $304 \times 1.25 = 380$ (chunk 384), then $384 \times 1.25 = 480$. The item exceeds 384, so it uses a 480-byte chunk.
 2. Waste per item: $480 - 390 = 90$ bytes, 18.8% of the chunk, close to the worst case $1 - 1/1.25 = 20\%$.
-3. Memory: $20 \times 10^6 \times 480 = 9.6 \times 10^9$ bytes = 9.6 GB, versus 7.8 GB of actual item bytes.
-4. With a mixed size distribution the expected waste is about $\tfrac{1}{2}(1 - 0.8) = 10\%$.
+3. Memory: $20 \times 10^6 \times 480 = 9.6 \times 10^9$ bytes = 9.6 GB, versus 7.8 GB of item bytes. With mixed sizes, expected waste is about $\tfrac{1}{2}(1 - 0.8) = 10\%$.
 
 **Interpretation.** Slab allocation trades 10–20% of memory for no external fragmentation and constant-time allocation. **Engineering implication.** If one item size dominates, check `stats slabs` and consider a smaller growth factor (for example `-f 1.08`) so a class lands just above your common size; budget memory by chunk size, not value size.
 :::
 
-**Segmented LRU.** Since version 1.5.0, each slab class's LRU is split into **HOT**, **WARM** and **COLD** sub-LRUs plus a **TEMP** queue for items with very short TTLs. New items enter HOT; items reaching the tail of HOT or WARM move to COLD unless they were accessed, in which case active items move to WARM; evictions take the tail of COLD. A background **LRU maintainer** thread moves items between segments, so a cache hit only sets a flag instead of relinking a shared list under a lock, and an **LRU crawler** reclaims expired items [Memcached Blog: Modern LRU]. The design is the scan-resistant midpoint idea of InnoDB's buffer pool (§13.4.2) applied to a cache.
+**Segmented LRU.** Since version 1.5.0, each class's LRU is split into **HOT**, **WARM** and **COLD** segments (plus **TEMP** for very short TTLs). New items enter HOT; items reaching a segment's tail move to COLD unless accessed, in which case they go to WARM; evictions take COLD's tail. A background **LRU maintainer** moves items, so a hit only sets a flag instead of relinking a locked list [Memcached Blog: Modern LRU]: InnoDB's scan-resistant midpoint idea (§13.4.2) applied to a cache.
 
 ::: industry
 **Netflix EVCache.** Netflix built EVCache, a client library and tooling around Memcached, to cache data for its streaming services; writes are replicated to copies in several availability zones and regions by the client so a zone failure does not empty the cache, and it was open-sourced [Netflix: EVCache]. The design shows the Memcached philosophy: keep the server simple and put replication and routing in the client or a proxy.
@@ -1316,3 +1311,138 @@ $$R_{\text{remote}} \le \min\!\left(\lambda_k,\ \frac{A}{T_{L1}}\right), \qquad 
 | Choose when | You need data structures, atomic operations or durability | You need a fast, simple, horizontally scaled cache |
 
 **Licensing (as of 2026).** Redis was BSD-licensed until March 2024, when Redis 7.4 moved to a dual RSALv2/SSPLv1 license, which is not an open-source license under the OSI definition. The Linux Foundation then launched **Valkey**, a BSD-licensed fork of Redis 7.2.4 supported by several cloud providers. Redis 8.0 (2025) added the OSI-approved AGPLv3 as a third licensing option [Redis Blog 2024; Redis Blog 2025; Linux Foundation 2024]. Managed services such as AWS ElastiCache offer Valkey, Redis OSS and Memcached engines. For system design the engines are protocol-compatible for the features in this chapter; check the license and feature set of the specific version you deploy.
+
+## 20.17 Summary and revision notes
+
+::: summary
+- A cache trades staleness, memory and a new failure mode for latency and backend capacity. $T_{\text{eff}} = t_c + (1-h)t_b$; database reads $= (1-h)R$. Watch the miss rate: 99% → 98% doubles database reads, and p99 is a miss once the miss ratio exceeds 1%.
+- Zipf skew makes small caches effective: the ideal top-$C$ hit ratio is $H_{C,s}/H_{N,s}$, about 68% for 1% of a million keys at $s = 1$, and grows by a roughly constant amount per doubling.
+- Cache at every layer that freshness allows: browser and CDN for versioned and public content, in-process L1 for tiny hot data, remote L2 as the shared, invalidatable tier; the database's buffer pool is the only coherent one.
+- Redis: one thread executes commands (atomic, but one slow command blocks all), optional I/O threads, RDB/AOF persistence, asynchronous replication, 16,384 hash slots with `MOVED`/`ASK`. Memcached: multithreaded, slab allocator (10–20% waste), segmented HOT/WARM/COLD LRU, no persistence or replication.
+- Cache-aside with delete-after-commit is the default; it still has a stale-set race, closed by leases, versioned sets or CDC deletes, and bounded by TTLs. Write-through adds write latency; write-back risks $r_w T_{\text{flush}}$ writes; write-around avoids polluting the cache.
+- Every entry needs a TTL; add jitter so peak refills are $K/J$.
+- LRU is scan-sensitive, in-cache LFU cannot forget; ARC and W-TinyLFU combine recency and frequency and come within a few points of ideal. Redis samples keys to approximate LRU and LFU; never run a cache with `noeviction`.
+- Invalidate with TTL + explicit deletes, CDC from the commit log (mcsqueal), or versioned keys.
+- Stampede: leases/single-flight, XFetch ($t - \delta\beta\ln u \ge t_{\text{exp}}$; lead $\approx \delta\beta(\ln\lambda\delta\beta + \gamma)$; $e^{1/\beta}$ recomputes), stale-while-revalidate. Penetration: negative caching and Bloom filters. Avalanche: jitter, replication, warming, L1 and stale-if-error, load shedding.
+- Distribute keys by consistent hashing or slots; hot keys need L1 caches ($\le A/T_{L1}$ remote requests/s) or replicated copies.
+:::
+
+## 20.18 Knowledge checkpoint
+
+1. A cache lookup costs 0.4 ms and a database read 12 ms. What is the mean read latency at $h = 0.95$?
+2. Why can a 1-point drop in hit ratio double database load?
+3. Using the $s = 1$ approximation, what is the ideal hit ratio for $C = 10^5$ of $N = 10^7$ keys?
+4. Name two reasons an in-process cache can be preferable to Redis, and two reasons it can be worse.
+5. Why are Redis commands atomic without locks, and what is the operational cost of that design?
+6. How does Redis Cluster map a key to a node, and how do you make two keys land in the same slot?
+7. An item with header is 200 bytes. Which Memcached chunk (growth factor 1.25) holds it, and what fraction is wasted?
+8. Describe the stale-set race in cache-aside and one mechanism that prevents it.
+9. Why delete the cache entry after a write instead of setting the new value?
+10. A write-back cache receives 50,000 writes/s and flushes every 2 s. How many acknowledged writes can a crash lose?
+11. 600,000 keys were written in 30 s with the same TTL. The database tolerates 1,500 refills/s. What jitter range do you need?
+12. Why does in-cache LFU do badly when popularity shifts, and how does W-TinyLFU avoid it?
+13. What do ARC's ghost lists record, and what does a ghost hit change?
+14. For XFetch with $\lambda = 400$ requests/s, $\delta = 0.5$ s, $\beta = 1$, what is the expected lead before expiry?
+15. Why does negative caching not stop an attacker requesting random IDs?
+16. Why does `hash mod N` cause an avalanche when you add a cache node?
+17. 200 app instances use a 2 s L1 TTL for a hot key. What is the maximum remote request rate for it?
+
+<details><summary>Answers</summary>
+
+1. $0.4 + 0.05 \times 12 = 1.0$ ms.
+2. Database reads are proportional to the miss ratio; going from 99% to 98% doubles the miss ratio from 1% to 2%.
+3. $(\ln 10^5 + 0.577)/(\ln 10^7 + 0.577) = (11.513 + 0.577)/(16.118 + 0.577) = 12.090/16.695 \approx 0.724$.
+4. Better: ~100 ns hits with no network or serialization; keeps working during a cache-cluster outage. Worse: one copy per instance multiplies memory and misses; invalidating every instance is hard, so staleness is bounded only by a short TTL.
+5. One thread executes all commands sequentially. Any slow command (`KEYS`, large `DEL`, long scripts) blocks every client, and a process uses only one core for execution.
+6. `CRC16(key) mod 16384` gives the slot; each primary owns a set of slots. Put the same hash tag in both keys, for example `{user:42}:profile` and `{user:42}:cart`.
+7. Classes: 152, 192, 240. 200 > 192, so the 240-byte chunk; waste $40/240 = 16.7\%$.
+8. A reader reads $v_1$ from the database, a writer commits $v_2$ and deletes the key, and the reader then sets $v_1$, which stays until TTL. Leases (the delete voids the reader's token), versioned compare-and-set, or CDC-issued deletes after commit prevent or repair it.
+9. Concurrent writers can set values in a different order from their database commits, leaving an old value cached; deletes are idempotent and order-insensitive.
+10. $50{,}000 \times 2 = 100{,}000$ writes.
+11. $J \ge 600{,}000 / 1{,}500 = 400$ s.
+12. Counts of formerly hot entries stay high, so they are never evicted. W-TinyLFU halves sketch counters periodically (aging) and admits new keys through a recency window.
+13. The keys (not values) recently evicted from $T_1$ and $T_2$. A hit in $B_1$ increases the target size of $T_1$ (more recency); a hit in $B_2$ decreases it (more frequency).
+14. $\lambda\delta\beta = 200$; $0.5 \times (\ln 200 + 0.577) = 0.5 \times 5.875 = 2.94$ s.
+15. Each random ID is requested once, so the negative entry is never reused; a Bloom filter of existing keys is needed.
+16. About $N/(N+1)$ of keys map to a different node, so most entries become unreachable at once and their reads fall through to the database.
+17. $200 / 2 = 100$ requests/s.
+
+</details>
+
+## 20.19 Interview questions
+
+### Basic
+
+**Q1. When would you add a cache, and what do you need to state when you do?**
+**Answer.** When a read-heavy workload repeatedly reads the same data, the backing store is too slow for the latency target or near its capacity, and the data tolerates bounded staleness. State the expected hit ratio and resulting database load, the pattern (usually cache-aside), the TTL and invalidation mechanism, what happens on a cache outage, and the memory size from the working set.
+
+**Q2. Explain cache-aside versus write-through.**
+**Answer.** Cache-aside: the application reads the cache, fills it from the database on a miss and deletes the key after writing the database; the cache is optional and holds only read data. Write-through: writes go through the cache layer, which writes the database synchronously and updates itself, so reads through that layer are fresh, at the cost of higher write latency and caching data that may never be read.
+
+**Q3. Redis or Memcached?**
+**Answer.** Memcached for a simple, multithreaded, large look-aside cache of serialized objects. Redis (or Valkey) when you need data structures, atomic operations, persistence or replication: sessions, leaderboards, rate limiters. Mention the Redis licensing change and Valkey as of 2026.
+
+### Intermediate
+
+**Q4. Users sometimes see their old profile picture for an hour after changing it. Diagnose.**
+**Answer.** Probably the stale-set race (a slow reader re-inserting the old value after the writer's delete), a missed delete on some write path, a delete-before-write ordering, or a downstream layer (CDN, browser, L1) caching longer. The one-hour duration points to a TTL acting as the backstop. Fix: delete after commit, leases or versioned keys, CDC-driven invalidation, a versioned image URL for the picture, and shorter TTLs on derived caches.
+
+**Q5. Your database melts down every day at 09:00. Why might the cache be involved?**
+**Answer.** A cache avalanche: a job warms or rewrites many keys at the same time each day with identical TTLs, or a daily cache restart empties it. Add TTL jitter, warm caches gradually, keep replicas, add stale-if-error serving, and protect the database with load shedding.
+
+**Q6. How do you protect a hot key that expires?**
+**Answer.** Make sure only one request recomputes it: single-flight in process plus a lease or lock across processes, or XFetch to refresh before expiry with $\beta \approx 1$, or stale-while-revalidate. For read volume beyond one node, add L1 caches and key replication.
+
+### Advanced
+
+**Q7. Derive why XFetch's duplicate recomputations do not grow with traffic.**
+**Answer.** Each request triggers with probability $e^{-r/(\delta\beta)}$; Poisson arrivals give trigger intensity $\lambda e^{-r/(\delta\beta)}$. Let $G = \lambda\delta\beta e^{-R/(\delta\beta)}$ at the first trigger time $R$; since $P(\text{no trigger before } r) = \exp(-\lambda\delta\beta e^{-r/(\delta\beta)})$, $G$ is exponential with mean 1. Triggers in the following $\delta$ seconds have expected count $G(e^{1/\beta} - 1)$, so the mean total is $e^{1/\beta}$ for any $\lambda$, while the lead $\delta\beta(\ln\lambda\delta\beta + \gamma)$ grows only logarithmically.
+
+**Q8. Design invalidation for a multi-region cache in front of a MySQL primary with cross-region replicas.**
+**Answer.** Writers delete local keys after commit; a CDC daemon per database (primary and each replica) tails the commit log and issues batched deletes to that region's caches, so a region's caches are invalidated only after its replica has applied the change, preventing refills from lagging replicas. Keep TTLs as a backstop, use leases against stale sets, and for read-your-writes after a user's own update, route that user's reads to the primary or mark the key so misses read the primary (Facebook's remote markers) [Nishtala et al. 2013].
+
+**Q9. A team proposes replacing LRU with LFU in a 200 GB cache. How do you decide?**
+**Answer.** Replay a production trace through LRU, LFU with aging, ARC and W-TinyLFU at several sizes and compare hit ratios and database QPS, as in §20.9.5. Look for scans (LRU suffers) and popularity shifts (pure LFU suffers). Consider memory overhead and CPU per hit. In Redis this is `allkeys-lfu` versus `allkeys-lru`; in Java, Caffeine gives W-TinyLFU.
+
+## 20.20 Practical exercises
+
+1. **Measure skew.** Extend the §20.3.3 program to read a log of keys (one per line), fit the Zipf exponent by linear regression of log frequency on log rank, and plot measured LRU hit ratio against cache size.
+2. **Add a doorkeeper.** Add a Bloom-filter doorkeeper (§17.4) to the W-TinyLFU class in §20.9.5 and report the hit-ratio change on the three traces.
+3. **Reproduce the race.** With Redis and PostgreSQL in Docker, write a reader that sleeps 200 ms between its database read and its cache `SET`, and a writer that updates and deletes. Count stale entries over 10,000 iterations; then add a version check with a Lua script and count again.
+4. **Stampede test.** Put a 1 s sleep behind a cached endpoint, expire the key under 500 concurrent clients, and measure database calls with no protection, with a `SET NX PX` lock, and with XFetch.
+5. **Redis eviction.** Fill a Redis instance with `maxmemory 100mb` under `allkeys-lru` with `maxmemory-samples` 1, 5 and 10, replay a Zipf trace and compare hit ratios with exact LRU from §20.9.5.
+
+## 20.21 Design challenges
+
+1. **Product catalog for a flash sale.** 5 million products, 400,000 reads/s at peak with one product drawing 30% of traffic during the sale, prices that must be correct within 2 s. Design the cache layers, TTLs, invalidation and hot-key handling, and compute database load at the expected hit ratio.
+2. **Session store.** 20 million active sessions of 1 KB, 100,000 reads/s, sessions must survive a single node failure. Compare Redis with replicas against Memcached with client-side replication, including memory with slab overhead.
+3. **Social feed cache.** Feeds are lists of post IDs per user, rebuilt from a fan-out service. Design the keys, eviction policy, invalidation on post deletion, and the warm-up plan for a new region.
+
+## 20.22 References
+
+1. Belady, L. A. *A Study of Replacement Algorithms for a Virtual-Storage Computer*. IBM Systems Journal 5(2), 1966.
+2. Breslau, L., Cao, P., Fan, L., Phillips, G., Shenker, S. *Web Caching and Zipf-like Distributions: Evidence and Implications*. IEEE INFOCOM, 1999.
+3. Caffeine project. *Caffeine Wiki: Efficiency* and *Design*. GitHub, accessed 2026. https://github.com/ben-manes/caffeine/wiki
+4. Einziger, G., Friedman, R., Manes, B. *TinyLFU: A Highly Efficient Cache Admission Policy*. ACM Transactions on Storage 13(4), 2017.
+5. Linux Foundation. *Linux Foundation Launches Open Source Valkey Community* (press release). 2024.
+6. Megiddo, N., Modha, D. S. *ARC: A Self-Tuning, Low Overhead Replacement Cache*. USENIX Conference on File and Storage Technologies (FAST), 2003.
+7. Memcached project. *Replacing the cache replacement algorithm in memcached* (Modern LRU). memcached.org blog, 2018. https://memcached.org/blog/modern-lru/
+8. Memcached project. *protocol.txt* (text and meta protocols) and wiki (overview, slabs, threads). Accessed 2026. https://github.com/memcached/memcached
+9. MySQL Server Team. *MySQL 8.0: Retiring Support for the Query Cache*. MySQL Server Blog, 2017.
+10. Netflix. *EVCache*. GitHub repository, accessed 2026. https://github.com/Netflix/EVCache
+11. Nishtala, R., Fugal, H., Grimm, S., Kwiatkowski, M., Lee, H., Li, H. C., McElroy, R., Paleczny, M., Peek, D., Saab, P., Stafford, D., Tung, T., Venkataramani, V. *Scaling Memcache at Facebook*. USENIX NSDI, 2013. https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala
+12. OpenZFS project. *OpenZFS documentation* (Adaptive Replacement Cache). Accessed 2026.
+13. Redis. *Redis documentation*: Data types; Persistence; Replication; Cluster specification; Key eviction; EXPIRE; Client-side caching; Redis configuration (`io-threads`). Accessed 2026. https://redis.io/docs/
+14. Redis. *Redis adopts dual source-available licensing* (2024) and *Redis 8 general availability, AGPLv3* (2025). Redis Blog.
+15. Fielding, R., Nottingham, M., Reschke, J. *HTTP Caching*. RFC 9111, IETF, 2022. https://www.rfc-editor.org/rfc/rfc9111
+16. Nottingham, M. *HTTP Cache-Control Extensions for Stale Content*. RFC 5861, IETF, 2010. https://www.rfc-editor.org/rfc/rfc5861
+17. Valkey project. *Valkey 8.0: Delivering Enhanced Performance and Reliability*. Valkey Blog, 2024. https://valkey.io/blog/valkey-8-0-0-rc1/
+18. Vattani, A., Chierichetti, F., Lowenstein, K. *Optimal Probabilistic Cache Stampede Prevention*. Proceedings of the VLDB Endowment 8(8), 2015.
+
+## 20.23 Open verification items
+
+- Nishtala et al. 2013: lease rate of one token per 10 s per key, the 17K/s → 1.3K/s peak database query figure and the ~1% gutter pool size were confirmed only via secondary summaries (the USENIX site was unreachable); check against the paper.
+- Breslau et al. 1999: exponent range of the traces (stated here only as "below 1").
+- Valkey 8.0's 1.2M requests/s figure is a vendor benchmark on AWS r7g; Redis license history and versions (7.4 dual license; 8.0 AGPLv3 option) as of 2026.
+- Caffeine's admission randomization against hash flooding, and default window/probation proportions.
+- Exact URLs for the MySQL query-cache blog post, the Linux Foundation press release and Redis blog posts.

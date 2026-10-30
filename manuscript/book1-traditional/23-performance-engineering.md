@@ -10,13 +10,13 @@ Chapter 4 gave you the mathematics (percentiles, queueing, Little's Law, the Uni
 
 After this chapter you should be able to:
 
-- Apply the USE method to resources and the RED method or four golden signals to services, and follow a disciplined workflow from symptom to root cause.
-- Choose between sampling and instrumenting profilers, read a CPU flame graph, explain why off-CPU analysis is needed for latency problems, and profile CPU and memory in Python with `cProfile` and `tracemalloc`.
+- Apply USE to resources and RED or the four golden signals to services, following a workflow from symptom to cause.
+- Choose sampling or instrumenting profilers, read flame graphs, use off-CPU analysis, and profile Python with `cProfile` and `tracemalloc`.
 - Distinguish open and closed workload models, demonstrate coordinated omission and correct for it, and record latency with HDR histograms.
 - Quantify fan-out tail amplification and list the main sources of latency variability (garbage collection, queueing, background work, noisy neighbors, CPU throttling).
 - Design hedged and tied requests, compute their latency benefit and extra load, and explain when hedging becomes dangerous.
 - Size batches and pipelines with a latency–throughput model and decide when compression pays for its CPU cost.
-- Explain generational garbage collection, stop-the-world pauses and the trade-offs among G1, ZGC, Shenandoah and the Go collector, and account for JIT warm-up in tests and deployments.
+- Explain generational GC, stop-the-world pauses, collector trade-offs (G1, ZGC, Shenandoah, Go) and JIT warm-up.
 - Fit the Universal Scalability Law to benchmark data, predict the throughput peak and convert the model into a fleet size.
 
 ## 23.2 Prerequisites
@@ -267,8 +267,6 @@ Request latency equals on-CPU plus off-CPU time. Latency problems in I/O-heavy s
 | async-profiler | JVM | Sampling with perf events and JVM APIs | Avoids safepoint bias; CPU, allocation, lock and wall-clock modes |
 | Java Flight Recorder | JVM | Built-in event recording | Low overhead, always-on in production; GC and lock events |
 | pprof | Go | Built-in sampling (CPU 100 Hz), heap sampling | `net/http/pprof` endpoint; CPU, heap, goroutine, block, mutex profiles |
-| `cProfile` | CPython | Instrumentation | Exact call counts; high overhead on small functions |
-| `tracemalloc` | CPython | Allocation tracing | Live memory attributed to source lines; snapshot diffs |
 
 **Safepoint bias**: older JVM profilers sampled threads only at **safepoints**, so time in loops without safepoints was misattributed, and a study of four Java profilers found they often disagreed about the hottest method [Mytkowicz et al. 2010]. Signal-based asynchronous profilers such as async-profiler avoid this.
 
@@ -279,7 +277,7 @@ In garbage-collected runtimes the **allocation rate** sets how often the collect
 ```python
 import cProfile
 import json
-import os
+import linecache
 import pstats
 import random
 import tracemalloc
@@ -326,8 +324,8 @@ snapshot = tracemalloc.take_snapshot()
 tracemalloc.stop()
 for stat in snapshot.statistics("lineno")[:2]:
     frame = stat.traceback[0]
-    print(f"{os.path.basename(frame.filename)}:{frame.lineno:<4}"
-          f"{stat.size / 1024:8.0f} KiB in {stat.count:6d} blocks")
+    code = linecache.getline(frame.filename, frame.lineno).strip()
+    print(f"{stat.size / 1024:6.0f} KiB in {stat.count:6d} blocks: {code[:38]}")
 ```
 
 Output (Python 3.13; timings vary by machine):
@@ -341,8 +339,8 @@ loads                   100000    0.092    0.436
 decode                  100000    0.142    0.314
 distinct_users_fast          1    0.021    0.220
 raw_decode              100000    0.072    0.072
-encoder.py:263     3442 KiB in  50000 blocks
-prof.py:11       434 KiB in      3 blocks
+  3442 KiB in  50000 blocks: return _iterencode(o, 0)
+   434 KiB in      3 blocks: return [json.dumps({"user": f"u{rng.ra
 ```
 
 What to notice:
@@ -350,7 +348,7 @@ What to notice:
 - **Self time versus total time.** `distinct_users_slow` has 1.03 s of *self* time: the `user not in seen` scan is an operator, not a function call, so cProfile charges it to the enclosing function. Its JSON parsing (`loads`, about 0.22 s per 50,000 calls) is the same in both versions. The fix (a set) makes the function about 6 times faster overall.
 - **Call counts are exact**: 100,000 calls to `loads` (50,000 per version). A sampling profiler would give percentages but not counts.
 - **Instrumentation overhead.** Each of the 100,000 `loads` calls passes through cProfile's hooks, so the absolute times are inflated; compare ratios, not absolutes.
-- **tracemalloc** attributes 3.4 MiB of live memory to the JSON encoder's string-building line: 50,000 strings of about 70 bytes each. The list holding them (line 11) costs 434 KiB of pointers. In a production service the same view, diffed over time, finds leaks.
+- **tracemalloc** attributes 3.4 MiB of live memory to a line inside the JSON encoder: 50,000 strings of about 70 bytes each. The list comprehension holding them costs 434 KiB of pointers. In a production service the same view, diffed over time, finds leaks.
 
 For a running production Python process you would use a sampling profiler instead: `py-spy record -o profile.svg --pid <PID> --duration 30` produces a flame graph without restarting or modifying the program.
 
@@ -487,7 +485,7 @@ $$\text{missed by closed tester} \approx \frac{T_s}{\Delta} \qquad t_{\text{drai
 3. Affected requests: $500 \times (1.5 + 1.5) = 1{,}500$, which is 5% of the test. Their latencies fall linearly from 1.5 s to about 0.
 4. True p99 is the 300th worst of these: $1.5 - 300 \times (1.5/1{,}500) = 1.2$ s.
 
-**Interpretation.** The real p99 is 1.2 s, while the closed tester's p99 is the ordinary 1–2 ms service time. **Engineering implication.** Any test whose generator waits for responses will under-report every percentile that a stall touches, often by orders of magnitude.
+**Interpretation.** The real p99 is 1.2 s; a closed tester reports the ordinary 1–2 ms. **Engineering implication.** Generators that wait for responses under-report every percentile a stall touches, often by orders of magnitude.
 :::
 
 The following program simulates this exact scenario with three measurement strategies: the naive closed loop, the closed loop with HdrHistogram's after-the-fact correction (which adds the "missing" samples $v - \Delta, v - 2\Delta, \dots$ for each long sample $v$), and an open-loop generator that measures from the intended send time.
@@ -661,7 +659,7 @@ $$P(T_{\text{root}} \le t) = F(t)^{N} \qquad t_q^{\text{root}} = F^{-1}\!\left(q
 2. Root p50 with $N = 100$: $0.5^{1/100} = 0.99309$, so $t = 10 \ln(1/0.00691) = 10 \times 4.975 = 49.8$ ms.
 3. Root p99: $0.99^{1/100} = 0.9998995$, so $t = 10 \ln(1/0.0001005) = 10 \times 9.205 = 92.1$ ms.
 
-**Interpretation.** The root's *median* (49.8 ms) is worse than a single leaf's p99 (46.1 ms); the root's p99 is governed by the leaf's p99.99. **Engineering implication.** In a fan-out service, the leaf tail *is* the user-facing median. Either engineer leaves to an extreme percentile or use tail-tolerant techniques (§23.7) that break the $F^N$ law.
+**Interpretation.** The root's *median* (49.8 ms) is worse than one leaf's p99 (46.1 ms). **Engineering implication.** In fan-out services the leaf tail *is* the user-facing median: engineer leaves to extreme percentiles or use tail-tolerant techniques (§23.7).
 :::
 
 Real leaves are not fully independent: a shared cause (a switch hiccup) slows many at once. Dean and Barroso measured a large fan-out service at Google and reported that waiting for the slowest 5% of leaf requests accounted for roughly half of the root's p99 latency [Dean and Barroso 2013].
@@ -693,10 +691,9 @@ flowchart LR
 | GC stop-the-world pause | 1 ms – seconds | GC logs; pause histograms | Lower allocation; concurrent collector (§23.9) |
 | Queueing behind large requests | Size of the large request | Per-request size vs. latency | Split large requests; priority classes |
 | Background tasks (compaction, backups) | 10s–100s of ms | Latency correlates with job schedule | Throttle; schedule off-peak; stagger across replicas |
-| Noisy neighbor | 10s of % slowdown | Cache misses, steal time | Isolation, dedicated hosts, pinning |
+| Noisy neighbor | 10s of % slowdown | Cache misses, CPU steal time | Isolation, dedicated hosts |
 | CPU quota throttling | Rest of a 100 ms period | `nr_throttled` in cgroup `cpu.stat` | Raise or remove limits; fewer threads |
 | Packet loss | ≥ 200 ms per retransmission | TCP retransmit counters | Avoid drops; hedging (§23.7) |
-| Cold start / JIT warm-up | 10s of seconds after deploy | p99 spike after each rollout | Warm-up traffic; load-balancer slow start |
 
 ### 23.6.3 A worked trap: CPU quota throttling
 
@@ -780,12 +777,12 @@ $$T = \min(X_1,\; d + X_2) \qquad P(T > t) = \begin{cases} P(X > t) & t < d \\ P
 4. Extra load $= P(X > 10\text{ ms}) = 2\%$.
 5. With a 100-leaf fan-out: $P(\text{all leaves} \le 18\text{ ms}) = (1 - 0.0004)^{100} = 0.961$, versus $0.98^{100} = 0.133$ unhedged.
 
-**Interpretation.** Two percent more requests turn 87% slow fan-out queries into 4% slow ones. **Engineering implication.** Hedge after roughly the p95 latency, so that extra load is bounded by about 5%, and only for idempotent operations.
+**Interpretation.** Two percent more requests turn 87% slow fan-out queries into 4%. **Engineering implication.** Hedge idempotent operations after about the p95, bounding extra load near 5%.
 :::
 
 ### 23.7.2 Simulating hedging, including its cost
 
-The worked example ignores a crucial feedback: hedges add load, load raises queueing delay, and higher latency triggers more hedges. The simulation below models 20 FIFO replicas with Poisson arrivals. Each request needs about 1 ms of work, and 0.1% of requests trigger a 50 ms hiccup that also delays everything queued behind it. It compares no hedging, hedging after the unhedged p95, hedging with cancellation (a copy that has not started when the original finishes is dropped, the essence of tied requests), and over-eager hedging after the p50.
+The worked example ignores a feedback: hedges add load, load adds queueing, and higher latency triggers more hedges. The simulation models 20 FIFO replicas with Poisson arrivals, about 1 ms of work per request, and a 50 ms hiccup on 0.1% of requests that also delays everything queued behind it. It compares no hedging, hedging after the unhedged p95, hedging with cancellation (a copy not yet started when the original finishes is dropped), and hedging after the p50.
 
 ```python
 import heapq
@@ -876,9 +873,9 @@ utilization 80%: hedge delay = p95 = 45.05 ms
 What to notice:
 
 - **At 50% utilization, hedging at p95 cuts p99 from 44.6 ms to 8.6 ms** (5×) and p99.9 by more than half, for about 6% extra work. The median is untouched.
-- **At 80% utilization, the same policy without cancellation collapses** into a positive feedback loop: hedges raise utilization, queues grow, more requests exceed $d$, more hedges are sent. Extra work reaches 75%, demand exceeds capacity, and latency grows for as long as the run lasts (the absolute seconds depend on run length). The same policy *with* cancellation stays stable and still cuts the tail.
-- **Hedging at p50 is a denial-of-service attack on yourself**: it nearly doubles the work at either load.
-- The model cannot cancel an original once it is queued; real tied requests (below) can, so they do slightly better.
+- **At 80% utilization the same policy without cancellation collapses** in a positive feedback loop: hedges raise utilization, queues grow, more requests exceed $d$. Extra work reaches 75%, demand exceeds capacity, and latency grows for as long as the run lasts. *With* cancellation the policy stays stable and still cuts the tail.
+- **Hedging at p50 is a self-inflicted denial of service**, nearly doubling the work.
+- The model cannot cancel a queued original; real tied requests (below) can.
 
 ### 23.7.3 Tied requests
 
@@ -997,7 +994,7 @@ $$T_{\text{seq}} = n\,(r + s) \qquad T_{\text{pipe}} \approx r + n\,s \quad (\te
 
 ### 23.8.3 Compression: ratio versus CPU
 
-Compression trades CPU for bytes. It pays when bytes are the bottleneck (slow links, egress charges, storage cost, cache capacity) and loses when CPU is.
+Compression trades CPU for bytes: it pays when bytes are the bottleneck (slow links, egress charges, storage, cache capacity).
 
 **Table 23.7 — Fast compressors on one CPU core (as of 2026; zstd project benchmark, lzbench on the Silesia corpus, Core i7-9700K).**
 
@@ -1009,7 +1006,7 @@ Compression trades CPU for bytes. It pays when bytes are the bottleneck (slow li
 | lz4 1.10.0 | 2.101 | 675 | 3,850 |
 | snappy 1.2.1 | 2.089 | 520 | 1,500 |
 
-Source: [Zstandard README]. Higher levels of zstd, brotli and zlib compress much better and much more slowly; numbers depend heavily on data and hardware, so benchmark your own payloads.
+Source: [Zstandard README]. Higher levels compress better and far more slowly; benchmark your own payloads.
 
 ::: formula
 **When compression reduces transfer time (store-and-forward)**
@@ -1024,7 +1021,7 @@ $$t_{\text{plain}} = \frac{S}{W} \qquad t_{\text{comp}} = \frac{S}{C_c} + \frac{
 | $C_c$, $C_d$ | Compression and decompression speed | MB/s |
 :::
 
-With streaming, the stages overlap and the time approaches the *slowest* stage instead of the sum, which favors compression further.
+With streaming, stages overlap and time approaches the *slowest* stage rather than the sum.
 
 ::: example
 **Worked example — Shipping 100 MB.** Use Table 23.7.
@@ -1043,7 +1040,7 @@ With streaming, the stages overlap and the time approaches the *slowest* stage i
 **Definition — Garbage collection (GC).** Automatic reclamation of heap memory that the program can no longer reach. A **tracing** collector finds live objects by following references from **roots** (stacks, globals, registers) and reclaims everything else. A **stop-the-world (STW) pause** is an interval in which all application threads (the **mutator**) are halted so the collector can work on a consistent heap [Jones et al. 2023].
 :::
 
-A restaurant can clear tables continuously while diners eat (concurrent collection) or close the dining room for ten minutes every hour to clean everything (stop-the-world). The second is simpler and faster overall, but every diner present at closing time waits. Most objects in typical programs die young: request buffers, temporary strings, iterators. This **weak generational hypothesis** motivates **generational** collection [Ungar 1984]: allocate new objects in a small **young generation**, collect it often and cheaply by copying the few survivors out, and promote long-lived objects to an **old generation** collected rarely.
+A restaurant can clear tables while diners eat (concurrent collection) or close the room for ten minutes every hour (stop-the-world): simpler and cheaper overall, but everyone present waits. Most objects die young (request buffers, temporary strings), the **weak generational hypothesis**, which motivates **generational** collection [Ungar 1984]: allocate in a small **young generation** collected often by copying out the few survivors, and promote long-lived objects to an **old generation** collected rarely.
 
 **Figure 23.11 — Generational heap.**
 
@@ -1100,11 +1097,11 @@ $$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p + w}{I_{\
 | Go GC | Go | Concurrent, non-generational, non-moving mark-sweep | Short STW phases; *GC assist* slows allocating goroutines | Default; tune GOGC and GOMEMLIMIT |
 | CPython | Python | Reference counting plus a cycle collector | Immediate frees; occasional cycle-collection pauses | Default |
 
-Concurrent collectors are not free. They use barriers on every reference load or store, keep spare CPU for collector threads (Go's collector targets about 25% of available CPU during marking [Go GC Guide]), and need heap headroom so the application does not outrun them. They trade throughput and memory for shorter pauses. Go 1.19 added `GOMEMLIMIT`, a soft memory limit that makes the collector run more often as the process approaches it, which fits containers with hard memory limits [Go GC Guide].
+Concurrent collectors trade throughput and memory for short pauses: they add barriers to reference loads or stores, consume CPU for collector threads (Go's targets about 25% of available CPU during marking) and need heap headroom. Go 1.19 added `GOMEMLIMIT`, a soft limit that makes the collector run more often near it, which suits containers [Go GC Guide].
 
 ### 23.9.3 JIT warm-up and other runtime effects
 
-A **just-in-time (JIT)** compiler, as in the JVM, .NET and JavaScript engines, starts by interpreting code, profiles it, and compiles hot methods with increasingly aggressive optimization, sometimes *deoptimizing* when an assumption breaks. A freshly started instance therefore runs several times slower for its first seconds to minutes. Effects: load tests without warm-up understate steady-state performance and overstate cold-start latency; every deployment and autoscaling event creates a p99 spike as new instances receive full traffic. Mitigations: replay warm-up traffic before marking an instance ready, use load-balancer **slow start** to ramp traffic onto new instances (Chapter 19), or reduce warm-up with ahead-of-time compilation and class-data sharing.
+A **just-in-time (JIT)** compiler (JVM, .NET, JavaScript engines) interprets code first, profiles it and compiles hot methods with increasing optimization, so a fresh instance runs several times slower for seconds to minutes. Every deployment and autoscaling event therefore causes a p99 spike, and tests without warm-up misstate steady-state performance. Mitigations: replay warm-up traffic before marking an instance ready, ramp traffic with load-balancer **slow start** (Chapter 19), or use ahead-of-time compilation and class-data sharing.
 
 ::: recommendation
 **GC and runtime tuning heuristics.**
@@ -1114,7 +1111,6 @@ A **just-in-time (JIT)** compiler, as in the JVM, .NET and JavaScript engines, s
 - Give the collector headroom: a heap of a few times the live set is a common starting point; a nearly full heap means frequent collections.
 - Pick the collector by goal: throughput (Parallel), balanced (G1), tail latency on large heaps (ZGC or Shenandoah).
 - In containers, set the heap from the container limit (for example `-XX:MaxRAMPercentage`, or `GOMEMLIMIT` below the cgroup limit) so the runtime is not killed before it collects.
-- Never call explicit full GCs on a timer, and treat any full STW collection in a latency-sensitive service as an incident.
 :::
 
 ::: industry
@@ -1266,9 +1262,9 @@ R^2 = 0.9983   N* = 43.3   X(N*) = 13,588 req/s
 What to notice:
 
 - **The fit is excellent ($R^2 = 0.998$) yet the coefficients are off.** The true peak is at $N^* = \sqrt{0.97/0.0004} = 49$ with 13,770 req/s; the fit says 43 with 13,588 req/s. Throughput near the peak is flat, so the *location* of the peak is poorly determined while its *height* is well determined. Plan on throughput, not on the exact $N^*$.
-- **The response-time column is Little's Law**: in a closed test with no think time, $R = N/X$ (§23.5.2). Past the peak, extra concurrency only adds queueing: latency quadruples from $N = 24$ to $N = 96$ while throughput falls.
-- **Efficiency** $X(N)/(N\gamma)$ falls below 70% at $N = 16$; that is the knee, where adding concurrency starts buying much less throughput than it costs in latency.
-- Rows 96 and 128 are extrapolations. Measure there before relying on them.
+- **The response-time column is Little's Law** for a closed test with no think time, $R = N/X$ (§23.5.2): latency rises more than fourfold from $N = 24$ to $N = 96$ while throughput falls.
+- **Efficiency** $X(N)/(N\gamma)$ reaches 70% at $N = 16$ and 57% at 24: the knee, beyond which concurrency buys little throughput for much latency.
+- Rows 96 and 128 are extrapolations; measure before relying on them.
 
 ### 23.10.3 Converting a model into a fleet size
 
@@ -1309,7 +1305,7 @@ $$n = \left\lceil \frac{\lambda_{\text{peak}}\,(1 + g)}{u \cdot X_{\max}} \right
 - **Load testing.** Closed generators reduce load when the system slows and hide outages; use open (constant-arrival-rate) generators for SLO tests. Coordinated omission can understate p99 by orders of magnitude: measure from the intended send time. Record latency in HDR histograms and merge, never average, percentiles.
 - **Tail at scale.** For $N$-way fan-out, root percentiles are leaf percentiles at $q^{1/N}$; the leaf tail becomes the user median. Variability comes from GC, queueing, background work, noisy neighbors, CPU throttling and packet loss.
 - **Hedging.** Hedge idempotent requests after about the p95 for about 5% extra load; tied requests with cancellation do better. Without budgets and cancellation, hedging can collapse a loaded system.
-- **Batching, pipelining, compression.** Bound batch latency with a timer; pipeline small requests to amortize round trips; compress when bytes, not CPU, are the bottleneck (fast compressors help on 1 Gb/s links and hurt on 10 Gb/s single streams).
+- **Batching, pipelining, compression.** Bound batch latency with a timer; pipeline small requests; compress when bytes, not CPU, are the bottleneck.
 - **Runtimes.** GC exposure is pause frequency (allocation rate / young size) times pause length; reduce allocation first, then choose a collector for the goal. Warm up JIT runtimes before they take traffic.
 - **Capacity.** Fit the USL to measured throughput, plan to a fraction of the fitted peak, then add growth and zone redundancy.
 :::
@@ -1328,8 +1324,7 @@ $$n = \left\lceil \frac{\lambda_{\text{peak}}\,(1 + g)}{u \cdot X_{\max}} \right
 10. A replica answers in 5 ms with probability 0.97 and 300 ms otherwise. Hedging after 6 ms, what fraction of requests exceeds 11 ms, and what is the extra load?
 11. Why did hedging without cancellation collapse at 80% utilization in the simulation of §23.7.2?
 12. When does compression increase transfer time?
-13. A JVM allocates 1 GB/s with a 4 GB young generation and 20 ms minor pauses. How often do pauses occur, and roughly what fraction of 10 ms requests overlap one?
-14. Why is the location of the USL peak $N^*$ less reliable than its height?
+13. Why is the location of the USL peak $N^*$ less reliable than its height?
 
 <details><summary>Answers</summary>
 
@@ -1345,15 +1340,14 @@ $$n = \left\lceil \frac{\lambda_{\text{peak}}\,(1 + g)}{u \cdot X_{\max}} \right
 10. $P(T > 11) = 0.03 \times 0.03 = 0.0009$ (0.09%); extra load is $P(X > 6) = 3\%$.
 11. Hedges raised utilization, which raised latency, which pushed more requests past the fixed hedge delay, a positive feedback loop that drove demand above capacity.
 12. When CPU time to compress and decompress exceeds the bandwidth time saved: $1/C_c + 1/(\rho W) + 1/C_d > 1/W$, typically on fast links with a single stream.
-13. Every $4/1 = 4$ s; about $(20 + 10)/4{,}000 = 0.75\%$ of requests.
-14. Throughput is flat near the peak, so many values of $N$ give nearly the same $X$; small noise moves $N^*$ a lot but $X_{\max}$ little.
+13. Throughput is flat near the peak, so many values of $N$ give nearly the same $X$; small noise moves $N^*$ a lot but $X_{\max}$ little.
 </details>
 
 ## 23.13 Interview questions
 
 ### Basic
 
-**Q1. A service's average latency is fine but users complain. Where do you start?** **Answer.** Look at percentiles (p99, p99.9) per endpoint from histograms, separated by success and error, and check what changed when the complaints began. Then apply RED across the call graph to find the slow service and USE on its resources. Averages hide tails; percentiles show what the unlucky fraction sees, and fan-out means that fraction is often most users.
+**Q1. A service's average latency is fine but users complain. Where do you start?** **Answer.** Check per-endpoint percentiles (p99, p99.9) from histograms, split by success and error, and what changed when complaints began; then RED across the call graph and USE on the slow service. Averages hide tails, and with fan-out the unlucky fraction is often most users.
 
 **Q2. What is coordinated omission?** **Answer.** A load generator that waits for each response before sending the next stops sending during a stall, so the requests that would have suffered are never measured. Reported percentiles can be orders of magnitude too low. Use a constant-rate open generator that timestamps from the intended send time, and record into HDR histograms.
 
@@ -1361,13 +1355,13 @@ $$n = \left\lceil \frac{\lambda_{\text{peak}}\,(1 + g)}{u \cdot X_{\max}} \right
 
 **Q3. Design hedging for a key-value read path with a p99 problem.** **Answer.** Hedge only idempotent reads. Set the delay from a rolling histogram near the p95, cap hedges at about 5% of requests with a token-bucket budget, choose the second replica in a different failure domain, and cancel the loser. Disable hedging when the service is overloaded (rising queue depth or error rate) to avoid feedback. Measure p99, p99.9 and hedge rate before and after; consider tied requests if the storage servers can cancel queued work.
 
-**Q4. CPU is at 30% but p99 is ten times the SLO. What could it be?** **Answer.** Off-CPU causes: a saturated connection or thread pool, lock contention, a slow dependency, GC pauses, CPU quota throttling (host CPU low, cgroup throttled), or packet retransmissions. Check pool waiters, cgroup `nr_throttled`, GC logs and retransmit counters, then take an off-CPU or wall-clock profile and traces of slow requests.
+**Q4. CPU is at 30% but p99 is ten times the SLO. What could it be?** **Answer.** Off-CPU causes: saturated pools, lock contention, slow dependencies, GC pauses, CPU quota throttling or retransmissions. Check pool waiters, cgroup `nr_throttled`, GC logs and retransmit counters, then take off-CPU profiles and traces of slow requests.
 
 ### Advanced
 
 **Q5. How would you produce a capacity plan for a new service?** **Answer.** Build a representative workload from production traces; run warm, steady-state closed tests at increasing concurrency on the target instance type; fit the USL; check residuals and that the peak lies within the measured range. Choose an operating point at a fraction of the fitted peak, verified by an open-model test at that rate against the latency SLO. Size $n = \lceil \lambda_{\text{peak}}(1+g)/(u X_{\max}) \rceil$, add zone redundancy, and refit after every major change, comparing with production telemetry.
 
-**Q6. A Java service's p99.9 spikes every few seconds. Walk through diagnosis and fixes.** **Answer.** Correlate spikes with GC logs. If they match minor pauses, measure the allocation rate and young-generation size: frequency is $E/a$, and pause length scales with survivors. Reduce allocation using an allocation profiler, size the heap with headroom, or move to a concurrent collector (ZGC or Shenandoah) for sub-millisecond pauses at some throughput and memory cost. If spikes follow deployments, the cause may be JIT warm-up: add warm-up traffic and load-balancer slow start. Also rule out container throttling and background jobs.
+**Q6. A Java service's p99.9 spikes every few seconds. Walk through diagnosis and fixes.** **Answer.** Correlate spikes with GC logs. If they match minor pauses, measure the allocation rate and young-generation size: frequency is $E/a$, and pause length scales with survivors. Reduce allocation using an allocation profiler, size the heap with headroom, or move to a concurrent collector (ZGC or Shenandoah) for sub-millisecond pauses at some throughput and memory cost. Also rule out JIT warm-up after deployments, container throttling and background jobs.
 
 ## 23.14 Practical exercises
 

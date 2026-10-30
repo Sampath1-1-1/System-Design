@@ -2,9 +2,9 @@
 
 > **Level:** 2–3 · **Track:** A (Traditional) · **Estimated reading time:** 3 h
 
-Every service you build will eventually receive more requests than it can handle. Sometimes the cause is success (a launch, a viral post), sometimes abuse (a scraper, a credential-stuffing bot), and very often it is your own system: a slow database makes callers time out, the callers retry, and the retries triple the load on the database that was already struggling. Chapter 4 showed why this is dangerous: as utilization approaches 100%, queueing delay grows without bound (§4.10.3). This chapter is the toolbox for staying on the safe side of that curve. It covers **rate limiting** (deciding how much each client may send), **load shedding** and **backpressure** (what a server does when total demand exceeds capacity), the client-side disciplines of **timeouts, deadlines, retries, circuit breakers and bulkheads**, and finally **idempotency keys**, which make retries safe for operations that must never happen twice, such as charging a card.
+Every service eventually receives more requests than it can handle: from success (a launch), abuse (a scraper) or, very often, itself (a slow database makes callers time out, they retry, and the retries triple the load). As utilization approaches 100%, queueing delay grows without bound (§4.10.3); this chapter is the toolbox for staying on the safe side of that curve. It covers **rate limiting** (deciding how much each client may send), **load shedding** and **backpressure** (what a server does when total demand exceeds capacity), the client-side disciplines of **timeouts, deadlines, retries, circuit breakers and bulkheads**, and finally **idempotency keys**, which make retries safe for operations that must never happen twice, such as charging a card.
 
-The running example is PhotoShare from Chapter 1, which now offers a public API to third-party apps and sells a paid "PhotoShare Pro" subscription through an external payment provider. The API needs per-key quotas; the upload service needs protection from overload; and the subscription purchase must never charge a customer twice, even when the mobile network drops a response.
+The running example is PhotoShare (Chapter 1), which now offers a public API and sells a "PhotoShare Pro" subscription through an external payment provider: the API needs quotas, the upload service needs overload protection, and the purchase must never charge twice.
 
 ## 22.1 Learning objectives
 
@@ -40,28 +40,22 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a popular museum that sells timed entry tickets. The museum could let everyone in at once, but then the galleries would be so crowded that nobody could see anything, and one tour bus of 200 people arriving at 10:00 would ruin the visit for everyone else. So it caps entries per half hour and per booking. The cap protects the shared resource (gallery space), gives each visitor a fair share, and stops one large group from crowding out individuals. A rate limiter does the same for an API: it caps how many requests each client may make per unit of time, so that no single client can consume the shared capacity.
+A popular museum caps entries per half hour and per booking, so that one tour bus of 200 people cannot crowd out everyone else. A rate limiter does the same for an API: it caps how many requests each client may make per unit of time, so no single client can consume the shared capacity.
 
 #### Why does this exist?
 
-Rate limits solve five distinct problems, and naming which one you are solving determines the right design:
+Rate limits solve five distinct problems: **abuse** (credential stuffing, scraping, application-layer DoS, §10.11; 5 login attempts per minute turns a million-password attack into a multi-year project), **fairness** between tenants, **protecting downstream capacity**, **cost control** for expensive calls (paid APIs, GPU inference), and **product tiers** ("Free: 60 requests/minute; Pro: 5,000").
 
-1. **Abuse and security.** Credential stuffing, scraping and application-layer denial-of-service send many requests from one identity or address (§10.3, §10.11). A per-account login limit of, say, 5 attempts per minute turns a million-password attack into a multi-year project.
-2. **Fairness between tenants.** In a multi-tenant API, one customer's batch job must not starve everyone else. Limits per tenant enforce isolation.
-3. **Protecting downstream capacity.** A service that can sustain 2,000 RPS on its database should not accept 10,000 RPS and let the database fall over.
-4. **Cost control.** Some requests cost real money (a call to a paid third-party API, a GPU inference). Limits cap the bill.
-5. **Product tiers.** "Free: 60 requests/minute; Pro: 5,000 requests/minute" is both a commercial offer and a capacity plan.
-
-A rate limit is a *per-client* control. It does not protect a service when the *sum* of all clients' allowed traffic exceeds capacity; that is the job of load shedding (§22.9). Keep the two separate in your designs: rate limits answer "is this client within its contract?", load shedding answers "can I afford this request right now?".
+Rate limits answer "is this client within its contract?"; load shedding (§22.9) answers "can I afford this request right now?". Keep the two separate.
 
 ### 22.3.2 Where to enforce limits
 
-Limits can be enforced at four places, and mature systems use several of them in layers.
+Mature systems enforce limits in layers:
 
-1. **Client side.** Well-behaved SDKs pace themselves (a local token bucket) and honor `Retry-After`. This reduces rejected traffic but cannot be trusted for protection, because malicious clients ignore it.
-2. **Edge (CDN or WAF).** Coarse per-IP limits at the edge stop floods before they reach your network (§10.11). The edge sees every request but knows little about users.
-3. **API gateway.** The gateway authenticates the request, so it can limit per API key, user or tenant, and per route. This is the most common place for contractual quotas.
-4. **Service.** Inside the service you know the true cost of a request (rows scanned, bytes uploaded, model tokens generated) and can limit on cost rather than count, or protect one expensive dependency.
+1. **Client side.** SDKs pace themselves and honor `Retry-After`; useful, but never trusted for protection.
+2. **Edge (CDN or WAF).** Coarse per-IP limits stop floods before they reach your network (§10.11).
+3. **API gateway.** After authentication it can limit per API key, user, tenant and route; the usual home of contractual quotas.
+4. **Service.** Only the service knows a request's true cost (rows scanned, bytes uploaded, tokens generated), so it can limit on cost rather than count.
 
 **Figure 22.1 — Layered rate limiting for the PhotoShare API.**
 
@@ -76,32 +70,30 @@ flowchart LR
   GW -->|429 plus Retry-After| C
 ```
 
-**Reading the diagram.** A third-party app (stadium) sends HTTPS requests through three enforcement layers. The *CDN/WAF* applies cheap per-IP limits before traffic reaches PhotoShare's network. The *API gateway* authenticates the API key and checks per-key and per-tenant quotas against *shared counters* in Redis (a storage boundary shared by all gateway nodes, §22.8). The *upload service* applies a cost-based limit (bytes per minute per user) because one upload can cost a thousand times more than a metadata read. All solid arrows are synchronous; the thumbnail queue is asynchronous. Rejected requests return 429 with `Retry-After` directly from whichever layer rejected them. Failure points: the Redis counter store is on the hot path of every request, so its outage policy (fail open or closed, §22.8.5) must be decided in advance. Scaling: edge and gateway scale horizontally; the counter store is partitioned by key.
+**Reading the diagram.** A third-party app sends HTTPS requests through three enforcement layers: the *CDN/WAF* (cheap per-IP limits), the *API gateway* (per-key and per-tenant quotas checked against *shared counters* in Redis, a storage boundary shared by all gateway nodes, §22.8) and the *upload service* (a cost-based limit in bytes per minute). Solid arrows are synchronous; the thumbnail queue is asynchronous. Whichever layer rejects returns 429 with `Retry-After`. Failure point: the counter store is on every request's hot path, so its outage policy (§22.8.5) must be decided in advance. Scaling: edge and gateway scale horizontally; counters are partitioned by key.
 
 ### 22.3.3 Choosing the key
 
-The **rate-limit key** is the identity whose usage is counted. Choosing it badly either lets abuse through or punishes innocent users.
+The **rate-limit key** is the identity whose usage is counted.
 
 **Table 22.1 — Rate-limit keys.**
 
 | Key | Strengths | Weaknesses | Typical use |
 |---|---|---|---|
-| Client IP address | Available before authentication; stops anonymous floods | Many users share one IP behind carrier-grade NAT or corporate proxies (§7.13); attackers rotate IPs; trust `X-Forwarded-For` only from your own proxies (§7.12) | Edge flood control, login pages, sign-up |
-| User or account ID | Fair per person; survives IP changes | Needs authentication first; one attacker can create many accounts | Per-user actions (posts, messages) |
-| API key or OAuth client ID | Maps directly to a contract and a bill | A leaked key consumes the owner's quota | Public developer APIs |
-| Tenant (organization) | Isolates customers in multi-tenant SaaS | One heavy user can exhaust a whole organization's quota | Enterprise plans, noisy-neighbor control |
-| Route or operation, combined with one of the above | Expensive endpoints get tighter limits | More counters to store | `POST /uploads` stricter than `GET /photos` |
-| Cost units | Reflects true resource use | Cost must be estimated before execution | GraphQL query cost (§8.7), LLM tokens |
+| Client IP address | Available before authentication | Many users share one IP behind carrier-grade NAT (§7.13); attackers rotate IPs | Edge flood control, login, sign-up |
+| User or account ID | Fair per person | Needs authentication; attackers create accounts | Per-user actions |
+| API key or OAuth client ID | Maps to a contract and a bill | A leaked key consumes the owner's quota | Public developer APIs |
+| Tenant | Isolates customers | One heavy user exhausts the tenant | Noisy-neighbor control |
+| Route plus one of the above | Tighter limits on expensive endpoints | More counters | `POST /uploads` |
+| Cost units | Reflects true resource use | Cost must be estimated up front | GraphQL cost (§8.7), LLM tokens |
 
-Production systems usually apply **hierarchical limits**: a request must pass every applicable bucket, for example per-IP (edge) *and* per-key *and* per-tenant *and* a global ceiling for the route. The request is admitted only if all checks pass, and tokens are taken from all of them.
+Production systems apply **hierarchical limits**: a request must pass every applicable bucket (per-IP *and* per-key *and* per-tenant *and* a route ceiling).
 
 ### 22.3.4 Telling the client: 429, Retry-After and RateLimit headers
 
-A rejected client needs three facts: that it was limited (not that the server failed), when to come back, and ideally how much quota remains so it can pace itself before hitting the wall.
-
-- **HTTP 429 Too Many Requests** means the client sent too many requests in a given time; it was defined in RFC 6585 [Nottingham and Fielding 2012]. It blames the client. **503 Service Unavailable** blames the server (overload or maintenance) and is the right status for load shedding (§22.9).
-- **`Retry-After`** (RFC 9110 §10.2.3) gives either a number of seconds or an HTTP date after which the client may retry. Compute it from the limiter's state (the token bucket in §22.4 returns it exactly).
-- **RateLimit header fields** are being standardized by the IETF HTTPAPI working group in the Internet-Draft *RateLimit header fields for HTTP* [Polli et al., draft]. As of 2026 this is still a **draft, not an RFC**, and its syntax has changed between versions. Early drafts used three fields (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`); recent drafts use two structured fields, `RateLimit-Policy` (the quota policy: quota `q` and window `w`) and `RateLimit` (current state: remaining `r` and seconds until reset `t`). Many public APIs still use their own `X-RateLimit-*` headers.
+- **429 Too Many Requests** [Nottingham and Fielding 2012] blames the client; **503 Service Unavailable** blames the server and is right for load shedding (§22.9).
+- **`Retry-After`** (RFC 9110 §10.2.3) gives seconds or a date after which to retry; compute it from the limiter's state.
+- **RateLimit header fields** are being standardized in the IETF Internet-Draft *RateLimit header fields for HTTP* [Polli et al., draft], as of 2026 still a **draft, not an RFC**. Early drafts used `RateLimit-Limit`, `-Remaining` and `-Reset`; recent drafts use `RateLimit-Policy` (quota `q`, window `w`) and `RateLimit` (remaining `r`, seconds to reset `t`). Many APIs still use their own `X-RateLimit-*` headers.
 
 ```text
 HTTP/1.1 429 Too Many Requests
@@ -117,12 +109,11 @@ RateLimit: "default";r=0;t=18
 
 What to notice:
 
-- The body uses the RFC 9457 problem-details format so clients can parse it; the headers carry the machine-readable timing.
-- `Retry-After: 18` and `t=18` agree. Clients that only understand `Retry-After` still behave correctly.
-- Send the `RateLimit` fields on *successful* responses too, so careful clients slow down before being rejected.
+- The body uses RFC 9457 problem details; `Retry-After: 18` and `t=18` agree, so older clients still behave.
+- Send the `RateLimit` fields on *successful* responses too, so clients slow down before being rejected.
 
 ::: industry
-**GitHub REST API rate-limit headers.** GitHub documents per-user and per-app limits for its REST API and returns `x-ratelimit-limit`, `x-ratelimit-remaining`, `x-ratelimit-used`, `x-ratelimit-reset` (a Unix timestamp) and `x-ratelimit-resource` on responses; when the limit is exceeded it returns 403 or 429, and for secondary limits it may send `retry-after` [GitHub Docs: REST rate limits]. The lesson is that de-facto conventions predate the IETF draft, so client libraries must handle several header dialects.
+**GitHub REST API.** GitHub returns `x-ratelimit-limit`, `x-ratelimit-remaining`, `x-ratelimit-used`, `x-ratelimit-reset` (a Unix timestamp) and `x-ratelimit-resource`, answers excess requests with 403 or 429, and may send `retry-after` for secondary limits [GitHub Docs: REST rate limits]. De-facto conventions predate the IETF draft, so client libraries must handle several dialects.
 *Evidence: Primary* — [GitHub Docs: REST rate limits]
 :::
 
@@ -131,12 +122,11 @@ What to notice:
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Thousands of mobile users blocked at once | Per-IP limit applied to a carrier NAT address | 429 spike concentrated on few IPs with many user agents | Raise or bypass the IP limit for authenticated traffic | Key on user or API key after authentication; IP limits only pre-auth |
-| Limits do nothing during an attack | Attacker rotates API keys or IPs | Total traffic high while every key is under its limit | Add tenant- and route-level ceilings | Hierarchical limits plus load shedding |
 | Clients hammer after 429 | No `Retry-After`; SDK retries immediately | 429 rate rises in lockstep with request rate | Return `Retry-After`; block abusive keys | SDK backoff with jitter (§22.12) |
 | Legitimate burst rejected | Burst allowance smaller than the client's natural burst (app start-up sync) | 429s at app launch time, low average usage | Increase bucket capacity | Size burst from observed per-session peaks (§22.4) |
 
 ::: mistake
-**Mistake — "Rate limiting protects my service from overload."** It protects you from *individual* clients exceeding their contracts. If 10,000 well-behaved customers each stay within 100 RPS, they can still send 1,000,000 RPS in total. Capacity protection needs a global admission control layer: load shedding and backpressure (§22.9–§22.10).
+**Mistake — "Rate limiting protects my service from overload."** 10,000 customers each within 100 RPS can still send 1,000,000 RPS in total. Capacity protection needs load shedding and backpressure (§22.9–§22.10).
 :::
 
 ## 22.4 Token bucket
@@ -1844,3 +1834,126 @@ $$S = \lambda_w \times T_{\text{ttl}} \times s_r$$
 **Mistake — "We return the stored response, so the operation is exactly-once."** Idempotency keys give *at-most-once execution per key within the retention window* on top of *at-least-once delivery* by the client: effectively-once processing. They say nothing about a client that generates a new key per attempt, a key that has expired, or a side effect that escaped your transaction. Exactly-once delivery is not achievable over an unreliable network; effectively-once processing is (§32.9).
 :::
 
+## 22.16 Summary and revision notes
+
+::: summary
+- **Rate limits are per-client contracts; load shedding protects total capacity.** You need both. Enforce limits in layers (edge per IP, gateway per key/tenant, service per cost) and signal them with 429, `Retry-After`, and the draft `RateLimit-Policy`/`RateLimit` fields.
+- **Token bucket:** rate $r$, burst $b$, admitted $A(T) \le b + rT$; two numbers per key; `Retry-After` $= \text{deficit}/r$. **GCRA** is the same policy stored as one timestamp. The leaky bucket *as a queue* shapes traffic by delaying it.
+- **Fixed window** admits up to $2L$ across a boundary. The **sliding log** is exact but stores $L$ timestamps per key. The **sliding window counter** $\hat N = C_{\text{prev}}(W-e)/W + C_{\text{curr}}$ is cheap and close to exact for random traffic, but biased for traffic phase-locked to the window.
+- **Distributed limiting:** centralized Redis with an atomic Lua script is exact but costs a round trip; local counting with sync overshoots by up to $\lambda\Delta$; quota distribution is cheap but lags demand shifts. Decide fail-open versus fail-closed per limit.
+- **Overload:** without shedding, goodput collapses after $t = \mu T_{\text{out}}/(\lambda-\mu)$. Shed by priority, bound queues by time ($Q_{\max} = \mu D$), and use CoDel-style delay targets and adaptive LIFO.
+- **Backpressure** propagates "slow down" upstream: bounded buffers, blocking or rejection, and explicit demand (`request(n)`, TCP windows).
+- **Deadlines** propagate absolute time budgets: $B_{i+1} = B_i - e_i - m_i$. A timeout means "unknown outcome", not "failed".
+- **Retries:** only retryable errors, idempotent operations, remaining budget. Use capped exponential backoff with full or decorrelated jitter. Amplification is $a^d$ across $d$ retrying layers; retry at one layer and cap with a budget (about 10%).
+- **Circuit breakers** fail fast when a dependency's failure rate crosses a threshold, probe in half-open, and need timeouts underneath. **Bulkheads** give each dependency its own Little's-Law-sized pool.
+- **Idempotency keys:** client-generated once per logical operation; scoped per account; fingerprinted; claimed with a uniqueness constraint; leased and fenced; committed atomically with the business write; retained longer than the retry horizon ($S = \lambda_w T_{\text{ttl}} s_r$).
+:::
+
+## 22.17 Knowledge checkpoint
+
+1. Why is a rate limit not sufficient protection against overload?
+2. A token bucket has $r = 50$ RPS and $b = 200$. What is the most it admits in any 10 s interval, and how long does it take to refill from empty?
+3. What is the difference between the leaky bucket as a queue and as a meter?
+4. With a fixed window of 1,000 requests per hour, what is the most a client can send in any one-hour interval?
+5. Sliding window counter, $L = 60$/min: previous window 40, current 25, 30 s elapsed. Is the next request admitted?
+6. Why must a Redis-based limiter use a Lua script (or equivalent atomic operation) rather than `GET` then `SET`?
+7. With 20 gateways synchronizing every 50 ms and 4,000 RPS offered for one key, what is the worst-case overshoot per second?
+8. A server handles 400 RPS; clients time out after 2 s; 600 RPS arrive. When does goodput collapse without shedding?
+9. Why does adaptive LIFO help an overloaded server?
+10. What does a timeout tell the caller about a write operation?
+11. Five layers each make up to 2 attempts. What is the worst-case amplification at the bottom?
+12. Why does a circuit breaker need a minimum call volume?
+13. What does the fencing check in an idempotency layer prevent?
+14. Name three request properties that should go into an idempotency fingerprint.
+
+<details><summary>Answers</summary>
+
+1. It bounds each client individually; the sum of all clients' allowed traffic can still exceed capacity. Global protection needs load shedding and backpressure.
+2. $A(10) = 200 + 50 \times 10 = 700$ requests; refill time $b/r = 200/50 = 4$ s.
+3. The queue form buffers requests and releases them at a constant rate (delaying them, smoothing output); the meter form admits or rejects immediately and is equivalent to a token bucket.
+4. $2L = 2{,}000$, by spending a full quota at the end of one window and another at the start of the next.
+5. $\hat N = 40 \times 0.5 + 25 = 45$; $45 + 1 \le 60$, so yes.
+6. Between a read and a write, other nodes can read the same value and also admit, exceeding the limit and losing increments. A script runs atomically on the shard.
+7. $E_{\max} \approx \lambda\Delta = 4{,}000 \times 0.05 = 200$ requests.
+8. $t = \mu T/(\lambda - \mu) = 400 \times 2/200 = 4$ s.
+9. Under a standing queue the oldest requests have probably timed out at the client; serving the newest first spends capacity on requests someone is still waiting for.
+10. Nothing definite: the write may not have arrived, may have failed, or may have succeeded with the response lost.
+11. $2^5 = 32$.
+12. Without it, a handful of failures at low traffic (2 of 3 calls) would exceed a percentage threshold and trip the breaker on noise.
+13. A slow worker whose lease expired committing its result after another worker took over, which would execute the operation twice.
+14. HTTP method, path (resource), and canonicalized body; optionally the API version and relevant headers.
+</details>
+
+## 22.18 Interview questions
+
+### Basic
+
+**Q1. Design a rate limiter for a public API.** **Answer.** Clarify keys (API key, plus per-IP pre-authentication), limits (rate and burst per tier) and accuracy needs. Use a token bucket per key, stored in Redis and updated by an atomic Lua script called from the API gateway; return 429 with `Retry-After` and `RateLimit` headers. Discuss latency (one round trip, about 0.5 ms in-datacenter), hot keys (local pre-aggregation), Redis failure (fail open for quotas, closed for login limits), and hierarchical limits per tenant and route.
+
+**Q2. Why add jitter to exponential backoff?** **Answer.** Clients that failed together back off by identical amounts and retry together, so each wave collides again. Randomizing the wait spreads retries over time; in this chapter's simulation, jitter reduced calls from 5,050 to about 460 for 100 contending clients.
+
+### Intermediate
+
+**Q3. Compare token bucket, fixed window and sliding window counter for a 100-requests-per-minute limit.** **Answer.** Token bucket ($r = 1.67$/s, $b$ chosen for bursts) is exact, two numbers per key, controls bursts explicitly. Fixed window is one counter but admits up to 200 across a boundary. Sliding counter is two counters and approximates a true sliding minute well for random traffic (5–13% worst-window overshoot in simulation) but is biased for periodic traffic. Choose token bucket for API admission, fixed windows for coarse daily quotas.
+
+**Q4. A dependency gets slow and your service's p99 explodes even for endpoints that don't call it. Why and what do you change?** **Answer.** The slow dependency holds threads from a shared pool (Little's Law: in-flight $= \lambda W$ grows with $W$), starving other endpoints. Add timeouts set from the dependency's p99.9, a bulkhead (dedicated pool or semaphore) sized for normal concurrency, a circuit breaker to fail fast, and a fallback.
+
+### Advanced
+
+**Q5. Design idempotent payment creation across your API and an external payment provider.** **Answer.** Client generates a UUID key per checkout and persists it; server scopes keys per account, stores fingerprint and status with a uniqueness constraint; concurrent duplicates get 409; mismatched bodies 422. The server passes a derived key to the provider so that a crash between charge and commit is safe to retry; it splits work into atomic phases with recovery points; stores the final response atomically with local state; leases claims and fences completions; retains keys longer than the client's retry horizon; and reconciles stuck in-progress keys with the provider.
+
+**Q6. A five-service call chain melts down during a database brownout. Explain the dynamics and a fix.** **Answer.** Each layer retries three times, so load at the database multiplies up to $3^5 = 243\times$; queues grow beyond client timeouts so goodput collapses; fixed per-hop timeouts keep inner calls running after the user has given up. Fix: retry at one layer with jittered backoff and a 10% budget, propagate deadlines, shed sheddable traffic by priority with bounded queues, add circuit breakers at each dependency, and use adaptive client throttling.
+
+## 22.19 Practical exercises
+
+1. Extend the `TokenBucket` class with per-request cost and a `RateLimit` header generator; test with a fake clock that a 5-token upload request is rejected when 3 tokens remain and that `Retry-After` is correct.
+2. Run the Lua script from §22.8.2 against a local Redis, then write a version *without* atomicity (separate `HMGET` and `HSET` from 20 concurrent threads) and measure how many requests exceed the limit.
+3. Modify the distributed limiter simulation so that node 0's share of traffic jumps from 10% to 60% at $t = 10$ s. Measure how long each strategy under- or over-admits.
+4. Add a retry budget (10% token bucket) to the backoff simulation and measure total calls when the resource fails every call for 5 s.
+5. Port the idempotency layer to PostgreSQL and test concurrent claims from two processes with `INSERT ... ON CONFLICT DO NOTHING`.
+
+## 22.20 Design challenges
+
+1. **Multi-tier quota service.** A SaaS platform with 50,000 tenants, 200 gateway nodes in three regions and 1 million RPS must enforce per-tenant per-minute quotas and per-user burst limits with less than 1 ms added p99 latency. Choose algorithms, storage and synchronization; quantify overshoot and coordination traffic; define behavior during a region partition.
+2. **Overload-proof checkout.** Design PhotoShare Pro's purchase path to survive a 5× traffic spike and a 10-minute payment-provider brownout without double charges: deadlines, retries, breakers, bulkheads, shedding priorities and the idempotency layer, with a failure-mode table.
+
+## 22.21 References
+
+1. Amazon Web Services. *Throttle requests to your REST APIs for better throughput in API Gateway*. AWS Documentation, accessed 2026. https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-request-throttling.html
+2. Amazon Web Services. *Retry behavior*. AWS SDKs and Tools Reference Guide, accessed 2026. https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html
+3. ATM Forum. *Traffic Management Specification Version 4.0* (af-tm-0056.000). ATM Forum, 1996.
+4. Beyer, B., Jones, C., Petoff, J., Murphy, N. R. (eds.). *Site Reliability Engineering: How Google Runs Production Systems*, ch. 21 "Handling Overload" and ch. 22 "Addressing Cascading Failures". O'Reilly, 2016. https://sre.google/sre-book/table-of-contents/
+5. Brooker, M. *Exponential Backoff and Jitter*. AWS Architecture Blog, 2015. https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+6. Brooker, M. *Timeouts, retries, and backoff with jitter*. Amazon Builders' Library, 2019. https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+7. Desgats, J. *How we built rate limiting capable of scaling to millions of domains*. Cloudflare Blog, 2017.
+8. Envoy Project. *Global rate limiting*, *Local rate limit filter* and *Circuit breaking* (retry budgets). Envoy Proxy documentation, accessed 2026. https://www.envoyproxy.io/docs
+9. Fowler, M. *CircuitBreaker*. martinfowler.com, 2014. https://martinfowler.com/bliki/CircuitBreaker.html
+10. GitHub. *Rate limits for the REST API*. GitHub Docs, accessed 2026. https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
+11. gRPC Authors. *Deadlines*. gRPC documentation, accessed 2026. https://grpc.io/docs/guides/deadlines/
+12. ITU-T. *Recommendation I.371: Traffic control and congestion control in B-ISDN*. International Telecommunication Union (several editions since 1993).
+13. Jena, J., Dalal, S. *The Idempotency-Key HTTP Header Field*. IETF Internet-Draft draft-ietf-httpapi-idempotency-key-header, work in progress (revision -07, October 2025).
+14. Leach, B. *Designing robust and predictable APIs with idempotency*. Stripe Blog, 2017. https://stripe.com/blog/idempotency
+15. Leach, B. *Implementing Stripe-like Idempotency Keys in Postgres*. brandur.org, 2017. https://brandur.org/idempotency-keys (cited as Leach 2017b)
+16. Maurer, B. *Fail at Scale: Reliability in the face of rapid change*. ACM Queue 13(8), 2015.
+17. Netflix. *Hystrix Configuration*. Hystrix wiki on GitHub, accessed 2026. https://github.com/Netflix/Hystrix/wiki/Configuration
+18. Nichols, K., Jacobson, V. *Controlling Queue Delay*. ACM Queue 10(5), 2012.
+19. Nottingham, M., Fielding, R. *Additional HTTP Status Codes*. RFC 6585, IETF, 2012.
+20. Nottingham, M., Wilde, E., Dalal, S. *Problem Details for HTTP APIs*. RFC 9457, IETF, 2023.
+21. Fielding, R., Nottingham, M., Reschke, J. (eds.). *HTTP Semantics*. RFC 9110, IETF, 2022.
+22. Nygard, M. T. *Release It! Design and Deploy Production-Ready Software*, 2nd ed. Pragmatic Bookshelf, 2018.
+23. Polli, R., Martínez Ruiz, A., Miller, D. *RateLimit header fields for HTTP*. IETF Internet-Draft draft-ietf-httpapi-ratelimit-headers, work in progress (revisions through 2025–2026).
+24. Reactive Streams. *Reactive Streams Specification for the JVM*, version 1.0.0, 2015. https://www.reactive-streams.org/
+25. Redis. *Scripting with Lua*. Redis documentation, accessed 2026. https://redis.io/docs/latest/develop/interact/programmability/eval-intro/
+26. Stripe. *Idempotent requests*. Stripe API reference, accessed 2026. https://docs.stripe.com/api/idempotent_requests
+27. Tarjan, P. *Scaling your API with rate limiters*. Stripe Blog, 2017. https://stripe.com/blog/rate-limiters
+28. Yanacek, D. *Using load shedding to avoid overload*. Amazon Builders' Library. https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/
+29. Yanacek, D. *Making retries safe with idempotent APIs*. Amazon Builders' Library. https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-apis/
+
+## 22.22 Open verification items
+
+- ITU-T I.371 edition year and the exact ATM Forum TM 4.0 document number for the GCRA definition (cited without a specific edition).
+- Current revision and field syntax of the IETF RateLimit header draft (search results indicated draft-10, September 2025, and draft-11, May 2026; ietf.org was unreachable from the build environment).
+- Idempotency-Key draft: status after revision -07 (October 2025) and whether its 409/422 recommendations changed.
+- Cloudflare post (Desgats 2017): exact URL and the "0.003% of 400 million requests" figure.
+- Stripe documentation details (255-character keys, 24-hour pruning, stored 500 responses) as of 2026.
+- Hystrix default values and AWS SDK retry-quota behavior; ACM Queue URLs for Nichols and Jacobson 2012 and Maurer 2015.
