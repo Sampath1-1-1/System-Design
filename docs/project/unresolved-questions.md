@@ -191,3 +191,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-184 | 32 | DBLog arXiv ID; Netflix Conductor blog URL; Debezium default delivery guarantee (as of 2026) | Open | |
 | UQ-185 | 32 | Step Functions and Temporal limits (as of 2026); per-step latency figures in Table 32.13 | Open | Time-sensitive |
 | UQ-186 | 32 | Whether crypto-shredding satisfies GDPR Art. 17 erasure | Accepted | Legal question; text presents it as commonly used, not as legal advice |
+| UQ-187 | 37 | Norvig (1996) talk title/venue and "16 of 23 patterns invisible or simpler" figure | Open | |
+| UQ-188 | 37 | Author list/date of "The 'Double-Checked Locking is Broken' Declaration"; PEP 318 author attribution | Open | |
+| UQ-189 | 37 | Spring docs wording recommending constructor injection; default proxy type (JDK dynamic proxy in Spring Framework vs CGLIB in Spring Boot) | Open | Version-dependent |
+| UQ-190 | 37 / 5 / 6 | PEP 703 free-threaded CPython still experimental as of 2026 | Open | Merge with UQ-028, UQ-063 |

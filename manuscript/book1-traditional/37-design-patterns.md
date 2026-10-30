@@ -1230,7 +1230,12 @@ Proxy (§37.11) has the same structure but controls access rather than adding fe
 
 ### Problem it solves
 
-The invoice service is expensive to start (it loads templates and opens a connection pool) but most requests never need it; a virtual proxy defers that cost. Only users with the billing role may read invoices; a protection proxy enforces that at one choke point. In a microservice deployment the invoice service runs elsewhere; a remote proxy (a gRPC or REST client stub) lets callers write `invoices.get_invoice("o-17")`. Hibernate's lazy-loaded entity proxies, Spring's AOP proxies for `@Transactional` methods, and every generated gRPC client stub are proxies [Spring Docs].
+The invoice service is expensive to start (it loads templates and opens a connection pool) but most requests never need it; a virtual proxy defers that cost. Only users with the billing role may read invoices; a protection proxy enforces that at one choke point. In a microservice deployment the invoice service runs elsewhere; a remote proxy (a gRPC or REST client stub) lets callers write `invoices.get_invoice("o-17")`.
+
+::: industry
+**Spring Framework transactions.** Spring applies `@Transactional` and other aspects by wrapping a bean in a proxy, a JDK dynamic proxy when the bean implements an interface and a generated subclass otherwise. The proxy begins the transaction, calls the real method and commits or rolls back. The documented trade-off: a call from one method of the bean to another on `this` bypasses the proxy, so the annotation on the inner method has no effect.
+*Evidence: Primary* — [Spring Docs]
+:::
 
 ### Structure
 
@@ -1742,7 +1747,7 @@ Unit of Work tracks changes across repositories and commits them in one transact
 
 ### Problem it solves
 
-An `OrderService` that calls `PostgresOrderRepository()`, `VendorPayClient()` and `datetime.now()` inside its methods cannot be tested without a database, a payment sandbox and a frozen clock, and it cannot be reconfigured without editing it. The Dependency Inversion Principle (§36.7) says high-level policy should depend on abstractions; DI is the mechanism that hands the concrete implementations of those abstractions in. Fowler named the pattern in 2004 to distinguish it from the broader term "inversion of control", and contrasted it with the **Service Locator**, in which objects ask a global registry for dependencies [Fowler 2004].
+An `OrderService` that calls `PostgresOrderRepository()`, `VendorPayClient()` and `datetime.now()` inside its methods cannot be tested without a database, a payment sandbox and a frozen clock, and it cannot be reconfigured without editing it. The Dependency Inversion Principle (§36.7) says high-level policy should depend on abstractions; DI is the mechanism that hands the concrete implementations of those abstractions in. Fowler named the pattern in 2004 to distinguish it from the broader term "inversion of control", and contrasted it with the **Service Locator**, in which objects ask a global registry for dependencies [Fowler 2004]. Section 36.7.4 separates DI, dependency inversion and inversion of control in detail.
 
 ### Structure
 
@@ -2097,7 +2102,13 @@ Use Template Method in frameworks and base classes where the sequence is invaria
 
 #### Problem it solves
 
-Every HTTP request to the order API must be logged, authenticated and rate-limited before reaching the application, and some requests must be stopped early (401, 429). Putting all of that at the top of every endpoint duplicates code and mixes concerns. A chain of middleware applies the concerns in a configured order, and any link can short-circuit. Django's middleware, Java servlet filters, Express and ASGI middleware, gRPC interceptors and Envoy's HTTP filter chain all work this way [Django Docs]. The classic GoF form, in which exactly one handler takes the request (a support ticket escalating from bot to agent to engineer, or nested exception handlers), is the same structure with a different stopping rule.
+Every HTTP request to the order API must be logged, authenticated and rate-limited before reaching the application, and some requests must be stopped early (401, 429). Putting all of that at the top of every endpoint duplicates code and mixes concerns. A chain of middleware applies the concerns in a configured order, and any link can short-circuit. Java servlet filters, Express and ASGI middleware, gRPC interceptors and Envoy's HTTP filter chain all work this way.
+
+::: industry
+**Django middleware.** Django builds its request pipeline from the `MIDDLEWARE` setting: each middleware is a factory that receives `get_response` (the next handler) and returns a callable. Requests pass through the list top to bottom and responses bottom to top, and a middleware can return a response without calling `get_response`, short-circuiting the chain. The documentation stresses that order matters, for example placing session middleware before authentication middleware, which reads the session.
+*Evidence: Primary* — [Django Docs]
+:::
+ The classic GoF form, in which exactly one handler takes the request (a support ticket escalating from bot to agent to engineer, or nested exception handlers), is the same structure with a different stopping rule.
 
 #### Structure
 
@@ -2774,4 +2785,5 @@ Patterns are answers; start from the question. Name the force that hurts (a grow
 - Bacon et al. declaration: full author list and date.
 - PEP 318 author attribution (Kevin D. Smith, Jim Jewett, Skip Montanaro, Anthony Baxter).
 - Spring documentation wording recommending constructor injection for mandatory dependencies (as of 2026).
+- Spring proxy defaults: JDK dynamic proxy for interface-implementing beans in Spring Framework versus class-based (CGLIB) proxies by default in Spring Boot (as of 2026).
 - PEP 703 free-threaded build status in current CPython releases (experimental in 3.13; status as of 2026).
