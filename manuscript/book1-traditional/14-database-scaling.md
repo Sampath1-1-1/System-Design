@@ -302,11 +302,9 @@ The program below implements option 2 with a per-session watermark.
 """Read-your-writes and monotonic reads with log-position tokens (simulation)."""
 import random
 
-
 class Replica:
     def __init__(self, name):
         self.name, self.applied = name, 0       # applied log position (LSN)
-
 
 class Router:
     """Routes reads to any replica that has applied the session's watermark."""
@@ -330,7 +328,6 @@ class Router:
         # monotonic reads: later reads must be at least as fresh as this one
         self.watermark[session] = max(need, chosen.applied)
         return chosen.name
-
 
 if __name__ == "__main__":
     random.seed(7)
@@ -632,7 +629,6 @@ The program below implements the formula and reproduces the example.
 """Shard-count calculator: the binding constraint among storage, writes and reads."""
 import math
 
-
 def shards_needed(data_tb, disk_tb, fill, writes, write_cap, reads,
                   read_nodes, read_cap, util):
     terms = {
@@ -643,11 +639,9 @@ def shards_needed(data_tb, disk_tb, fill, writes, write_cap, reads,
     binding = max(terms, key=terms.get)
     return math.ceil(terms[binding]), binding, terms
 
-
 def even_logical_counts(physical, candidates=(512, 720, 960, 1024, 4096)):
     """Logical-shard counts that divide evenly over `physical` shards."""
     return [c for c in candidates if c % physical == 0]
-
 
 if __name__ == "__main__":
     s, binding, terms = shards_needed(
@@ -768,11 +762,9 @@ import bisect
 import hashlib
 from collections import Counter
 
-
 def h(key: str) -> int:
     """Map a string to a 64-bit ring position (MD5 used only for mixing)."""
     return int.from_bytes(hashlib.md5(key.encode("utf-8")).digest()[:8], "big")
-
 
 class HashRing:
     def __init__(self, vnodes_per_weight: int = 100):
@@ -815,7 +807,6 @@ class HashRing:
                 result.append(node)
             i = (i + 1) % len(self._owners)
         return result
-
 
 if __name__ == "__main__":
     keys = [f"user:{i}" for i in range(200_000)]
@@ -935,10 +926,8 @@ RING = 2 ** 64
 N = 10            # physical nodes
 TRIALS = 200      # independent rings per value of V
 
-
 def h(key: str) -> int:
     return int.from_bytes(hashlib.md5(key.encode("utf-8")).digest()[:8], "big")
-
 
 def node_shares(n: int, v: int, trial: int) -> list:
     """Fraction of the ring owned by each node in one random ring."""
@@ -951,7 +940,6 @@ def node_shares(n: int, v: int, trial: int) -> list:
         prev = pos
     return [s / RING for s in share]
 
-
 def expected_max_std_normal(n: int, samples: int = 4000) -> float:
     """E[max of n standard normals], by a quick deterministic quadrature."""
     nd = statistics.NormalDist()
@@ -960,7 +948,6 @@ def expected_max_std_normal(n: int, samples: int = 4000) -> float:
         u = (k + 0.5) / samples               # u = F(x)^n  =>  x = F^-1(u^(1/n))
         total += nd.inv_cdf(u ** (1.0 / n))
     return total / samples
-
 
 if __name__ == "__main__":
     z = expected_max_std_normal(N)
@@ -1043,10 +1030,8 @@ import statistics
 
 MASK64 = (1 << 64) - 1
 
-
 def h64(s: str) -> int:
     return int.from_bytes(hashlib.md5(s.encode("utf-8")).digest()[:8], "big")
-
 
 def jump_hash(key: int, num_buckets: int) -> int:
     """Lamping & Veach (2014): 64-bit key -> bucket in [0, num_buckets)."""
@@ -1057,11 +1042,9 @@ def jump_hash(key: int, num_buckets: int) -> int:
         j = int((b + 1) * (float(1 << 31) / float((key >> 33) + 1)))
     return b
 
-
 def rendezvous(key: str, nodes: list) -> str:
     """Highest random weight: every node scores the key; the top score wins."""
     return max(nodes, key=lambda node: h64(f"{node}|{key}"))
-
 
 def report(name, assign_before, assign_after, keys, n_after):
     moved = sum(assign_before(k) != assign_after(k) for k in keys) / len(keys)
@@ -1073,7 +1056,6 @@ def report(name, assign_before, assign_after, keys, n_after):
     cv = statistics.pstdev(counts.values()) / mean
     print(f"{name:<11} moved {moved:6.2%} (ideal {1 / n_after:.2%})  "
           f"key-count CV {cv:.4f}  max/mean {max(counts.values()) / mean:.3f}")
-
 
 if __name__ == "__main__":
     keys = [f"order:{i}" for i in range(100_000)]
@@ -1266,8 +1248,6 @@ A supermarket assigns customers to ten lanes by surname initial. Then a celebrit
 
 Popularity is typically heavy-tailed (§4.7.2): celebrity accounts, flash sales, the newest partition of a timestamp-ranged table, a giant tenant. Partitioning divides capacity evenly, so any concentration of load becomes a bottleneck. Detect it with per-partition request, CPU, size and throttling metrics, alerting on the busiest-to-median ratio, and find hot keys with sampling or a heavy-hitters sketch (§17.6). Distinguish **data skew** from **load skew**; they need different fixes.
 
-
-
 #### Mitigation techniques
 
 1. **Key salting.** Append a suffix $0..s-1$ to a hot key, such as `post:991#7`, spreading its writes over $s$ partitions; readers query and combine all $s$ sub-keys. Good for counters and append-only data, bad for objects read as one consistent unit.
@@ -1456,7 +1436,6 @@ sequenceDiagram
 
 Teams avoid distributed transactions in roughly this order: (1) choose the shard key so transactions stay on one shard (§14.7.2); (2) use a saga of local transactions with compensations (Chapter 32); (3) use a database that implements distributed transactions internally (Chapter 28); (4) use explicit 2PC with careful recovery of in-doubt transactions.
 
-
 ::: warning
 **Warning — Multi-shard writes through a proxy may not be atomic.** A proxy may commit shards one after another, so a failed second commit leaves the first committed. Vitess documents this best-effort default and an optional two-phase commit mode with its own constraints.
 :::
@@ -1593,3 +1572,132 @@ flowchart LR
 | Wrong data from session settings | `SET search_path` leaks between clients in transaction mode | Intermittent wrong-schema errors | Move setting into each transaction | Use `SET LOCAL`; ban session state |
 | All requests stall | Long transactions hold every server connection | Pool wait time; `cl_waiting` grows | Kill long transactions | Transaction timeouts; separate pools |
 | Proxy becomes a single point of failure | One pooler instance | Health checks fail; total outage | Restart or fail over | Multiple instances; one per host |
+
+## 14.14 Summary and revision notes
+
+::: summary
+- **Replication** copies data for read capacity and availability; **partitioning** splits data for write capacity and storage. Production systems replicate every partition.
+- Replicas cannot scale writes: each applies the whole write stream, so read capacity is $n(uc - w)$.
+- Asynchronous replication is fast but can lose recent commits on failover; synchronous or quorum commit adds the $k$-th fastest replica's RTT; MySQL semi-sync silently degrades to async after a timeout.
+- Lag is unbounded and drains at $r_{\text{apply}} - r_{\text{in}}$. It breaks read-your-writes and monotonic reads; fix with primary reads after writes, LSN/GTID watermarks or sticky replicas (§25.6 for theory).
+- Prefer row-based or physical replication; use logical replication for upgrades, subsets and CDC. Multi-primary buys local writes at the cost of conflicts; partitioned ownership avoids most of them.
+- Range partitioning serves scans but suffers monotonic keys; hash balances but scatters scans; list serves residency; directories place giant tenants. Separate key→partition from partition→node.
+- Good shard keys have high cardinality, even load, query and transaction locality, and stability. Shard count is the maximum of storage, write and read terms at the planning horizon.
+- Consistent hashing moves an expected $K/(N+1)$ keys on add. With $V$ random vnodes a node's share is $\text{Beta}(V,(N-1)V)$, so its CV is $\sqrt{(N-1)/(NV+1)} \approx 1/\sqrt{V}$ and the busiest node sits near $1 + z_N/\sqrt{V}$.
+- Jump hash balances perfectly with no memory but only for numbered buckets; rendezvous hashing balances perfectly at $O(N)$ per lookup.
+- Rebalance with fixed partitions, dynamic splitting or per-node tokens; migrate online by capture → backfill → catch-up → verify → switch reads → switch writes → reverse stream.
+- Hot keys defeat hashing: salt writes (read cost ×$s$), cache reads, special-case giants, bucket unbounded partitions.
+- Local indexes make reads scatter; global indexes make writes cross partitions and lag. Avoid cross-shard transactions by co-location; 2PC blocks on coordinator failure (Chapter 28).
+- Poolers turn unbounded database concurrency into a bounded queue sized by Little's Law; Vitess adds routing, resharding and failover for MySQL.
+:::
+
+## 14.15 Knowledge checkpoint
+
+1. Why does adding read replicas eventually stop increasing read capacity?
+2. What exactly does MySQL's `AFTER_SYNC` semi-synchronous mode wait for, and when does it stop protecting you?
+3. A replica was offline for 20 minutes with $r_{\text{in}} = 2{,}000$/s and $r_{\text{apply}} = 2{,}500$/s. How long does catch-up take?
+4. Give a sequence of events that violates monotonic reads.
+5. Why is statement-based replication unsafe for `UPDATE ... LIMIT 10` without `ORDER BY`?
+6. Why does range partitioning on an auto-increment ID create a hot partition?
+7. Name the five properties of a good shard key.
+8. Under `hash mod N`, what fraction of keys moves going from 9 to 10 nodes? Under consistent hashing?
+9. Compute the load CV for $N = 20$ nodes and $V = 50$ vnodes.
+10. Why can jump consistent hash not remove an arbitrary failed bucket?
+11. Why must change capture start before the backfill snapshot?
+12. A counter key receives 12,000 writes/s and partitions sustain 1,000 writes/s at $u = 0.75$. What salt factor do you need?
+13. Why are global secondary indexes usually eventually consistent?
+14. Which PostgreSQL features break under PgBouncer transaction pooling?
+
+<details><summary>Answers</summary>
+
+1. Each replica applies every write, so per-node read budget is $uc - w$; as writes grow it approaches zero no matter how many replicas exist.
+2. A replica writing the events to its relay log before the primary commits in the storage engine. After the timeout with no acknowledgment, the primary falls back to asynchronous replication.
+3. $B = 2{,}000 \times 1{,}200 = 2.4 \times 10^6$; $T = 2.4 \times 10^6 / 500 = 4{,}800$ s, 80 minutes.
+4. A user reads a fresh replica (12 comments), then a more lagged replica (9 comments).
+5. Which 10 rows are updated depends on scan order, which can differ on the replica, so copies diverge silently.
+6. Every new row has the largest key, so all inserts land in the last range.
+7. High cardinality, even load, query locality, transaction locality, stability.
+8. $9/10 = 90$ %; about $1/10 = 10$ %.
+9. $\sqrt{19/1001} \approx 0.138$, about 14 %.
+10. Buckets must be numbered $0..n-1$; only the last can be removed without remapping, so failures are handled inside a replicated bucket.
+11. Writes between snapshot and capture start would be in neither copy.
+12. $\lceil 12{,}000 / 750 \rceil = 16$.
+13. Updating index partitions on other nodes synchronously needs a distributed transaction, so most systems update them asynchronously.
+14. Session-level `SET`, `LISTEN`, session advisory locks, temporary tables and `WITH HOLD` cursors (and protocol prepared statements before PgBouncer 1.21).
+
+</details>
+
+## 14.16 Interview questions
+
+### Basic
+
+**Q1. When would you add read replicas, and when would you shard?**
+**Answer.** Add replicas when reads dominate, can tolerate some staleness and the primary has write headroom; they also provide failover. Shard when writes, data size or working set exceed one primary, or when applying writes consumes most of each replica's budget. State the read/write ratio, freshness needs and growth, then show which limit binds using the shard-count formula.
+
+**Q2. Explain consistent hashing and why virtual nodes are used.**
+**Answer.** Keys and nodes hash onto a ring; each key belongs to the next node clockwise, so adding a node moves only about $K/(N+1)$ keys, all to the new node, versus nearly all under mod-N. With one position per node, shares vary widely (busiest about $H_N$ times fair). With $V$ random vnodes each share is a sum of $V$ arcs, CV $\approx 1/\sqrt{V}$, and a failed node's load spreads over many survivors. Mention weights, preference lists and the alternatives (jump, rendezvous, bounded loads).
+
+### Intermediate
+
+**Q3. Choose a shard key for a B2B SaaS product where one customer is 500× the median.**
+**Answer.** `tenant_id`, because nearly all queries and transactions are tenant-scoped, giving locality, isolation and per-tenant deletion. Hash tenants into many logical shards mapped to physical clusters by a directory, put the giant on a dedicated cluster via an override, and if it outgrows that, sub-partition it by a second key such as project. Discuss cross-tenant analytics (move to a warehouse), routing cache staleness and fencing, and the resharding procedure.
+
+**Q4. Users report that a post disappears right after they publish it, then reappears. Diagnose and fix.**
+**Answer.** Reads after the write are served by lagging asynchronous replicas: a read-your-writes violation. Confirm with lag metrics and request traces. Fixes: return the commit LSN/GTID and read only from replicas that have applied it (or wait briefly), or route the author's reads to the primary for a window; add sticky sessions for monotonic reads. Keep lagging replicas out of rotation and investigate why lag spikes (single-threaded apply, bulk jobs).
+
+### Advanced
+
+**Q5. Reshard a live 40 TB MySQL fleet from 8 to 32 shards with no more than seconds of write downtime.**
+**Answer.** Introduce a routing layer (Vitess, or a proxy plus directory) if one does not exist. Choose logical shards so future growth needs only moves. For each source shard: start binlog-based capture, snapshot and backfill the target ranges with throttling, catch up, verify with checksums and shadow reads, switch reads, then freeze writes for seconds, wait for the final position, switch writes and fence the source, keeping reverse replication for rollback. Estimate time: splitting each shard into four moves three quarters of the data, 30 TB; at 150 MB/s per stream with 8 streams in parallel that is about 7 hours of copy plus catch-up. Address hot shards, cross-shard queries during transition, and monitoring of lag and p99.
+
+**Q6. Your ring-partitioned store has 200 nodes with 32 random vnodes each, and the busiest node runs at 1.6× the mean. Is that expected, and what would you do?**
+**Answer.** CV $= \sqrt{199/6401} \approx 0.176$, and $z_{200} \approx 2.7$, so the expected busiest node is about $1 + 2.7 \times 0.176 \approx 1.48\times$; 1.6× is plausible from randomness alone, though request skew may contribute, so check per-key heat first. To reduce imbalance: raise $V$ (to reach 1.1× needs about $(2.7/0.1)^2 \approx 730$ vnodes, with repair and streaming costs), allocate tokens deliberately, move to fixed equal-sized partitions, or use bounded-load assignment. For hot keys, salt or cache instead.
+
+## 14.17 Practical exercises
+
+1. Extend the ring in §14.8.3 with zone awareness so that a preference list never places two replicas in one zone. Measure the balance cost.
+2. Modify the experiment in §14.8.4 to measure the busiest node for $N = 1{,}000$ and compare with $1 + z_N \cdot \text{CV}$.
+3. Implement weighted rendezvous hashing and verify that a weight-2 node receives twice the keys of a weight-1 node.
+4. Set up PostgreSQL with one streaming standby, run `pgbench`, and measure commit latency under `synchronous_commit` set to `local`, `on` and `remote_apply`.
+5. Put PgBouncer in front of PostgreSQL in transaction mode and demonstrate one session-state feature that breaks; then fix the application code.
+
+## 14.18 Design challenges
+
+1. **Global chat history.** 500 million messages per day, channels from two members to 2 million. Choose partition keys, bounded partitions and indexes for "latest 50 messages in channel" and "search my messages".
+2. **Multi-region SaaS with residency.** EU tenants' data must stay in the EU, writes must be local, and tenants occasionally move region. Combine list partitioning, directories and the migration procedure of §14.9.5.
+3. **Flash-sale inventory.** One product receives 200,000 purchase attempts per second for 5 minutes. Design inventory decrements that neither oversell nor saturate one partition.
+
+## 14.19 References
+
+1. Karger, D., Lehman, E., Leighton, T., Panigrahy, R., Levine, M., Lewin, D. *Consistent Hashing and Random Trees: Distributed Caching Protocols for Relieving Hot Spots on the World Wide Web*. ACM STOC, 1997.
+2. Lamping, J., Veach, E. *A Fast, Minimal Memory, Consistent Hash Algorithm*. arXiv:1406.2294, 2014. https://arxiv.org/abs/1406.2294
+3. Thaler, D. G., Ravishankar, C. V. *Using Name-Based Mappings to Increase Hit Rates*. IEEE/ACM Transactions on Networking 6(1), 1998.
+4. DeCandia, G., et al. *Dynamo: Amazon's Highly Available Key-value Store*. SOSP, 2007.
+5. Kleppmann, M. *Designing Data-Intensive Applications* (Ch. 5 "Replication", Ch. 6 "Partitioning"). O'Reilly, 2017.
+6. Lakshman, A., Malik, P. *Cassandra: A Decentralized Structured Storage System*. ACM SIGOPS Operating Systems Review 44(2), 2010.
+7. Chang, F., et al. *Bigtable: A Distributed Storage System for Structured Data*. OSDI, 2006.
+8. David, H. A., Nagaraja, H. N. *Order Statistics* (3rd ed.). Wiley, 2003.
+9. Eisenbud, D. E., et al. *Maglev: A Fast and Reliable Software Network Load Balancer*. NSDI, 2016.
+10. Mirrokni, V., Thorup, M., Zadimoghaddam, M. *Consistent Hashing with Bounded Loads*. ACM-SIAM SODA, 2018. https://arxiv.org/abs/1608.01350
+11. Elhemali, M., et al. *Amazon DynamoDB: A Scalable, Predictably Performant, and Fully Managed NoSQL Database Service*. USENIX ATC, 2022.
+12. Fidalgo, G. *Herding Elephants: Lessons Learned from Sharding Postgres at Notion*. Notion Blog, 2021. https://www.notion.com/blog/sharding-postgres-at-notion
+13. Instagram Engineering. *Sharding & IDs at Instagram*. Instagram Engineering Blog, 2012.
+14. Discord Engineering. *How Discord Stores Billions of Messages*. Discord Blog, 2017.
+15. Slack Engineering. *Scaling Datastores at Slack with Vitess*. Slack Engineering Blog, 2020.
+16. PostgreSQL Global Development Group. *PostgreSQL Documentation: High Availability, Load Balancing, and Replication; Logical Replication; synchronous_commit*. https://www.postgresql.org/docs/current/
+17. Oracle. *MySQL Reference Manual: Replication (formats, semisynchronous replication) and Group Replication*. https://dev.mysql.com/doc/refman/8.4/en/replication.html
+18. PgBouncer project. *PgBouncer Documentation: Configuration and Features*. https://www.pgbouncer.org/
+19. ProxySQL project. *ProxySQL Documentation*. https://proxysql.com/documentation/
+20. The Vitess Authors. *Vitess Documentation: Architecture, VSchema, VReplication workflows*. https://vitess.io/docs/
+21. Amazon Web Services. *Amazon DynamoDB Developer Guide: partition key design, burst and adaptive capacity, secondary indexes*. https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/
+22. Apache Software Foundation. *Apache Cassandra Documentation: data distribution and virtual nodes*. https://cassandra.apache.org/doc/latest/
+
+## 14.20 Open verification items
+
+- Cassandra 4.0 default `num_tokens = 16` with the token-allocation algorithm, and the availability rationale for lowering it.
+- PgBouncer version (1.21) that added protocol-level prepared statements in transaction mode.
+- DynamoDB per-partition limit (1,000 WCU/s) and burst/adaptive capacity wording, as of 2026.
+- Vitess two-phase-commit mode status and default multi-shard transaction semantics.
+- URLs and authors for Instagram (2012), Discord (2017) and Slack (2020) engineering posts; Slack migration details.
+- Lamping and Veach 3.2 % / 8 % figures confirmed via search snippets only (arXiv not reachable).
+- Bigtable tablet split size (~100–200 MB).

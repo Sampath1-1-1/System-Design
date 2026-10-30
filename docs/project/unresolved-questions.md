@@ -16,7 +16,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-009 | 3 | Roediger & Karpicke (2006) one-week retention figures (~61% vs ~40%) confirmed only via secondary sources | Open | |
 | UQ-010 | 3 | Macnamara et al. (2014): which domains showed lower variance explained (12% overall verified) | Open | |
 | UQ-011 | 3 | Feynman "What I cannot create, I do not understand" — cite Caltech archives photo of the blackboard | Open | |
-| UQ-012 | 3 / 14 | Load imbalance with V virtual nodes shrinks ~1/√V — needs derivation or citation in §14.8 | Open | Assign to Ch 14 author |
+| UQ-012 | 3 / 14 | Load imbalance with V virtual nodes shrinks ~1/√V — needs derivation or citation in §14.8 | Resolved | §14.8.4 derives node share ~ Beta(V,(N−1)V), CV = √((N−1)/(NV+1)) → 1/√V; simulation slope −0.49 |
 | UQ-013 | 1 | Exact URLs: Nygard "Documenting Architecture Decisions" (2011) and Ubl "Design Docs at Google" (2020); Ubl's statements on doc length | Open | Existence confirmed by search |
 | UQ-014 | 1 | SEC 2013 Knight Capital order: release number, URL and quoted figures | Open | |
 | UQ-015 | 1 | Primary source for YouTube's 2014 32-bit view-counter overflow ("Gangnam Style") | Open | |
@@ -93,3 +93,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-086 | 13 | Cassandra ~50% free-disk guidance for STCS; Cassandra 5.0 Unified Compaction Strategy | Open | |
 | UQ-087 | 13 | Uber blog URL (Postgres→MySQL migration post) still live | Open | |
 | UQ-088 | 13 | Compaction write-amplification formulas are a simplified average-case model by the author | Accepted | Labeled in text |
+| UQ-089 | 14 | Cassandra 4.0 num_tokens default (16) and rationale | Open | |
+| UQ-090 | 14 | PgBouncer 1.21 prepared-statement support in transaction mode | Open | |
+| UQ-091 | 14 | DynamoDB per-partition limits (1,000 WCU / 3,000 RCU) as of 2026 | Open | Time-sensitive |
+| UQ-092 | 14 | Vitess two-phase-commit (atomic distributed transaction) mode and default | Open | |
+| UQ-093 | 14 | URLs/authors: Instagram ID/sharding post, Discord and Slack scaling posts; Lamping & Veach figures (arXiv blocked) | Open | |
+| UQ-094 | 14 | Bigtable tablet split size | Open | |
