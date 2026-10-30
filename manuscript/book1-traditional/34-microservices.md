@@ -1185,3 +1185,221 @@ $$\Delta L_{\text{chain}} \approx h \cdot \delta_{\text{hop}} \qquad C_{\text{CP
 **Recommendation — Adopt a mesh for a specific problem.** Good reasons: you must encrypt and authenticate all service-to-service traffic, you run many languages and need uniform telemetry and traffic policy, or you need fine-grained traffic shifting. Weak reasons: "we have microservices, so we need a mesh." With ten services in one language, a well-configured RPC library is simpler.
 :::
 
+## 34.11 Data ownership and database-per-service
+
+### 34.11.1 Database-per-service and the shared-database anti-pattern
+
+::: definition
+**Definition — Database-per-service.** Each service's persistent data is private to that service and reachable by others only through its API or published events. The service may use its own database server, its own schema on a shared server, or private tables, provided no other service reads or writes them [Richardson 2018].
+:::
+
+The opposite is the **shared database**: several services read and write the same tables. It looks efficient, since joins are free and there is one source of truth, but it is content coupling (§34.3.2) at scale. Nobody can change a column without finding every service that uses it; one service's heavy query slows the others; and invariants are enforced by whichever service wrote last. The schema becomes the real, unversioned API of the system.
+
+**Figure 34.12 — Shared database versus database-per-service with an event-fed read model.**
+
+```mermaid
+flowchart LR
+  subgraph Shared["Anti-pattern: shared database"]
+    O1[Ordering] --> SDB[(Shared DB)]
+    D1[Delivery] --> SDB
+    B1[Billing] --> SDB
+  end
+  subgraph Owned["Database-per-service"]
+    O2[Ordering] --> ODB[(Order DB + outbox)]
+    O2 -.->|OrderPlaced via outbox| BR[[Event log]]
+    BR -.-> D2[Delivery]
+    BR -.-> V2[Order history view]
+    D2 --> DDB[(Delivery DB)]
+    D2 -.->|DeliveryCompleted| BR
+    V2 --> VDB[(Read-model DB)]
+    Q([Support app]) -->|query| V2
+  end
+```
+
+**Reading the diagram.** On the left, three services share one database: there is one storage boundary for three owners, every table is a shared interface, and a lock or slow query from one service hurts all three. On the right, each service writes only its own database. Ordering commits an order and an outbox row in one local transaction, and a relay publishes `OrderPlaced` to the event log asynchronously (dotted). Delivery keeps the order fields it needs in its own database. An **order history view** service consumes events from both Ordering and Delivery into a denormalized read model that the support app queries synchronously. Failure points: if the event log or relay stops, copies go stale but nothing fails outright; consumers must be idempotent because delivery is at least once (§32.10). Scaling: each database is sized for its own load, and the read model can be rebuilt by replaying the log.
+
+### 34.11.2 Replicating data with events
+
+When Delivery needs the customer's address and the restaurant's location, it does not call Ordering for every courier assignment. It keeps a local copy, updated from events. Rules for doing so safely:
+
+1. **One owner per fact.** Ordering owns the order address; Delivery's copy is a cache that it never edits.
+2. **Publish reliably.** Use the transactional outbox or change data capture (§32.5–§32.6) so the database and the event log cannot disagree.
+3. **Consume idempotently and in order per key.** Partition events by aggregate ID so all events for one order arrive in order (§31.5), and ignore events whose version is not newer than the copy's.
+4. **Carry enough state.** "Event-carried state transfer" puts the changed fields in the event so consumers need not call back.
+
+Cross-service invariants then become **sagas**: a sequence of local transactions with compensations (refund the payment if no courier can be found), coordinated by choreography or an orchestrator. Chapter 32 owns that topic (§32.7–§32.8).
+
+### 34.11.3 Querying across services
+
+A support agent wants "all orders for customer X in the last month, with delivery times and refund status": data owned by three services. Two patterns exist [Richardson 2018]:
+
+- **API composition.** A composer (a BFF or query service) calls each owner and joins in memory. Simple and always fresh, but its latency is that of the slowest owner, its availability is the product of the owners' (§34.14.4), and large joins (all orders with any refund) need inefficient fan-out.
+- **CQRS view.** A dedicated read model, fed by events from the owners, stores the pre-joined answer (Figure 34.12). Queries are fast and independent of the owners' availability, at the cost of replication lag (typically under a second to seconds) and another datastore to run (§32.4).
+
+**Table 34.6 — Querying across services.**
+
+| | API composition | CQRS view |
+|---|---|---|
+| Freshness | Current | Lags by the replication delay |
+| Latency | Slowest owner plus composition | One local query |
+| Availability | Product of owners' availability | Independent of owners at read time |
+| Complexity | Low | Event handling, idempotency, rebuilds |
+| Choose when | Few owners, small result sets | Frequent queries, joins across many owners, search |
+
+::: mistake
+**Common misconception — "Database-per-service means one database server per service."** It means private *ownership*. Several services may share a managed database cluster with separate schemas and credentials, which is often the cost-effective start, as long as no service can read another's schema. Enforce the boundary with database permissions, not with good intentions.
+:::
+
+## 34.12 Deployment strategies
+
+The defining property of a microservice is that it can be deployed alone. Chapter 43 covers rolling, blue–green and canary deployments and feature flags in depth (§43.4–§43.7); this section lists what microservices add.
+
+1. **One pipeline per service.** Each service builds, tests (including contract verification, §34.8.5) and deploys from its own pipeline, without waiting for other services.
+2. **Backward and forward compatibility at every step.** During a rolling deploy, old and new versions of a service run side by side, and consumers on either side may be old or new. Every API, event and schema change therefore uses expand and contract (§34.8.4); database changes too (§43.13).
+3. **Progressive delivery.** Shift a small share of traffic to the new version (with a mesh, by weight, §34.10.2), compare its error rate and latency with the old version, and roll forward or back automatically.
+4. **Decouple deploy from release.** Ship code dark behind a feature flag, then enable it gradually.
+
+::: warning
+**Warning — The lockstep release is a symptom.** If a release plan says "deploy Payment v42, then Ordering v118, then Billing v77 within the same hour", the services are not independently deployable. Find the incompatible change and split it into compatible steps.
+:::
+
+## 34.13 Migration from a monolith
+
+### 34.13.1 The strangler fig pattern
+
+::: definition
+**Definition — Strangler fig application.** A migration strategy in which a new system is grown around the edges of an old one, taking over one capability at a time while the old system keeps running, until the old system can be retired. Fowler named it after strangler fig vines, which grow around a host tree until they stand on their own [Fowler 2004].
+:::
+
+#### Why does this exist?
+
+The alternative, a "big bang" rewrite, stops feature delivery for months or years, must reproduce every undocumented behavior of the old system, and delivers no value until the end. Incremental migration delivers value early, can be paused at any point, and keeps the old system as a fallback.
+
+#### How it works internally
+
+1. **Put a routing layer in front** of the monolith (a reverse proxy or the API gateway); initially it sends everything to the monolith.
+2. **Pick a capability** with low change coupling to the rest (§34.3.2), clear data ownership and real value from extraction.
+3. **Build it as a service**, with its own data. Synchronize data during the transition, for example with change data capture from the monolith's tables.
+4. **Redirect traffic** for that capability's routes to the new service, gradually (by percentage or by customer), with the ability to switch back.
+5. **Remove the dead code** from the monolith, then repeat.
+
+**Figure 34.13 — Strangler fig: extracting Catalog from the QuickBite monolith.**
+
+```mermaid
+flowchart LR
+  C([Clients]) -->|HTTPS| GW[Gateway with routing rules]
+  GW -->|"/menus, /restaurants"| CAT[New Catalog service]
+  GW -->|everything else| MON[QuickBite monolith]
+  CAT --> CDB[(Catalog DB)]
+  MON --> MDB[(Monolith DB)]
+  MDB -.->|CDC during transition| CAT
+  MON -->|"catalog calls via<br/>abstraction"| CAT
+```
+
+**Reading the diagram.** All clients reach the gateway over HTTPS; routing rules send catalog paths to the new Catalog service and everything else to the monolith (synchronous). During the transition, change data capture streams menu changes still written by old monolith screens into Catalog's database (dotted, asynchronous), and monolith code that needs menu data calls Catalog through an internal abstraction instead of its own tables. Two storage boundaries now exist, and for a period the monolith database remains the source of truth for some fields, so ownership must be explicit per field. Failure points: the routing layer (must be redundant), the CDC pipeline (lag shows stale menus) and divergent behavior between old and new code. Scaling: Catalog now scales independently with read traffic.
+
+### 34.13.2 Branch by abstraction and parallel run
+
+Routing works at the edge. Functionality deep inside the monolith, called by other monolith code, needs **branch by abstraction**: introduce an interface in front of the existing implementation, move all callers to the interface, build the new implementation (a client to the new service) behind it, switch with a flag, then delete the old implementation [Fowler 2014: BranchByAbstraction; Newman 2019]. All of this happens on the main branch with no long-lived feature branch.
+
+For risky logic (pricing, payments), use a **parallel run**: call both old and new implementations, return the old result to the user, and compare the results, logging any differences. GitHub's Scientist library automates this for code paths inside an application [GitHub Scientist]. Only when differences are rare and understood do you switch to the new implementation as the source of truth. Make sure only one side has side effects (only one sends the email or charges the card).
+
+### 34.13.3 A worked migration plan
+
+**Table 34.7 — Migrating QuickBite's monolith over about four quarters (illustrative).**
+
+| Phase | Step | Exit criterion |
+|---|---|---|
+| 0 | Gateway in front of monolith; tracing and per-route metrics; modularize code by context | All traffic via gateway; module dependencies mapped |
+| 1 | Extract Notification (async, low coupling) via `OrderPlaced` events from an outbox | Monolith no longer sends messages |
+| 2 | Extract Catalog with CDC sync and route-by-route redirection | Catalog DB is source of truth; monolith reads via API |
+| 3 | Extract Delivery; parallel-run courier assignment for two weeks | Assignment differences below 0.1%, all explained |
+| 4 | Extract Payment behind branch by abstraction; ACL for provider | Payment tables removed from monolith DB |
+| 5 | Remaining Ordering core stays a well-modularized service | Decide on evidence whether to split further |
+
+The order follows the change-coupling data: the least coupled, lowest-risk capabilities first, so the team learns the platform (pipelines, discovery, tracing) on cheap mistakes. Payment comes late because it has high coupling with Ordering ($C = 0.43$ in §34.3.2). Phase 5 is a legitimate end state: nothing requires the core to be split.
+
+::: industry
+**Shopify's modular monolith.** Shopify chose not to split its large Ruby on Rails monolith into microservices, and instead enforced component boundaries inside it, with tooling that detects violations of the declared dependencies between components [Westeinde 2019]. This captures much of the boundary benefit without the network.
+*Evidence: Primary* — [Westeinde 2019]
+:::
+
+## 34.14 Anti-patterns
+
+### 34.14.1 The distributed monolith
+
+::: definition
+**Definition — Distributed monolith.** A system deployed as multiple services that cannot be changed, deployed or operated independently: services share databases, must be released together, or call each other synchronously so tightly that one failure stops all of them. It has the costs of distribution and the coupling of a monolith [Newman 2021].
+:::
+
+Symptoms: coordinated releases (§34.12), a shared database (§34.11), long synchronous call chains, and a single change touching many repositories. The cause is almost always boundaries drawn without regard to cohesion, often by technical layer (Figure 34.1) or by noun ("Customer service", "Product service") instead of by capability.
+
+### 34.14.2 Nanoservices and shared-library coupling
+
+**Nanoservices** are services so fine-grained that the network and operational overhead outweighs their function: a service per database table, or per function. Each adds a pipeline, an on-call surface, a versioned API and network hops.
+
+**Shared-library coupling** occurs when services share a library containing domain model classes or business logic. Updating the library forces every service to rebuild and redeploy, often in lockstep, and the library's model becomes a hidden shared kernel. Sharing infrastructure libraries (logging, tracing, an RPC client) is fine if versions can differ between services; sharing domain models is not.
+
+### 34.14.3 Synchronous call chains
+
+::: formula
+**Availability and latency of a synchronous call chain**
+
+$$A_{\text{chain}} = \prod_{i=1}^{n} A_i = A^n \ \ \text{(equal services)} \qquad L_{\text{chain}} = \sum_{i=1}^{n} \left(R_i + s_i\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of services that must all succeed for the request | count |
+| $A_i$ | Availability of service $i$ (independent failures assumed) | dimensionless |
+| $A_{\text{chain}}$ | Availability of the request path | dimensionless |
+| $R_i$, $s_i$ | Round-trip and processing time of hop $i$ | ms |
+| $L_{\text{chain}}$ | End-to-end latency of the chain | ms |
+:::
+
+::: example
+**Worked example — QuickBite checkout as a chain.** Each service is 99.9% available. A distributed-monolith checkout calls gateway → BFF → Ordering → Pricing → Payment, five in sequence. Over a 30-day month (720 hours):
+
+1. Five in series: $A = 0.999^5 = 0.99501$; unavailability $0.00499 \times 720 = 3.59$ hours/month.
+2. Ten in series (add Inventory, Promotions, Kitchen, Notification, Loyalty synchronously): $A = 0.999^{10} = 0.99004$; $0.00996 \times 720 = 7.17$ hours/month.
+3. Redesign with three services on the critical path (gateway, Ordering, Payment) and the rest asynchronous: $A = 0.999^3 = 0.99700$; 2.16 hours/month.
+4. Latency at 0.5 ms network, 0.25 ms mesh and 10 ms processing per hop: ten hops cost $10 \times 10.75 = 107.5$ ms; three cost 32.25 ms.
+
+**Interpretation.** Every synchronous dependency multiplies in its unavailability: ten 99.9% services give barely two nines. Retries help only against transient faults, and correlated failures (a shared database or cluster) make reality worse than the independence assumption. **Engineering implication.** Count the services on each critical path and keep it short; move non-essential work to events; and for remaining synchronous calls use timeouts, fallbacks and circuit breakers (Chapter 22) so a non-essential dependency degrades the response instead of failing it.
+:::
+
+**Figure 34.14 — Shortening the critical path.**
+
+```mermaid
+flowchart LR
+  subgraph Before["Before: ten services in series"]
+    A1[Gateway] --> A2[BFF] --> A3[Ordering] --> A4[Pricing] --> A5[Payment]
+    A5 --> A6[Inventory] --> A7[Promotions] --> A8[Kitchen] --> A9[Notification] --> A10[Loyalty]
+  end
+  subgraph After["After: three on the critical path"]
+    B1[Gateway] --> B3[Ordering] --> B5[Payment]
+    B3 -.->|OrderConfirmed| BQ[[Event log]]
+    BQ -.-> B8[Kitchen]
+    BQ -.-> B9[Notification]
+    BQ -.-> B10[Loyalty]
+    B3 --> B4[(Local price and promo copy)]
+  end
+```
+
+**Reading the diagram.** Before, ten synchronous calls must all succeed in order; any failure fails checkout, and latency is the sum of all hops. After, only the gateway, Ordering and Payment are on the synchronous path. Pricing and promotion rules are replicated into a local copy that Ordering reads (a storage boundary inside Ordering, fed by events). Kitchen, Notification and Loyalty consume `OrderConfirmed` asynchronously from the event log. Inventory is checked from a local, event-fed availability copy (not shown). Failure points shrink to three services plus the outbox relay, whose failure delays but does not lose events. Scaling: asynchronous consumers scale on backlog.
+
+::: industry
+**Two public reversals.** Segment described consolidating more than a hundred destination microservices back into a single service after the operational cost of many tiny services, shared-library versions and per-service queues outgrew the benefit [Noonan 2018]. Amazon Prime Video's monitoring team reported cutting infrastructure cost by about 90% by moving an audio/video quality-inspection workload from distributed serverless components to a single process, because passing frames between components dominated the cost [Kolny 2023]. Neither is an argument against services in general; both show granularity chosen without regard to the data flow.
+*Evidence: Primary* — [Noonan 2018; Kolny 2023]
+:::
+
+**Table 34.8 — Anti-patterns at a glance.**
+
+| Anti-pattern | Symptom | Fix |
+|---|---|---|
+| Distributed monolith | Lockstep releases | Re-cut boundaries by capability and change coupling; expand and contract |
+| Shared database | Schema changes need many teams | Database-per-service; events; CQRS views |
+| Nanoservices | More services than engineers | Merge into capability-sized services |
+| Shared domain library | Library bump forces fleet redeploy | Share only infrastructure; each context owns its model |
+| Long synchronous chains | $A^n$ availability; summed latency | Events, local copies, fewer hops |
+| Gateway with business logic | Every change goes through the platform team | Move logic into services or BFFs |
+

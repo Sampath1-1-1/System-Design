@@ -1735,3 +1735,252 @@ What to notice:
 ::: mistake
 **Misconception — "Composition over inheritance means never inherit."** The GoF principle says *favor*, not *forbid*. Implementing an interface, extending an abstract class designed for extension, and true is-a subtypes with one axis of variation are all fine. Composition is the default when you are unsure, because it is easier to change later.
 :::
+
+## 35.9 Interfaces and contracts
+
+### 35.9.1 Design by contract
+
+::: definition
+**Definition — Design by contract.** A method of specifying software in which each routine states a **precondition** (what must be true when it is called: the caller's obligation), a **postcondition** (what it guarantees when it returns: the supplier's obligation), and each class states an **invariant** (what is true of every instance between calls). The approach, and the term, come from Bertrand Meyer and the Eiffel language [Meyer 1997].
+:::
+
+#### First-principles explanation
+
+A courier company's terms read: "If the parcel weighs at most 30 kg and is properly addressed, we deliver it within two days." The first half is the customer's obligation (precondition); the second half is the courier's promise (postcondition). If you send a 40 kg parcel, the courier owes you nothing, and it does not need to have a plan for 40 kg parcels. Both sides know where responsibility lies, so neither checks everything twice.
+
+Method signatures alone are a weak interface. `reserve(sku: str, quantity: int)` tells you the types but not that `quantity` must be positive, that you cannot reserve more than is available, or that available stock goes down by exactly `quantity` afterwards. A contract makes those rules part of the interface, so that the caller, the implementer and the tests agree on them.
+
+#### Why does this exist?
+
+Meyer's argument [Meyer 1997] targets two failure modes. Without contracts, either nobody checks (and bad inputs corrupt state far from the cause) or everybody checks ("defensive programming" everywhere), which bloats code and still leaves gaps because each layer guesses differently. A contract assigns each check to exactly one side. It also gives inheritance a precise meaning: a subclass must honor the contract of its parent, which is the idea Liskov and Wing later formalized as **behavioral subtyping** [Liskov & Wing 1994] and which Ch 36 develops as the Liskov Substitution Principle (§36.5).
+
+#### How it works internally
+
+1. **Preconditions** are checked on entry. In public APIs, check them explicitly and fail fast with a clear exception: `ValueError` in Python, `IllegalArgumentException` (or `NullPointerException` via `Objects.requireNonNull`) in Java [Bloch 2018, Item 49].
+2. **Postconditions** describe the result in terms of the inputs and the *old* state. Capture the old value before the change and assert the relation after it.
+3. **Invariants** are checked at the end of the constructor and of every public method that changes state.
+4. **Assertions** (`assert` in both languages) document and check internal conditions. They can be switched off: Python skips them under `python -O`, and Java runs them only when the JVM is started with `-ea`. Therefore never put a check that must always run, such as validating user input, in an `assert`.
+5. **Contracts and inheritance (Meyer's rule).** A redefined method in a subclass may **weaken** (accept more than) the precondition and **strengthen** (promise more than) the postcondition, never the reverse, and it must preserve the parent's invariant. Eiffel enforces this with `require else` and `ensure then`.
+
+#### Architecture diagram
+
+**Figure 35.9 — The inventory contract and a subclass that breaks it.**
+
+```mermaid
+classDiagram
+  class Inventory {
+    -on_hand: dict
+    -reserved: dict
+    +receive(sku, quantity)
+    +available(sku) int
+    +reserve(sku, quantity)
+  }
+  class FlashSaleInventory {
+    +reserve(sku, quantity)
+  }
+  class Checkout {
+    +checkout(inventory, sku, quantity) str
+  }
+  Inventory <|-- FlashSaleInventory
+  Checkout ..> Inventory : relies on contract
+  note for Inventory "invariant: 0 <= reserved <= on_hand\nreserve pre: 1 <= qty <= available\nreserve post: available drops by qty"
+  note for FlashSaleInventory "adds pre: qty <= 2\nstrengthened precondition"
+```
+
+**Reading the diagram.**
+
+- **Components.** `Inventory` tracks stock on hand and stock reserved for unpaid orders. `FlashSaleInventory` is a subclass. `Checkout` is client code.
+- **Notes.** The notes record the contract: one invariant, plus the precondition and postcondition of `reserve`. The subclass note shows the extra condition it adds.
+- **Direction and sync.** `Checkout` calls `available` then `reserve` synchronously. It was written against `Inventory`'s contract and is handed a `FlashSaleInventory` at run time.
+- **Storage.** In memory here. In production the counts live in a database, and the "check then reserve" pair must be atomic, for example a single `UPDATE ... WHERE available >= qty` (§11), or two concurrent checkouts can both pass the check.
+- **Failure point.** The subclass rejects a call the parent's contract allows. `Checkout` checked the parent's precondition, so from its point of view the failure is impossible, and it has no handling for it.
+- **Scaling.** Contracts scale with the team: every new caller and every new subclass can be checked against the same written rules.
+
+#### Code example
+
+```python
+class Inventory:
+    """Stock for each SKU.
+    Class invariant: for every SKU, 0 <= reserved <= on_hand.
+    """
+
+    def __init__(self):
+        self._on_hand = {}
+        self._reserved = {}
+
+    def receive(self, sku, quantity):
+        # Precondition (caller's duty): quantity >= 1
+        if quantity < 1:
+            raise ValueError("precondition: quantity >= 1")
+        self._on_hand[sku] = self._on_hand.get(sku, 0) + quantity
+        self._reserved.setdefault(sku, 0)
+        self._check_invariant(sku)
+
+    def available(self, sku):
+        return self._on_hand.get(sku, 0) - self._reserved.get(sku, 0)
+
+    def reserve(self, sku, quantity):
+        # Preconditions (caller's duty)
+        if quantity < 1:
+            raise ValueError("precondition: quantity >= 1")
+        if quantity > self.available(sku):
+            raise ValueError("precondition: quantity <= available(sku)")
+        old_available = self.available(sku)
+
+        self._reserved[sku] += quantity
+
+        # Postcondition (supplier's promise) and invariant
+        assert self.available(sku) == old_available - quantity, "postcondition"
+        self._check_invariant(sku)
+
+    def _check_invariant(self, sku):
+        assert 0 <= self._reserved.get(sku, 0) <= self._on_hand.get(sku, 0), "invariant"
+
+
+inv = Inventory()
+inv.receive("SKU-MUG", 5)
+inv.reserve("SKU-MUG", 3)
+print(inv.available("SKU-MUG"))           # 2
+try:
+    inv.reserve("SKU-MUG", 3)             # caller broke the precondition
+except ValueError as e:
+    print("refused:", e)
+
+
+class FlashSaleInventory(Inventory):
+    """BAD subclass: strengthens the precondition (max 2 per reservation)."""
+    def reserve(self, sku, quantity):
+        if quantity > 2:
+            raise ValueError("flash sale: at most 2 per reservation")
+        super().reserve(sku, quantity)
+
+
+def checkout(inventory, sku, quantity):  # written against Inventory's contract
+    if quantity <= inventory.available(sku):
+        inventory.reserve(sku, quantity)  # contract says this cannot fail
+        return "reserved"
+    return "out of stock"
+
+
+for cls in (Inventory, FlashSaleInventory):
+    store = cls()
+    store.receive("SKU-TEA", 10)
+    try:
+        print(cls.__name__, checkout(store, "SKU-TEA", 4))
+    except ValueError as e:
+        print(cls.__name__, "surprise:", e)
+# 2
+# refused: precondition: quantity <= available(sku)
+# Inventory reserved
+# FlashSaleInventory surprise: flash sale: at most 2 per reservation
+```
+
+```java
+import java.util.HashMap;
+import java.util.Map;
+
+/** Class invariant: for every SKU, 0 <= reserved <= onHand. */
+class Inventory {
+    private final Map<String, Integer> onHand = new HashMap<>();
+    private final Map<String, Integer> reserved = new HashMap<>();
+
+    /** @pre quantity >= 1 */
+    void receive(String sku, int quantity) {
+        if (quantity < 1) throw new IllegalArgumentException("precondition: quantity >= 1");
+        onHand.merge(sku, quantity, Integer::sum);
+        reserved.putIfAbsent(sku, 0);
+        assert invariantHolds(sku) : "invariant";
+    }
+
+    int available(String sku) {
+        return onHand.getOrDefault(sku, 0) - reserved.getOrDefault(sku, 0);
+    }
+
+    /** @pre 1 <= quantity <= available(sku)
+     *  @post available(sku) == old available(sku) - quantity */
+    void reserve(String sku, int quantity) {
+        if (quantity < 1)
+            throw new IllegalArgumentException("precondition: quantity >= 1");
+        if (quantity > available(sku))
+            throw new IllegalArgumentException("precondition: quantity <= available(sku)");
+        int oldAvailable = available(sku);
+
+        reserved.merge(sku, quantity, Integer::sum);
+
+        assert available(sku) == oldAvailable - quantity : "postcondition";
+        assert invariantHolds(sku) : "invariant";
+    }
+
+    private boolean invariantHolds(String sku) {
+        int r = reserved.getOrDefault(sku, 0);
+        return 0 <= r && r <= onHand.getOrDefault(sku, 0);
+    }
+}
+
+/** BAD subclass: strengthens the precondition. */
+class FlashSaleInventory extends Inventory {
+    @Override void reserve(String sku, int quantity) {
+        if (quantity > 2) throw new IllegalArgumentException("flash sale: at most 2 per reservation");
+        super.reserve(sku, quantity);
+    }
+}
+
+class Main {
+    static String checkout(Inventory inventory, String sku, int quantity) {
+        if (quantity <= inventory.available(sku)) {
+            inventory.reserve(sku, quantity);     // the contract says this cannot fail
+            return "reserved";
+        }
+        return "out of stock";
+    }
+
+    public static void main(String[] args) {
+        Inventory inv = new Inventory();
+        inv.receive("SKU-MUG", 5);
+        inv.reserve("SKU-MUG", 3);
+        System.out.println(inv.available("SKU-MUG"));                  // 2
+        try {
+            inv.reserve("SKU-MUG", 3);
+        } catch (IllegalArgumentException e) {
+            System.out.println("refused: " + e.getMessage());
+        }
+        for (Inventory store : new Inventory[] { new Inventory(), new FlashSaleInventory() }) {
+            store.receive("SKU-TEA", 10);
+            String name = store.getClass().getSimpleName();
+            try {
+                System.out.println(name + " " + checkout(store, "SKU-TEA", 4));
+            } catch (IllegalArgumentException e) {
+                System.out.println(name + " surprise: " + e.getMessage());
+            }
+        }
+    }
+}
+```
+
+What to notice:
+
+- Preconditions are explicit `if` checks that always run; postconditions and invariants use `assert`, which documents intent and runs in tests (`-ea` was set when this Java was run).
+- The postcondition refers to the *old* value of `available`, captured before the change. Eiffel has an `old` keyword for this; in Python and Java you save it in a local variable.
+- `FlashSaleInventory` compiles, passes its own unit tests, and still breaks `checkout`. Type systems check method *signatures*; only the contract (and tests written against it) catches the change in *behavior*. A correct design would make the flash-sale limit part of the base contract (for example, `max_per_reservation(sku)` that callers can query) rather than a hidden extra rule.
+
+#### Real-world industry applications
+
+::: industry
+**Eiffel and mainstream languages.** Eiffel builds contracts into the language: `require` clauses, `ensure` clauses with `old`, and class `invariant` sections, monitored at run time according to a compilation setting, and inherited automatically by subclasses. Mainstream languages approximate this with conventions: Java documents preconditions in Javadoc and checks them with exceptions or `Objects.requireNonNull`, and uses `assert` for internal conditions that are disabled by default in production.
+*Evidence: Primary* — [Meyer 1997]; [Bloch 2018, Item 49]
+:::
+
+#### Failure scenarios
+
+**Table 35.9 — Failure scenarios for contracts.**
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Subclass rejects valid calls | Strengthened precondition | Unhandled exception in client code | Move rule into the base contract | Meyer's rule; contract tests run against every subclass |
+| Input validation silently off in production | Validation written with `assert` | Bad data in production | Replace with explicit checks | `assert` only for internal conditions |
+| Overselling under load | Check-then-act across two calls, not atomic | Negative stock in reports | Compensate (cancel, refund) | Atomic conditional update in the store |
+| Each layer re-validates differently | No written contract | Conflicting error messages | Document and centralize | One owner per check |
+
+::: mistake
+**Misconception — "A subclass that adds a safety check is always safer."** Adding a check to the *precondition* is exactly what breaks substitutability: callers that obey the parent's contract now fail. Extra checks on *outputs* (a stronger postcondition) are safe; extra demands on *inputs* are not.
+:::

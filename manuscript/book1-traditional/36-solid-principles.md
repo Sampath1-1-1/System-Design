@@ -1527,3 +1527,356 @@ ISP's benefits are narrower blast radius for interface changes, no stub methods,
 ::: tip
 **ISP in LLD interviews.** In a vending machine or parking lot, a single `Machine` or `ParkingLot` interface with admin, payment and display methods is a red flag. Split it into roles such as `PaymentAcceptor`, `InventoryAdmin` and `Display`, and say which client uses which. Interviewers often follow up with "where do the interfaces live?", which leads to dependency inversion.
 :::
+
+## 36.7 Dependency Inversion Principle
+
+### 36.7.1 Definition: policy should not depend on detail
+
+::: definition
+**Definition — Dependency Inversion Principle (DIP).** (a) High-level modules should not depend on low-level modules; both should depend on abstractions. (b) Abstractions should not depend on details; details should depend on abstractions [Martin 2002]. **High-level** modules hold policy: the business rules that justify the system (checkout, invoicing). **Low-level** modules hold detail: mechanisms that could be swapped without changing the business (a payment vendor's SDK, SMTP, SQL).
+:::
+
+#### First-principles explanation
+
+A company writes a job description ("must hold a forklift licence, work night shifts") and then hires someone who fits it. It does not rewrite its operations manual around whichever person it happened to hire. The job description is the abstraction, written in the company's terms and owned by the company; candidates conform to it. If the company instead wrote its procedures around one employee's personal habits, it could never replace that person.
+
+In naive layered code the arrows run the other way: checkout imports the payment vendor's client, so checkout's source code names the vendor, its data shapes and its error codes. Every vendor change ripples upward into the business rules.
+
+#### Why does this exist?
+
+Source-code dependencies point the same way as control flow by default: if A calls B, A imports B. That makes the most important code (policy) depend on the most volatile code (vendors, frameworks, databases). DIP breaks that coupling by inserting an interface between them and, crucially, **placing the interface on the policy side**. Control still flows from checkout to the vendor at run time, but the source-code dependency now points from the vendor adapter *toward* checkout. That reversal is the "inversion".
+
+#### How it works internally
+
+1. Identify policy code and the details it calls.
+2. Define, **in the policy module**, an interface expressing what policy needs in its own vocabulary (`PaymentGateway.charge` returns a `ChargeResult`, not the vendor's JSON).
+3. Write an **adapter** in a detail module that implements the interface by calling the vendor.
+4. Give policy its collaborators from outside (dependency injection, §36.7.4), assembled in one **composition root**.
+5. In tests, implement the same interfaces with **fakes**.
+
+### 36.7.2 The violation: checkout constructs its details
+
+**Figure 36.12 — Before DIP: policy depends on concrete details.**
+
+```mermaid
+classDiagram
+  class CheckoutService {
+    -payments: AcmePayClient
+    -mailer: SmtpMailer
+    +checkout(order_id, token, cents, email) str
+  }
+  class AcmePayClient {
+    <<vendor SDK>>
+    +create_charge(token, cents, currency) dict
+  }
+  class SmtpMailer {
+    +send_mail(to, subject, body) void
+  }
+  CheckoutService --> AcmePayClient : constructs, HTTPS
+  CheckoutService --> SmtpMailer : constructs, SMTP
+```
+
+**Reading the diagram.** The high-level `CheckoutService` creates and holds its two low-level collaborators (solid arrows): a vendor SDK that charges cards over HTTPS and an SMTP mailer. Both calls are synchronous. Both collaborators are external failure points, and the service cannot run, even in a unit test, without reaching them. The vendor's response shape (a dictionary with a `status` field) is visible inside the business rule, so switching to a second payment provider means editing checkout itself. Every arrow points from policy to detail.
+
+```python
+class AcmePayClient:                       # low-level detail: a vendor SDK
+    def create_charge(self, card_token: str, amount_cents: int,
+                      currency: str = "usd") -> dict:
+        print(f"[HTTPS api.acmepay.example] charge {amount_cents} {currency}")
+        return {"id": "ch_1", "status": "succeeded"}
+
+class SmtpMailer:                          # low-level detail: a mail transport
+    def __init__(self, host: str = "smtp.internal", port: int = 587):
+        self.host, self.port = host, port
+    def send_mail(self, to: str, subject: str, body: str) -> None:
+        print(f"[SMTP {self.host}:{self.port}] to={to} subject={subject}")
+
+class CheckoutService:                     # high-level policy
+    def __init__(self):
+        self.payments = AcmePayClient()    # policy constructs and names details
+        self.mailer = SmtpMailer()
+
+    def checkout(self, order_id: str, card_token: str, amount_cents: int,
+                 email: str) -> str:
+        result = self.payments.create_charge(card_token, amount_cents)
+        if result["status"] != "succeeded":          # vendor vocabulary leaks in
+            raise RuntimeError("payment declined")
+        self.mailer.send_mail(email, "Order confirmed", f"Order {order_id} is paid")
+        return result["id"]
+
+print(CheckoutService().checkout("A-1001", "tok_visa", 4719, "ana@example.com"))
+```
+
+What to notice: to test the decline path you would need a real card that the vendor declines, or a patching library that rewrites `AcmePayClient` at run time. Both are signs that the dependency points the wrong way.
+
+### 36.7.3 The refactor: ports owned by policy
+
+**Figure 36.13 — After DIP: interfaces live with policy; adapters point inward.**
+
+```mermaid
+flowchart LR
+  subgraph checkout["checkout package: policy"]
+    CS[CheckoutService]
+    PG[PaymentGateway<br/>interface]
+    OC[OrderConfirmations<br/>interface]
+    CS --> PG
+    CS --> OC
+  end
+  subgraph adapters["adapters package: details"]
+    AG[AcmePayGateway]
+    SC[SmtpConfirmations]
+  end
+  subgraph tests["tests"]
+    FP[FakePaymentGateway]
+    RC[RecordingConfirmations]
+  end
+  AG -->|implements| PG
+  SC -->|implements| OC
+  FP -->|implements| PG
+  RC -->|implements| OC
+  AG -->|HTTPS| V{{AcmePay API}}
+  SC -->|SMTP| M{{Mail server}}
+```
+
+**Reading the diagram.** Arrows are source-code dependencies, which is what DIP is about. Inside the `checkout` package, the service depends only on two interfaces that the package itself defines. Both the production adapters and the test fakes depend *inward* on those interfaces; nothing in `checkout` names an adapter. Only adapters cross the system boundary to the external vendor and mail server (hexagons, the failure points), over HTTPS and SMTP. At run time, calls still flow synchronously from the service through an interface to an adapter; only the compile-time direction is inverted. The `checkout` package can be built and tested with no network, and a second payment vendor is a new adapter, deployable without touching policy.
+
+#### Code example
+
+```python
+from dataclasses import dataclass, field
+from typing import Protocol
+
+# ---------- checkout: high-level policy. It OWNS the ports it needs. ----------
+@dataclass(frozen=True)
+class ChargeResult:
+    ok: bool
+    charge_id: str = ""
+    reason: str = ""
+
+class PaymentGateway(Protocol):            # port, named in checkout's language
+    def charge(self, card_token: str, cents: int) -> ChargeResult: ...
+
+class OrderConfirmations(Protocol):        # port
+    def confirm(self, email: str, order_id: str) -> None: ...
+
+class PaymentDeclined(Exception):
+    pass
+
+class CheckoutService:
+    def __init__(self, payments: PaymentGateway, confirmations: OrderConfirmations):
+        self.payments = payments           # injected through the constructor
+        self.confirmations = confirmations
+
+    def checkout(self, order_id: str, card_token: str, cents: int, email: str) -> str:
+        result = self.payments.charge(card_token, cents)
+        if not result.ok:
+            raise PaymentDeclined(result.reason)
+        self.confirmations.confirm(email, order_id)
+        return result.charge_id
+
+# ---------- adapters: low-level details. They depend on checkout's ports. ----------
+class AcmePayClient:                       # vendor SDK (stand-in)
+    def create_charge(self, card_token, amount_cents, currency="usd") -> dict:
+        return {"id": "ch_1", "status": "succeeded"}
+
+class AcmePayGateway:                      # implements PaymentGateway
+    def __init__(self, client: AcmePayClient):
+        self.client = client
+    def charge(self, card_token, cents):
+        raw = self.client.create_charge(card_token, cents)
+        if raw["status"] == "succeeded":
+            return ChargeResult(True, charge_id=raw["id"])
+        return ChargeResult(False, reason=raw.get("failure_code", "unknown"))
+
+class SmtpConfirmations:                   # implements OrderConfirmations
+    def __init__(self, host: str):
+        self.host = host
+    def confirm(self, email, order_id):
+        print(f"[SMTP {self.host}] to={email} Order {order_id} is paid")
+
+def build_checkout() -> CheckoutService:   # composition root: the only place
+    return CheckoutService(AcmePayGateway(AcmePayClient()),   # that names details
+                           SmtpConfirmations("smtp.internal"))
+
+# ---------- tests: fakes implement the same ports; no network, no mocks library ----------
+@dataclass
+class FakePaymentGateway:
+    declined_tokens: set = field(default_factory=set)
+    charges: list = field(default_factory=list)
+    def charge(self, card_token, cents):
+        if card_token in self.declined_tokens:
+            return ChargeResult(False, reason="card_declined")
+        self.charges.append((card_token, cents))
+        return ChargeResult(True, charge_id=f"fake-{len(self.charges)}")
+
+@dataclass
+class RecordingConfirmations:
+    sent: list = field(default_factory=list)
+    def confirm(self, email, order_id):
+        self.sent.append((email, order_id))
+
+def test_successful_checkout_charges_once_and_confirms():
+    pay, mail = FakePaymentGateway(), RecordingConfirmations()
+    charge_id = CheckoutService(pay, mail).checkout("A-1", "tok_ok", 4719, "a@x.com")
+    assert charge_id == "fake-1"
+    assert pay.charges == [("tok_ok", 4719)]
+    assert mail.sent == [("a@x.com", "A-1")]
+
+def test_declined_card_sends_no_confirmation():
+    pay, mail = FakePaymentGateway(declined_tokens={"tok_bad"}), RecordingConfirmations()
+    try:
+        CheckoutService(pay, mail).checkout("A-2", "tok_bad", 1000, "b@x.com")
+        raise AssertionError("expected PaymentDeclined")
+    except PaymentDeclined as err:
+        assert str(err) == "card_declined"
+    assert mail.sent == []
+
+test_successful_checkout_charges_once_and_confirms()
+test_declined_card_sends_no_confirmation()
+print("tests passed")
+print("production wiring:", build_checkout().checkout("A-3", "tok_visa", 4719, "ana@example.com"))
+```
+
+What to notice:
+
+- `ChargeResult` and `PaymentDeclined` are checkout's vocabulary. The vendor's `"succeeded"` string appears only in the adapter.
+- The decline test, which was hard to write before, is now four lines. A **fake** is a working, simplified implementation (here, an in-memory list); a **mock** is an object pre-programmed with expected calls [Meszaros 2007]. Fakes of owned interfaces tend to produce tests that survive refactoring, because they check outcomes rather than call sequences.
+- `build_checkout` is the only function that knows concrete classes. Everything else receives its collaborators.
+
+```java
+// File: DipAfter.java  (Java 17+)
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+public class DipAfter {
+    // ---------- checkout (policy): owns its ports ----------
+    record ChargeResult(boolean ok, String chargeId, String reason) {}
+    interface PaymentGateway { ChargeResult charge(String cardToken, long cents); }
+    interface OrderConfirmations { void confirm(String email, String orderId); }
+    static final class PaymentDeclined extends RuntimeException {
+        PaymentDeclined(String reason) { super(reason); }
+    }
+
+    static final class CheckoutService {
+        private final PaymentGateway payments;
+        private final OrderConfirmations confirmations;
+        CheckoutService(PaymentGateway payments, OrderConfirmations confirmations) {   // constructor injection
+            this.payments = payments; this.confirmations = confirmations;
+        }
+        String checkout(String orderId, String cardToken, long cents, String email) {
+            ChargeResult r = payments.charge(cardToken, cents);
+            if (!r.ok()) throw new PaymentDeclined(r.reason());
+            confirmations.confirm(email, orderId);
+            return r.chargeId();
+        }
+    }
+
+    // ---------- adapters (details): depend on checkout's ports ----------
+    static final class AcmePayGateway implements PaymentGateway {
+        public ChargeResult charge(String token, long cents) {
+            // A real adapter would call the vendor SDK here and translate its response.
+            return new ChargeResult(true, "ch_1", "");
+        }
+    }
+    static final class SmtpConfirmations implements OrderConfirmations {
+        public void confirm(String email, String orderId) {
+            System.out.println("[SMTP] to=" + email + " Order " + orderId + " is paid");
+        }
+    }
+
+    // ---------- test fakes ----------
+    static final class FakePaymentGateway implements PaymentGateway {
+        final Set<String> declined; final List<Long> charges = new ArrayList<>();
+        FakePaymentGateway(Set<String> declined) { this.declined = declined; }
+        public ChargeResult charge(String token, long cents) {
+            if (declined.contains(token)) return new ChargeResult(false, "", "card_declined");
+            charges.add(cents);
+            return new ChargeResult(true, "fake-" + charges.size(), "");
+        }
+    }
+    static final class RecordingConfirmations implements OrderConfirmations {
+        final List<String> sent = new ArrayList<>();
+        public void confirm(String email, String orderId) { sent.add(email + ":" + orderId); }
+    }
+
+    static void check(boolean cond, String msg) { if (!cond) throw new AssertionError(msg); }
+
+    public static void main(String[] args) {
+        // Unit tests with fakes
+        FakePaymentGateway pay = new FakePaymentGateway(Set.of("tok_bad"));
+        RecordingConfirmations mail = new RecordingConfirmations();
+        CheckoutService svc = new CheckoutService(pay, mail);
+        check(svc.checkout("A-1", "tok_ok", 4719, "a@x.com").equals("fake-1"), "charge id");
+        check(mail.sent.equals(List.of("a@x.com:A-1")), "confirmation sent");
+        try { svc.checkout("A-2", "tok_bad", 1000, "b@x.com"); check(false, "expected decline"); }
+        catch (PaymentDeclined e) { check(e.getMessage().equals("card_declined"), "reason"); }
+        check(mail.sent.size() == 1, "no confirmation after decline");
+        System.out.println("tests passed");
+
+        // Composition root: the only place that names concrete classes
+        CheckoutService prod = new CheckoutService(new AcmePayGateway(), new SmtpConfirmations());
+        System.out.println(prod.checkout("A-3", "tok_visa", 4719, "ana@example.com"));
+    }
+}
+```
+
+What to notice: in a real project the interfaces and `CheckoutService` sit in one Java package or module, the adapters in another that `requires` it, and the fakes under `src/test`. In production code you would write these checks as JUnit tests; a plain `main` keeps the example self-contained.
+
+### 36.7.4 DI, DIP and IoC are three different things
+
+The three terms are often used interchangeably. They are related but distinct.
+
+**Table 36.6 — Dependency inversion, dependency injection and inversion of control.**
+
+| Term | What it is | Question it answers | Example |
+|---|---|---|---|
+| Dependency Inversion Principle (DIP) | A design principle about the *direction of source-code dependencies* | Which module owns the interface, and which way do imports point? | `checkout` defines `PaymentGateway`; the adapter imports it |
+| Dependency injection (DI) | A *technique*: an object receives its collaborators from outside instead of constructing them | Who creates the collaborators? | `CheckoutService(payments, confirmations)` |
+| Inversion of control (IoC) | A broad *property of frameworks*: the framework calls your code, not the reverse | Who owns the main loop? | A web framework calls your handler; a test runner calls your tests |
+
+Fowler's 2004 article explains why he and others coined "dependency injection": "inversion of control" was too generic, since every framework inverts control, and the specific pattern being described was supplying dependencies to an object from outside [Fowler 2004]. He describes constructor injection, setter injection and interface injection, and compares injection with the **service locator** alternative, in which an object asks a registry for its dependencies. A service locator hides dependencies inside method bodies; constructor injection makes them visible in the signature, which is why it is the common default.
+
+**Figure 36.14 — How DIP, DI and IoC relate.**
+
+```mermaid
+flowchart TB
+  IOC[Inversion of control<br/>framework calls your code]
+  DI[Dependency injection<br/>collaborators passed in]
+  DIP[Dependency inversion<br/>policy owns abstractions]
+  CR[Composition root<br/>or DI container]
+  SL[Service locator<br/>alternative to DI]
+  IOC -->|one form is| DI
+  DI -->|is assembled by| CR
+  DI -.->|enables, not required| DIP
+  SL -.->|also supplies| DIP
+```
+
+**Reading the diagram.** Read solid arrows as "is a kind of" or "is done by", and dotted arrows as "can support". Inversion of control is the broadest idea; dependency injection is one form of it, in which a composition root (hand-written, as in `build_checkout`, or a container such as Spring or Guice) creates objects and passes them in. DI makes DIP convenient, but you can inject a concrete class (DI without DIP), and you can satisfy DIP with a service locator (DIP without DI). The failure point in practice is a DI container used without DIP: every class is injected, yet the injected types are concrete vendor classes, so policy is still coupled to detail.
+
+#### Real-world industry applications
+
+::: industry
+**JDBC and SLF4J.** Java application code programs against `java.sql.Connection` and related interfaces defined by the platform; vendors ship drivers that implement them, and since JDBC 4.0 `DriverManager` discovers drivers through `ServiceLoader`, so the application's source never names the database vendor. SLF4J does the same for logging: libraries depend on the `org.slf4j.Logger` API, and the deployer chooses the logging backend at deployment time. In both cases the abstraction is owned by the client side (the platform or the facade), and the details depend on it.
+*Evidence: Primary* — [Oracle Java SE API: java.sql.DriverManager, java.util.ServiceLoader]; [SLF4J manual]
+:::
+
+#### Advantages, disadvantages and failure scenarios
+
+DIP makes policy testable in milliseconds, lets you replace vendors and databases by writing adapters, and keeps business rules readable in business terms. It costs an interface and an adapter per external dependency, plus a composition root to maintain. Interfaces that merely mirror one vendor's SDK method for method give the cost without the benefit, because a second vendor will not fit them.
+
+**Table 36.7 — DIP failure scenarios.**
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Swapping vendors requires editing business rules | Policy imports the SDK or its data types | Import graph: core package imports vendor package | Introduce a port in the core; move vendor code to an adapter | Architecture tests that forbid core-to-adapter imports |
+| Interface changes whenever the vendor changes | Interface owned by, or copied from, the detail | Port signatures use vendor types or names | Rewrite the port in domain vocabulary | Define ports from the policy's needs |
+| Tests pass but production fails | Fake diverges from the real adapter's behavior | Bugs found only in integration | Run the same contract tests (§36.5.3) on fake and real adapter | Contract-test every fake |
+
+::: mistake
+**"Using a DI container means the code follows DIP."** A container only wires objects. If `CheckoutService` is injected with an `AcmePayClient`, the dependency still points from policy to detail. DIP is about *which module owns the abstraction*.
+:::
+
+::: tip
+**DIP in LLD interviews.** When you introduce a repository or gateway interface, say who owns it ("the domain layer defines `OrderRepository`; the Postgres adapter implements it") and how you would test the domain with an in-memory fake. Distinguishing DI from DIP in one sentence is a common senior-level signal.
+:::
