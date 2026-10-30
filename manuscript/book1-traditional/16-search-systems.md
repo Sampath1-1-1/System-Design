@@ -410,7 +410,7 @@ flowchart LR
   TF2 -->|term lookups| IDX
 ```
 
-**Reading the diagram.** Two inputs enter the same pipeline: a document at index time (top) and a query at search time (bottom). Character filters run first on raw text (stripping HTML, mapping "&" to "and"); the tokenizer then splits text into tokens with positions; token filters normalize them. The index stores terms with positions; the query side only looks terms up. All steps are synchronous, in-process transformations; the only storage boundary is the index. The critical failure point is **asymmetry**: if the two pipelines diverge, for example because the index was built with stemming and the query analyzer was changed later, queries look up terms that were never stored and silently return nothing. Changing index-time analysis therefore requires a full reindex (§16.10.4); query-time-only filters such as synonyms can change without one. Analysis is CPU-bound and scales with indexer nodes.
+**Reading the diagram.** Two inputs enter the same pipeline: a document at index time (top) and a query at search time (bottom). Character filters run first on raw text (stripping HTML, mapping "&" to "and"); the tokenizer then splits text into tokens with positions; token filters normalize them. The index stores terms with positions; the query side only looks terms up. All steps are synchronous, in-process transformations; the only storage boundary is the index. The critical failure point is **asymmetry**: if the two pipelines diverge, for example because the index was built with stemming and the query analyzer was changed later, queries look up terms that were never stored and silently return nothing. Changing index-time analysis therefore requires a full reindex (§16.10.2); query-time-only filters such as synonyms can change without one. Analysis is CPU-bound and scales with indexer nodes.
 
 **Table 16.3 — Analysis chain components and their trade-offs.**
 
@@ -1256,7 +1256,7 @@ OpenSearch's **segment replication** copies segment files from primary to replic
 | Stale results | Indexing pipeline lag | Freshness metric (§16.10.3) | Scale consumers | Alert on consumer lag |
 
 ::: mistake
-**Mistake — "Elasticsearch can be our primary database."** It is durable per shard and replicated, but it has no multi-document transactions, near-real-time rather than immediate visibility, and mapping changes often require reindexing. Treat it as a derived, rebuildable view of a system of record (§16.10.4).
+**Mistake — "Elasticsearch can be our primary database."** It is durable per shard and replicated, but it has no multi-document transactions, near-real-time rather than immediate visibility, and mapping changes often require reindexing. Treat it as a derived, rebuildable view of a system of record (§16.10.2).
 :::
 
 ## 16.9 Typeahead and autocomplete

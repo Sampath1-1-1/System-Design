@@ -1,8 +1,12 @@
-%% Figure 11.6 — The executed plan tree for "revenue by city over the last day"
-flowchart BT
-  SO["Seq Scan on orders<br/>filter: last day, not cancelled<br/>78,515 rows"] -->|"rows"| HJ["Hash Join<br/>o.customer_id = c.customer_id"]
-  SC["Seq Scan on customers<br/>100,000 rows"] -->|"rows"| H["Hash<br/>build, 5.7 MB"]
-  H -->|"hash table"| HJ
-  HJ -->|"78,515 joined rows"| AG["HashAggregate<br/>group by city: 5 groups"]
-  AG -->|"5 rows"| S["Sort<br/>by revenue desc"]
-  S -->|"5 rows"| R([Client])
+%% Figure 11.6 — Non-repeatable read under READ COMMITTED
+sequenceDiagram
+  participant A as Txn A - report
+  participant DB as Database
+  participant B as Txn B - restock
+  A->>DB: SELECT on_hand WHERE product 42
+  DB-->>A: 10
+  B->>DB: UPDATE on_hand = on_hand - 3
+  B->>DB: COMMIT
+  A->>DB: SELECT on_hand WHERE product 42
+  DB-->>A: 7 under READ COMMITTED
+  Note over A,DB: REPEATABLE READ returns 10 again: same snapshot

@@ -2,8 +2,8 @@
 flowchart LR
   subgraph TIER["Size-tiered, T = 4"]
     direction TB
-    A1[(64 MB)] & A2[(64 MB)] & A3[(64 MB)] & A4[(64 MB)] -.->|merge 4 similar runs| B1[(256 MB run)]
-    B1 & B2[(256 MB)] & B3[(256 MB)] & B4[(256 MB)] -.->|merge 4 runs| C1[(1 GB run)]
+    A1[(64 MB)] & A2[(64 MB)] & A3[(64 MB)] & A4[(64 MB)] -.-> B1[(256 MB run<br/>merged from 4)]
+    B1 & B2[(256 MB)] & B3[(256 MB)] & B4[(256 MB)] -.-> C1[(1 GB run<br/>merged from 4)]
   end
   subgraph LEVEL["Leveled, T = 10"]
     direction TB

@@ -1953,21 +1953,7 @@ flowchart TD
   L2 --> H[("Heap rows or<br/>clustered row data")]
 ```
 
-**Figure 11.5 — Query processing pipeline.**
-
-```mermaid
-flowchart LR
-  C([Client]) -->|"SQL over wire protocol"| P["Parser"]
-  P -->|"parse tree"| A["Analyzer and rewriter"]
-  A -->|"query tree"| O["Planner / optimizer"]
-  CAT[("Catalog and statistics<br/>pg_class, pg_stats")] -->|"row counts, histograms"| O
-  O -->|"cheapest plan tree"| E["Executor"]
-  E -->|"page requests"| BP["Buffer pool"]
-  BP -->|"miss: read page"| D[("Data files<br/>heap and indexes")]
-  E -->|"result rows"| C
-```
-
-**Figure 11.6 — The executed plan tree for "revenue by city over the last day".**
+**Figure 11.5 — The executed plan tree for "revenue by city over the last day".**
 
 ```mermaid
 flowchart BT
@@ -1979,7 +1965,7 @@ flowchart BT
   S -->|"5 rows"| R([Client])
 ```
 
-**Figure 11.7 — Non-repeatable read under READ COMMITTED.**
+**Figure 11.6 — Non-repeatable read under READ COMMITTED.**
 
 ```mermaid
 sequenceDiagram
@@ -1995,7 +1981,7 @@ sequenceDiagram
   Note over A,DB: REPEATABLE READ returns 10 again: same snapshot
 ```
 
-**Figure 11.8 — Lost update from an application-side read-modify-write.**
+**Figure 11.7 — Lost update from an application-side read-modify-write.**
 
 ```mermaid
 sequenceDiagram
@@ -2012,7 +1998,7 @@ sequenceDiagram
   B->>DB: COMMIT or ROLLBACK
 ```
 
-**Figure 11.9 — Write skew: both doctors go off call.**
+**Figure 11.8 — Write skew: both doctors go off call.**
 
 ```mermaid
 sequenceDiagram
@@ -2029,7 +2015,7 @@ sequenceDiagram
   Note over B,DB: SERIALIZABLE: aborted, retry sees 1
 ```
 
-**Figure 11.10 — PostgreSQL version chain for product 42.**
+**Figure 11.9 — PostgreSQL version chain for product 42.**
 
 ```mermaid
 flowchart LR
@@ -2041,7 +2027,7 @@ flowchart LR
   VAC["VACUUM"] -->|"reclaims lp 2,<br/>redirects lp 1 to lp 3"| V1
 ```
 
-**Figure 11.11 — InnoDB current row and undo chain for product 42.**
+**Figure 11.10 — InnoDB current row and undo chain for product 42.**
 
 ```mermaid
 flowchart LR
@@ -2049,6 +2035,73 @@ flowchart LR
   U2 -->|"roll pointer"| U1[["Undo record<br/>on_hand 10, trx 993"]]
   RV(["Read view that cannot see 995"]) -.->|"reconstructs"| U2
   PU["Purge thread"] -->|"discards when no read view needs"| U1
+```
+
+**Figure 11.11 — A deadlock between two checkouts, as reproduced on PostgreSQL 16.**
+
+```mermaid
+sequenceDiagram
+  participant A as Txn A - cart 42 then 43
+  participant DB as PostgreSQL
+  participant B as Txn B - cart 43 then 42
+  A->>DB: UPDATE inventory product 42
+  B->>DB: UPDATE inventory product 43
+  A->>DB: UPDATE inventory product 43
+  Note over A,DB: A waits for B
+  B->>DB: UPDATE inventory product 42
+  Note over B,DB: B waits for A - cycle
+  DB-->>A: ERROR deadlock detected after about 1 s
+  DB-->>B: UPDATE 1, then COMMIT succeeds
+```
+
+**Figure 11.12 — Entity–relationship diagram of the order system.**
+
+```mermaid
+erDiagram
+  CUSTOMERS ||--o{ ORDERS : places
+  ORDERS ||--|{ ORDER_ITEMS : contains
+  PRODUCTS ||--o{ ORDER_ITEMS : "appears in"
+  PRODUCTS ||--|| INVENTORY : "stocked as"
+  ORDERS ||--o{ PAYMENTS : "paid by"
+  CUSTOMERS {
+    bigint customer_id PK
+    text email UK
+    text full_name
+    text city
+  }
+  PRODUCTS {
+    bigint product_id PK
+    text sku UK
+    text name
+    int price_cents
+  }
+  INVENTORY {
+    bigint product_id PK, FK
+    int on_hand
+  }
+  ORDERS {
+    bigint order_id PK
+    bigint customer_id FK
+    text status
+    text ship_to
+    bigint total_cents
+    text idempotency_key UK
+    timestamptz created_at
+  }
+  ORDER_ITEMS {
+    bigint order_id PK, FK
+    smallint line_no PK
+    bigint product_id FK
+    int quantity
+    int unit_price_cents
+  }
+  PAYMENTS {
+    bigint payment_id PK
+    bigint order_id FK
+    bigint amount_cents
+    text provider_ref UK
+    text status
+  }
 ```
 
 ## Chapter 12 — NoSQL Databases
@@ -2079,6 +2132,7 @@ flowchart LR
   C([Client]) -->|HTTPS| RR[Request router]
   RR -->|partition map lookup| MD[(Partition metadata)]
   RR -->|"hash of partition key"| L1
+  RR -->|other keys| L2
   subgraph P1["Partition 1: Paxos group across 3 AZs"]
     L1["Leader replica<br/>CUST#c42: PROFILE, ORDER#..."]
     F1a[Replica AZ-b]
@@ -2324,7 +2378,7 @@ flowchart TB
     P1["Parent: 30, 60"] --> L1["Leaf A: 30 32 34 36 38<br/>full"]
   end
   subgraph AFTER["After the split"]
-    P2["Parent: 30, 34, 60"] --> L2["Leaf A: 30 32 34"]
+    P2["Parent: 30, 35, 60"] --> L2["Leaf A: 30 32 34"]
     P2 --> L3["New leaf B: 35 36 38"]
     L2 -->|sibling link| L3
   end
@@ -2382,8 +2436,8 @@ flowchart TB
 flowchart LR
   subgraph TIER["Size-tiered, T = 4"]
     direction TB
-    A1[(64 MB)] & A2[(64 MB)] & A3[(64 MB)] & A4[(64 MB)] -.->|merge 4 similar runs| B1[(256 MB run)]
-    B1 & B2[(256 MB)] & B3[(256 MB)] & B4[(256 MB)] -.->|merge 4 runs| C1[(1 GB run)]
+    A1[(64 MB)] & A2[(64 MB)] & A3[(64 MB)] & A4[(64 MB)] -.-> B1[(256 MB run<br/>merged from 4)]
+    B1 & B2[(256 MB)] & B3[(256 MB)] & B4[(256 MB)] -.-> C1[(1 GB run<br/>merged from 4)]
   end
   subgraph LEVEL["Leveled, T = 10"]
     direction TB
@@ -3212,36 +3266,42 @@ flowchart LR
   API([Trending API]) -->|read| ST
 ```
 
-**Figure 17.8 — A skip list with three levels; searching for 40.**
+**Figure 17.8 — A skip list with three levels; the bold path finds 40.**
 
 ```mermaid
 flowchart LR
-  subgraph L3["Level 3"]
-    H3[head] --> N30c[30] --> E3[end]
-  end
-  subgraph L2["Level 2"]
-    H2[head] --> N10b[10] --> N30b[30] --> N50b[50] --> E2[end]
-  end
-  subgraph L1["Level 1: every node"]
-    H1[head] --> N10[10] --> N20[20] --> N30[30] --> N40[40] --> N50[50] --> E1[end]
-  end
-  N30c -.->|down| N30b
-  N30b -.->|down| N30
+  H["head<br/>levels 1-3"]
+  N10["10<br/>levels 1-2"]
+  N20["20<br/>level 1"]
+  N30["30<br/>levels 1-3"]
+  N40["40<br/>level 1"]
+  N50["50<br/>levels 1-2"]
+  E["end"]
+  H ==>|L3| N30
+  N30 -->|L3| E
+  H -->|L2| N10
+  N10 -->|L2| N30
+  N30 -->|L2| N50
+  N50 -->|L2| E
+  H -->|L1| N10
+  N10 -->|L1| N20
+  N20 -->|L1| N30
+  N30 ==>|L1| N40
+  N40 -->|L1| N50
+  N50 -->|L1| E
 ```
 
 **Figure 17.9 — A Merkle tree over four records and the inclusion proof for record C.**
 
 ```mermaid
 flowchart TD
-  ROOT["Root = H of H_AB and H_CD"] --> HAB["H_AB = H of H_A and H_B"]
-  ROOT --> HCD["H_CD = H of H_C and H_D"]
+  ROOT["Root = H of H_AB and H_CD"] --> HAB["H_AB = H of H_A and H_B<br/>sent as proof item 2"]
+  ROOT --> HCD["H_CD = H of H_C and H_D<br/>recomputed by verifier"]
   HAB --> HA["H_A = H of record A"]
   HAB --> HB["H_B = H of record B"]
-  HCD --> HC["H_C = H of record C"]
-  HCD --> HD["H_D = H of record D"]
+  HCD --> HC["H_C = H of record C<br/>recomputed by verifier"]
+  HCD --> HD["H_D = H of record D<br/>sent as proof item 1"]
   HC --> RC[(Record C)]
-  HD -.->|proof item 1| HC
-  HAB -.->|proof item 2| HCD
 ```
 
 **Figure 17.10 — Merkle-tree anti-entropy between two replicas.**
@@ -3259,4 +3319,80 @@ sequenceDiagram
   A->>B: leaf 777777 differs
   B-->>A: stream rows in leaf range 777777
   A->>A: apply newer versions by timestamp
+```
+
+**Figure 17.11 — Geohash refinement: each character narrows the cell.**
+
+```mermaid
+flowchart TD
+  W["World: 2 ranges<br/>lon -180 to 180, lat -90 to 90"] -->|first 5 bits| C1["9<br/>about 5,000 x 5,000 km"]
+  C1 -->|next 5 bits| C2["9q<br/>about 1,250 x 620 km"]
+  C2 -->|next 5 bits| C3["9q8<br/>about 156 x 156 km"]
+  C3 -->|next 5 bits| C4["9q8y<br/>about 39 x 19 km"]
+  C4 -->|next 5 bits| C5["9q8yy<br/>about 4.9 x 4.9 km"]
+  C5 -->|next 5 bits| C6["9q8yyk<br/>about 1.2 x 0.6 km"]
+  C6 --> IDX[("Index: key = geohash,<br/>value = driver IDs")]
+```
+
+**Figure 17.12 — An adaptive quadtree: dense areas split further.**
+
+```mermaid
+flowchart TD
+  R["Root: whole city<br/>capacity exceeded, split"] --> NW["NW: suburbs<br/>40 points, leaf"]
+  R --> NE["NE: downtown<br/>split again"]
+  R --> SW["SW: park<br/>3 points, leaf"]
+  R --> SE["SE: airport<br/>70 points, leaf"]
+  NE --> NE1["NE-NW: 95 points, leaf"]
+  NE --> NE2["NE-NE: financial district<br/>split again"]
+  NE --> NE3["NE-SW: 60 points, leaf"]
+  NE --> NE4["NE-SE: 88 points, leaf"]
+  NE2 --> D1["4 leaves of about 90 points each"]
+```
+
+**Figure 17.13 — A nearby-drivers service built on a cell index.**
+
+```mermaid
+flowchart LR
+  D([Driver apps]) -->|GPS every 4 s over HTTPS| LS[Location service]
+  LS -->|compute cell ID| GI[("Geo index: cell to drivers,<br/>sharded by region")]
+  LS -.->|append| LOG[[Location stream]]
+  R([Rider app]) -->|nearby request| QS[Query service]
+  QS -->|cover circle with cells| GI
+  GI -->|candidate drivers| QS
+  QS -->|exact distance filter,<br/>rank by ETA| R
+  LOG -.->|rebuild after failure| GI
+```
+
+**Figure 17.14 — The Snowflake 64-bit ID layout.**
+
+```mermaid
+flowchart LR
+  S["bit 63<br/>sign: always 0"] --- T["bits 62 to 22<br/>41-bit timestamp<br/>ms since custom epoch"]
+  T --- M["bits 21 to 12<br/>10-bit machine ID<br/>5 datacenter + 5 worker"]
+  M --- Q["bits 11 to 0<br/>12-bit sequence<br/>per ms, per machine"]
+```
+
+**Figure 17.15 — Flickr-style ticket servers.**
+
+```mermaid
+flowchart LR
+  A1[App server 1] -->|SQL: REPLACE INTO, LAST_INSERT_ID| T1[("Ticket DB odd<br/>1, 3, 5, ...")]
+  A2[App server 2] -->|SQL| T2[("Ticket DB even<br/>2, 4, 6, ...")]
+  A1 -->|on failure| T2
+  A2 -->|on failure| T1
+  A1 -->|insert row with ID| S[(Sharded databases)]
+  A2 -->|insert row with ID| S
+```
+
+**Figure 17.16 — A trie holding sync, syntax, system and scale.**
+
+```mermaid
+flowchart TD
+  R((root)) -->|s| S[s]
+  S -->|y| SY[sy]
+  S -->|c| SC["sc ... scale"]
+  SY -->|n| SYN[syn]
+  SY -->|s| SYS["sys ... system"]
+  SYN -->|c| SYNC["sync (end, weight 60)"]
+  SYN -->|t| SYNT["synt ... syntax"]
 ```

@@ -966,4 +966,4 @@ Interviewers sometimes ask how you learn, especially for senior roles. The conce
 - Macnamara et al. (2014): headline 12 % of variance confirmed; the domain ordering (lower in education and professions than in games, music, sports) is from memory and should be checked.
 - Attribution of "What I cannot create, I do not understand" to Feynman's blackboard (Caltech Archives, 1988): widely documented; add an archival citation if one is required.
 - Leitner intervals (1, 3, 7, 16, 35 days) are a teaching choice, not an empirically derived schedule; the text says so.
-- The "~1/√V" load-spread scaling is stated as an approximation; a formal bound should be cited or derived in §14.8.
+- The "~1/√V" load-spread scaling is stated as an approximation; it is now derived in §14.8.4 (UQ-012, resolved).

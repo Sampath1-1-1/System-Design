@@ -145,7 +145,7 @@ Redundant designs suffer three **anomalies**:
 
 1. **Update anomaly** — changing one fact requires changing many rows; a partial update leaves contradictions.
 2. **Insert anomaly** — you cannot record a fact without an unrelated one: a new product cannot be stored until somebody orders it.
-3. **Delete anomaly** — deleting one fact destroys another: cancelling and purging the only order of a product loses the product's name and price.
+3. **Delete anomaly** — deleting one fact destroys another: canceling and purging the only order of a product loses the product's name and price.
 
 ::: definition
 **Definition — Functional dependency.** In a relation $R$, the functional dependency $X \to Y$ holds if any two rows that agree on the columns $X$ also agree on the columns $Y$. $X$ is the **determinant**. Example: `product_id → product_name` because one product ID always has one name.
@@ -1015,7 +1015,7 @@ A single PostgreSQL server is ACID-consistent and, for reads on that server, lin
 
 ### 11.13.1 The anomalies
 
-Perfect isolation, called **serializability**, means the result of running transactions concurrently equals the result of running them one at a time in *some* order. It costs throughput, so databases offer weaker **isolation levels** that permit specific **anomalies**. Berenson and colleagues showed that the SQL standard's definitions were ambiguous and catalogued the anomalies precisely [Berenson et al. 1995]:
+Perfect isolation, called **serializability**, means the result of running transactions concurrently equals the result of running them one at a time in *some* order. It costs throughput, so databases offer weaker **isolation levels** that permit specific **anomalies**. Berenson and colleagues showed that the SQL standard's definitions were ambiguous and cataloged the anomalies precisely [Berenson et al. 1995]:
 
 ::: definition
 **Definition — Isolation anomalies.**

@@ -3,6 +3,7 @@ flowchart LR
   C([Client]) -->|HTTPS| RR[Request router]
   RR -->|partition map lookup| MD[(Partition metadata)]
   RR -->|"hash of partition key"| L1
+  RR -->|other keys| L2
   subgraph P1["Partition 1: Paxos group across 3 AZs"]
     L1["Leader replica<br/>CUST#c42: PROFILE, ORDER#..."]
     F1a[Replica AZ-b]

@@ -2,11 +2,9 @@
 """Read-your-writes and monotonic reads with log-position tokens (simulation)."""
 import random
 
-
 class Replica:
     def __init__(self, name):
         self.name, self.applied = name, 0       # applied log position (LSN)
-
 
 class Router:
     """Routes reads to any replica that has applied the session's watermark."""
@@ -30,7 +28,6 @@ class Router:
         # monotonic reads: later reads must be at least as fresh as this one
         self.watermark[session] = max(need, chosen.applied)
         return chosen.name
-
 
 if __name__ == "__main__":
     random.seed(7)

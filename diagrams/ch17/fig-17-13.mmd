@@ -1,0 +1,10 @@
+%% Figure 17.13 — A nearby-drivers service built on a cell index
+flowchart LR
+  D([Driver apps]) -->|GPS every 4 s over HTTPS| LS[Location service]
+  LS -->|compute cell ID| GI[("Geo index: cell to drivers,<br/>sharded by region")]
+  LS -.->|append| LOG[[Location stream]]
+  R([Rider app]) -->|nearby request| QS[Query service]
+  QS -->|cover circle with cells| GI
+  GI -->|candidate drivers| QS
+  QS -->|exact distance filter,<br/>rank by ETA| R
+  LOG -.->|rebuild after failure| GI

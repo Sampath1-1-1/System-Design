@@ -1,0 +1,11 @@
+%% Figure 17.12 — An adaptive quadtree: dense areas split further
+flowchart TD
+  R["Root: whole city<br/>capacity exceeded, split"] --> NW["NW: suburbs<br/>40 points, leaf"]
+  R --> NE["NE: downtown<br/>split again"]
+  R --> SW["SW: park<br/>3 points, leaf"]
+  R --> SE["SE: airport<br/>70 points, leaf"]
+  NE --> NE1["NE-NW: 95 points, leaf"]
+  NE --> NE2["NE-NE: financial district<br/>split again"]
+  NE --> NE3["NE-SW: 60 points, leaf"]
+  NE --> NE4["NE-SE: 88 points, leaf"]
+  NE2 --> D1["4 leaves of about 90 points each"]

@@ -24,7 +24,7 @@ After this chapter you should be able to:
 - Page cache, `mmap`, copy-on-write — §6.6.5–§6.6.6 (buffer pools replace or sit beside them).
 - `fsync`, journaling and group commit — §6.14 (the group-commit formula in §6.14.3 is not repeated).
 - B+ trees, transactions and MVCC — §11.8, §11.11, §11.14 (here: how a B-tree is stored and made crash-safe).
-- Logarithms — §4.3. Units: **KiB/MiB** for page and block sizes; **KB/MB/GB/TB** (powers of ten) for data volumes.
+- Logarithms — §4.4. Units: **KiB/MiB** for page and block sizes; **KB/MB/GB/TB** (powers of ten) for data volumes.
 
 ## 13.3 Pages and blocks
 
@@ -384,7 +384,7 @@ sequenceDiagram
   Note over T,D: crash: page 9 change lost from RAM, LSN 150 maybe in WAL
 ```
 
-**Reading the diagram.** The WAL file and data files are separate durable storage boundaries; the buffer pool is RAM. Solid arrows are synchronous; the dashed arrow is the acknowledgement. The commit waits only for a sequential log `fsync` up to LSN 110, never for page 7, which the checkpointer writes later, respecting the WAL rule. At the crash, page 9's uncommitted change exists only in RAM and perhaps the log tail; recovery must ensure it does not appear. Scaling: the log is one sequential stream, so its device's flush latency bounds commit throughput; put it on fast, power-loss-protected storage.
+**Reading the diagram.** The WAL file and data files are separate durable storage boundaries; the buffer pool is RAM. Solid arrows are synchronous; the dashed arrow is the acknowledgment. The commit waits only for a sequential log `fsync` up to LSN 110, never for page 7, which the checkpointer writes later, respecting the WAL rule. At the crash, page 9's uncommitted change exists only in RAM and perhaps the log tail; recovery must ensure it does not appear. Scaling: the log is one sequential stream, so its device's flush latency bounds commit throughput; put it on fast, power-loss-protected storage.
 
 ### 13.5.3 ARIES recovery: analysis, redo, undo
 
@@ -512,24 +512,12 @@ flowchart TB
 
 #### Mathematical foundations
 
-::: formula
-**B+ tree height**
-
-$$N_{leaf} = \left\lceil \frac{N}{n_{leaf}} \right\rceil, \qquad h = 1 + \left\lceil \log_{f} N_{leaf} \right\rceil$$
-
-| Symbol | Meaning | Units |
-|---|---|---|
-| $N$ | Number of rows (keys) | rows |
-| $n_{leaf}$ | Rows per leaf page at the typical fill factor | rows/page |
-| $N_{leaf}$ | Number of leaf pages | pages |
-| $f$ | Fan-out: child pointers per internal page at the typical fill factor | pointers/page |
-| $h$ | Number of levels including the leaf level | levels |
-:::
+The height formula $h = 1 + \lceil \log_f \lceil n/L \rceil \rceil$ (fan-out $f$, $L$ rows per leaf) is derived in §11.8.2, which works a billion-row InnoDB table at 80% usable space: fan-out 819, 65 rows per leaf, four levels, 294 MiB of internal pages. The physical question here is how sensitive those numbers are to page fill.
 
 ::: example
 **Worked example — A 1-billion-row InnoDB table.**
 
-Assume 16 KiB pages filled to 70% (a typical steady state after random inserts; random B-tree fill averages about $\ln 2 \approx 69\%$ [Yao 1978]), rows of 200 bytes, and internal entries of 16 bytes (an 8-byte key, a page number and record overhead).
+Repeat the §11.8.2 example with 16 KiB pages filled to 70% (a typical steady state after random inserts; random B-tree fill averages about $\ln 2 \approx 69\%$ [Yao 1978]), rows of 200 bytes, and internal entries of 16 bytes (an 8-byte key, a page number and record overhead).
 
 1. Usable bytes per page: $16\,384 \times 0.7 = 11\,469$.
 2. Rows per leaf: $\lfloor 11\,469 / 200 \rfloor = 57$. Leaves: $10^9 / 57 = 17\,543\,860$.
@@ -537,7 +525,7 @@ Assume 16 KiB pages filled to 70% (a typical steady state after random inserts; 
 4. Height: $\log_{716} 17\,543\,860 = \ln(1.754 \times 10^7) / \ln 716 = 16.68 / 6.57 = 2.54$, so $\lceil 2.54 \rceil = 3$ internal levels and $h = 4$.
 5. Internal pages: $17\,543\,860 / 716 \approx 24\,503$, then $\lceil 24\,503 / 716 \rceil = 35$, then 1 root: $24\,539$ pages $\times$ 16 KiB $\approx 402$ MB.
 
-**Interpretation.** Four levels index a billion rows, and the internal levels fit in about 400 MB, so a point lookup costs at most **one** random read. **Engineering implication.** Read cost is nearly flat in table size while internal pages stay cached; the real danger is a working set of *leaves* larger than RAM. Wide keys cut fan-out and can add a level, one reason to prefer compact primary keys.
+**Interpretation.** Four levels index a billion rows, as at 80% fill, and the internal levels fit in about 400 MB (about 30% more than the 308 MB, or 294 MiB, of §11.8.2), so a point lookup costs at most **one** random read. **Engineering implication.** Read cost is nearly flat in table size while internal pages stay cached; the real danger is a working set of *leaves* larger than RAM. Wide keys cut fan-out and can add a level, one reason to prefer compact primary keys.
 :::
 
 ### 13.6.2 Concurrency: latches and latch crabbing
@@ -1367,7 +1355,7 @@ RocksDB began at Facebook in 2012 as a fork of Google's LevelDB, optimized for f
 
 ### 13.14.3 PostgreSQL heap: append-friendly pages with MVCC versions
 
-PostgreSQL stores a table as an unordered **heap** of 8 KiB slotted pages (§13.3). A row version (tuple) carries `xmin`/`xmax`, the IDs of the transactions that created and deleted it. An `UPDATE` never overwrites: it writes a new tuple version — on the same page if there is room, else elsewhere — and marks the old one deleted. All indexes are secondary and point to a tuple's physical location `(block, slot)`, the `ctid`. Two optimizations limit the cost. A **heap-only tuple (HOT)** update, possible when no indexed column changes and the new version fits on the same page, links the versions within the page and adds no index entries; a lower `fillfactor` leaves room for it. **`VACUUM`** later removes dead versions, records reusable space in the **free space map**, and marks all-visible pages in the **visibility map**, which enables index-only scans. Large values are moved out of line by TOAST. Recovery is redo-only from the WAL with full-page writes (§13.5, §13.12.3).
+PostgreSQL stores a table as an unordered **heap** of 8 KiB slotted pages (§13.3). A row version (tuple) carries `xmin`/`xmax`, the IDs of the transactions that created and deleted it (visibility rules: §11.14.2). An `UPDATE` never overwrites: it writes a new tuple version — on the same page if there is room, else elsewhere — and marks the old one deleted. All indexes are secondary and point to a tuple's physical location `(block, slot)`, the `ctid`. Two optimizations limit the cost. A **heap-only tuple (HOT)** update, possible when no indexed column changes and the new version fits on the same page, links the versions within the page and adds no index entries; a lower `fillfactor` leaves room for it. **`VACUUM`** later removes dead versions, records reusable space in the **free space map**, and marks all-visible pages in the **visibility map**, which enables index-only scans. Large values are moved out of line by TOAST. Recovery is redo-only from the WAL with full-page writes (§13.5, §13.12.3).
 *Evidence: Primary* — [PostgreSQL Docs: Database Physical Storage; Routine Vacuuming].
 
 **Table 13.8 — B-tree versus LSM storage engines.**

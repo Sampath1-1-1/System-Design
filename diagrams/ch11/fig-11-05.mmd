@@ -1,10 +1,8 @@
-%% Figure 11.5 — Query processing pipeline
-flowchart LR
-  C([Client]) -->|"SQL over wire protocol"| P["Parser"]
-  P -->|"parse tree"| A["Analyzer and rewriter"]
-  A -->|"query tree"| O["Planner / optimizer"]
-  CAT[("Catalog and statistics<br/>pg_class, pg_stats")] -->|"row counts, histograms"| O
-  O -->|"cheapest plan tree"| E["Executor"]
-  E -->|"page requests"| BP["Buffer pool"]
-  BP -->|"miss: read page"| D[("Data files<br/>heap and indexes")]
-  E -->|"result rows"| C
+%% Figure 11.5 — The executed plan tree for "revenue by city over the last day"
+flowchart BT
+  SO["Seq Scan on orders<br/>filter: last day, not cancelled<br/>78,515 rows"] -->|"rows"| HJ["Hash Join<br/>o.customer_id = c.customer_id"]
+  SC["Seq Scan on customers<br/>100,000 rows"] -->|"rows"| H["Hash<br/>build, 5.7 MB"]
+  H -->|"hash table"| HJ
+  HJ -->|"78,515 joined rows"| AG["HashAggregate<br/>group by city: 5 groups"]
+  AG -->|"5 rows"| S["Sort<br/>by revenue desc"]
+  S -->|"5 rows"| R([Client])

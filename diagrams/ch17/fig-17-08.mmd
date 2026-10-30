@@ -1,13 +1,21 @@
-%% Figure 17.8 — A skip list with three levels; searching for 40
+%% Figure 17.8 — A skip list with three levels; the bold path finds 40
 flowchart LR
-  subgraph L3["Level 3"]
-    H3[head] --> N30c[30] --> E3[end]
-  end
-  subgraph L2["Level 2"]
-    H2[head] --> N10b[10] --> N30b[30] --> N50b[50] --> E2[end]
-  end
-  subgraph L1["Level 1: every node"]
-    H1[head] --> N10[10] --> N20[20] --> N30[30] --> N40[40] --> N50[50] --> E1[end]
-  end
-  N30c -.->|down| N30b
-  N30b -.->|down| N30
+  H["head<br/>levels 1-3"]
+  N10["10<br/>levels 1-2"]
+  N20["20<br/>level 1"]
+  N30["30<br/>levels 1-3"]
+  N40["40<br/>level 1"]
+  N50["50<br/>levels 1-2"]
+  E["end"]
+  H ==>|L3| N30
+  N30 -->|L3| E
+  H -->|L2| N10
+  N10 -->|L2| N30
+  N30 -->|L2| N50
+  N50 -->|L2| E
+  H -->|L1| N10
+  N10 -->|L1| N20
+  N20 -->|L1| N30
+  N30 ==>|L1| N40
+  N40 -->|L1| N50
+  N50 -->|L1| E

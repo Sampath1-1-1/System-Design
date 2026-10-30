@@ -1,0 +1,5 @@
+%% Figure 17.14 — The Snowflake 64-bit ID layout
+flowchart LR
+  S["bit 63<br/>sign: always 0"] --- T["bits 62 to 22<br/>41-bit timestamp<br/>ms since custom epoch"]
+  T --- M["bits 21 to 12<br/>10-bit machine ID<br/>5 datacenter + 5 worker"]
+  M --- Q["bits 11 to 0<br/>12-bit sequence<br/>per ms, per machine"]

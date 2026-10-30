@@ -1,5 +1,4 @@
 # Extracted from manuscript/book1-traditional/17-data-structures-for-scale.md §17.3.3 (listing 1). Edit the manuscript, not this file.
-
 def murmur3_32(data: bytes, seed: int = 0) -> int:
     """MurmurHash3 x86_32 (Appleby), pure Python. Returns an unsigned 32-bit int."""
     c1, c2, mask = 0xCC9E2D51, 0x1B873593, 0xFFFFFFFF

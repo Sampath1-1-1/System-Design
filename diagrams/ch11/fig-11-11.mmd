@@ -1,6 +1,13 @@
-%% Figure 11.11 — InnoDB current row and undo chain for product 42
-flowchart LR
-  CI[("Clustered index leaf<br/>on_hand 8, DB_TRX_ID 995")] -->|"DB_ROLL_PTR"| U2[["Undo record<br/>on_hand 9, trx 994"]]
-  U2 -->|"roll pointer"| U1[["Undo record<br/>on_hand 10, trx 993"]]
-  RV(["Read view that cannot see 995"]) -.->|"reconstructs"| U2
-  PU["Purge thread"] -->|"discards when no read view needs"| U1
+%% Figure 11.11 — A deadlock between two checkouts, as reproduced on PostgreSQL 16
+sequenceDiagram
+  participant A as Txn A - cart 42 then 43
+  participant DB as PostgreSQL
+  participant B as Txn B - cart 43 then 42
+  A->>DB: UPDATE inventory product 42
+  B->>DB: UPDATE inventory product 43
+  A->>DB: UPDATE inventory product 43
+  Note over A,DB: A waits for B
+  B->>DB: UPDATE inventory product 42
+  Note over B,DB: B waits for A - cycle
+  DB-->>A: ERROR deadlock detected after about 1 s
+  DB-->>B: UPDATE 1, then COMMIT succeeds

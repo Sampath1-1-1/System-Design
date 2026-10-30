@@ -5,10 +5,8 @@ import statistics
 
 MASK64 = (1 << 64) - 1
 
-
 def h64(s: str) -> int:
     return int.from_bytes(hashlib.md5(s.encode("utf-8")).digest()[:8], "big")
-
 
 def jump_hash(key: int, num_buckets: int) -> int:
     """Lamping & Veach (2014): 64-bit key -> bucket in [0, num_buckets)."""
@@ -19,11 +17,9 @@ def jump_hash(key: int, num_buckets: int) -> int:
         j = int((b + 1) * (float(1 << 31) / float((key >> 33) + 1)))
     return b
 
-
 def rendezvous(key: str, nodes: list) -> str:
     """Highest random weight: every node scores the key; the top score wins."""
     return max(nodes, key=lambda node: h64(f"{node}|{key}"))
-
 
 def report(name, assign_before, assign_after, keys, n_after):
     moved = sum(assign_before(k) != assign_after(k) for k in keys) / len(keys)
@@ -35,7 +31,6 @@ def report(name, assign_before, assign_after, keys, n_after):
     cv = statistics.pstdev(counts.values()) / mean
     print(f"{name:<11} moved {moved:6.2%} (ideal {1 / n_after:.2%})  "
           f"key-count CV {cv:.4f}  max/mean {max(counts.values()) / mean:.3f}")
-
 
 if __name__ == "__main__":
     keys = [f"order:{i}" for i in range(100_000)]

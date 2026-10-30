@@ -1,13 +1,13 @@
-%% Figure 11.8 — Lost update from an application-side read-modify-write
+%% Figure 11.8 — Write skew: both doctors go off call
 sequenceDiagram
-  participant A as Txn A - checkout 1
+  participant A as Txn A - Alice
   participant DB as Database
-  participant B as Txn B - checkout 2
-  A->>DB: SELECT on_hand - returns 10
-  B->>DB: SELECT on_hand - returns 10
-  A->>DB: UPDATE SET on_hand = 9
-  A->>DB: COMMIT
-  B->>DB: UPDATE SET on_hand = 9
-  Note over B,DB: READ COMMITTED: succeeds, one sale lost
-  Note over B,DB: PostgreSQL REPEATABLE READ: error, retry
-  B->>DB: COMMIT or ROLLBACK
+  participant B as Txn B - Bob
+  A->>DB: SELECT count WHERE on_call - returns 2
+  B->>DB: SELECT count WHERE on_call - returns 2
+  A->>DB: UPDATE alice SET on_call = false
+  B->>DB: UPDATE bob SET on_call = false
+  A->>DB: COMMIT - ok
+  B->>DB: COMMIT
+  Note over B,DB: REPEATABLE READ: ok, nobody on call
+  Note over B,DB: SERIALIZABLE: aborted, retry sees 1

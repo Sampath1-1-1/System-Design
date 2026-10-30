@@ -190,6 +190,16 @@ Canonical usage rules are in
 the rules are written in terms of: <strong>roles</strong> (RBAC),
 <strong>attributes</strong> (ABAC) or <strong>relationships</strong>
 (ReBAC). <em>(§8.12.1)</em></p>
+<p><strong>ACID</strong> — The four guarantees of a database
+transaction, named by Härder and Reuter [Härder and Reuter 1983]:
+<strong>Atomicity</strong> — all of a transaction’s writes take effect,
+or none do. <strong>Consistency</strong> — a transaction takes the
+database from one state satisfying all declared invariants (constraints)
+to another. <strong>Isolation</strong> — concurrently executing
+transactions do not see each other’s partial effects; at the strongest
+level, the outcome equals some serial execution.
+<strong>Durability</strong> — once a commit is acknowledged, its effects
+survive crashes. <em>(§11.12)</em></p>
 <p><strong>Active recall</strong> — Deliberately retrieving information
 from memory without looking at the source, for example by answering a
 question, drawing a diagram or explaining aloud. Its measured benefit
@@ -200,6 +210,13 @@ process can use. On Linux x86-64 with 4-level page tables, user space
 spans 2⁴⁷ bytes = 128 TiB of <em>virtual</em> addresses; the kernel
 occupies the upper half and is not accessible from user mode.
 <em>(§6.3.2)</em></p>
+<p><strong>Analysis</strong> — The process that converts raw text into
+the terms stored in (or looked up from) an inverted index. An
+<strong>analyzer</strong> is a pipeline of zero or more
+<strong>character filters</strong> (rewrite the raw character stream),
+exactly one <strong>tokenizer</strong> (split the stream into tokens
+with positions and offsets) and zero or more <strong>token
+filters</strong> (modify, remove or add tokens). <em>(§16.4.1)</em></p>
 <p><strong>Anycast</strong> — An addressing scheme in which the same IP
 prefix is announced via BGP from many locations at once. Each client’s
 packets are routed to whichever announcing location is “closest”
@@ -246,6 +263,10 @@ client is. <strong>Authorization (AuthZ)</strong> is deciding
 <em>what</em> that verified identity may do (§8.12). AuthN failures
 return <code>401</code>; AuthZ failures return <code>403</code>.
 <em>(§8.11)</em></p>
+<p><strong>Autocomplete (typeahead)</strong> — A service that, given the
+prefix a user has typed so far, returns a short ranked list (typically
+5–10) of likely completions, usually popular past queries or entity
+names, on every keystroke or after a short pause. <em>(§16.9.1)</em></p>
 <p><strong>Availability</strong> — The fraction of time (or of requests)
 for which a system serves correctly:
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><mtext mathvariant="normal">uptime</mtext><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">uptime</mtext><mo>+</mo><mtext mathvariant="normal">downtime</mtext><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">A = \text{uptime}/(\text{uptime} + \text{downtime})</annotation></semantics></math>,
@@ -278,6 +299,37 @@ a single binary digit, 0 or 1. A <strong>byte</strong> (symbol B) is 8
 bits. Storage and memory are conventionally measured in bytes; network
 link speeds are conventionally measured in bits per second (bps).
 <em>(§4.5.1)</em></p>
+<p><strong>Block, file and object storage</strong> — <strong>Block
+storage</strong> exposes a numbered array of fixed-size blocks
+(typically 512 B or 4 KiB) that a client reads and writes by offset; the
+client’s own file system or database gives the blocks meaning.
+<strong>File storage</strong> exposes a hierarchical namespace of
+directories and byte-addressable files with POSIX-like operations (open,
+read at offset, write at offset, rename, lock), shared by many clients
+over a protocol such as NFS or SMB. <strong>Object storage</strong>
+exposes a flat namespace of immutable <strong>objects</strong>, each a
+byte string plus metadata addressed by a key within a
+<strong>bucket</strong>, accessed over HTTP with whole-object PUT, GET
+(optionally a byte range), DELETE and LIST. <em>(§15.3.1)</em></p>
+<p><strong>Bloom filter</strong> — A probabilistic data structure for
+set membership, introduced by Burton Bloom in 1970, that stores a set of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+items in an array of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
+bits using
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+hash functions [Bloom 1970]. A query answers either “definitely not in
+the set” or “probably in the set”. It never gives a <strong>false
+negative</strong> (saying “no” for an item that was added), and gives a
+<strong>false positive</strong> (saying “yes” for an item that was not
+added) with a probability
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>p</mi><annotation encoding="application/x-tex">p</annotation></semantics></math>
+that depends on
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>.
+<em>(§17.4.1)</em></p>
 <p><strong>Bottleneck</strong> — The resource whose capacity limits the
 throughput of the whole system for a given workload. Throughput cannot
 rise above the bottleneck’s capacity no matter how much the other
@@ -290,6 +342,40 @@ outcome of a conditional jump (a <strong>branch</strong>, e.g. an
 pipeline can keep fetching instructions. A wrong guess is a
 <strong>misprediction</strong> and forces a pipeline flush.
 <em>(§5.3.4)</em></p>
+<p><strong>B-tree and B+ tree</strong> — A <strong>B-tree</strong> is a
+balanced search tree whose nodes are disk pages holding many sorted
+keys; every leaf is at the same depth, and nodes split and merge to stay
+between half-full and full [Bayer and McCreight 1972]. A <strong>B+
+tree</strong> is the variant used by almost every relational database:
+internal nodes hold only separator keys and child pointers, all keys and
+values (or row pointers) live in the leaves, and leaves are linked to
+their siblings so range scans can walk sideways [Comer 1979; Petrov
+2019]. <em>(§11.8.1)</em></p>
+<p><strong>B-tree storage engine</strong> — A storage engine that keeps
+each table or index as a B+ tree of fixed-size pages and <strong>updates
+pages in place</strong>: a change to a key rewrites the page that holds
+it. Internal pages hold separator keys and child page numbers; leaf
+pages hold the keys with either the rows themselves (a clustered index)
+or pointers to them. <em>(§13.6.1)</em></p>
+<p><strong>Bucket, key, object and flat namespace</strong> — A
+<strong>bucket</strong> is a named container with its own access policy,
+region and configuration. An <strong>object</strong> is an immutable
+byte string (from zero bytes to tens of terabytes) plus system metadata
+(size, content type, checksum, version ID) and user metadata. A
+<strong>key</strong> is the object’s full name within the bucket, for
+example <code>photos/2026/10/u42/abc.jpg</code>. The namespace is
+<strong>flat</strong>: the slashes are ordinary characters, and
+“folders” are an illusion produced by listing keys that share a
+<strong>prefix</strong> and grouping them at a
+<strong>delimiter</strong> (usually <code>/</code>).
+<em>(§15.4.1)</em></p>
+<p><strong>Buffer pool</strong> — A region of memory, managed by the
+database itself, divided into page-sized <strong>frames</strong> that
+cache disk pages. A <strong>page table</strong> maps page IDs to frames;
+each frame carries a <strong>pin count</strong> (how many threads are
+using it right now), a <strong>dirty flag</strong> (whether it differs
+from the disk copy) and bookkeeping for the <strong>replacement
+policy</strong> that chooses which page to evict. <em>(§13.4.1)</em></p>
 <h2 id="c">C</h2>
 <p><strong>Cache coherence</strong> — The guarantee that all cores
 observe a single, consistent sequence of values for each memory
@@ -336,6 +422,23 @@ communicate over a network using an agreed <strong>protocol</strong>.
 internal circuitry steps from one state to the next, measured in hertz
 (cycles per second). A 4 GHz core has a <strong>cycle time</strong> of 1
 / (4 × 10⁹) s = 0.25 ns. <em>(§5.3.2)</em></p>
+<p><strong>Clustered and secondary index</strong> — In a
+<strong>clustered index</strong> (an index-organized table), the leaf
+level of the index <em>is</em> the table: rows are stored in key order
+inside the index’s leaf pages. A table can have at most one. A
+<strong>secondary index</strong> stores, for each key, a pointer to the
+row; the table can have many. <em>(§11.7.2)</em></p>
+<p><strong>Columnar storage (column store)</strong> — A layout that
+stores each column of a table contiguously — all values of
+<code>price</code>, then all values of <code>country</code> — instead of
+storing each row’s fields together. Column stores are optimized for
+analytical queries that read a few columns of many rows [Abadi et
+al. 2013]. <em>(§13.13.1)</em></p>
+<p><strong>Compaction</strong> — The background merge of sorted runs in
+an LSM tree that removes overwritten values and tombstones and bounds
+the number of runs a read must consult. A <strong>compaction
+strategy</strong> decides which runs to merge and when; it sets the
+engine’s read, write and space amplification. <em>(§13.9.1)</em></p>
 <p><strong>Compare-and-swap (CAS)</strong> — An atomic CPU instruction
 that, in one indivisible step, compares a memory location with an
 expected value and, only if they are equal, replaces it with a new
@@ -383,6 +486,10 @@ SSE, long polling), authenticate them, track which user and topics each
 connection belongs to, and move messages between those connections and
 back-end services through a messaging layer. It contains no business
 logic. <em>(§9.9.1)</em></p>
+<p><strong>Connection pooler</strong> — A component that keeps a few
+open database connections and lends them to many clients per session,
+transaction or statement, either inside the application or as a shared
+proxy. <em>(§14.13.1)</em></p>
 <p><strong>Consistent hashing</strong> — A way of assigning keys to
 nodes so that, when a node is added or removed, only about
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>/</mi><mi>N</mi></mrow><annotation encoding="application/x-tex">K/N</annotation></semantics></math>
@@ -394,6 +501,13 @@ is the number of nodes. Both keys and nodes are hashed onto the same
 circular number space (the <strong>ring</strong>). Each key belongs to
 the first node found by moving clockwise from the key’s position [Karger
 et al. 1997]. <em>(§3.3.2)</em></p>
+<p><strong>Content-defined chunking (CDC)</strong> — Splitting a byte
+stream into variable-size chunks whose boundaries are chosen by the
+content itself: a rolling hash is computed over a small sliding window,
+and a boundary is declared wherever the hash matches a pattern (for
+example, its low 13 bits equal a fixed value). Each chunk is then
+identified by a cryptographic hash of its bytes, so identical chunks are
+stored once (<strong>deduplication</strong>). <em>(§15.8.3)</em></p>
 <p><strong>Context diagram</strong> — A diagram that shows the whole
 system as a single box, surrounded by the people (actors) and external
 systems that interact with it, with each interaction labeled. Context
@@ -403,6 +517,26 @@ the C4 model [Brown C4]. <em>(§2.4.1)</em></p>
 thread running on a CPU core, saves its CPU state into its PCB, and
 loads the saved state of another thread so that it resumes where it left
 off. <em>(§6.4)</em></p>
+<p><strong>Cost-based optimizer</strong> — The component that enumerates
+equivalent physical plans for a query (access paths, join orders, join
+algorithms), estimates each plan’s cost from <strong>statistics</strong>
+about the data using a <strong>cost model</strong>, and returns the plan
+with the lowest estimated cost. <em>(§11.10.1)</em></p>
+<p><strong>Count-Min sketch</strong> — A
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mo>×</mo><mi>w</mi></mrow><annotation encoding="application/x-tex">d \times w</annotation></semantics></math>
+array of counters with one hash function per row that estimates the
+frequency of any item in a stream. Each update increments one counter
+per row; each query returns the minimum of the item’s
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>
+counters. The estimate never underestimates and, with probability at
+least
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mo>−</mo><mi>δ</mi></mrow><annotation encoding="application/x-tex">1 - \delta</annotation></semantics></math>,
+overestimates by at most
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>ε</mi><mi>N</mi></mrow><annotation encoding="application/x-tex">\varepsilon N</annotation></semantics></math>,
+where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
+is the total of all updates [Cormode &amp; Muthukrishnan 2005].
+<em>(§17.6.1)</em></p>
 <p><strong>CPU-bound and I/O-bound</strong> — A workload is
 <strong>CPU-bound</strong> when its speed is limited by how fast the
 processor can execute instructions; giving it a faster CPU or more cores
@@ -433,6 +567,14 @@ resistance</strong>), (2) given one input, find a different input with
 the same digest (<strong>second-preimage resistance</strong>), and (3)
 find any two distinct inputs with the same digest (<strong>collision
 resistance</strong>). <em>(§10.4.1)</em></p>
+<p><strong>Cuckoo filter</strong> — A hash table of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>-slot
+buckets that stores a short <strong>fingerprint</strong> of each item
+(an
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>-bit
+hash) in one of two candidate buckets. Membership checks two buckets for
+a matching fingerprint; deletion removes one copy of the fingerprint.
+<em>(§17.4.7)</em></p>
 <h2 id="d">D</h2>
 <p><strong>Deadline</strong> — An absolute point in time by which a
 client needs an RPC to complete. gRPC transmits it as a remaining
@@ -451,6 +593,10 @@ and changed mostly on its own. <em>(§2.3.2)</em></p>
 improve performance. It targets specific weaknesses, has clear goals,
 gives immediate feedback and is usually guided by a teacher or coach
 [Ericsson et al. 1993]. <em>(§3.4.6)</em></p>
+<p><strong>Denormalization</strong> — Deliberately storing a fact more
+than once, or storing a derived value, to make important reads cheaper,
+while accepting the cost of keeping the copies consistent.
+<em>(§11.5.5)</em></p>
 <p><strong>Design assumption</strong> — A belief about the workload, the
 environment or the business that the design depends on but that has not
 yet been verified, for example “80% of requests are reads” or “the
@@ -488,11 +634,22 @@ network bandwidth, packet-processing capacity, connection-state tables,
 or application CPU, memory and database capacity — with traffic from
 many sources at once, typically a <strong>botnet</strong> of compromised
 devices or abused open servers. <em>(§10.11)</em></p>
+<p><strong>Distributed file system</strong> — A file system whose
+namespace and data are spread across many machines, so that files can be
+larger than any one disk and throughput can grow with the number of
+machines, while clients still use file-like operations (create, open,
+read, write or append, delete). <em>(§15.5.1)</em></p>
 <p><strong>DNS time to live (TTL)</strong> — A per-record value, in
 seconds, that tells any cache how long it may reuse the record before
 asking again. <strong>Negative caching</strong> stores “this name does
 not exist” (NXDOMAIN) answers for a duration derived from the zone’s SOA
 record [RFC 2308]. <em>(§7.6.4)</em></p>
+<p><strong>Document database</strong> — A database that stores
+self-describing, hierarchical records — <strong>documents</strong>,
+usually JSON or a binary encoding of it such as BSON — grouped into
+<strong>collections</strong>, and that can index and query fields inside
+the documents, including nested fields and array elements.
+<em>(§12.5.1)</em></p>
 <p><strong>Domain Name System (DNS)</strong> — A hierarchical,
 distributed database that maps human-readable <strong>domain
 names</strong> (such as <code>www.example.com</code>) to data, most
@@ -510,6 +667,12 @@ durability” means an annual loss probability of
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mo>−</mo><mn>11</mn></mrow></msup><annotation encoding="application/x-tex">10^{-11}</annotation></semantics></math>
 per object. <em>(§4.16.1)</em></p>
 <h2 id="e">E</h2>
+<p><strong>Elasticsearch cluster</strong> — A set of nodes that share
+one cluster state (index definitions, mappings and the location of every
+shard copy). An <strong>index</strong> is a logical collection of
+documents divided into <strong>primary shards</strong>; each primary has
+zero or more <strong>replica shards</strong>; every shard is one Lucene
+index. <em>(§16.8.1)</em></p>
 <p><strong>Encapsulation</strong> — The process by which each layer of
 the stack prepends its own header (and sometimes appends a trailer) to
 the data unit handed down by the layer above, treating that data unit as
@@ -520,6 +683,27 @@ receiver. <em>(§7.3.1)</em></p>
 encrypting (“wrapping”) the DEK with a KEK held in a KMS, and storing
 the wrapped DEK alongside the ciphertext [AWS Docs: KMS concepts].
 <em>(§10.9.2)</em></p>
+<p><strong>Erasure code and RS(k, m)</strong> — An <strong>erasure
+code</strong> transforms
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+data fragments into
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mo>+</mo><mi>m</mi></mrow><annotation encoding="application/x-tex">k + m</annotation></semantics></math>
+fragments such that the original data can be rebuilt from some subset of
+them after the others are lost (“erased”). A
+<strong>Reed–Solomon</strong> code
+RS(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>)
+is a <strong>maximum distance separable (MDS)</strong> code:
+<em>any</em>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+of the
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mo>+</mo><mi>m</mi></mrow><annotation encoding="application/x-tex">k+m</annotation></semantics></math>
+fragments suffice, so it tolerates the loss of any
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
+fragments. A code is <strong>systematic</strong> when the first
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+fragments are the unmodified data, so healthy reads need no decoding.
+<em>(§15.6.1)</em></p>
 <p><strong>Event loop</strong> — A single thread that repeatedly waits
 for events (ready sockets, expired timers, completed tasks) using an I/O
 multiplexing call, and dispatches each event to a short, non-blocking
@@ -562,6 +746,18 @@ protocol whereby compromise of a party’s long-term private key does not
 reveal session keys from past sessions. It is achieved by using fresh
 <strong>ephemeral</strong> key pairs for every session (the “E” in
 ECDHE) and deleting them afterward. <em>(§10.4.4)</em></p>
+<p><strong>Functional dependency</strong> — In a relation
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>R</mi><annotation encoding="application/x-tex">R</annotation></semantics></math>,
+the functional dependency
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mo>→</mo><mi>Y</mi></mrow><annotation encoding="application/x-tex">X \to Y</annotation></semantics></math>
+holds if any two rows that agree on the columns
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>
+also agree on the columns
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Y</mi><annotation encoding="application/x-tex">Y</annotation></semantics></math>.
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>
+is the <strong>determinant</strong>. Example:
+<code>product_id → product_name</code> because one product ID always has
+one name. <em>(§11.5.1)</em></p>
 <p><strong>Functional requirement (FR)</strong> — A statement of a
 behavior the system must provide: an input, action or event, and the
 observable result. Functional requirements describe <em>what</em> the
@@ -569,6 +765,21 @@ system does — for example, “a signed-in user can upload a JPEG or PNG
 photo up to 20 MB, and it appears in their followers’ feeds”.
 <em>(§1.6.1)</em></p>
 <h2 id="g">G</h2>
+<p><strong>Geohash</strong> — A string encoding of a latitude/longitude
+cell, published by Gustavo Niemeyer in 2008, formed by alternately
+bisecting the longitude and latitude ranges, interleaving the resulting
+bits (longitude first) and writing every 5 bits as one base-32 character
+[Niemeyer 2008]. Each additional character subdivides the cell into 32
+smaller cells, so a geohash that is a prefix of another names a cell
+containing it. <em>(§17.9.2)</em></p>
+<p><strong>Graph database</strong> — A database whose data model is a
+graph of <strong>vertices</strong> (nodes) and <strong>edges</strong>
+(relationships), optimized for traversing edges. In the <strong>property
+graph</strong> model, nodes carry labels, edges carry a type and a
+direction, and both carry key-value properties. In the
+<strong>RDF</strong> model, all data is a set of
+subject–predicate–object <strong>triples</strong>.
+<em>(§12.7.1)</em></p>
 <p><strong>GraphQL</strong> — A query language for APIs and a runtime
 for executing those queries against a strongly typed
 <strong>schema</strong>. The client sends a document describing exactly
@@ -584,17 +795,39 @@ records data magnetically on spinning platters, read and written by
 heads mounted on a moving arm (the <strong>actuator</strong>). Data is
 organized in concentric <strong>tracks</strong> divided into
 <strong>sectors</strong> of 512 or 4096 bytes. <em>(§5.6.1)</em></p>
+<p><strong>Hash function</strong> — A deterministic function
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>h</mi><annotation encoding="application/x-tex">h</annotation></semantics></math>
+that maps an input of any length to a fixed-size integer (for example
+32, 64 or 128 bits), called the <strong>hash</strong> or
+<strong>digest</strong>. A <strong>non-cryptographic hash
+function</strong> is designed for speed and statistical uniformity on
+ordinary inputs. A <strong>cryptographic hash function</strong>
+additionally resists an adversary who tries to find collisions or
+preimages (§10.4.1). <em>(§17.3.1)</em></p>
 <p><strong>High-level design (HLD)</strong> — A description of a system
 as a set of major components (services, data stores, queues, caches,
 external dependencies), their responsibilities, the interfaces and
 protocols between them, data flows, and deployment topology — at a level
 of detail where each component is a box whose internals are not yet
 specified. <em>(§1.5.1)</em></p>
+<p><strong>Hot partition and hot key</strong> — A <strong>hot
+partition</strong> receives enough excess requests or data to saturate
+its node while peers idle. A <strong>hot key</strong> is a single key
+causing that excess. <strong>Skew</strong> is uneven distribution of
+data or load in general. <em>(§14.10.1)</em></p>
 <p><strong>HTTP cookie</strong> — A small name–value pair that a server
 asks the browser to store, via the <code>Set-Cookie</code> response
 header, and that the browser automatically returns in the
 <code>Cookie</code> request header on later requests to matching URLs
 [RFC 6265]. <em>(§8.10.1)</em></p>
+<p><strong>HyperLogLog (HLL)</strong> — A probabilistic algorithm that
+estimates the number of distinct items (the
+<strong>cardinality</strong>) in a multiset using
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
+small registers, with relative standard error about
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1.04</mn><mi>/</mi><msqrt><mi>m</mi></msqrt></mrow><annotation encoding="application/x-tex">1.04/\sqrt{m}</annotation></semantics></math>,
+independent of the cardinality itself [Flajolet et al. 2007].
+<em>(§17.5.1)</em></p>
 <h2 id="i">I</h2>
 <p><strong>Idempotent method</strong> — A method for which the intended
 effect on the server of sending the same request
@@ -602,6 +835,13 @@ effect on the server of sending the same request
 times is the same as sending it once [RFC 9110 §9.2.2]. The
 <em>response</em> may differ (a second <code>DELETE</code> may return
 404); the <em>state</em> does not. <em>(§8.6.3)</em></p>
+<p><strong>Index</strong> — A secondary data structure, kept in sync
+with a table by the database, that maps values of one or more
+<strong>key columns</strong> to the locations of the rows holding them,
+so that rows can be found without scanning the whole table. Most
+relational indexes are B+ trees (§11.8); others include hash, GiST, GIN
+and BRIN indexes in PostgreSQL and full-text and spatial indexes in
+MySQL. <em>(§11.7.1)</em></p>
 <p><strong>Instruction pipeline</strong> — A technique in which the core
 splits instruction execution into stages and works on different stages
 of several consecutive instructions at the same time, like an assembly
@@ -610,6 +850,13 @@ line. <em>(§5.3.3)</em></p>
 concepts within one practice session (A B C A C B), instead of finishing
 all practice on one kind before moving to the next (AAA BBB CCC, called
 <strong>blocking</strong>). <em>(§3.4.5)</em></p>
+<p><strong>Inverted index</strong> — A mapping from each distinct
+<strong>term</strong> (a normalized word or token) to a <strong>postings
+list</strong>: the sorted list of identifiers of the documents that
+contain the term, optionally with the term’s frequency and positions in
+each document. The set of all terms is the <strong>dictionary</strong>
+(or <strong>vocabulary</strong>, or <strong>lexicon</strong>).
+<em>(§16.3.1)</em></p>
 <p><strong>I/O (input/output)</strong> — Any transfer of data between
 the CPU/memory and a device outside it: storage, network cards, GPUs,
 keyboards. A <strong>device controller</strong> on each device does the
@@ -627,6 +874,24 @@ network interface that the Internet Protocol uses to deliver packets. An
 is 128 bits, written as eight groups of four hexadecimal digits
 separated by colons (<code>2001:db8:0:1::25</code>) [RFC 8200].
 <em>(§7.4.1)</em></p>
+<p><strong>Isolation anomalies</strong> — <strong>Dirty write:</strong>
+a transaction overwrites another’s uncommitted write. <strong>Dirty
+read:</strong> a transaction reads another’s uncommitted write (which
+may later roll back). <strong>Non-repeatable (fuzzy) read:</strong> a
+transaction reads a row twice and sees different committed values
+because another transaction updated it in between.
+<strong>Phantom:</strong> a transaction runs the same <em>predicate</em>
+query twice (<code>WHERE status = &#39;pending&#39;</code>) and gets a different
+set of rows because another transaction inserted or deleted matching
+rows. <strong>Lost update:</strong> two transactions read the same
+value, both compute a new value from it and write; the second write
+silently overwrites the first. <strong>Read skew:</strong> a transaction
+sees part of another transaction’s effects (reads account A before a
+transfer commits and account B after it). <strong>Write skew:</strong>
+two transactions read an overlapping set of rows, each checks an
+invariant, then each writes a <em>different</em> row; each write is
+valid alone but together they violate the invariant.
+<em>(§11.13.1)</em></p>
 <h2 id="j">J</h2>
 <p><strong>JSON Web Token (JWT)</strong> — A compact, URL-safe string
 representing a set of <strong>claims</strong> (statements about a
@@ -641,6 +906,20 @@ plaintext, performs cryptographic operations with them on request,
 enforces access policies on every use and logs every call. Examples: AWS
 KMS, Google Cloud KMS, Azure Key Vault, HashiCorp Vault’s Transit
 engine. <em>(§10.9.2)</em></p>
+<p><strong>Keys</strong> — A <strong>superkey</strong> is a set of
+columns whose values are unique across all rows. A <strong>candidate
+key</strong> is a minimal superkey: remove any column and it stops being
+unique. The <strong>primary key</strong> is the candidate key chosen as
+the row’s main identifier; it must be unique and NOT NULL. Other
+candidate keys are enforced with <code>UNIQUE</code> constraints. A
+<strong>foreign key</strong> is a column (or set) in one table whose
+values must match a key of another table, a rule called
+<strong>referential integrity</strong>. <em>(§11.4.1)</em></p>
+<p><strong>Key-value store</strong> — A database whose primary interface
+is <code>get(key)</code>, <code>put(key, value)</code> and
+<code>delete(key)</code>, where the value is opaque to the database or
+has a small set of built-in types. The key alone determines where the
+value lives. <em>(§12.4.1)</em></p>
 <h2 id="l">L</h2>
 <p><strong>Latency and bandwidth (hardware)</strong> —
 <strong>Latency</strong> is the time from issuing one request to
@@ -663,6 +942,12 @@ average arrival rate multiplied by the average time each item spends in
 the system:
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mo>=</mo><mi>λ</mi><mi>W</mi></mrow><annotation encoding="application/x-tex">L = \lambda W</annotation></semantics></math>
 [Little 1961]. <em>(§4.11.1)</em></p>
+<p><strong>Local and global secondary indexes</strong> — A
+<strong>local</strong> (document-partitioned) index lives in each
+partition and covers only its rows. A <strong>global</strong>
+(term-partitioned) index covers all rows and is partitioned by the
+<em>indexed value</em>, so all entries for one value live together
+[Kleppmann 2017]. <em>(§14.11.1)</em></p>
 <p><strong>Logarithm</strong> — The logarithm base
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
 of
@@ -678,6 +963,21 @@ if
 then
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>y</mi><mo>=</mo><msub><mo>log</mo><mi>b</mi></msub><mi>x</mi></mrow><annotation encoding="application/x-tex">y = \log_b x</annotation></semantics></math>.
 <em>(§4.4.1)</em></p>
+<p><strong>Log-structured merge tree (LSM tree)</strong> — A storage
+structure that buffers writes in a sorted in-memory table (the
+<strong>memtable</strong>), periodically writes it out as an immutable
+sorted file (a <strong>sorted string table, SSTable</strong>), and
+merges SSTables in the background (<strong>compaction</strong>) into
+progressively larger sorted runs organized in <strong>levels</strong>.
+Introduced by O’Neil, Cheng, Gawlick and O’Neil [O’Neil et al. 1996];
+the memtable/SSTable design popularized by Google’s Bigtable [Chang et
+al. 2006] and implemented in LevelDB, RocksDB, Cassandra, HBase,
+ScyllaDB and many others. <em>(§13.8.1)</em></p>
+<p><strong>Log-structured storage</strong> — A storage design in which
+every write — insert, update or delete — is appended to the end of a
+file, and existing data is never modified in place. Old versions become
+garbage that a background <strong>compaction</strong> (or merge) process
+removes by copying live data into new files. <em>(§13.7.1)</em></p>
 <p><strong>Long polling</strong> — A technique in which the client sends
 an HTTP request that the server deliberately does not answer until
 either new data is available or a server-side timeout
@@ -716,6 +1016,11 @@ storage technologies in a computer, from small, fast and expensive per
 byte (registers, caches) to large, slow and cheap per byte (disks,
 tape), in which each level acts as a cache for the level below it.
 <em>(§5.5.2)</em></p>
+<p><strong>Merkle tree (hash tree)</strong> — A tree in which every leaf
+holds the hash of a data block and every interior node holds the hash of
+its children’s hashes. The <strong>root hash</strong> summarizes the
+entire data set: changing any block changes the root [Merkle 1987].
+<em>(§17.8.1)</em></p>
 <p><strong>Message authentication code (MAC)</strong> — A short tag
 computed from a message and a secret key,
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>t</mi><mo>=</mo><msub><mtext mathvariant="normal">MAC</mtext><mi>K</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>m</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">t = \text{MAC}_K(m)</annotation></semantics></math>,
@@ -725,6 +1030,11 @@ it is infeasible to produce a valid tag for any new message.
 <strong>HMAC</strong> is the standard construction from a hash function:
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mtext mathvariant="normal">HMAC</mtext><mi>K</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>m</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mi>H</mi><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">(</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><mo>⊕</mo><mtext mathvariant="normal">opad</mtext><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.167em"></mspace><mo stretchy="false" form="postfix">∥</mo><mspace width="0.167em"></mspace><mi>H</mi><mrow><mo stretchy="true" form="prefix">(</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><mo>⊕</mo><mtext mathvariant="normal">ipad</mtext><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.167em"></mspace><mo stretchy="false" form="postfix">∥</mo><mspace width="0.167em"></mspace><mi>m</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{HMAC}_K(m) = H\big((K \oplus \text{opad}) \,\|\, H((K \oplus \text{ipad}) \,\|\, m)\big)</annotation></semantics></math>
 [Krawczyk et al. 1997]. <em>(§10.4.6)</em></p>
+<p><strong>Metadata service</strong> — The component that maps names to
+data: directory entries, file or object attributes (size, owner,
+permissions, version, checksum) and the locations of each chunk or
+fragment. It is on the path of every open, create, list and delete,
+while the data path bypasses it. <em>(§15.7.1)</em></p>
 <p><strong>Mobile push notification</strong> — A message sent by an
 application’s server to a platform-operated push service — Apple Push
 Notification service (<strong>APNs</strong>) for Apple platforms,
@@ -732,14 +1042,48 @@ Firebase Cloud Messaging (<strong>FCM</strong>) for Android (and
 optionally iOS and web) — which delivers it, on a best-effort basis,
 over a single persistent connection that the operating system maintains
 to that service on behalf of all apps. <em>(§9.8.1)</em></p>
+<p><strong>Monotonic reads</strong> — A client never sees data move
+backwards: after reading some version, its later reads return that
+version or newer. <em>(§14.4.3)</em></p>
 <p><strong>Multi-core processor</strong> — A single chip containing
 several complete cores, each with its own pipeline and private caches,
 sharing the last-level cache and memory. <em>(§5.3.6)</em></p>
+<p><strong>Multipart upload</strong> — A protocol for uploading one
+large object as independently uploaded <strong>parts</strong>: the
+client <em>initiates</em> an upload and receives an upload ID, uploads
+numbered parts (in any order, in parallel, retrying any part), then
+<em>completes</em> the upload with the list of part numbers and their
+ETags, at which point the store assembles the object atomically. Until
+completion, or after an <em>abort</em>, the object is not visible.
+<em>(§15.8.1)</em></p>
+<p><strong>Multi-primary replication</strong> — More than one node
+accepts writes for the same data and replicates to the others (also
+<strong>multi-leader</strong> or <strong>active–active</strong>).
+Concurrent uncoordinated changes to the same row create <strong>write
+conflicts</strong> that must be detected and resolved.
+<em>(§14.5.1)</em></p>
 <p><strong>Mutex (mutual-exclusion lock)</strong> — An object with two
 operations, <code>lock</code> and <code>unlock</code>, guaranteeing that
 at most one thread holds it at a time. A thread that calls
 <code>lock</code> while another holds it waits. <em>(§6.10.1)</em></p>
+<p><strong>MVCC</strong> — A concurrency-control technique in which a
+write creates a new <strong>version</strong> of a row instead of
+overwriting it in place, and each transaction reads the versions visible
+in its <strong>snapshot</strong>: the set of transactions that had
+committed when the snapshot was taken. Readers therefore never block
+writers and writers never block readers; only writers of the same row
+wait for each other. <em>(§11.14.1)</em></p>
 <h2 id="n">N</h2>
+<p><strong>Natural and surrogate keys</strong> — A <strong>natural
+key</strong> is a candidate key with business meaning (email address,
+ISBN, country code). A <strong>surrogate key</strong> is a meaningless
+value generated by the system (an auto-increment integer, a UUID) whose
+only job is identification. <em>(§11.4.2)</em></p>
+<p><strong>Near-real-time (NRT) search</strong> — A search system in
+which newly written documents become searchable after a short, bounded
+delay (typically one second to a minute) rather than immediately,
+because making them visible requires creating a new segment and
+reopening the searcher. <em>(§16.10.1)</em></p>
 <p><strong>Network Address Translation (NAT)</strong> — A function,
 usually in a router or gateway, that rewrites the source and/or
 destination IP addresses (and usually ports) of packets as they pass,
@@ -748,6 +1092,12 @@ rewritten back. The most common form, <strong>source NAT with port
 translation</strong> (NAPT, often just “NAT”), lets many hosts with
 private addresses share one public address [RFC 3022].
 <em>(§7.13)</em></p>
+<p><strong>NewSQL (distributed SQL)</strong> — Relational databases that
+keep SQL and ACID transactions with serializable or strong isolation
+while scaling horizontally across nodes and regions, by partitioning
+data into ranges replicated with a consensus protocol. The term was
+coined by analyst Matthew Aslett in 2011 [Pavlo &amp; Aslett 2016].
+<em>(§12.11)</em></p>
 <p><strong>Non-functional requirement (NFR)</strong> — A requirement on
 <em>how well</em> the system performs its functions, or on constraints
 under which it operates, expressed as a measurable target — for example
@@ -755,6 +1105,30 @@ under which it operates, expressed as a measurable target — for example
 99.9%”. NFRs are also called <strong>quality attributes</strong> or,
 informally, the <strong>“-ilities”</strong> (scalability, availability,
 durability, …). <em>(§1.7.1)</em></p>
+<p><strong>Normal forms (1NF to BCNF)</strong> — <strong>1NF:</strong>
+every column holds a single atomic value (no lists or repeating groups).
+<strong>2NF:</strong> 1NF, and no non-key column depends on only
+<em>part</em> of a composite candidate key. <strong>3NF:</strong> 2NF,
+and no non-key column depends on another non-key column (no transitive
+dependency); formally, for every non-trivial
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mo>→</mo><mi>A</mi></mrow><annotation encoding="application/x-tex">X \to A</annotation></semantics></math>,
+either
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>
+is a superkey or
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>A</mi><annotation encoding="application/x-tex">A</annotation></semantics></math>
+is part of some candidate key. <strong>BCNF (Boyce–Codd normal
+form):</strong> for every non-trivial
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>X</mi><mo>→</mo><mi>A</mi></mrow><annotation encoding="application/x-tex">X \to A</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>
+is a superkey. BCNF removes 3NF’s exception for key columns.
+<em>(§11.5.2)</em></p>
+<p><strong>NoSQL database</strong> — A database that does not use the
+relational table-and-join model as its primary data model and typically
+trades some combination of cross-record transactions, ad-hoc querying
+and fixed schemas for horizontal scale-out, flexible schemas or
+availability during failures. The name is usually read as “not only
+SQL”; it describes a movement, not a specification.
+<em>(§12.3.1)</em></p>
 <p><strong>NUMA (non-uniform memory access)</strong> — A memory
 architecture in which each processor socket (or each chiplet group
 within a socket) has its own directly attached memory. A core can access
@@ -801,11 +1175,33 @@ folds SSRF into it, and adds categories for software supply-chain
 failures and mishandling of exceptional conditions, so the architectural
 controls below remain applicable. <em>(§10.7)</em></p>
 <h2 id="p">P</h2>
+<p><strong>Page</strong> — The fixed-size unit (typically 4–16 KiB) in
+which a storage engine reads, writes, caches and logs data. A page on
+disk is sometimes called a <strong>block</strong>; the engine keeps a
+copy of a page in memory in a <strong>frame</strong> of its buffer pool.
+<em>(§13.3.1)</em></p>
 <p><strong>Page cache</strong> — The kernel’s in-RAM cache of file
 contents, organized in pages. Reads are served from it when possible;
 writes normally modify pages in it (marking them <strong>dirty</strong>)
 and return immediately, with the kernel writing them back to storage
 later. <em>(§6.6.6)</em></p>
+<p><strong>Partition key, sort key and item collection</strong> — In
+DynamoDB every <strong>item</strong> (a record of up to 400 KB, as of
+2026) has a primary key made of a <strong>partition key</strong> and,
+optionally, a <strong>sort key</strong>. DynamoDB hashes the partition
+key to choose the storage partition. All items sharing a partition key
+form an <strong>item collection</strong>, stored together and ordered by
+sort key, so a single <strong>Query</strong> can return a contiguous,
+sorted range of them. <em>(§12.4.3)</em></p>
+<p><strong>Partition (shard)</strong> — A subset of a dataset’s rows,
+stored and served together, such that every row belongs to exactly one
+partition. <strong>Partitioning</strong> spreads partitions over nodes;
+<strong>sharding</strong> is a synonym used mostly for separate database
+servers. This book uses <em>partition</em> and <em>shard</em>
+interchangeably and reserves <strong>network partition</strong> for
+network splits (§24.7). The columns that choose a row’s partition form
+the <strong>partition key</strong> (or <strong>shard key</strong>).
+<em>(§14.6.1)</em></p>
 <p><strong>Percentile</strong> — The
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math>-th
 percentile of a set of measurements is the value at or below which
@@ -825,6 +1221,16 @@ challenge</strong>, with the authorization request, and must present the
 verifier when redeeming the authorization code. An attacker who
 intercepts the code cannot redeem it without the verifier [RFC 7636].
 <em>(§8.14.3)</em></p>
+<p><strong>Polyglot persistence</strong> — Using several different
+data-storage technologies within one system, each chosen for the access
+pattern it serves best, rather than forcing all data into one database
+[Fowler 2011; Sadalage &amp; Fowler 2012]. <em>(§12.13.1)</em></p>
+<p><strong>Primary key in CQL</strong> — In Cassandra Query Language,
+<code>PRIMARY KEY ((a, b), c, d)</code> declares <code>(a, b)</code> as
+the <strong>partition key</strong> — hashed to choose the replicas and
+defining what is stored together — and <code>c, d</code> as
+<strong>clustering columns</strong>, which order rows <em>within</em>
+the partition on disk. <em>(§12.6.2)</em></p>
 <p><strong>Priority inversion</strong> — A situation in which a
 high-priority thread is blocked waiting for a lock held by a
 low-priority thread, while a medium-priority thread, which needs no
@@ -893,11 +1299,32 @@ operations on shared state. A <strong>data race</strong> is the specific
 case where two threads access the same memory location concurrently, at
 least one access is a write, and nothing orders them.
 <em>(§6.9)</em></p>
+<p><strong>Read-your-writes consistency</strong> — After a client writes
+a value, its own later reads return that value or a newer one. Other
+clients get no such promise. <em>(§14.4.3)</em></p>
+<p><strong>Rebalancing</strong> — Moving partitions, or parts of them,
+between nodes so that data and load stay even as nodes join, leave or
+fail and as data grows, while staying available and moving no more data
+than necessary. <em>(§14.9.1)</em></p>
 <p><strong>Register</strong> — A tiny, extremely fast storage slot
 inside a core, typically 64 bits wide for general-purpose registers.
 x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A
 (AArch64) exposes 31. Reading a register costs essentially nothing
 beyond the instruction that uses it. <em>(§5.3.2)</em></p>
+<p><strong>Relation</strong> — A <strong>relation</strong> is a named
+set of <strong>tuples</strong> that share the same
+<strong>attributes</strong>. Each attribute has a name and a
+<strong>domain</strong> (the set of allowed values, such as 64-bit
+integers). In SQL a relation is a <strong>table</strong>, a tuple is a
+<strong>row</strong> and an attribute is a <strong>column</strong>. The
+relation’s name and attributes together form its
+<strong>schema</strong>; the set of rows at a moment is its
+<strong>instance</strong>. <em>(§11.3.1)</em></p>
+<p><strong>Relevance score</strong> — A number computed for each (query,
+document) pair that estimates how well the document satisfies the query.
+A <strong>ranking function</strong> computes it; the engine returns the
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+highest-scoring documents. <em>(§16.5.1)</em></p>
 <p><strong>Reliability, MTBF, MTTR and failure rate</strong> —
 <strong>Reliability</strong>
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">R(t)</annotation></semantics></math>
@@ -919,6 +1346,30 @@ machine, with syntax that resembles a local function call. Generated
 <strong>stubs</strong> serialize the arguments, send them over the
 network, and deserialize the result [Birrell and Nelson 1984].
 <em>(§8.8.1)</em></p>
+<p><strong>Replication</strong> — Keeping a copy of the same data on
+more than one node. Each copy is a <strong>replica</strong>. In
+<strong>primary–replica replication</strong>, exactly one node, the
+<strong>primary</strong> (called the “master” in older documentation),
+accepts writes and streams its changes to the <strong>replicas</strong>,
+which apply them in the same order and serve reads.
+<em>(§14.3.1)</em></p>
+<p><strong>Replication lag</strong> — The delay between a change
+committing on the primary and becoming visible on a replica, measured in
+seconds, bytes of log or transactions. <em>(§14.4.2)</em></p>
+<p><strong>Replication log formats</strong> — What the log describes:
+the SQL statements executed (<strong>statement-based</strong>), the
+changed rows (<strong>row-based</strong>), the storage engine’s
+page-level byte changes (<strong>physical</strong>, or WAL shipping), or
+decoded, engine-independent row changes per table
+(<strong>logical</strong>). <em>(§14.4.5)</em></p>
+<p><strong>Replication modes</strong> — In <strong>synchronous
+replication</strong>, the primary reports a commit only after at least
+one designated replica has durably received (or applied) it. In
+<strong>asynchronous replication</strong>, it reports success after its
+local commit and ships the change afterwards. <strong>Semi-synchronous
+replication</strong>, MySQL’s middle ground, waits until a replica has
+<em>received and logged</em> the change and falls back to asynchronous
+mode after a timeout. <em>(§14.4.1)</em></p>
 <p><strong>Request–response lifecycle</strong> — The complete sequence
 of network and processing steps between a client issuing a request and
 receiving the full response, including name resolution, connection
@@ -931,6 +1382,17 @@ an order before the restaurant accepts it”) or how well it must do it (a
 placements complete within 800 ms”). A requirement is
 <strong>testable</strong> if you could write an automated check or a
 measurement that proves it is met. <em>(§2.5.1)</em></p>
+<p><strong>Reservoir sampling</strong> — An algorithm that maintains a
+uniform random sample of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+items from a stream whose length
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+is not known in advance, using
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>k</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">O(k)</annotation></semantics></math>
+memory and a single pass: after any number of items, every item seen so
+far is in the sample with probability
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mi>/</mi><mi>n</mi></mrow><annotation encoding="application/x-tex">k/n</annotation></semantics></math>
+[Vitter 1985]. <em>(§17.12.1)</em></p>
 <p><strong>REST (Representational State Transfer)</strong> — An
 architectural style for distributed hypermedia systems, defined by Roy
 Fielding in his 2000 doctoral dissertation as a set of constraints on
@@ -944,11 +1406,21 @@ based on its destination address and the <strong>forwarding
 table</strong>. <strong>Routing</strong> is the control-plane process of
 building those tables by exchanging reachability information with other
 routers. <em>(§7.5.1)</em></p>
+<p><strong>RUM conjecture</strong> — For any access method, bounding two
+of <strong>R</strong>ead overhead, <strong>U</strong>pdate overhead and
+<strong>M</strong>emory (space) overhead forces the third to be worse:
+you can optimize for at most two [Athanassoulis et al. 2016].
+<em>(§13.11.1)</em></p>
 <h2 id="s">S</h2>
 <p><strong>Safe method</strong> — A method whose semantics are
 read-only: the client does not request, and does not expect, any state
 change on the server [RFC 9110 §9.2.1]. Logging or metrics side effects
 are allowed. <em>(§8.6.3)</em></p>
+<p><strong>Search engine (as a data store)</strong> — A system such as
+Elasticsearch, OpenSearch or Apache Solr that stores JSON documents and
+builds an <strong>inverted index</strong> — a map from each term to the
+list of documents containing it — so it can answer full-text,
+relevance-ranked, faceted and fuzzy queries. <em>(§12.9)</em></p>
 <p><strong>Secret</strong> — Any value that grants access and must be
 kept confidential: database passwords, API keys, OAuth client secrets,
 TLS and signing private keys, encryption keys, webhook HMAC keys.
@@ -967,6 +1439,12 @@ designers add <strong>authentication</strong> (knowing who is acting),
 <strong>authorization</strong> (deciding what that actor may do) and
 <strong>non-repudiation</strong> (an actor cannot credibly deny an
 action they took). <em>(§10.3.1)</em></p>
+<p><strong>Segment</strong> — A self-contained, immutable mini-index
+(its own dictionary, postings, stored fields, norms and doc values)
+covering a subset of documents. A Lucene index is a set of segments plus
+a <strong>commit point</strong> file (<code>segments_N</code>) listing
+which segments are live; a search runs over every live segment and
+combines the results. <em>(§16.6.1)</em></p>
 <p><strong>Semaphore</strong> — An integer counter with two atomic
 operations introduced by Dijkstra: <strong>wait</strong> (P, or
 <em>acquire</em>) decrements it and blocks if the result would be
@@ -1024,6 +1502,24 @@ thread</strong>). <em>(§5.3.6)</em></p>
 JavaScript bundle; the JavaScript calls JSON APIs and builds the page in
 the browser. Navigation afterwards happens without full page loads.
 <em>(§8.4.2)</em></p>
+<p><strong>Skip list</strong> — An ordered linked list augmented with
+extra levels of “express” pointers. Each node is promoted to the next
+level with probability
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>p</mi><annotation encoding="application/x-tex">p</annotation></semantics></math>
+(typically 1/2 or 1/4), so level
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>
+contains about a fraction
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>p</mi><mi>i</mi></msup><annotation encoding="application/x-tex">p^i</annotation></semantics></math>
+of the nodes. Search, insert and delete take expected
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mrow><mo stretchy="true" form="prefix">(</mo><mo>log</mo><mi>n</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">O(\log n)</annotation></semantics></math>
+time [Pugh 1990]. <em>(§17.7.1)</em></p>
+<p><strong>Slotted page</strong> — A page layout in which a
+<strong>header</strong> is followed by an array of
+<strong>slots</strong> (also called line pointers or item IDs) that
+grows from the front, while variable-length <strong>records</strong>
+(tuples) are packed from the back. Each slot stores the offset and
+length of one record; free space sits in the middle.
+<em>(§13.3.2)</em></p>
 <p><strong>Software architecture</strong> — “The set of structures
 needed to reason about the system, which comprise software elements,
 relations among them, and properties of both” [Bass et al. 2021]. The
@@ -1047,6 +1543,14 @@ processor (or node) to the time it takes on
 Perfect, <strong>linear</strong> speedup is
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>N</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">S(N) = N</annotation></semantics></math>.
 <em>(§4.12.1)</em></p>
+<p><strong>SQL</strong> — The Structured Query Language, standardized by
+ANSI/ISO, with sublanguages for defining schema (DDL:
+<code>CREATE</code>, <code>ALTER</code>, <code>DROP</code>),
+manipulating data (DML: <code>SELECT</code>, <code>INSERT</code>,
+<code>UPDATE</code>, <code>DELETE</code>) and controlling transactions
+(<code>BEGIN</code>, <code>COMMIT</code>, <code>ROLLBACK</code>). Every
+major database implements the core standard plus its own dialect.
+<em>(§11.6.1)</em></p>
 <p><strong>Stateless service</strong> — A service that keeps no
 client-specific data in its own memory between requests. Every request
 carries, or lets the service look up from a shared store, everything
@@ -1054,6 +1558,16 @@ needed to process it. <em>(§8.3.2)</em></p>
 <p><strong>Static site generation (SSG)</strong> — HTML is produced at
 build time and served as static files, usually from a CDN (Chapter 21).
 Pages that change per user cannot be fully static. <em>(§8.4.2)</em></p>
+<p><strong>Storage tier and lifecycle policy</strong> — A
+<strong>storage tier</strong> (storage class) is a price/performance
+point for the same data: <strong>hot</strong> (frequent access, highest
+storage price, no retrieval fee), <strong>warm</strong> or infrequent
+access (cheaper storage, per-GB retrieval fee, minimum storage
+duration), <strong>cold</strong> (cheaper again, slower or costlier
+retrieval) and <strong>archive</strong> (cheapest storage, retrieval in
+hours). A <strong>lifecycle policy</strong> is a set of rules, usually
+by prefix, tag or age, that automatically transitions objects between
+tiers and expires (deletes) them. <em>(§15.9)</em></p>
 <p><strong>STRIDE</strong> — A mnemonic for six threat categories,
 developed at Microsoft in 1999 by Loren Kohnfelder and Praerit Garg and
 popularized by Shostack [Shostack 2014]: <strong>S</strong>poofing,
@@ -1119,12 +1633,30 @@ the <strong>assets</strong> in it that are worth protecting, the
 the <strong>threats</strong> (ways a security property could be
 violated), and the <strong>mitigations</strong> chosen for each threat
 [Shostack 2014]. <em>(§10.3.2)</em></p>
+<p><strong>Time-series database (TSDB)</strong> — A database optimized
+for sequences of timestamped measurements. Data is organized into
+<strong>series</strong>, each identified by a metric name plus a set of
+<strong>labels</strong> (tags) such as
+<code>{host=&quot;web-3&quot;, region=&quot;eu&quot;}</code>, and each series is an
+append-only list of <strong>samples</strong>
+<code>(timestamp, value)</code>. <em>(§12.8.1)</em></p>
+<p><strong>Torn write (torn page)</strong> — A page write that is
+interrupted by a crash so that part of the page on disk is new and part
+is old. It arises because the database page (8 or 16 KiB) is larger than
+the unit the device or file system writes atomically (commonly 4 KiB or
+512 bytes). <em>(§13.12.2)</em></p>
 <p><strong>Trade-off</strong> — A situation where improving one desired
 property of a system makes another worse. Examples: lower latency at
 higher cost, stronger consistency at lower availability during network
 partitions, faster delivery at higher operational risk. Every design
 decision is a trade-off. If you cannot name what an option makes worse,
 you have not understood it yet. <em>(§2.8.1)</em></p>
+<p><strong>Transaction</strong> — A sequence of reads and writes that
+the database treats as one logical unit: either all of its effects
+become permanent together (<strong>commit</strong>) or none of them do
+(<strong>abort</strong> or <strong>rollback</strong>), and concurrently
+running transactions are isolated from each other’s intermediate states.
+<em>(§11.11.1)</em></p>
 <p><strong>Transport Layer Security (TLS)</strong> — A protocol that
 gives two communicating applications <strong>confidentiality</strong>
 (eavesdroppers cannot read the data), <strong>integrity</strong>
@@ -1132,12 +1664,29 @@ gives two communicating applications <strong>confidentiality</strong>
 the server proves its identity, usually with an X.509 certificate).
 <strong>HTTPS</strong> is HTTP carried over TLS, on TCP port 443 by
 default. TLS 1.3 is specified in RFC 8446 (2018). <em>(§7.10.1)</em></p>
+<p><strong>Trie (prefix tree)</strong> — A tree in which each edge is
+labeled with a character and each node represents the string spelled by
+the path from the root; nodes that end a stored key are marked. Looking
+up a key or a prefix of length
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>L</mi><annotation encoding="application/x-tex">L</annotation></semantics></math>
+takes
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>L</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">O(L)</annotation></semantics></math>
+steps, independent of how many keys are stored [Fredkin 1960].
+<em>(§17.11.1)</em></p>
 <p><strong>Trust boundary</strong> — A line in a system where the level
 of trust changes: data or requests crossing it come from a party that
 the receiving side does not fully control or trust. Examples: the
 internet-to-load-balancer edge, the browser-to-server connection, a
 service calling a third-party API, a tenant’s code running on shared
 infrastructure. <em>(§10.3.2)</em></p>
+<p><strong>Two-phase locking (2PL)</strong> — A protocol in which each
+transaction acquires locks (shared <strong>S</strong> for reading,
+exclusive <strong>X</strong> for writing) before accessing data and,
+once it releases any lock, acquires no new ones: a <em>growing</em>
+phase followed by a <em>shrinking</em> phase. <strong>Strict
+2PL</strong> holds all X locks until commit or abort. Any schedule
+produced by 2PL is serializable [Eswaran et al. 1976].
+<em>(§11.15.1)</em></p>
 <h2 id="u">U</h2>
 <p><strong>UDP</strong> — The User Datagram Protocol [RFC 768] is a
 connectionless transport protocol that adds only port numbers, a length
@@ -1163,11 +1712,28 @@ from the origin to a point in
 space; its <strong>length</strong> (or norm) is
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">∥</mo><mi>𝐚</mi><mo stretchy="false" form="postfix">∥</mo><mo>=</mo><msqrt><mrow><msubsup><mi>a</mi><mn>1</mn><mn>2</mn></msubsup><mo>+</mo><mi>⋯</mi><mo>+</mo><msubsup><mi>a</mi><mi>d</mi><mn>2</mn></msubsup></mrow></msqrt></mrow><annotation encoding="application/x-tex">\lVert \mathbf{a} \rVert = \sqrt{a_1^2 + \cdots + a_d^2}</annotation></semantics></math>.
 <em>(§4.9.1)</em></p>
+<p><strong>Vector database</strong> — A data store that indexes
+high-dimensional numeric vectors (<strong>embeddings</strong> produced
+by machine-learning models) and answers <strong>approximate nearest
+neighbor (ANN) search</strong> queries: “the <em>k</em> stored vectors
+most similar to this query vector”, by cosine similarity, dot product or
+Euclidean distance. <em>(§12.10)</em></p>
 <p><strong>Virtual memory</strong> — A mechanism in which every address
 a program uses is a <strong>virtual address</strong> that the hardware’s
 <strong>memory-management unit (MMU)</strong> translates, using tables
 maintained by the kernel, into a <strong>physical address</strong> in
 RAM, or into a fault if no valid mapping exists. <em>(§6.6.1)</em></p>
+<p><strong>Virtual node (vnode)</strong> — One of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>V</mi><annotation encoding="application/x-tex">V</annotation></semantics></math>
+ring positions belonging to the same physical node, typically obtained
+by hashing labels such as <code>db-3#vn17</code>; also called a
+<strong>token</strong>. <em>(§14.8.1)</em></p>
+<p><strong>Volcano (iterator) model</strong> — An execution model in
+which a query plan is a tree of operators, each implementing the same
+interface — <code>open()</code>, <code>next()</code> and
+<code>close()</code> — and each <code>next()</code> call pulls one row
+from the operator’s children on demand [Graefe 1994].
+<em>(§11.9.2)</em></p>
 <h2 id="w">W</h2>
 <p><strong>WebRTC</strong> — A set of IETF protocols (overview in RFC
 8825 [Alvestrand 2021]) and a W3C browser API [W3C WebRTC] for real-time
@@ -1182,6 +1748,18 @@ a full-duplex sequence of framed messages in both directions with 2–14
 bytes of framing overhead per frame. URLs use the schemes
 <code>ws://</code> (plain TCP, default port 80) and <code>wss://</code>
 (over TLS, default port 443). <em>(§9.6.1)</em></p>
+<p><strong>Wide-column store</strong> — A database whose rows are
+identified by a key, sorted (globally or within a partition) by that
+key, and contain a sparse, variable set of columns grouped into
+<strong>column families</strong>; each row may have millions of columns
+and each cell may hold several timestamped versions. Bigtable, HBase,
+Cassandra and ScyllaDB belong to this family. <em>(§12.6.1)</em></p>
+<p><strong>Write-ahead log (WAL)</strong> — An append-only file of
+<strong>log records</strong> describing every change to the database,
+written <em>before</em> the changed pages themselves reach disk. Each
+record is identified by a monotonically increasing <strong>log sequence
+number (LSN)</strong>, usually its byte offset in the log. Also called
+the redo log (InnoDB) or journal. <em>(§13.5.1)</em></p>
 <h2 id="z">Z</h2>
 <p><strong>Zero trust</strong> — A security model in which network
 location confers no trust: every request is authenticated, authorized

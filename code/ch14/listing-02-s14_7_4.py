@@ -2,7 +2,6 @@
 """Shard-count calculator: the binding constraint among storage, writes and reads."""
 import math
 
-
 def shards_needed(data_tb, disk_tb, fill, writes, write_cap, reads,
                   read_nodes, read_cap, util):
     terms = {
@@ -13,11 +12,9 @@ def shards_needed(data_tb, disk_tb, fill, writes, write_cap, reads,
     binding = max(terms, key=terms.get)
     return math.ceil(terms[binding]), binding, terms
 
-
 def even_logical_counts(physical, candidates=(512, 720, 960, 1024, 4096)):
     """Logical-shard counts that divide evenly over `physical` shards."""
     return [c for c in candidates if c % physical == 0]
-
 
 if __name__ == "__main__":
     s, binding, terms = shards_needed(

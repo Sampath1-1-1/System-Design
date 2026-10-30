@@ -4,11 +4,9 @@ import bisect
 import hashlib
 from collections import Counter
 
-
 def h(key: str) -> int:
     """Map a string to a 64-bit ring position (MD5 used only for mixing)."""
     return int.from_bytes(hashlib.md5(key.encode("utf-8")).digest()[:8], "big")
-
 
 class HashRing:
     def __init__(self, vnodes_per_weight: int = 100):
@@ -51,7 +49,6 @@ class HashRing:
                 result.append(node)
             i = (i + 1) % len(self._owners)
         return result
-
 
 if __name__ == "__main__":
     keys = [f"user:{i}" for i in range(200_000)]

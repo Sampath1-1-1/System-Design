@@ -52,7 +52,7 @@
 
 **Branch prediction** — Hardware that guesses the outcome of a conditional jump (a **branch**, e.g. an `if` or a loop condition) before it is computed, so that the pipeline can keep fetching instructions. A wrong guess is a **misprediction** and forces a pipeline flush. *(§5.3.4)*
 
-**B-tree and B+ tree** — A **B-tree** is a balanced search tree whose nodes are disk pages holding many sorted keys; every leaf is at the same depth, and nodes split and merge to stay between half-full and full [Bayer and McCreight 1972]. A **B+ tree** is the variant used by almost every relational database: internal nodes hold only separator keys and child pointers, all keys and values (or row pointers) live in the leaves, and leaves are linked to their siblings so range scans can walk sideways [Comer 1979]. *(§11.8.1)*
+**B-tree and B+ tree** — A **B-tree** is a balanced search tree whose nodes are disk pages holding many sorted keys; every leaf is at the same depth, and nodes split and merge to stay between half-full and full [Bayer and McCreight 1972]. A **B+ tree** is the variant used by almost every relational database: internal nodes hold only separator keys and child pointers, all keys and values (or row pointers) live in the leaves, and leaves are linked to their siblings so range scans can walk sideways [Comer 1979; Petrov 2019]. *(§11.8.1)*
 
 **B-tree storage engine** — A storage engine that keeps each table or index as a B+ tree of fixed-size pages and **updates pages in place**: a change to a key rewrites the page that holds it. Internal pages hold separator keys and child page numbers; leaf pages hold the keys with either the rows themselves (a clustered index) or pointers to them. *(§13.6.1)*
 
@@ -98,7 +98,7 @@
 
 **Connection gateway** — A dedicated, thin service tier whose only job is to terminate long-lived client connections (WebSocket, SSE, long polling), authenticate them, track which user and topics each connection belongs to, and move messages between those connections and back-end services through a messaging layer. It contains no business logic. *(§9.9.1)*
 
-**Connection pooler** — A component that keeps a small number of open database connections and lends them to a much larger number of clients for the duration of a session, a transaction or a statement. It may live inside the application (a client-side pool) or run as a separate proxy shared by many application instances. *(§14.13.1)*
+**Connection pooler** — A component that keeps a few open database connections and lends them to many clients per session, transaction or statement, either inside the application or as a shared proxy. *(§14.13.1)*
 
 **Consistent hashing** — A way of assigning keys to nodes so that, when a node is added or removed, only about $K/N$ of the $K$ keys change owner, where $N$ is the number of nodes. Both keys and nodes are hashed onto the same circular number space (the **ring**). Each key belongs to the first node found by moving clockwise from the key's position [Karger et al. 1997]. *(§3.3.2)*
 
@@ -190,6 +190,8 @@
 
 ## G
 
+**Geohash** — A string encoding of a latitude/longitude cell, published by Gustavo Niemeyer in 2008, formed by alternately bisecting the longitude and latitude ranges, interleaving the resulting bits (longitude first) and writing every 5 bits as one base-32 character [Niemeyer 2008]. Each additional character subdivides the cell into 32 smaller cells, so a geohash that is a prefix of another names a cell containing it. *(§17.9.2)*
+
 **Graph database** — A database whose data model is a graph of **vertices** (nodes) and **edges** (relationships), optimized for traversing edges. In the **property graph** model, nodes carry labels, edges carry a type and a direction, and both carry key-value properties. In the **RDF** model, all data is a set of subject–predicate–object **triples**. *(§12.7.1)*
 
 **GraphQL** — A query language for APIs and a runtime for executing those queries against a strongly typed **schema**. The client sends a document describing exactly the fields it wants; the server returns JSON of the same shape [GraphQL Spec]. *(§8.7.1)*
@@ -204,7 +206,7 @@
 
 **High-level design (HLD)** — A description of a system as a set of major components (services, data stores, queues, caches, external dependencies), their responsibilities, the interfaces and protocols between them, data flows, and deployment topology — at a level of detail where each component is a box whose internals are not yet specified. *(§1.5.1)*
 
-**Hot partition and hot key** — A **hot partition** receives a disproportionate share of requests or data relative to its peers, enough to saturate its node while others are idle. A **hot key** is a single key responsible for that excess. **Skew** is the general term for uneven distribution of data or load across partitions. *(§14.10)*
+**Hot partition and hot key** — A **hot partition** receives enough excess requests or data to saturate its node while peers idle. A **hot key** is a single key causing that excess. **Skew** is uneven distribution of data or load in general. *(§14.10.1)*
 
 **HTTP cookie** — A small name–value pair that a server asks the browser to store, via the `Set-Cookie` response header, and that the browser automatically returns in the `Cookie` request header on later requests to matching URLs [RFC 6265]. *(§8.10.1)*
 
@@ -250,7 +252,7 @@
 
 **Little's Law** — For any stable system observed over a long period, the average number of items in the system equals the average arrival rate multiplied by the average time each item spends in the system: $L = \lambda W$ [Little 1961]. *(§4.11.1)*
 
-**Local and global secondary indexes** — A **local index** (also **document-partitioned** index) is stored inside each partition and covers only that partition's rows. A **global index** (also **term-partitioned** index) is a separate structure covering all rows, partitioned by the *indexed value* rather than by the row's key, so all entries for one value live together [Kleppmann 2017]. *(§14.11)*
+**Local and global secondary indexes** — A **local** (document-partitioned) index lives in each partition and covers only its rows. A **global** (term-partitioned) index covers all rows and is partitioned by the *indexed value*, so all entries for one value live together [Kleppmann 2017]. *(§14.11.1)*
 
 **Logarithm** — The logarithm base $b$ of $x$, written $\log_b x$, is the exponent to which $b$ must be raised to give $x$: if $b^y = x$ then $y = \log_b x$. *(§4.4.1)*
 
@@ -278,13 +280,13 @@
 
 **Mobile push notification** — A message sent by an application's server to a platform-operated push service — Apple Push Notification service (**APNs**) for Apple platforms, Firebase Cloud Messaging (**FCM**) for Android (and optionally iOS and web) — which delivers it, on a best-effort basis, over a single persistent connection that the operating system maintains to that service on behalf of all apps. *(§9.8.1)*
 
-**Monotonic reads** — A guarantee that a client never sees data move backwards in time: once it has read a value at some version, later reads return that version or newer. *(§14.4.3)*
+**Monotonic reads** — A client never sees data move backwards: after reading some version, its later reads return that version or newer. *(§14.4.3)*
 
 **Multi-core processor** — A single chip containing several complete cores, each with its own pipeline and private caches, sharing the last-level cache and memory. *(§5.3.6)*
 
 **Multipart upload** — A protocol for uploading one large object as independently uploaded **parts**: the client *initiates* an upload and receives an upload ID, uploads numbered parts (in any order, in parallel, retrying any part), then *completes* the upload with the list of part numbers and their ETags, at which point the store assembles the object atomically. Until completion, or after an *abort*, the object is not visible. *(§15.8.1)*
 
-**Multi-primary replication** — A topology in which more than one node accepts writes for the same data and each primary replicates its changes to the others. It is also called **multi-leader** or **active–active** replication. Because two primaries can change the same row concurrently without coordination, the system must detect and resolve **write conflicts**. *(§14.5)*
+**Multi-primary replication** — More than one node accepts writes for the same data and replicates to the others (also **multi-leader** or **active–active**). Concurrent uncoordinated changes to the same row create **write conflicts** that must be detected and resolved. *(§14.5.1)*
 
 **Mutex (mutual-exclusion lock)** — An object with two operations, `lock` and `unlock`, guaranteeing that at most one thread holds it at a time. A thread that calls `lock` while another holds it waits. *(§6.10.1)*
 
@@ -330,7 +332,7 @@
 
 **Partition key, sort key and item collection** — In DynamoDB every **item** (a record of up to 400 KB, as of 2026) has a primary key made of a **partition key** and, optionally, a **sort key**. DynamoDB hashes the partition key to choose the storage partition. All items sharing a partition key form an **item collection**, stored together and ordered by sort key, so a single **Query** can return a contiguous, sorted range of them. *(§12.4.3)*
 
-**Partition (shard)** — A subset of a dataset's rows, stored and served together, such that every row belongs to exactly one partition. **Partitioning** is dividing a dataset this way and spreading the partitions over nodes. **Sharding** is a synonym used mostly for partitioning across separate database servers. This book uses *partition* and *shard* interchangeably for the data subset and reserves **network partition** for a network split (§24.7). The column or columns that decide a row's partition form the **partition key** (or **shard key**). *(§14.6.1)*
+**Partition (shard)** — A subset of a dataset's rows, stored and served together, such that every row belongs to exactly one partition. **Partitioning** spreads partitions over nodes; **sharding** is a synonym used mostly for separate database servers. This book uses *partition* and *shard* interchangeably and reserves **network partition** for network splits (§24.7). The columns that choose a row's partition form the **partition key** (or **shard key**). *(§14.6.1)*
 
 **Percentile** — The $q$-th percentile of a set of measurements is the value at or below which $q$% of the measurements fall. Latency percentiles are written **p50** (the median), **p95**, **p99** and **p99.9** (also written p999): the 50th, 95th, 99th and 99.9th percentiles. *(§4.8.1)*
 
@@ -366,9 +368,9 @@
 
 **Race condition** — A bug in which the result of a program depends on the relative timing or interleaving of concurrent operations on shared state. A **data race** is the specific case where two threads access the same memory location concurrently, at least one access is a write, and nothing orders them. *(§6.9)*
 
-**Read-your-writes consistency** — A guarantee that after a client writes a value, its subsequent reads return that value or a newer one. It says nothing about other clients' reads. It is also called **read-after-write consistency**. *(§14.4.3)*
+**Read-your-writes consistency** — After a client writes a value, its own later reads return that value or a newer one. Other clients get no such promise. *(§14.4.3)*
 
-**Rebalancing** — Moving partitions, or parts of them, between nodes so that data and load stay evenly spread as nodes are added, removed or replaced, or as the data grows. A good rebalancing scheme keeps the database available throughout, moves no more data than necessary and leaves load balanced at the end. *(§14.9)*
+**Rebalancing** — Moving partitions, or parts of them, between nodes so that data and load stay even as nodes join, leave or fail and as data grows, while staying available and moving no more data than necessary. *(§14.9.1)*
 
 **Register** — A tiny, extremely fast storage slot inside a core, typically 64 bits wide for general-purpose registers. x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A (AArch64) exposes 31. Reading a register costs essentially nothing beyond the instruction that uses it. *(§5.3.2)*
 
@@ -382,15 +384,17 @@
 
 **Replication** — Keeping a copy of the same data on more than one node. Each copy is a **replica**. In **primary–replica replication**, exactly one node, the **primary** (called the "master" in older documentation), accepts writes and streams its changes to the **replicas**, which apply them in the same order and serve reads. *(§14.3.1)*
 
-**Replication lag** — The delay between a change committing on the primary and the same change becoming visible on a replica. It can be measured as time (seconds), as log volume (bytes of WAL not yet replayed) or as transactions. *(§14.4.2)*
+**Replication lag** — The delay between a change committing on the primary and becoming visible on a replica, measured in seconds, bytes of log or transactions. *(§14.4.2)*
 
-**Replication log formats** — **Statement-based replication** ships the SQL statements the primary executed. **Row-based replication** ships the before and after images of each changed row. **Physical replication** (WAL shipping) ships the storage engine's low-level log of byte changes to data pages. **Logical replication** ships a decoded, engine-independent description of row changes per table, which subscribers can filter and apply to a different schema or version. *(§14.4.5)*
+**Replication log formats** — What the log describes: the SQL statements executed (**statement-based**), the changed rows (**row-based**), the storage engine's page-level byte changes (**physical**, or WAL shipping), or decoded, engine-independent row changes per table (**logical**). *(§14.4.5)*
 
-**Replication modes** — In **synchronous replication**, the primary does not report a commit as successful until at least one designated replica has durably received it (or, in stricter settings, applied it). In **asynchronous replication**, the primary reports success after its own local commit and ships the change afterwards. **Semi-synchronous replication** is MySQL's name for a middle ground: the primary waits until at least one replica has *received and logged* the change, but not until it has applied it, and it falls back to asynchronous mode if no replica answers within a timeout. *(§14.4.1)*
+**Replication modes** — In **synchronous replication**, the primary reports a commit only after at least one designated replica has durably received (or applied) it. In **asynchronous replication**, it reports success after its local commit and ships the change afterwards. **Semi-synchronous replication**, MySQL's middle ground, waits until a replica has *received and logged* the change and falls back to asynchronous mode after a timeout. *(§14.4.1)*
 
 **Request–response lifecycle** — The complete sequence of network and processing steps between a client issuing a request and receiving the full response, including name resolution, connection establishment, routing through intermediaries, application processing, data access and the return path. *(§8.5.1)*
 
 **Requirement** — A statement of what the system must do (a **functional requirement**, e.g. "a customer can cancel an order before the restaurant accepts it") or how well it must do it (a **non-functional requirement**, e.g. "99% of order placements complete within 800 ms"). A requirement is **testable** if you could write an automated check or a measurement that proves it is met. *(§2.5.1)*
+
+**Reservoir sampling** — An algorithm that maintains a uniform random sample of $k$ items from a stream whose length $n$ is not known in advance, using $O(k)$ memory and a single pass: after any number of items, every item seen so far is in the sample with probability $k/n$ [Vitter 1985]. *(§17.12.1)*
 
 **REST (Representational State Transfer)** — An architectural style for distributed hypermedia systems, defined by Roy Fielding in his 2000 doctoral dissertation as a set of constraints on how components interact [Fielding 2000]. In everyday usage, a "REST API" is an HTTP API that models its domain as **resources** identified by URIs and manipulated with the standard HTTP methods. *(§8.6.1)*
 
@@ -484,7 +488,11 @@
 
 **Transport Layer Security (TLS)** — A protocol that gives two communicating applications **confidentiality** (eavesdroppers cannot read the data), **integrity** (tampering is detected) and **authentication** (at least the server proves its identity, usually with an X.509 certificate). **HTTPS** is HTTP carried over TLS, on TCP port 443 by default. TLS 1.3 is specified in RFC 8446 (2018). *(§7.10.1)*
 
+**Trie (prefix tree)** — A tree in which each edge is labeled with a character and each node represents the string spelled by the path from the root; nodes that end a stored key are marked. Looking up a key or a prefix of length $L$ takes $O(L)$ steps, independent of how many keys are stored [Fredkin 1960]. *(§17.11.1)*
+
 **Trust boundary** — A line in a system where the level of trust changes: data or requests crossing it come from a party that the receiving side does not fully control or trust. Examples: the internet-to-load-balancer edge, the browser-to-server connection, a service calling a third-party API, a tenant's code running on shared infrastructure. *(§10.3.2)*
+
+**Two-phase locking (2PL)** — A protocol in which each transaction acquires locks (shared **S** for reading, exclusive **X** for writing) before accessing data and, once it releases any lock, acquires no new ones: a *growing* phase followed by a *shrinking* phase. **Strict 2PL** holds all X locks until commit or abort. Any schedule produced by 2PL is serializable [Eswaran et al. 1976]. *(§11.15.1)*
 
 ## U
 
@@ -500,7 +508,7 @@
 
 **Virtual memory** — A mechanism in which every address a program uses is a **virtual address** that the hardware's **memory-management unit (MMU)** translates, using tables maintained by the kernel, into a **physical address** in RAM, or into a fault if no valid mapping exists. *(§6.6.1)*
 
-**Virtual node (vnode)** — One of $V$ positions on the ring assigned to the same physical node, typically by hashing labels such as `"db-3#vn17"`. A physical node owns the union of the arcs that end at its vnodes. A vnode is sometimes called a **token**. *(§14.8.1)*
+**Virtual node (vnode)** — One of $V$ ring positions belonging to the same physical node, typically obtained by hashing labels such as `db-3#vn17`; also called a **token**. *(§14.8.1)*
 
 **Volcano (iterator) model** — An execution model in which a query plan is a tree of operators, each implementing the same interface — `open()`, `next()` and `close()` — and each `next()` call pulls one row from the operator's children on demand [Graefe 1994]. *(§11.9.2)*
 

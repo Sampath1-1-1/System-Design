@@ -4,7 +4,7 @@ flowchart TB
     P1["Parent: 30, 60"] --> L1["Leaf A: 30 32 34 36 38<br/>full"]
   end
   subgraph AFTER["After the split"]
-    P2["Parent: 30, 34, 60"] --> L2["Leaf A: 30 32 34"]
+    P2["Parent: 30, 35, 60"] --> L2["Leaf A: 30 32 34"]
     P2 --> L3["New leaf B: 35 36 38"]
     L2 -->|sibling link| L3
   end

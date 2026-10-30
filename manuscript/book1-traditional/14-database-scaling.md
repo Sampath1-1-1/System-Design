@@ -193,7 +193,7 @@ $$T_{\text{commit}} \approx T_{\text{local}} + \text{RTT}_{(k)} + T_{\text{remot
 :::
 
 ::: example
-**Worked example — Where to put the synchronous replica.** A primary flushes its WAL in 0.2 ms on NVMe. Replica A is in the same availability zone (RTT 0.3 ms), replica B is in another zone of the same region (RTT 1.2 ms), and replica C is in another region (RTT 70 ms). Each replica flushes in 0.2 ms.
+**Worked example — Where to put the synchronous replica.** A primary flushes its WAL in 0.2 ms on NVMe with power-loss protection (a drive without it can take about 2 ms per `fsync`, §6.14.3). Replica A is in the same availability zone (RTT 0.3 ms), replica B is in another zone of the same region (RTT 1.2 ms), and replica C is in another region (RTT 70 ms). Each replica flushes in 0.2 ms.
 
 1. Asynchronous ($k = 0$): $T \approx 0.2$ ms.
 2. Synchronous, `ANY 1 (A, B)`: the fastest acknowledgment is A's. $T \approx 0.2 + 0.3 + 0.2 = 0.7$ ms.
@@ -1289,7 +1289,7 @@ $$s = \left\lceil \frac{\lambda_{\text{key}}}{u \cdot c_{\text{part}}} \right\rc
 :::
 
 ::: example
-**Worked example — A viral post's like counter.** A post receives $\lambda_{\text{key}} = 50{,}000$ likes per second at its peak. The store's partitions each sustain $c_{\text{part}} = 1{,}000$ writes/s, a figure of the same order as DynamoDB's documented per-partition limit of 1,000 write capacity units per second (as of 2026), and you target $u = 0.7$.
+**Worked example — A viral post's like counter.** A post receives $\lambda_{\text{key}} = 50{,}000$ likes per second at its peak. The store's partitions each sustain $c_{\text{part}} = 1{,}000$ writes/s, a figure of the same order as DynamoDB's documented per-partition limit of 1,000 write capacity units per second (as of 2026; §12.4.5), and you target $u = 0.7$.
 
 1. Salt factor: $s = \lceil 50{,}000 / (0.7 \times 1{,}000) \rceil = \lceil 71.4 \rceil = 72$ sub-keys.
 2. Writes per sub-key: $50{,}000 / 72 \approx 694$ writes/s, which is 69 % of a partition's capacity.

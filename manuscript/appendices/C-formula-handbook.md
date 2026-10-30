@@ -1500,6 +1500,19 @@ $$T_{\text{wrap}} = \frac{2^{31} - A}{\lambda_{\text{xid}}}$$
 | $\lambda_{\text{xid}}$ | Rate of transactions that write (read-only transactions consume no ID) | transactions/second |
 :::
 
+*From §11.15.3*
+
+::: formula
+**Throughput ceiling of a single hot row**
+
+$$X_{\max} = \frac{1}{t_{\text{hold}}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $X_{\max}$ | Maximum transactions per second that can update the same row | transactions/second |
+| $t_{\text{hold}}$ | Time each transaction holds the row's X lock (from its update to commit) | seconds |
+:::
+
 ## Chapter 12 — NoSQL Databases
 
 *From §12.4.5*
@@ -1633,22 +1646,6 @@ $$W_{redo} \approx r_{WAL} \times \Delta t_{ckpt}, \qquad T_{redo} \approx \frac
 | $\Delta t_{ckpt}$ | Time between checkpoints (worst case, crash just before the next one) | s |
 | $T_{redo}$ | Duration of the redo pass | s |
 | $b_{replay}$ | Replay throughput, usually limited by random page reads, not log reads | bytes/s |
-:::
-
-*From §13.6.1*
-
-::: formula
-**B+ tree height**
-
-$$N_{leaf} = \left\lceil \frac{N}{n_{leaf}} \right\rceil, \qquad h = 1 + \left\lceil \log_{f} N_{leaf} \right\rceil$$
-
-| Symbol | Meaning | Units |
-|---|---|---|
-| $N$ | Number of rows (keys) | rows |
-| $n_{leaf}$ | Rows per leaf page at the typical fill factor | rows/page |
-| $N_{leaf}$ | Number of leaf pages | pages |
-| $f$ | Fan-out: child pointers per internal page at the typical fill factor | pointers/page |
-| $h$ | Number of levels including the leaf level | levels |
 :::
 
 *From §13.8.1*
@@ -1831,7 +1828,7 @@ $$\frac{E[\max_i L_i]}{1/N} \approx 1 + z_N \cdot \text{CV}(N, V) \quad (V \gtrs
 | $H_N$ | $N$-th harmonic number $1 + \tfrac12 + \dots + \tfrac1N \approx \ln N + 0.577$ | dimensionless |
 :::
 
-*From §14.10*
+*From §14.10.1*
 
 ::: formula
 **Salt factor for a hot key**
@@ -1844,20 +1841,6 @@ $$s = \left\lceil \frac{\lambda_{\text{key}}}{u \cdot c_{\text{part}}} \right\rc
 | $\lambda_{\text{key}}$ | Write rate to the hot key | writes/s |
 | $c_{\text{part}}$ | Write capacity of one partition | writes/s |
 | $u$ | Target utilization of a partition | dimensionless (0–1) |
-:::
-
-*From §14.11*
-
-::: formula
-**Probability that a scatter-gather query hits at least one slow partition**
-
-$$P_{\text{slow}} = 1 - (1 - q)^{n}$$
-
-| Symbol | Meaning | Units |
-|---|---|---|
-| $P_{\text{slow}}$ | Probability that the gathered query waits for at least one slow response | dimensionless (0–1) |
-| $q$ | Probability that one partition's response is slow, e.g. $0.01$ beyond its p99 | dimensionless (0–1) |
-| $n$ | Number of partitions queried | partitions |
 :::
 
 *From §14.13.1*
@@ -2342,4 +2325,80 @@ $$h = \lceil \log_2 n \rceil, \qquad \text{proof size} = h \times H_{\text{bytes
 | $h$ | Tree height | levels |
 | $H_{\text{bytes}}$ | Size of one hash (32 for SHA-256) | bytes |
 | $k$ | Number of divergent leaves between two replicas | leaves |
+:::
+
+*From §17.9.2*
+
+::: formula
+**Geohash cell size**
+
+$$b_{\text{lon}} = \left\lceil \frac{5L}{2} \right\rceil, \quad b_{\text{lat}} = \left\lfloor \frac{5L}{2} \right\rfloor, \quad W = \frac{360^\circ}{2^{b_{\text{lon}}}} \times 111.32 \cos\varphi \ \text{km}, \quad H = \frac{180^\circ}{2^{b_{\text{lat}}}} \times 110.57 \ \text{km}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $L$ | Geohash length | characters |
+| $b_{\text{lon}}$, $b_{\text{lat}}$ | Bits spent on longitude and latitude | bits |
+| $W$, $H$ | Cell width (east–west) and height (north–south) | km |
+| $\varphi$ | Latitude of the cell | degrees |
+| 111.32, 110.57 | Approximate km per degree of longitude at the equator and of latitude | km/degree |
+:::
+
+*From §17.9.4*
+
+::: formula
+**Average S2 cell area at level L**
+
+$$\bar{A}_L \approx \frac{4\pi R^2}{6 \times 4^{L}} = \frac{510.1 \times 10^{6} \text{ km}^2}{6 \times 4^{L}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\bar{A}_L$ | Average area of a level-$L$ cell | km² |
+| $R$ | Earth's mean radius, ≈ 6,371 km | km |
+| $L$ | Cell level, 0 (a cube face) to 30 | level |
+:::
+
+*From §17.10.2*
+
+::: formula
+**Birthday bound for random identifiers**
+
+$$P_{\text{collision}} \approx 1 - e^{-n^2 / (2N)} \approx \frac{n^2}{2N} \ \ (\text{when small}), \qquad n_{50\%} \approx \sqrt{2N \ln 2} \approx 1.18\sqrt{N}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of IDs generated within one collision domain | IDs |
+| $N$ | Number of possible values, $2^{\text{random bits}}$ | values |
+| $P_{\text{collision}}$ | Probability that at least two IDs are equal | probability |
+| $n_{50\%}$ | Number of IDs at which a collision becomes a coin flip | IDs |
+:::
+
+*From §17.10.3*
+
+::: formula
+**Snowflake capacity and lifetime**
+
+$$\text{rate}_{\text{machine}} = 2^{S} \times 1000 \ \text{IDs/s}, \qquad \text{rate}_{\text{cluster}} = 2^{M} \times \text{rate}_{\text{machine}}, \qquad \text{lifetime} = \frac{2^{T}}{1000 \times 3600 \times 24 \times 365.25} \ \text{years}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T$ | Timestamp bits (millisecond resolution) | bits |
+| $M$ | Machine-ID bits | bits |
+| $S$ | Sequence bits | bits |
+| $\text{rate}$ | Maximum sustained ID generation rate | IDs/s |
+| lifetime | Time from the epoch until the timestamp field overflows | years |
+:::
+
+*From §17.12.1*
+
+::: formula
+**Reservoir sampling inclusion probability**
+
+$$P(\text{item } i \text{ in sample after } n \text{ items}) = \frac{k}{i} \times \prod_{j=i+1}^{n} \left(1 - \frac{1}{j}\right) = \frac{k}{i} \times \frac{i}{n} = \frac{k}{n}, \qquad \mathbb{E}[\text{replacements}] \approx k \ln \frac{n}{k}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $k$ | Reservoir size | items |
+| $n$ | Items seen so far | items |
+| $i$ | Arrival position of a particular item ($i > k$) | position |
+| $1 - 1/j$ | Probability that item $j$ does not evict this item: it is chosen with probability $k/j$ and then evicts one of $k$ slots | probability |
 :::

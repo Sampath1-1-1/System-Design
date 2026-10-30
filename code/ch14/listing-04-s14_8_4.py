@@ -13,10 +13,8 @@ RING = 2 ** 64
 N = 10            # physical nodes
 TRIALS = 200      # independent rings per value of V
 
-
 def h(key: str) -> int:
     return int.from_bytes(hashlib.md5(key.encode("utf-8")).digest()[:8], "big")
-
 
 def node_shares(n: int, v: int, trial: int) -> list:
     """Fraction of the ring owned by each node in one random ring."""
@@ -29,7 +27,6 @@ def node_shares(n: int, v: int, trial: int) -> list:
         prev = pos
     return [s / RING for s in share]
 
-
 def expected_max_std_normal(n: int, samples: int = 4000) -> float:
     """E[max of n standard normals], by a quick deterministic quadrature."""
     nd = statistics.NormalDist()
@@ -38,7 +35,6 @@ def expected_max_std_normal(n: int, samples: int = 4000) -> float:
         u = (k + 0.5) / samples               # u = F(x)^n  =>  x = F^-1(u^(1/n))
         total += nd.inv_cdf(u ** (1.0 / n))
     return total / samples
-
 
 if __name__ == "__main__":
     z = expected_max_std_normal(N)

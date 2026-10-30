@@ -269,7 +269,7 @@ Object storage gives unlimited capacity, high durability, parallel throughput an
 
 #### First-principles explanation
 
-Think of a library with one head librarian and a thousand shelves in separate rooms. The librarian keeps only the catalogue: which book is split into which volumes and which rooms hold each volume. Readers ask the librarian once, then walk directly to the rooms. The librarian never carries books, so one person can manage a huge library. That is the GFS design.
+Think of a library with one head librarian and a thousand shelves in separate rooms. The librarian keeps only the catalog: which book is split into which volumes and which rooms hold each volume. Readers ask the librarian once, then walk directly to the rooms. The librarian never carries books, so one person can manage a huge library. That is the GFS design.
 
 #### Why does this exist?
 
@@ -481,7 +481,7 @@ $$P_{\text{loss/yr}} \approx \frac{n!}{(n - m - 1)!}\;\lambda^{m+1}\;T^{\,m} \ti
 3. Per petabyte with 64 MB fragments: replication has $10^{15}/6.4 \times 10^{7} = 1.56 \times 10^{7}$ groups, so $5.6 \times 10^{-3}$ expected loss events per year; RS(10,4) stripes hold 640 MB of data, so $1.56 \times 10^{6}$ stripes and $6.8 \times 10^{-8}$ loss events per year.
 4. Cost for 10 PB of logical data at an illustrative $\$10$ per raw TB-month: replication needs 30 PB raw, $\$300{,}000$ per month; RS(10,4) needs 14 PB raw, $\$140{,}000$ per month, saving $\$1.92$ million per year.
 
-**Interpretation.** Under independent failures RS(10,4) is both cheaper (1.4× against 3×) and several thousand times more durable per byte, because it tolerates four losses instead of two. **Engineering implication.** Erasure-code large, cold or warm data. The independence assumption is optimistic for both schemes (§4.16): correlated failures dominate real loss [Ford et al. 2010], so spread a stripe's fragments across racks and zones, and remember the hidden costs below — CPU for encoding, latency for small objects, and repair traffic.
+**Interpretation.** Under independent failures RS(10,4) is both cheaper (1.4× against 3×) and far more durable, because it tolerates four losses instead of two: about 8,000 times less likely to lose a given stripe, and, since each stripe holds ten times as much data as a replica group, about 80,000 times fewer expected loss events per petabyte. **Engineering implication.** Erasure-code large, cold or warm data. The independence assumption is optimistic for both schemes (§4.16): correlated failures dominate real loss [Ford et al. 2010], so spread a stripe's fragments across racks and zones, and remember the hidden costs below — CPU for encoding, latency for small objects, and repair traffic.
 :::
 
 ::: formula
@@ -660,7 +660,7 @@ Replication wins for small objects (a 4 KB object should not become ten 400-byte
 
 #### First-principles explanation
 
-Return to the library. Adding shelves is easy; the catalogue is the hard part, because every reader consults it and every new book changes it. Data scales by adding disks; metadata scales only if the catalogue itself can be split without breaking operations that span several entries, such as moving a directory.
+Return to the library. Adding shelves is easy; the catalog is the hard part, because every reader consults it and every new book changes it. Data scales by adding disks; metadata scales only if the catalog itself can be split without breaking operations that span several entries, such as moving a directory.
 
 #### How it works internally
 
