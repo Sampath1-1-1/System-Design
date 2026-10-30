@@ -39,3 +39,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-032 | 7 | New York–London measured RTT "often around 70 ms" | Open | Coordinate with Appendix F |
 | UQ-033 | 7 | Jacobson 1988 congestion-collapse figure (32 kbps → 40 bps) and BBR 2–25× gain on B4 vs primary papers | Open | |
 | UQ-034 | 7 | Linux default values quoted (TIME_WAIT, min RTO, delayed ACK, ephemeral port range, keepalive) | Open | Kernel-version dependent |
+| UQ-035 | 10 | OWASP Password Storage Cheat Sheet parameters; OWASP Top 10:2025 category names and release status (owasp.org unreachable; confirmed via search snippets) | Open | |
+| UQ-036 | 10 | NIST SP 800-63B-4 rules (15-char minimum for single-factor passwords; pepper guidance) confirmed only via secondary sources | Open | |
+| UQ-037 | 7 / 10 | CA/Browser Forum certificate-lifetime schedule (down to 47 days by 2029) | Open | Merge with UQ-031 |
+| UQ-038 | 10 | GPU password-guessing rates are order-of-magnitude estimates | Accepted | Labeled as estimates |
+| UQ-039 | 10 | AWS KMS quotas and pricing "as of 2026"; LinkedIn 2012 and Capital One 2019 breach figures from press reporting | Open | |
+| UQ-040 | 10 | Exact URLs for BeyondCorp papers (;login:) and AWS KMS envelope-encryption docs | Open | |

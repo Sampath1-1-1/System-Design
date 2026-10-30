@@ -3,4 +3,3 @@ build/.cache/
 __pycache__/
 *.pyc
 dist/test.*
-dist/preview.*

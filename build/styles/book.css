@@ -14,19 +14,22 @@
     --navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
     --green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
     --grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+    color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
   --green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
   --grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+  color-scheme: dark;
 }
 
 html { font-size: 16px; }
 body {
   font-family: "Source Serif 4", "Source Serif Pro", Georgia, "DejaVu Serif", serif;
   color: var(--text); background: var(--page-bg);
-  line-height: 1.6; max-width: 48rem; margin: 0 auto; padding: 2rem 1rem 4rem;
+  line-height: 1.6; max-width: 48rem; margin: 0 auto; padding-block: 2rem 4rem;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word;
 }
 h1, h2, h3, h4, h5 { font-family: Inter, "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--navy); line-height: 1.25; }
@@ -51,6 +54,7 @@ th { background: var(--blue-bg); color: var(--navy); text-align: left; font-weig
 th, td { padding: .4rem .55rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
 tbody tr:nth-child(even) { background: color-mix(in srgb, var(--grey-bg) 60%, transparent); }
 .table-wrap { overflow-x: auto; }
+@media (max-width: 600px) { table { display: block; overflow-x: auto; } }
 
 /* Figures */
 figure, p > img { text-align: center; }
@@ -102,7 +106,7 @@ nav#TOC > ul > li { margin-top: .5rem; font-weight: 600; }
 nav#TOC > ul > li li { font-weight: 400; }
 nav#TOC a { text-decoration: none; color: var(--text); }
 
-@media (max-width: 600px) { body { padding: 1rem 16px 3rem; } h1 { font-size: 1.6rem; } table { font-size: .75rem; } }
+@media (max-width: 600px) { body { padding-block: 1rem 3rem; } h1 { font-size: 1.6rem; } table { font-size: .75rem; } }
 
 /* Print */
 @page { size: A4; margin: 22mm 20mm 24mm 20mm; }
