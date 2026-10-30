@@ -4,9 +4,9 @@
 
 A hash table, a sorted array and a B-tree will carry you a long way. Then the numbers grow. You need to know whether one of 3 billion usernames is taken without reading a disk. You need to count the distinct visitors to a site that gets 50 billion page views a day. You need the 100 most-shared links of the last hour in a stream of a million events per second. You need every driver within a kilometer of a rider, out of a million moving cars. And you need IDs for all of these things, generated on a thousand machines at once, without the machines talking to each other.
 
-Exact answers to these questions cost memory, disk reads or coordination in proportion to the data, and at scale that cost is too high. The structures in this chapter accept a small, *bounded* and *quantifiable* error, or a small amount of randomness, in exchange for memory measured in kilobytes, constant-time operations and no coordination. A Bloom filter answers "have I seen this?" in about 10 bits per item with a 1% false-positive rate. A HyperLogLog counts a billion distinct items in 12 KB with 0.81% standard error. A Count-Min sketch tracks frequencies in a fixed table whatever the number of distinct keys. A geohash turns a two-dimensional search into a range scan over a one-dimensional index. A Snowflake ID packs a timestamp, a machine number and a counter into 64 bits so that a thousand machines can mint 4 billion IDs per second without talking to one another.
+Exact answers cost memory, disk reads or coordination in proportion to the data. The structures in this chapter accept a small, *bounded* and *quantifiable* error, or a little randomness, in exchange for kilobytes of memory, constant-time operations and no coordination. A Bloom filter answers "have I seen this?" in about 10 bits per item at a 1% false-positive rate. A HyperLogLog counts a billion distinct items in 12 KB with 0.81% standard error. A Snowflake ID lets a thousand machines mint 4 billion IDs per second without talking to one another.
 
-For every structure you will learn the idea first, then the mechanism, then the formula that sizes it, then a worked example, then runnable Python that checks the formula against a measurement. The chapter ends with tries and reservoir sampling, two smaller tools that turn up in search and in observability.
+For each structure you get the idea, the mechanism, the sizing formula, a worked example and runnable Python that checks the formula against a measurement.
 
 ## 17.1 Learning objectives
 
@@ -44,26 +44,26 @@ After this chapter you should be able to:
 
 Imagine a cloakroom with 1,000 numbered hooks. You want to hang each coat on a hook chosen by a rule, so that later you can go straight to the right hook instead of searching all of them. A good rule looks at the whole ticket and scatters tickets evenly: no hook gets 50 coats while others are empty. It must give the same hook for the same ticket every time. And it must be fast, because the queue is long. That rule is a hash function, and the hooks are **buckets**.
 
-Every structure in this chapter starts with a hash. A hash table uses it to pick a bucket. A partitioned database uses it to pick a node (§14.6). A Bloom filter uses it to pick bits. HyperLogLog treats its output bits as coin flips. If the hash is poor, every structure built on it inherits the flaw: hot buckets, hot partitions, false-positive rates far above the formula, cardinality estimates that are simply wrong.
+Every structure in this chapter starts with a hash: hash tables pick buckets, partitioned databases pick nodes (§14.6), Bloom filters pick bits, HyperLogLog reads output bits as coin flips. A poor hash passes its flaw to all of them.
 
 #### Why does this exist?
 
-Hash tables have existed since the 1950s, but at scale three demands sharpen. **Throughput**: a cache node may hash millions of keys per second, so a hash costing 1 µs would burn a core by itself. **Uniformity on structured input**: real keys are not random. They look like `user:1`, `user:2`, `user:3`, and a weak hash maps such near-identical keys to near-identical outputs. **Adversarial input**: when an attacker controls the keys (HTTP parameters, JSON field names), they can choose keys that all collide (§17.3.4).
+At scale three demands sharpen. **Throughput**: a cache node may hash millions of keys per second. **Uniformity on structured input**: real keys look like `user:1`, `user:2`, and a weak hash maps near-identical keys to near-identical outputs. **Adversarial input**: an attacker who controls keys (HTTP parameters, JSON field names) can choose keys that all collide (§17.3.4).
 
 #### How it works internally
 
-A modern non-cryptographic hash such as MurmurHash3 processes the input in fixed-size blocks and repeats three cheap operations: multiply by a large odd constant, rotate the bits, and XOR the result into a running state. A **finalizer** (or **mix**) step then scrambles the state so that every input bit affects every output bit. Four properties matter:
+MurmurHash3 and its relatives process the input in fixed-size blocks, repeatedly multiplying by large odd constants, rotating bits and XOR-ing into a running state; a **finalizer** then scrambles the state so that every input bit affects every output bit. Four properties matter:
 
-1. **Determinism.** Same input and seed, same output, on every machine and every run. Partitioning depends on this. A hash that changes between versions or processes re-routes every key.
+1. **Determinism.** Same input and seed, same output, on every machine and run. A hash that changes between versions re-routes every key.
 2. **Uniformity.** For realistic key sets, outputs are spread evenly over the output range, so `h(key) mod B` spreads evenly over $B$ buckets.
 3. **Avalanche.** Flipping one input bit flips each output bit with probability close to 1/2. This is what makes `user:1` and `user:2` land far apart.
-4. **Speed.** A few CPU cycles per byte, and low fixed overhead for short keys, which dominate in practice.
+4. **Speed.** A few CPU cycles per byte and low overhead for short keys.
 
-Some hashes also accept a **seed**: a number mixed into the initial state. Different seeds give effectively independent hash functions from the same code. Bloom filters and Count-Min sketches use this, and keyed hashes (§17.3.4) make the seed secret.
+A **seed** mixed into the initial state gives effectively independent hash functions from the same code; keyed hashes (§17.3.4) keep the seed secret.
 
 ### 17.3.2 MurmurHash3 and xxHash
 
-**MurmurHash3**, written by Austin Appleby and released with his SMHasher test suite in the early 2010s, has 32-bit and 128-bit variants. It is the default partitioner hash in Apache Cassandra (`Murmur3Partitioner`) and is widely used in Bloom filter libraries and stream processors [Appleby: SMHasher; Apache Cassandra Docs]. **xxHash**, by Yann Collet, offers XXH32, XXH64 and the newer XXH3 family. Its author reports throughput above MurmurHash3, especially for long inputs on CPUs with vector instructions [Collet: xxHash]. Both pass the SMHasher statistical tests and neither is cryptographic: an attacker who knows the algorithm and seed can construct collisions.
+**MurmurHash3** (Austin Appleby, published with the SMHasher test suite) has 32- and 128-bit variants and is Apache Cassandra's default partitioner hash (`Murmur3Partitioner`) [Appleby: SMHasher; Apache Cassandra Docs]. **xxHash** (Yann Collet) offers XXH32, XXH64 and XXH3; its author reports higher throughput than MurmurHash3, especially on long inputs [Collet: xxHash]. Both pass SMHasher's statistical tests, and neither is cryptographic.
 
 **Table 17.1 — Hash functions you will meet in system design.**
 
@@ -76,17 +76,17 @@ Some hashes also accept a **seed**: a number mixed into the initial state. Diffe
 | SipHash | 64 bits | Yes, with a secret 128-bit key | Moderate | Hash tables exposed to untrusted keys |
 | SHA-256, BLAKE2/BLAKE3 | 256 bits | Yes (cryptographic) | Slowest of these, still GB/s for BLAKE3 | Content addressing, Merkle trees, integrity |
 
-Relative speeds are qualitative and depend on key length and CPU; benchmark on your own hardware (as of 2025). The code in this chapter uses BLAKE2b from Python's standard library because it is portable and well mixed, not because it is the fastest choice.
+Speeds are qualitative (as of 2025); benchmark on your hardware. This chapter's code uses BLAKE2b from Python's standard library for portability, not speed.
 
 ::: recommendation
-**Pick the hash by threat model, then by speed.** If an adversary can choose the keys of an in-memory hash table, use a keyed hash (SipHash) or a structure with bounded worst case. If keys come from your own system (partitioning, sketches, Bloom filters), use MurmurHash3 or xxHash. If the hash must prove integrity (content addressing, Merkle trees), use a cryptographic hash. Never change the partitioning hash of a live system without a migration plan, because every key moves.
+**Pick the hash by threat model, then by speed.** Untrusted keys in an in-memory table: SipHash or a bounded-worst-case structure. Keys from your own system (partitioning, sketches, filters): MurmurHash3 or xxHash. Integrity: a cryptographic hash. Never change a live system's partitioning hash without a migration plan.
 :::
 
 ### 17.3.3 Measuring uniformity
 
 #### Mathematical foundations
 
-If a hash is uniform, each of $n$ keys lands in each of $B$ buckets independently with probability $1/B$. Bucket counts then follow a binomial distribution, which for large $n$ is close to a Poisson distribution with mean $n/B$.
+Under a uniform hash, bucket counts are binomial, close to Poisson with mean $n/B$.
 
 ::: formula
 **Expected bucket load and the chi-square uniformity test**
@@ -111,12 +111,12 @@ $$\mu = \frac{n}{B}, \qquad \sigma \approx \sqrt{\frac{n}{B}}, \qquad \chi^2 = \
 3. The fullest of 1,024 buckets is typically about 3.2 standard deviations above the mean: $97.7 + 3.2 \times 9.9 \approx 129$ keys.
 4. The chi-square statistic for a uniform hash should be near $B - 1 = 1{,}023$, with standard deviation $\sqrt{2 \times 1{,}023} = 45$. Values above about $1{,}023 + 3 \times 45 = 1{,}158$ suggest non-uniformity.
 
-*Interpretation.* Even a perfect hash does not give every bucket exactly 97.7 keys; a 30% spread between the emptiest and fullest bucket is normal. *Engineering implication.* When you size a partitioned system, provision for the fullest partition, not the average one. With few keys per bucket the relative spread $\sigma/\mu = 1/\sqrt{\mu}$ is large, one reason partitioned systems use many virtual nodes per server (§14.8).
+*Interpretation.* Even a perfect hash leaves a 30% spread between emptiest and fullest bucket. *Engineering implication.* Provision partitions for the fullest one, not the average; the relative spread $1/\sqrt{\mu}$ is one reason systems use many virtual nodes per server (§14.8).
 :::
 
 #### Code example
 
-The program below implements MurmurHash3 (x86, 32-bit) in pure Python, checks it against the reference value, and compares it with a deliberately bad hash (the sum of the bytes) on 100,000 structured keys.
+The program implements MurmurHash3 (x86, 32-bit) and compares it with a deliberately bad hash on 100,000 structured keys.
 
 ```python
 import random
@@ -182,10 +182,10 @@ murmur3   max bucket =    132  empty buckets =    0  chi-square =         1105
 
 What to notice:
 
-- The pure-Python MurmurHash3 matches the reference value `0x248bfa47` for `"hello"` with seed 0, and it also matched the C library on a set of test strings and seeds during preparation of this chapter.
+- The implementation matches the reference value `0x248bfa47` for `"hello"` (and matched the C library on further test strings).
 - MurmurHash3's fullest bucket (132) is close to the predicted ~129, and its chi-square (1,105) is within two standard deviations of 1,023: statistically indistinguishable from uniform.
-- The additive hash leaves 888 of 1,024 buckets empty. The sum of the bytes of `user:NNNNN` can take fewer than 150 distinct values (between 553 and 790), so all 100,000 keys crowd into 136 buckets and one bucket holds 5,520 keys. Structured keys expose weak hashes immediately.
-- `hash mod B` is used here for clarity. With a power-of-two $B$, `mod` keeps only the low bits; that is safe only when the hash mixes well into its low bits, as MurmurHash3's finalizer does.
+- The additive hash leaves 888 buckets empty: the byte sums of `user:NNNNN` take fewer than 150 distinct values (553–790), so one bucket holds 5,520 keys.
+- With a power-of-two $B$, `mod` keeps only low bits, which is safe only for hashes that mix well into them.
 
 ### 17.3.4 Hash flooding and keyed hashes
 
@@ -198,14 +198,14 @@ A chained hash table does $O(1)$ work per operation *on average*. If every key l
 2. All keys colliding: about $n^2/2 = (10^5)^2/2 = 5 \times 10^9$ key comparisons.
 3. At an optimistic $10^9$ comparisons per second per core, that is 5 s of CPU for one request; at a more realistic $10^8$ per second for string comparisons in an interpreted runtime, 50 s.
 
-*Interpretation.* The attacker's cost is one request of a few megabytes; yours is seconds of CPU. A few such requests per second saturate a server. *Engineering implication.* Any hash table filled from untrusted input needs either a secret-keyed hash or a bounded worst case.
+*Interpretation.* One request of a few megabytes costs you seconds of CPU. *Engineering implication.* Any hash table filled from untrusted input needs a secret-keyed hash or a bounded worst case.
 :::
 
 Three defenses are used in practice:
 
-1. **Keyed hashes.** SipHash, by Aumasson and Bernstein, is a fast pseudorandom function keyed with a 128-bit secret chosen randomly at process start [Aumasson & Bernstein 2012]. Without the key, an attacker cannot predict which keys collide. Python adopted SipHash for `str` and `bytes` hashing in version 3.4 [PEP 456], and Rust's standard `HashMap` uses a SipHash variant by default. A side effect: Python's built-in `hash()` of a string differs between processes, so never use it for partitioning or persistence.
-2. **Bounded worst case.** Since Java 8, `HashMap` converts a bucket's long linked list into a balanced tree, so a flooded bucket costs $O(\log n)$ per operation rather than $O(n)$ [JEP 180].
-3. **Input limits.** Cap the number of parameters, JSON keys or headers per request. This is cheap and worth doing even with the first two defenses.
+1. **Keyed hashes.** SipHash is a fast pseudorandom function keyed with a 128-bit secret chosen at process start, so attackers cannot predict collisions [Aumasson & Bernstein 2012]. Python uses it for `str` and `bytes` since 3.4 [PEP 456]; Rust's `HashMap` uses a SipHash variant. Consequence: Python's `hash()` differs between processes, so never use it for partitioning or persistence.
+2. **Bounded worst case.** Since Java 8, `HashMap` turns long bucket chains into balanced trees, $O(\log n)$ per operation [JEP 180].
+3. **Input limits.** Cap parameters, JSON keys and headers per request.
 
 **Figure 17.1 — Uniform hashing versus hash flooding.**
 
@@ -228,11 +228,11 @@ flowchart LR
   B5 --> CPU{{CPU cost grows as n squared}}
 ```
 
-**Reading the diagram.** The upper group shows three structured keys entering MurmurHash3. Because of avalanche, the nearly identical keys land in unrelated buckets (17, 803, 412), so each bucket holds about $n/B$ keys and operations stay constant-time. The lower group shows an attacker who knows an unkeyed hash function and its seed and has precomputed keys that all map to bucket 5. Every insert walks the whole chain, so total work grows quadratically (the hexagon marks the external effect: CPU exhaustion). All arrows are synchronous in-process calls; the buckets are in-memory storage. The failure point is the hash function itself, not capacity: adding servers does not help, because each server is flooded by the requests it receives. The fix is to make the bucket choice unpredictable (a secret SipHash key per process) or to bound the cost per bucket (tree bins).
+**Reading the diagram.** Upper group: three structured keys pass through MurmurHash3 and, thanks to avalanche, land in unrelated buckets, so operations stay constant-time. Lower group: an attacker who knows an unkeyed hash precomputes keys that all map to bucket 5; every insert walks the whole chain and total work grows quadratically (the hexagon is the external effect, CPU exhaustion). Arrows are synchronous in-process calls; buckets are in-memory storage. The failure point is the hash function, not capacity, so adding servers does not help; the fixes are an unpredictable bucket choice (secret SipHash key) or bounded per-bucket cost (tree bins).
 
 ### 17.3.5 From hashes to partitions
 
-Hashing a key and taking `mod N` spreads keys evenly over $N$ nodes. But when $N$ changes, almost every key moves: a key stays put only when `h mod N` equals `h mod (N+1)`, which is true for about $1/(N+1)$ of keys. **Consistent hashing** places nodes and keys on a ring so that adding or removing a node moves only about $1/N$ of the keys, and virtual nodes smooth out the load. Jump consistent hash and rendezvous (highest-random-weight) hashing achieve the same goal with different trade-offs. Chapter 14 owns this topic: see §14.8 for the ring, virtual nodes, load-imbalance analysis and the alternatives, and §3.3.2 for a guided walk-through. For this chapter, remember one consequence: consistent hashing assumes the underlying hash is uniform. A poor hash defeats it.
+With `hash mod N`, changing $N$ moves almost every key (a key stays only if `h mod N` equals `h mod (N+1)`, about $1/(N+1)$ of keys). **Consistent hashing** places nodes and keys on a ring so a membership change moves only about $1/N$ of keys; jump and rendezvous hashing are alternatives. Chapter 14 owns this topic (§14.8; walk-through in §3.3.2). It assumes a uniform underlying hash.
 
 #### Failure scenarios
 
@@ -252,7 +252,7 @@ Hashing a key and taking `mod N` spreads keys evenly over $N$ nodes. But when $N
 :::
 
 ::: mistake
-**"Cryptographic hashes are always better."** They are slower and solve a different problem. SHA-256 cannot be "more uniform" than MurmurHash3 on ordinary keys in any way that matters for bucketing. Use cryptographic hashes where an adversary benefits from a collision (integrity, content addressing), keyed hashes where an adversary chooses keys for your table, and fast hashes everywhere else.
+**"Cryptographic hashes are always better."** They are slower and solve a different problem; for bucketing ordinary keys they are no more uniform than MurmurHash3. Use them where an adversary benefits from a collision.
 :::
 
 ## 17.4 Bloom filters and cuckoo filters
@@ -265,31 +265,29 @@ Hashing a key and taking `mod N` spreads keys evenly over $N$ nodes. But when $N
 
 #### First-principles explanation
 
-Picture a nightclub bouncer with a terrible memory but a good stamp pad. Instead of remembering faces, each guest who enters gets three stamps, on positions of a wall chart chosen by the letters of their name. Later someone asks, "Was Alice here?" The bouncer checks Alice's three positions. If any position is unstamped, Alice was certainly never here, because her entry would have stamped all three. If all three are stamped, she was *probably* here, but those stamps might have been made by other guests whose positions happened to overlap hers. The wall chart is tiny compared with a guest list, it never forgets anyone who entered, and occasionally it vouches for a stranger.
+Picture a bouncer with a terrible memory but a stamp pad. Each guest who enters stamps three positions on a wall chart, chosen by the letters of their name. Asked "Was Alice here?", the bouncer checks Alice's three positions. If any is blank, she was certainly never here. If all are stamped, she was *probably* here, though other guests' stamps might happen to cover her positions. The chart is tiny, never forgets an entrant, and occasionally vouches for a stranger.
 
-That asymmetry is the whole point. A Bloom filter is useful wherever "definitely not" lets you skip something expensive and an occasional "maybe" costs only a little wasted work.
+A Bloom filter is useful wherever "definitely not" lets you skip something expensive and an occasional "maybe" costs only a little wasted work.
 
 #### Why does this exist?
 
-Bloom's 1970 paper was about a hyphenation program whose dictionary of exceptions did not fit in memory; a small in-memory filter let the program skip the disk for most words [Bloom 1970]. The same shape of problem appears everywhere at scale:
+Bloom's 1970 paper used a small in-memory filter so a hyphenation program could skip a disk-resident dictionary for most words [Bloom 1970]. The same shape recurs at scale:
 
-- An LSM-tree database (§13.8) stores data in many immutable files. A read for a key that does not exist would otherwise touch every file. A Bloom filter per file, held in memory, says "not in this file" for most of them.
-- A web crawler must avoid fetching the same URL twice among billions. An exact set of URLs would take hundreds of gigabytes.
-- A CDN should not write an object to disk the first time it is requested, because most objects are never requested again.
-- A sign-up form must tell users quickly whether a username is taken without a database round trip for every keystroke.
+- An LSM-tree database (§13.8) keeps many immutable files; a per-file filter in memory says "not in this file" for most of them.
+- A crawler must not refetch any of billions of URLs; an exact URL set would take hundreds of gigabytes.
+- A CDN should not write an object to disk on its first request, because most objects are never requested again.
 
-In each case, the exact structure (a hash set, an index lookup) costs memory or I/O proportional to the data, and the filter turns most of those costs into a memory lookup of a few bits.
+In each case the filter turns most memory- or I/O-heavy exact lookups into a check of a few bits.
 
 ### 17.4.2 How it works internally
 
 1. **Create** an array of $m$ bits, all 0, and choose $k$ independent hash functions $h_1, \ldots, h_k$, each mapping an item to a position in $[0, m)$.
 2. **Insert** item $x$: compute $h_1(x), \ldots, h_k(x)$ and set those $k$ bits to 1. Bits already set stay set.
 3. **Query** item $y$: compute the same $k$ positions. If any bit is 0, answer "definitely not present". If all are 1, answer "probably present".
-4. **Never delete** by clearing bits. A bit may have been set by several items, so clearing it for one item would make the filter forget others (a false negative). §17.4.6 shows the variants that support deletion.
+4. **Never delete** by clearing bits: a bit may belong to several items, so clearing it creates false negatives (§17.4.6 covers deletable variants).
 
-In practice you do not need $k$ unrelated hash functions. Kirsch and Mitzenmacher proved that two hashes $h_a$ and $h_b$ combined as $g_i(x) = h_a(x) + i \cdot h_b(x) \bmod m$ for $i = 0, \ldots, k-1$ give the same asymptotic false-positive rate [Kirsch & Mitzenmacher 2006]. One 128-bit hash split into two 64-bit halves is therefore enough.
+You do not need $k$ unrelated hash functions: two hashes combined as $g_i(x) = h_a(x) + i \cdot h_b(x) \bmod m$ give the same asymptotic false-positive rate [Kirsch & Mitzenmacher 2006], so one 128-bit hash split in two suffices. Filters with identical $m$, $k$ and hashes merge by bitwise OR into a filter of the **union**.
 
-Two filters built with the same $m$, $k$ and hash functions can be combined: the bitwise OR is a filter for the **union** of the two sets. The bitwise AND approximates the intersection but has a higher false-positive rate than a filter built directly from the intersection.
 
 #### Architecture diagram
 
@@ -309,7 +307,7 @@ flowchart LR
   MAYBE --> DB[(Authoritative store)]
 ```
 
-**Reading the diagram.** Inserting `alice` hashes her three times and sets bits 2, 7 and 13. Some earlier insert (not shown) set bits 5 and 9. A query for `bob` hashes to 5, 9 and 13. All three are 1, so the filter answers "probably present", even though `bob` was never inserted: bits 5 and 9 came from another item and bit 13 from `alice`. That is a false positive, and the only consequence is an unnecessary check against the authoritative store (the cylinder on the right). A query for `carol` hits bit 1, which is 0, so the filter answers "definitely absent" and the expensive lookup is skipped. Every arrow is a synchronous in-memory operation costing nanoseconds; the only I/O is the confirmation step. The filter is a cache-like accelerator in front of storage: if it is lost, correctness is unaffected and it can be rebuilt by re-inserting every item; if it is undersized, the "probably" answers become frequent and the savings vanish (§17.4.3). To scale, you partition the filter alongside the data it summarizes, one filter per file or per shard.
+**Reading the diagram.** Inserting `alice` sets bits 2, 7 and 13; an earlier insert set 5 and 9. A query for `bob` hits 5, 9 and 13, all set, so the filter says "probably present" although `bob` was never inserted: a false positive whose only cost is an unnecessary check against the authoritative store. A query for `carol` hits bit 1, which is 0, so the expensive lookup is skipped. All arrows are synchronous in-memory operations costing nanoseconds; the only I/O is the confirmation. Losing the filter never harms correctness (rebuild it from the data); undersizing it makes "maybe" frequent and erases the savings. Scale it by partitioning alongside the data it summarizes, one filter per file or shard.
 
 ### 17.4.3 Mathematical foundations
 
@@ -336,10 +334,10 @@ $$p \approx \left(1 - e^{-kn/m}\right)^{k}$$
 2. Fraction of bits still 0: $e^{-0.7} = 0.4966$. So $1 - 0.4966 = 0.5034$ of the bits are 1, which is about half.
 3. False-positive rate: $0.5034^7$. Take logs: $7 \times \ln 0.5034 = 7 \times (-0.6864) = -4.805$; $e^{-4.805} = 0.0082$.
 
-*Interpretation.* About 0.82% of queries for absent items return "maybe": 82 in 10,000. *Engineering implication.* If each "maybe" costs a 10 ms disk read and absent-key queries arrive at 10,000 per second, the filter turns 10,000 disk reads per second into 82, at a memory cost of 1.25 MB.
+*Interpretation.* 82 in 10,000 absent-item queries return "maybe". *Engineering implication.* At 10,000 absent-key queries per second, each "maybe" costing a 10 ms disk read, the filter turns 10,000 disk reads per second into 82 for 1.25 MB of memory.
 :::
 
-The number of hash functions involves a trade-off. More hashes check more bits per query, which lowers $p$, but also set more bits per insert, which fills the array and raises $p$. Minimizing $p$ over $k$ gives a clean answer.
+More hashes check more bits per query (lowering $p$) but set more bits per insert (raising it). Minimizing $p$ over $k$ gives:
 
 ::: formula
 **Optimal number of hash functions**
@@ -356,10 +354,10 @@ $$k^{*} = \frac{m}{n} \ln 2 \approx 0.693 \, \frac{m}{n}, \qquad p\big|_{k = k^*
 ::: example
 **Worked example — choosing k.** With $m/n = 10$ bits per element: $k^* = 10 \times 0.693 = 6.93$, so use $k = 7$. At the optimum, exactly half of the bits are 1 ($e^{-k^* n/m} = e^{-\ln 2} = 1/2$) and $p = 0.5^{6.93} = 0.0082$, matching the previous example.
 
-*Interpretation.* The optimum is the point where the array is half full. A filter whose bits are mostly 1 is overloaded; one whose bits are mostly 0 is wasting memory or using too few hashes. *Engineering implication.* The fraction of 1 bits is a cheap health metric. Export it, and alert when it passes about 0.5 for a filter sized at the optimum.
+*Interpretation.* At the optimum the array is half full. *Engineering implication.* The fraction of 1 bits is a cheap health metric: alert when it passes about 0.5.
 :::
 
-In practice you start from the false-positive rate you can tolerate and ask how much memory you need. Substituting $k^*$ into the formula and solving for $m$ gives the sizing rule.
+Usually you start from a tolerable $p$ and solve for memory:
 
 ::: formula
 **Bits per element for a target false-positive rate**
@@ -383,7 +381,7 @@ $$\frac{m}{n} = \frac{-\ln p}{(\ln 2)^2} \approx 1.44 \log_2 \frac{1}{p}, \qquad
 4. For 0.1%: $-\ln 0.001 / 0.4805 = 6.908 / 0.4805 = 14.38$ bits per element, 1.8 GB, $k = 10$.
 5. Compare with an exact set: 1 billion usernames averaging 12 bytes, plus about 40 bytes of hash-table and object overhead each, is roughly $52 \times 10^9$ bytes = 52 GB.
 
-*Interpretation.* Each 10× reduction in $p$ costs a fixed $\ln 10 / (\ln 2)^2 = 4.79$ extra bits per element, independent of how large the items are. *Engineering implication.* The filter fits in one server's memory (or is replicated to every API node), while the exact set would need a cluster. A "taken" answer is confirmed against the database before it is shown to the user; a "free" answer is always correct, and those are exactly the answers that need to be fast while the user types.
+*Interpretation.* Each 10× reduction in $p$ costs a fixed $\ln 10/(\ln 2)^2 = 4.79$ extra bits per element, whatever the item size. *Engineering implication.* The filter fits in one server's memory (or on every API node), where the exact set needs a cluster. "Taken" answers are confirmed against the database; "free" answers are always correct, and those are the ones that must be fast while the user types.
 :::
 
 **Table 17.3 — Bloom filter sizing at the optimal k.**
@@ -396,7 +394,7 @@ $$\frac{m}{n} = \frac{-\ln p}{(\ln 2)^2} \approx 1.44 \log_2 \frac{1}{p}, \qquad
 | 0.01% | 19.17 | 13 | 2.40 GB |
 | 0.001% | 23.96 | 17 | 3.00 GB |
 
-The approximation treats bit positions as independent, which they are not quite. Bose and colleagues showed the classic formula slightly underestimates the true rate for small filters [Bose et al. 2008]. For filters of millions of bits the difference is negligible, as the next measurement shows.
+The approximation assumes independent bit positions; it slightly underestimates the true rate for small filters [Bose et al. 2008], negligibly at millions of bits.
 
 ### 17.4.4 Implementation and measured validation
 
@@ -461,10 +459,9 @@ overfilled 3x: predicted 0.4360, measured 0.4376
 What to notice:
 
 - The sizing rule reproduces Table 17.3: 9.59 bits and $k = 7$ for 1%, 14.38 bits and $k = 10$ for 0.1%.
-- Measured rates match predictions to within sampling noise. With $10^6$ probes and $p = 0.001$, you expect $1{,}000 \pm 32$ false positives; 980 is well inside that. (An earlier run with only 200,000 probes measured 0.00117, 2.4 standard deviations high. Measure enough probes to resolve the rate you care about.)
+- Measured rates match predictions within sampling noise: with $10^6$ probes at $p = 0.001$ you expect $1{,}000 \pm 32$ false positives, and 980 is inside that. (A 200,000-probe run measured 0.00117, 2.4 standard deviations high; use enough probes to resolve the rate.)
 - The `assert` confirms the defining guarantee: every inserted item is found.
-- Overfilling is the most common real failure. A filter sized for 100,000 items holding 300,000 has a 44% false-positive rate, which makes it nearly useless. Size for the *maximum* expected $n$, or rebuild when $n$ grows.
-- `h2` is forced odd. Otherwise $h_2 = 0$ would make all $k$ positions identical.
+- Overfilling is the most common real failure: 3× the design load gives 44% false positives. Size for peak $n$ or rebuild as $n$ grows.
 
 ### 17.4.5 Bloom filters in system architecture
 
@@ -487,27 +484,26 @@ sequenceDiagram
   E-->>C: value
 ```
 
-**Reading the diagram.** A client asks the storage engine for `user:42`. The engine first checks the in-memory memtable (§13.8). On a miss it would normally have to search every SSTable on disk, newest first. Instead it tests the key against each SSTable's Bloom filter, which lives in RAM and costs well under a microsecond per test. Nine filters answer "definitely absent", so those files are never touched. Only SSTable 7 answers "maybe", and the engine reads one index block and one data block from it. All calls are synchronous; the storage boundary is between the RAM-resident filters and memtable and the disk-resident SSTables. If the key did not exist at all, the expected number of wasted disk reads with ten files at $p = 1\%$ is $10 \times 0.01 = 0.1$ instead of 10. Failure points: filters that are evicted from memory under pressure turn every lookup into disk reads (watch filter memory and block-cache hit ratio); filters cannot help range scans, because a range does not hash to bit positions (prefix Bloom filters help only for scans within a known key prefix). Scaling is automatic, since each new SSTable carries its own filter, built once when the file is written. Chapter 13 (§13.10) covers the storage-engine details; this chapter owns the filter's mathematics.
+**Reading the diagram.** After a memtable miss (§13.8), the engine would otherwise search every SSTable on disk. Instead it tests the key against each SSTable's RAM-resident filter (well under a microsecond each); nine say "absent" and are never touched, and only SSTable 7 costs disk reads. All calls are synchronous; the storage boundary separates RAM (memtable, filters) from disk (SSTables). For a missing key, ten files at $p = 1\%$ waste $10 \times 0.01 = 0.1$ reads instead of 10. Failure points: filters evicted from memory turn lookups back into disk reads, and range scans cannot use point filters (prefix Bloom filters help within a known prefix). Scaling is automatic: each new SSTable carries its own filter. §13.10 covers the storage-engine side.
 
 ::: industry
-**Google Bigtable and Apache Cassandra.** Bigtable lets clients enable Bloom filters per locality group so that reads for rows or columns that do not exist do not touch the SSTables on disk; the paper notes that most lookups for non-existent data then never touch disk [Chang et al. 2006]. Cassandra keeps a Bloom filter per SSTable and exposes its false-positive target as the table option `bloom_filter_fp_chance`, trading memory for fewer disk reads per table [Apache Cassandra Docs].
+**Google Bigtable and Apache Cassandra.** Bigtable lets clients enable Bloom filters per locality group so that most lookups for non-existent rows or columns never touch disk [Chang et al. 2006]. Cassandra keeps a Bloom filter per SSTable, tuned by the table option `bloom_filter_fp_chance` [Apache Cassandra Docs].
 *Evidence: Primary* — [Chang et al. 2006; Apache Cassandra Docs]
 :::
 
 ::: industry
-**Akamai's "one-hit wonders".** Akamai engineers reported that a large share of the objects requested from their CDN servers are requested only once, so writing every object to disk on its first request wastes disk bandwidth and evicts useful content. Their servers use a Bloom filter to record objects seen once and cache an object only on its second request within a period [Maggs & Sitaraman 2015]. The filter costs a few bits per URL and turns "cache on first request" into "cache on second request" without storing the URLs themselves.
+**Akamai's "one-hit wonders".** Akamai engineers reported that a large share of objects requested from their CDN servers are requested only once, so caching on first request wastes disk bandwidth and evicts useful content. Their servers record first requests in a Bloom filter and cache an object only on its second request [Maggs & Sitaraman 2015].
 *Evidence: Primary* — [Maggs & Sitaraman 2015]
 :::
 
 ### 17.4.6 Counting Bloom filters
 
-A standard Bloom filter cannot delete. A **counting Bloom filter** replaces each bit with a small counter, typically 4 bits [Fan et al. 2000]. Insert increments the $k$ counters, delete decrements them, and a query checks that all $k$ counters are non-zero. The false-positive rate is the same as for a bit filter with the same $m$ and $k$, because "counter > 0" plays the role of "bit = 1". The costs are memory (4× a plain filter for 4-bit counters) and two failure modes: a counter can overflow if more than 15 items map to it (with optimal $k$ the probability is astronomically small, which is why 4 bits suffice [Fan et al. 2000; Broder & Mitzenmacher 2004]), and deleting an item that was never inserted decrements counters that belong to other items, creating false negatives. Only delete items you know are present.
+A **counting Bloom filter** replaces each bit with a small counter, typically 4 bits [Fan et al. 2000]. Insert increments the $k$ counters, delete decrements them, and a query checks that all are non-zero, so the false-positive rate equals that of a bit filter with the same $m$ and $k$. Costs: 4× the memory; counter overflow, which is astronomically unlikely with optimal $k$ and 4-bit counters [Fan et al. 2000; Broder & Mitzenmacher 2004]; and false negatives if you delete an item that was never inserted. Fan and colleagues introduced it for the **Summary Cache** protocol, in which web proxies exchanged compact, constantly changing summaries of their cache contents.
 
-Fan and colleagues introduced counting filters for the **Summary Cache** protocol, in which cooperating web proxies exchanged compact summaries of their cache contents instead of querying one another on every miss [Fan et al. 2000]. Proxies insert and evict objects constantly, so the summary had to support deletion.
 
 ### 17.4.7 Cuckoo filters
 
-A **cuckoo filter** supports deletion with less memory than a counting Bloom filter and, for low false-positive rates, less memory than a plain Bloom filter [Fan et al. 2014].
+A **cuckoo filter** supports deletion with less memory than a counting Bloom filter and, at low false-positive rates, less than a plain Bloom filter [Fan et al. 2014].
 
 ::: definition
 **Definition — Cuckoo filter.** A hash table of $b$-slot buckets that stores a short **fingerprint** of each item (an $f$-bit hash) in one of two candidate buckets. Membership checks two buckets for a matching fingerprint; deletion removes one copy of the fingerprint.
@@ -538,11 +534,11 @@ flowchart LR
   K2 -.->|after 500 kicks| FULL{{Table full: resize or reject}}
 ```
 
-**Reading the diagram.** Item `x` produces a fingerprint and two candidate buckets. If either has room the insert ends immediately, which is the common case below about 90% load. When both are full, the filter displaces a resident fingerprint `fp_y` from bucket 40 and relocates it to its own alternate bucket, computed from `fp_y` alone. The loop repeats until a free slot appears. All steps are synchronous in-memory operations; insert latency is usually a few bucket accesses but grows sharply as the table approaches full, which is the main failure point. The dotted edge marks the rare outcome where relocation gives up: the filter has reached capacity and must be rebuilt larger (cuckoo filters cannot grow in place, because the original items are not stored). Lookups and deletes always touch exactly two buckets, which is why lookups are fast and cache-friendly.
+**Reading the diagram.** If either candidate bucket has room, the insert ends at once, the common case below about 90% load. Otherwise the filter displaces `fp_y` and moves it to its alternate bucket, computed from `fp_y` alone, repeating until a slot frees up. All steps are synchronous memory operations. Insert latency climbs as the table fills, and the dotted edge marks the failure point: after the kick limit the filter is full and must be rebuilt larger, since original items are not stored. Lookups and deletes always touch exactly two buckets.
 
 #### Mathematical foundations
 
-A lookup compares the query's fingerprint against up to $2b$ stored fingerprints, and each matches by chance with probability $2^{-f}$.
+A lookup compares against up to $2b$ stored fingerprints, each matching by chance with probability $2^{-f}$.
 
 ::: formula
 **Cuckoo filter false-positive bound and space cost**
@@ -564,7 +560,7 @@ $$\varepsilon \le \frac{2b}{2^{f}}, \qquad f \ge \log_2 \frac{2b}{\varepsilon}, 
 2. At $\varepsilon = 0.1\%$: $\log_2 1000 = 9.97$; cuckoo needs $(9.97 + 3)/0.95 = 13.7$ bits. Bloom needs 14.38.
 3. Crossover: cuckoo wins when $1.44x > (x + 3)/0.95$, where $x = \log_2(1/\varepsilon)$, i.e. $1.37x > x + 3$, so $x > 8.1$ and $\varepsilon < 0.4\%$. Fan and colleagues' **semi-sorting** optimization saves one bit per item, which moves the crossover to about 3% [Fan et al. 2014].
 
-*Interpretation.* Bloom filters pay 44% overhead over the information-theoretic minimum $\log_2(1/\varepsilon)$; cuckoo filters pay a fixed 2–3 bits plus the load-factor loss. *Engineering implication.* For low false-positive rates, or whenever you need deletion, a cuckoo filter is the better default; for high rates (≥ 3%) and append-only sets, a Bloom filter is smaller and simpler, and it degrades gracefully when overfilled where a cuckoo filter refuses inserts.
+*Interpretation.* Bloom filters pay 44% over the minimum $\log_2(1/\varepsilon)$; cuckoo filters pay 2–3 bits plus load-factor loss. *Engineering implication.* For low rates or deletion, prefer a cuckoo filter; for rates of 3% or more on append-only sets, a Bloom filter is smaller, simpler, and degrades gracefully when overfilled instead of refusing inserts.
 :::
 
 #### Code example
@@ -673,10 +669,10 @@ after deleting half: count = 63135, all survivors found = True
 
 What to notice:
 
-- With $b = 4$ the table filled to 96.3% before the first insert failed, consistent with the ~95% load factor reported by Fan and colleagues.
-- The measured false-positive rate (2.98%) sits just under the bound $2b/2^f = 8/256 = 3.1\%$; the bound assumes all $2b$ slots are full, and here 96% are.
-- Deletion works: after removing every second item, every survivor is still found. Deleting an item that was never inserted could remove another item's matching fingerprint, so production code must only delete items known to be present.
-- The `victim` slot mirrors the reference implementation: when relocation gives up, the last displaced fingerprint is kept aside so that no previously inserted item becomes a false negative.
+- With $b = 4$ the table reached 96.3% load before the first failure, consistent with Fan and colleagues' ~95%.
+- The measured rate (2.98%) sits under the bound $8/256 = 3.1\%$, which assumes every slot is full.
+- Deletion works, but deleting a never-inserted item could remove another item's matching fingerprint; delete only known members.
+- The `victim` slot, as in the reference implementation, keeps the last displaced fingerprint so a failed insert never causes a false negative.
 
 #### Alternatives and trade-offs
 
@@ -692,7 +688,7 @@ What to notice:
 | Union of two filters | Bitwise OR | Add counters | Not directly | Not directly |
 | Choose when | Append-only sets, simplicity, mergeability | Deletion with modest memory pressure | Deletion; low $p$ | Immutable sets, e.g. per-file filters |
 
-XOR filters [Graf & Lemire 2020] and the ribbon filters available in RocksDB are built once for a known set and cannot be modified, which suits per-file filters in LSM storage engines. A **quotient filter** is another fingerprint-based design that supports deletion and merging and keeps entries in sorted order; it is less common in practice.
+XOR filters [Graf & Lemire 2020] and RocksDB's ribbon filters are built once for a known set, which suits immutable per-file filters. Quotient filters are another fingerprint design supporting deletes and merges.
 
 #### Failure scenarios
 
@@ -709,7 +705,7 @@ XOR filters [Graf & Lemire 2020] and the ribbon filters available in RocksDB are
 #### Common misconceptions
 
 ::: mistake
-**"A Bloom filter tells me an item is in the set."** It tells you an item is *probably* in the set, or *definitely not* in it. The negative answer is the useful one. Any design that acts on a positive answer without confirmation (for example, rejecting a username as taken without checking) must accept being wrong $p$ of the time.
+**"A Bloom filter tells me an item is in the set."** Only *probably*; the useful answer is the negative one. Acting on a positive without confirmation means being wrong $p$ of the time.
 :::
 
 ::: mistake
@@ -726,22 +722,22 @@ XOR filters [Graf & Lemire 2020] and the ribbon filters available in RocksDB are
 
 #### First-principles explanation
 
-Suppose a friend flips a coin repeatedly and tells you only the longest run of heads that started a sequence: "Once I got five heads in a row before the first tail." A run of five heads has probability $1/32$, so your friend probably made about 32 attempts. A run of 20 heads suggests about a million attempts. You learned the number of attempts from one small number, the longest run.
+A friend flips coins in sessions and reports only the longest opening run of heads. Five heads in a row has probability $1/32$, so they probably ran about 32 sessions; twenty heads suggests about a million.
 
-Hash each item to a uniform bit string and read its leading zeros as coin flips. The probability that a hash starts with at least $r - 1$ zeros, so that its first 1-bit is at position $r$ or later, is $2^{-(r-1)}$. If the largest such position over all items is $R$, there were probably about $2^R$ *distinct* items. Duplicates do not matter: the same item always hashes to the same bits, so seeing it twice cannot raise the maximum. One maximum is very noisy (one lucky hash doubles the estimate), so HLL keeps many independent maxima and averages them.
+Read each item's hash as coin flips. The chance that its first 1-bit is at position $r$ or later is $2^{-(r-1)}$, so if the largest such position over all items is $R$, there were about $2^R$ *distinct* items; duplicates hash identically and cannot raise the maximum. One maximum is very noisy, so HLL keeps many and averages them.
 
 #### Why does this exist?
 
-Counting distinct items exactly needs memory proportional to the number of distinct items: a set of 1 billion 8-byte user IDs is at least 8 GB, and you may want one count per page, per day, per country. Analytics systems ask "how many unique users?" millions of times per day, and they need to combine counts across servers and time windows. A sum of per-server distinct counts double-counts users seen by two servers; HLL sketches can be merged without double counting.
+Exact distinct counting needs memory proportional to the distinct items: 1 billion 8-byte user IDs is at least 8 GB, per page, per day, per country. Summing per-server distinct counts double-counts users seen by two servers; HLL sketches merge without double counting.
 
 #### How it works internally
 
 1. Choose precision $p$; allocate $m = 2^p$ registers, all 0.
 2. For each item, compute a 64-bit hash. The first $p$ bits choose register $j$. In the remaining $64 - p$ bits, find $\rho$, the position of the leftmost 1-bit (1 if the first bit is 1).
 3. Set $M[j] = \max(M[j], \rho)$.
-4. To estimate, combine the registers with a **harmonic mean**, which damps the effect of a few unusually large registers, and multiply by a bias-correction constant.
+4. Estimate with a bias-corrected **harmonic mean** of $2^{M[j]}$, which damps a few unusually large registers.
 5. For small cardinalities, when many registers are still 0, switch to **linear counting**: $m \ln(m/V)$, where $V$ is the number of zero registers.
-6. To **merge** sketches from several servers, take the register-wise maximum. The result is exactly the sketch that one server would have built from the combined stream.
+6. **Merge** sketches by register-wise maximum, which equals the sketch of the combined stream.
 
 **Figure 17.5 — The HyperLogLog update and estimate path.**
 
@@ -759,7 +755,7 @@ flowchart LR
   EST --> OUT([Estimated distinct count])
 ```
 
-**Reading the diagram.** Each item is hashed once. The leading $p$ bits pick one of $m$ registers; the position of the first 1-bit among the remaining bits is that item's "longest run" observation. The register keeps only the maximum it has seen, so memory never grows. Updates are synchronous, constant-time, in-memory operations. The dotted edge shows the asynchronous merge path: sketches built on other servers or for other hours are combined with a register-wise maximum, typically in a batch or query layer, and the merged sketch answers "distinct users across all servers" with the same accuracy as one sketch. The estimate is computed on demand from the registers. Failure points: a poor hash breaks the coin-flip assumption and biases every estimate; mixing sketches built with different hash functions or precisions produces nonsense. Scaling is by sharding the stream freely and merging later, which is the property that makes HLL valuable in distributed analytics.
+**Reading the diagram.** Each item is hashed once; the leading $p$ bits pick a register and the first-1-bit position of the rest is the observation, kept only if it exceeds the register's maximum, so memory never grows. Updates are synchronous constant-time memory operations. The dotted edge is the asynchronous merge path: sketches from other servers or hours combine by register-wise max in a batch or query layer, with the same accuracy as one sketch. Failure points: a poor hash breaks the coin-flip assumption, and merging sketches with different hashes or precisions gives nonsense. Scale by sharding the stream freely and merging later.
 
 #### Mathematical foundations
 
@@ -786,12 +782,12 @@ $$E = \alpha_m \, m^2 \left( \sum_{j=1}^{m} 2^{-M[j]} \right)^{-1}, \qquad \alph
 3. Memory: $16{,}384 \times 6 = 98{,}304$ bits $= 12{,}288$ bytes $= 12$ KiB.
 4. For 1 billion distinct users, one standard error is $\pm 8.1$ million, and about 95% of estimates fall within two standard errors, $\pm 16.3$ million.
 5. An exact set of 1 billion 8-byte IDs needs at least 8 GB, about 650,000 times more memory.
-6. Daily uniques for each of 1 million pages: $10^6 \times 12$ KiB ≈ 12.3 GB in dense form. Most pages have few visitors, and a **sparse representation** stores only non-zero registers for small sketches, so the real total is far smaller.
+6. Daily uniques for 1 million pages: about 12.3 GB dense, far less with the **sparse representation** most small sketches use.
 
-*Interpretation.* Accuracy depends only on $m$. Quadrupling memory halves the error: $p = 16$ (48 KiB) gives 0.41%. *Engineering implication.* For dashboards, 0.81% is invisible; for billing or anything a customer can dispute, use exact counts.
+*Interpretation.* Accuracy depends only on $m$; quadrupling memory halves the error ($p = 16$: 48 KiB, 0.41%). *Engineering implication.* 0.81% is invisible on dashboards; billing needs exact counts.
 :::
 
-Heule, Nunkesser and Hall at Google described **HyperLogLog++**, three changes that most production systems now use: a 64-bit hash, which removes the large-cardinality correction the original 32-bit version needed as hash collisions became likely; an empirically measured bias correction for cardinalities up to about $5m$, where the raw estimate is biased; and a sparse representation with higher precision for small sets [Heule et al. 2013].
+**HyperLogLog++** [Heule et al. 2013], used by most production systems, adds a 64-bit hash (removing the large-range correction of the 32-bit original), empirical bias correction below about $5m$, and a sparse, higher-precision representation for small sets.
 
 #### Code example
 
@@ -863,13 +859,13 @@ union estimate 248,111 (true 250,000)
 
 What to notice:
 
-- Each trial uses a different hash salt, which acts as an independent hash function, so the RMS error over trials estimates the standard error. With 50 trials, the measured RMS itself is uncertain by about ±10%. The $p = 12$ and $p = 14$ rows match the prediction; the $p = 10$ row is 18% high, and a separate 200-trial run at $n = 20{,}000$ measured 0.0330 against the predicted 0.0325.
+- Each trial uses a different salt (an independent hash), so the RMS error over trials estimates the standard error, itself uncertain by about ±10% with 50 trials. Rows $p = 12$ and 14 match; $p = 10$ is 18% high, and a 200-trial run at $n = 20{,}000$ measured 0.0330 against 0.0325.
 - The sketch for 100,000 distinct users is 12 KB whether the stream has 100,000 events or 100 billion.
 - The merged sketch estimates the two-day union at 248,111, an error of −0.76%, without double-counting the 50,000 users present on both days.
 - `salt` is a keyed BLAKE2b parameter. Every sketch that you intend to merge must use the same hash and salt.
 
 ::: industry
-**Redis `PFADD`, `PFCOUNT`, `PFMERGE`.** Redis implements HyperLogLog as a string value with 16,384 6-bit registers (12 KB) and a sparse encoding for small cardinalities; its documentation states a standard error of 0.81% [Redis Docs: HyperLogLog; Sanfilippo 2014]. A typical use is one key per page per day (`PFADD uniques:2026-10-30:/home u42`), merged with `PFMERGE` into weekly keys. Google BigQuery exposes HyperLogLog++ through its `HLL_COUNT` functions, so partial sketches can be stored in tables and merged later [Google Cloud Docs: BigQuery HLL functions].
+**Redis `PFADD`, `PFCOUNT`, `PFMERGE`.** Redis stores an HLL as a string of 16,384 6-bit registers (12 KB) with a sparse encoding for small sets, and documents a 0.81% standard error [Redis Docs: HyperLogLog; Sanfilippo 2014]. A typical pattern is one key per page per day, merged with `PFMERGE` into weekly keys. Google BigQuery exposes HyperLogLog++ through `HLL_COUNT` functions so partial sketches can be stored and merged later [Google Cloud Docs: BigQuery HLL functions].
 *Evidence: Primary* — [Redis Docs: HyperLogLog; Google Cloud Docs]
 :::
 
@@ -882,11 +878,11 @@ What to notice:
 | Small counts are biased | Raw estimator range below ~$5m$ | Systematic error in tests with known small sets | Use HLL++ bias correction or linear counting | Use a library that implements HLL++ |
 
 ::: mistake
-**"HLL counts events."** It counts *distinct* items. Adding the same user a million times leaves the sketch unchanged. If you want the number of events, use a counter; if you want per-item frequencies, use a Count-Min sketch (§17.6).
+**"HLL counts events."** It counts *distinct* items; adding a user a million times changes nothing. For per-item frequencies use Count-Min (§17.6).
 :::
 
 ::: mistake
-**"Intersections work like unions."** For two sets of 10 million users with 100,000 in common, each cardinality has a standard error of about 81,000 at $p = 14$, so the inclusion–exclusion estimate of the intersection has an error larger than the intersection itself.
+**"Intersections work like unions."** With two 10-million-user sets overlapping by 100,000, each count's standard error at $p = 14$ is about 81,000, so the inclusion–exclusion estimate's error exceeds the intersection itself.
 :::
 
 ## 17.6 Count-Min sketch and heavy hitters
@@ -899,11 +895,11 @@ What to notice:
 
 #### First-principles explanation
 
-Imagine counting votes with a few small tally sheets instead of one line per candidate. Each sheet has a few hundred boxes, and each candidate is assigned one box per sheet by a different rule. Boxes are shared, so any box may contain votes for several candidates: every box *overcounts* its candidates. But the candidates sharing a box differ from sheet to sheet, so a candidate's least-inflated box, the minimum across sheets, is close to the truth. Adding more boxes per sheet reduces how much each box is inflated; adding more sheets reduces the chance that *every* box is badly inflated.
+Imagine counting votes on a few small tally sheets, each assigning every candidate to one shared box by a different rule. Every box overcounts, but a candidate's box-mates differ between sheets, so the least-inflated box, the minimum, is close to the truth. More boxes per sheet reduce inflation; more sheets reduce the chance that every box is badly inflated.
 
 #### Why does this exist?
 
-You want per-item counts over a stream with millions of distinct keys: requests per client IP for abuse detection, plays per song, queries per search term. An exact hash map needs memory proportional to the number of distinct keys, and an attacker can create unbounded keys (random IPs, random query strings). The sketch has a fixed size chosen in advance, supports addition (two sketches with the same hashes merge by adding their arrays element-wise), and gives a guaranteed error bound.
+Per-item counts over millions of distinct keys (requests per IP, plays per song) need a hash map proportional to the key count, and attackers can create unbounded keys. The sketch has a fixed size, merges by adding arrays (same hashes) and carries a guaranteed bound.
 
 #### Architecture diagram
 
@@ -925,7 +921,7 @@ flowchart LR
   R3 --> MIN
 ```
 
-**Reading the diagram.** An update hashes the item once per row and increments exactly one counter in each row, so it costs $d$ memory writes regardless of how many distinct items exist. A query (dotted, because it is typically issued by a separate reader such as a dashboard or a rate limiter) reads the same $d$ counters and returns their minimum. Each counter is a storage cell shared by every item that hashes to it, which is why estimates only err upward. The rows are independent, so the structure is easy to partition: each stream partition keeps its own sketch with the same hash functions, and a merger adds the arrays. Failure points: counters that overflow (use 64-bit counters for long-lived sketches), sketches built with different hash seeds being merged, and the error bound growing with $N$, so a sketch that is never reset or decayed becomes less accurate over time.
+**Reading the diagram.** An update increments one counter per row, $d$ memory writes regardless of how many distinct items exist. A query (dotted, typically from a separate reader such as a rate limiter) reads the same $d$ counters and returns the minimum; counters are shared storage cells, so estimates only err upward. Partitions keep their own sketches with identical hashes and a merger adds the arrays. Failure points: counter overflow (use 64-bit counters), merging sketches with different seeds, and error growing with $N$ in a sketch that is never reset or decayed.
 
 #### Mathematical foundations
 
@@ -952,19 +948,19 @@ $$w = \left\lceil \frac{e}{\varepsilon} \right\rceil, \qquad d = \left\lceil \ln
 2. Depth: $d = \lceil \ln 100 \rceil = \lceil 4.605 \rceil = 5$.
 3. Counters: $2{,}719 \times 5 = 13{,}595$; with 4-byte counters, 54.4 KB.
 4. For a stream of $N = 10^6$ requests, each estimate is within $+1{,}000$ of the truth with probability 99%.
-5. Scale it up: a day of $N = 10^{10}$ requests gives an error bound of $10^7$. A URL with a true count of 50,000 is lost in that noise, while one with $10^8$ requests is estimated within 10%.
+5. A day of $N = 10^{10}$ requests gives a bound of $10^7$: a URL with 50,000 requests is lost in noise; one with $10^8$ is within 10%.
 
-*Interpretation.* The error is additive and proportional to the *whole stream*, not to the item. Count-Min is accurate for heavy items and useless for rare ones. *Engineering implication.* Use it for heavy hitters, rate limiting of abusive keys and frequency-based admission (as in TinyLFU caches, §20.9). Reset or decay the sketch per window so that $N$ stays bounded.
+*Interpretation.* The error is additive and proportional to the *whole stream*: accurate for heavy items, useless for rare ones. *Engineering implication.* Use it for heavy hitters, abusive-key rate limiting and frequency-based cache admission (TinyLFU, §20.9), and reset or decay it per window.
 :::
 
-A common refinement is **conservative update**: on each update, increment only those of the item's $d$ counters that equal the current minimum. It reduces overestimation substantially and keeps the no-underestimate guarantee, but sketches updated this way can no longer be merged by simple addition with exact equivalence to a single sketch.
+**Conservative update** increments only counters equal to the current minimum, reducing overestimation substantially while keeping the no-underestimate guarantee; such sketches no longer merge exactly by addition.
 
 ### 17.6.2 Heavy hitters and top-k
 
-**Heavy hitters** are items whose frequency exceeds a threshold, such as 0.1% of traffic; **top-*k*** asks for the $k$ most frequent items. Two approaches dominate.
+**Heavy hitters** exceed a frequency threshold (say 0.1% of traffic); **top-*k*** asks for the $k$ most frequent items.
 
-1. **Count-Min plus a min-heap.** On each update, query the sketch for the item's estimate. Keep a min-heap of the $k$ items with the largest estimates; if the new estimate exceeds the heap's minimum, replace that minimum. Memory is the sketch plus $k$ entries.
-2. **Space-Saving** [Metwally et al. 2005]. Keep exactly $k$ (item, count) counters. If the item has a counter, increment it. If there is a free counter, take it. Otherwise, evict the item with the smallest count $c_{\min}$ and give the newcomer count $c_{\min} + 1$: it inherits the evicted count as an upper bound on how often it might have appeared unseen.
+1. **Count-Min plus a min-heap.** After each update, if the item's estimate exceeds the heap minimum, replace that minimum. Memory: the sketch plus $k$ entries.
+2. **Space-Saving** [Metwally et al. 2005]. Keep $k$ (item, count) counters. Increment a monitored item; otherwise take a free counter, or evict the smallest count $c_{\min}$ and give the newcomer $c_{\min} + 1$, an upper bound on its unseen occurrences.
 
 ::: formula
 **Space-Saving guarantee**
@@ -980,7 +976,7 @@ $$c_x - f_x \le c_{\min} \le \frac{N}{k}, \qquad f_x > \frac{N}{k} \Rightarrow x
 :::
 
 ::: example
-**Worked example — 100 counters over 1 million events.** $N/k = 10^6/100 = 10{,}000$. Any URL with more than 10,000 requests (1% of traffic) is guaranteed to be among the 100 monitored items, and each reported count overestimates by at most 10,000. *Interpretation.* Accuracy is again relative to the whole stream, but memory is just $k$ entries. *Engineering implication.* To report a reliable top 10, monitor several times more counters than 10, so that items ranked 11–100 absorb the churn.
+**Worked example — 100 counters over 1 million events.** $N/k = 10^6/100 = 10{,}000$: every URL with over 10,000 requests (1% of traffic) is guaranteed monitored, and reported counts overestimate by at most 10,000. *Interpretation.* Error is relative to the stream; memory is $k$ entries. *Engineering implication.* For a reliable top 10, monitor several times more than 10 counters so ranks 11–100 absorb churn.
 :::
 
 **Figure 17.7 — A distributed top-k pipeline.**
@@ -998,7 +994,7 @@ flowchart LR
   API([Trending API]) -->|read| ST
 ```
 
-**Reading the diagram.** Click events enter a partitioned event log (Chapter 30). Each worker consumes some partitions and maintains a local Count-Min sketch and a heap of candidate heavy hitters. Every 10 seconds the workers asynchronously ship their sketches and candidate lists to an aggregator (dotted arrows). The aggregator adds the sketches, re-estimates every candidate against the merged sketch, and writes the global top 100 to a store that the trending API reads synchronously. A globally heavy item that is moderately frequent on every worker might miss each local top-*k*; sending more candidates per worker (for example top 1,000 to produce a global top 100), or partitioning the log by item key so that each item's events land on one worker, reduces that risk. Failure points: a slow worker delays the window (use event-time windows with a lateness bound, Chapter 31), and the aggregator is a single point of failure that should be restartable from the log. The aggregator does little work, so scaling is mainly adding workers and partitions.
+**Reading the diagram.** Workers consume partitions of the event log (Chapter 30), each keeping a local Count-Min sketch and candidate heap. Every 10 seconds they ship sketches and candidates asynchronously (dotted) to an aggregator, which adds the sketches, re-estimates candidates and writes the global top 100 to a store the API reads synchronously. An item moderately frequent everywhere can miss every local top-*k*; ship more candidates (top 1,000 for a global top 100) or partition the log by item key. Failure points: slow workers delay windows (event-time windows with lateness bounds, Chapter 31), and the aggregator must restart from the log. Scale by adding workers and partitions.
 
 #### Code example
 
@@ -1116,18 +1112,17 @@ Space-Saving top-3: [('/page/1', 134738), ('/page/2', 63178), ('/page/3', 40195)
 What to notice:
 
 - Width 2,719 and depth 5 reproduce the worked example. The `assert` confirms that no estimate is below the truth.
-- Only 1 of 64,589 items exceeded the $\varepsilon N = 1{,}000$ bound, far fewer than the 1% that $\delta$ permits; the bound is conservative. The mean overestimate is just 61.
-- Both heavy-hitter methods recover the true top 10 exactly on this skewed (Zipf) stream. Real traffic is usually skewed like this, which is why these methods work well in practice. On a nearly uniform stream there are no heavy hitters to find, and both methods return arbitrary items.
-- Space-Saving's top three counts are exact here, because those items were never evicted.
-- Production Space-Saving uses a "stream-summary" linked structure for $O(1)$ eviction instead of `min()` over a dictionary.
+- Only 1 of 64,589 items exceeded the $\varepsilon N = 1{,}000$ bound, far below the 1% that $\delta$ allows; the mean overestimate is 61.
+- Both methods recover the true top 10 on this skewed (Zipf) stream, typical of real traffic; on a near-uniform stream there are no heavy hitters to find.
+- Space-Saving's top three counts are exact because those items were never evicted. Production code uses a "stream-summary" structure for $O(1)$ eviction.
 
 ::: industry
-**Twitter Algebird and Redis Stack.** Twitter open-sourced Algebird, a Scala library of mergeable aggregations (Count-Min sketch, HyperLogLog, Bloom filters and others) designed to be combined across Hadoop, Scalding and Storm jobs: each partition builds a sketch and the framework adds them [Twitter: Algebird]. The RedisBloom module (bundled in Redis Stack, and in Redis Open Source since Redis 8 as of 2025) provides `CMS.INCRBY`/`CMS.QUERY` for Count-Min sketches and `TOPK.ADD`/`TOPK.LIST` for top-*k* tracking [Redis Docs: Count-min sketch; Top-K].
+**Twitter Algebird and RedisBloom.** Twitter's open-source Algebird library provides mergeable Count-Min sketches, HyperLogLog and Bloom filters for Hadoop, Scalding and Storm jobs: each partition builds a sketch and the framework adds them [Twitter: Algebird]. The RedisBloom module (in Redis Stack, and in Redis Open Source from Redis 8, as of 2025) provides `CMS.INCRBY`/`CMS.QUERY` and `TOPK.ADD`/`TOPK.LIST` [Redis Docs: Count-min sketch; Top-K].
 *Evidence: Primary* — [Twitter: Algebird; Redis Docs]
 :::
 
 ::: mistake
-**"Count-Min gives each item's count within ε percent."** The bound is $\varepsilon N$, a fraction of the *entire stream*. An item with 0.001% of traffic can be overestimated by 100× its true count. Report Count-Min estimates only for items well above $\varepsilon N$.
+**"Count-Min gives each item's count within ε percent."** The bound is $\varepsilon N$, a fraction of the *entire stream*; a rare item can be overestimated 100-fold. Report estimates only for items well above $\varepsilon N$.
 :::
 
 ## 17.7 Skip lists
@@ -1140,11 +1135,11 @@ What to notice:
 
 #### First-principles explanation
 
-A subway line has local trains that stop at every station and an express train that stops at every fourth. To reach station 37, you ride the express to station 36, the last express stop before your destination, then switch to the local for one stop. A skip list stacks several such express lines. Unlike a planned subway, it chooses each station's express status by coin flip, so no central planner has to rebalance anything when stations are added.
+A subway has local trains stopping everywhere and express trains stopping at every fourth station: ride the express to the last stop before your destination, then switch to the local. A skip list stacks several express lines and picks each station's express status by coin flip, so nothing needs rebalancing as stations are added.
 
 #### Why does this exist?
 
-Balanced search trees (red–black, AVL) guarantee $O(\log n)$ operations, but their rebalancing rotations are intricate and touch several nodes per update. That makes them hard to implement correctly and very hard to make concurrent. Pugh's insight was that randomization gives the same *expected* performance with a far simpler algorithm: an insert changes only the predecessors' pointers at the levels the new node occupies, and no other part of the structure moves [Pugh 1990].
+Balanced trees (red–black, AVL) guarantee $O(\log n)$, but their rotations are intricate and hard to make concurrent. Pugh showed that randomization gives the same *expected* cost with a far simpler algorithm: an insert changes only its predecessors' pointers [Pugh 1990].
 
 #### How it works internally
 
@@ -1170,7 +1165,7 @@ flowchart LR
   N30b -.->|down| N30
 ```
 
-**Reading the diagram.** Each subgraph is one level; solid arrows are forward pointers within a level, and the dotted arrows show the search path moving down a level at node 30 (one node object holds all its levels; the copies are drawn per level for clarity). A search for 40 starts at the top-level head, moves right to 30, sees that the next key at level 3 is the end marker, drops to level 2, sees 50 > 40, drops to level 1 and steps once to 40: four forward moves instead of four steps along the bottom list, a gap that widens as $n$ grows. Everything is in memory and synchronous. Failure points: an unlucky sequence of coin flips can make one search slow (the guarantee is probabilistic), and pointer chasing across scattered nodes causes CPU cache misses (§5.4), which is why on-disk indexes use B-trees instead. Concurrency scales well because an insert locks or compare-and-swaps only the few predecessor pointers it changes.
+**Reading the diagram.** Each subgraph is one level; solid arrows are forward pointers, dotted arrows show the search descending at node 30 (one node object holds all its levels). Searching for 40: right to 30 at level 3, down (next is the end), down again (50 > 40), one step to 40; the saving grows with $n$. Everything is in memory and synchronous. Failure points: unlucky coin flips can slow one search (the guarantee is probabilistic), and pointer chasing causes CPU cache misses (§5.4), which is why on-disk indexes prefer B-trees. Concurrency scales well because an insert changes only a few predecessor pointers.
 
 #### Mathematical foundations
 
@@ -1194,7 +1189,7 @@ $$L(n) = \log_{1/p} n, \qquad \mathbb{E}[\text{search path}] \le \frac{L(n)}{p} 
 1. $p = 1/2$: $L = \log_2 10^6 = 19.9$ levels; search path $\le 19.9/0.5 + 1/0.5 = 41.9$ steps; 2.00 pointers per node.
 2. $p = 1/4$: $L = \log_4 10^6 = 6/\log_{10} 4 = 6/0.602 = 9.97$ levels; search path $\le 9.97/0.25 + 1/0.75 = 41.2$ steps; 1.33 pointers per node.
 
-*Interpretation.* Both choices give about 40 steps, but $p = 1/4$ stores a third fewer pointers. *Engineering implication.* This is why Redis uses $p = 1/4$: 8 bytes saved per pointer across millions of sorted-set members is real memory, and search cost barely changes.
+*Interpretation.* Both give about 40 steps, but $p = 1/4$ stores a third fewer pointers. *Engineering implication.* That is why Redis uses $p = 1/4$.
 :::
 
 #### Code example and measured validation
@@ -1295,12 +1290,12 @@ What to notice:
 - Pointers per node match $1/(1-p)$ exactly, confirming the memory saving of $p = 1/4$.
 
 ::: industry
-**Redis sorted sets and LSM memtables.** A Redis sorted set (`ZADD`, `ZRANGE`, `ZRANK`) larger than a small threshold is stored as a hash table from member to score plus a skip list ordered by (score, member). The skip list uses $p = 1/4$ and a maximum of 32 levels, and each forward pointer records a *span* (how many level-0 nodes it jumps), so `ZRANK` can sum spans along the search path and return a rank in $O(\log n)$. Small sorted sets use a compact listpack instead [Redis Docs: Sorted sets; Redis source `t_zset.c`]. LevelDB and RocksDB use a skip list as the default in-memory memtable, because it supports concurrent inserts and ordered iteration for flushing to sorted SSTables [RocksDB Wiki: MemTable]. Java's `ConcurrentSkipListMap` is a lock-free sorted map built on the same idea.
+**Redis sorted sets and LSM memtables.** A large Redis sorted set is a hash table (member → score) plus a skip list ordered by (score, member) with $p = 1/4$ and up to 32 levels; each forward pointer stores a *span* so `ZRANK` sums spans along the search path in $O(\log n)$. Small sets use a compact listpack [Redis Docs: Sorted sets; Redis source `t_zset.c`]. LevelDB and RocksDB use a skip list as the default memtable, for concurrent inserts and ordered flushing to SSTables [RocksDB Wiki: MemTable]; Java's `ConcurrentSkipListMap` is a lock-free sorted map on the same idea.
 *Evidence: Primary* — [Redis Docs; RocksDB Wiki]
 :::
 
 ::: mistake
-**"Skip lists guarantee O(log n)."** The bound is on the *expected* cost over the random coin flips. The probability of a much slower search falls off exponentially, so in practice it never matters, but an adversary who can predict your random number generator could build a degenerate list. Seed it from a good source.
+**"Skip lists guarantee O(log n)."** Only in expectation over the coin flips; slow searches are exponentially unlikely, unless an adversary can predict your random generator.
 :::
 
 ## 17.8 Merkle trees
@@ -1313,16 +1308,16 @@ What to notice:
 
 #### First-principles explanation
 
-Two libraries want to check that their copies of a 1-million-book catalog are identical. Comparing every entry means sending a million entries across town. Instead, each library writes a one-line summary of each shelf, then of each aisle (computed from its shelves' summaries), then of each floor, then of the building. They phone each other and compare the building summaries. If those match, they are done. If not, they compare the floor summaries, then only the aisles on mismatched floors, then only the shelves in mismatched aisles. With a tree of summaries, the work is proportional to the number of *differences* times the depth of the tree, not to the size of the catalog.
+Two libraries want to confirm their 1-million-book catalogs match without reading every entry over the phone. Each writes a summary per shelf, then per aisle from shelf summaries, then per floor, then for the building. They compare building summaries; on a mismatch they compare floors, then only aisles on mismatched floors, and so on. Work grows with the number of *differences* times the tree depth, not with catalog size.
 
 #### Why does this exist?
 
-Merkle introduced hash trees in the late 1970s so that one signature over a root could authenticate many values [Merkle 1987]. Distributed systems use them for two jobs: **verification** (prove that one record belongs to a data set identified by a trusted root, without sending the data set) and **anti-entropy** (find which parts of two replicas differ, sending only a few hashes).
+Merkle introduced hash trees so one signature over a root could authenticate many values [Merkle 1987]. Distributed systems use them for **verification** (prove a record belongs to a data set with a trusted root) and **anti-entropy** (find where replicas differ by exchanging a few hashes).
 
 #### How it works internally
 
-1. Hash each record to make the leaves. Use a cryptographic hash such as SHA-256 when an adversary might forge data; replicas that only need to detect accidental divergence can use a cheaper hash.
-2. Hash adjacent pairs to make the next level up, and repeat until one root remains. Prefix leaf and interior inputs with different bytes (for example `0x00` and `0x01`, as Certificate Transparency does [RFC 6962]) so that an interior node can never be passed off as a leaf.
+1. Hash each record into a leaf: a cryptographic hash such as SHA-256 if forgery matters, a cheaper one if only accidental divergence does.
+2. Hash adjacent pairs level by level up to the root, prefixing leaf and interior inputs with different bytes (`0x00`, `0x01`, as in Certificate Transparency [RFC 6962]) so interior nodes cannot pose as leaves.
 3. **Inclusion proof** for record $i$: the sibling hash at each level on the path from leaf $i$ to the root. A verifier recomputes the root from the record and the siblings and compares it with the trusted root.
 4. **Anti-entropy**: two replicas compare roots; if they differ, they compare children and descend only into subtrees whose hashes differ, until they reach the divergent leaves.
 
@@ -1341,7 +1336,7 @@ flowchart TD
   HAB -.->|proof item 2| HCD
 ```
 
-**Reading the diagram.** Leaves (bottom) are hashes of records; each parent hashes its two children; the root summarizes everything. To prove that record C is in the set, the server sends C plus two sibling hashes (dotted edges): $H_D$ and $H_{AB}$. The verifier computes $H_C$, then $H_{CD} = H(H_C, H_D)$, then $H(H_{AB}, H_{CD})$, and compares the result with a root it already trusts (from a signed log head or a block header). Records live in storage; hashes can be cached in memory or stored beside the data. The computation is synchronous and local to the verifier. Failure points: a stale root (the verifier must obtain the root through a trusted channel), and rebuilding large trees after many updates, which costs CPU; incremental trees update only the path from a changed leaf to the root. The structure scales logarithmically: a billion records need a proof of only 30 hashes.
+**Reading the diagram.** Leaves hash records, parents hash children, the root summarizes all. To prove C is present, the server sends C plus the dotted siblings $H_D$ and $H_{AB}$; the verifier recomputes $H_C$, $H_{CD}$ and the root and compares it with a root obtained through a trusted channel (signed log head, block header), all synchronously and locally. Records live in storage; hashes can be cached or stored beside them. Failure points: a stale or untrusted root, and rebuild cost after many updates (incremental trees rehash only the changed leaf's path). Proofs grow logarithmically: 30 hashes for a billion records.
 
 ::: formula
 **Merkle proof size and anti-entropy cost**
@@ -1363,7 +1358,7 @@ $$h = \lceil \log_2 n \rceil, \qquad \text{proof size} = h \times H_{\text{bytes
 2. Inclusion proof: $20 \times 32 = 640$ bytes, compared with sending all leaf hashes ($2^{20} \times 32$ B = 33.6 MB) or the data itself.
 3. Anti-entropy with $k = 2$ divergent records: at most $1 + 2 \times 2 \times 20 = 81$ hash comparisons out of about 2.1 million tree nodes.
 
-*Interpretation.* Both costs grow with $\log n$; anti-entropy cost grows with the number of differences, not the data size. *Engineering implication.* Replicas can run anti-entropy continuously in the background at negligible network cost when they are mostly in sync, which is the normal case.
+*Interpretation.* Both costs grow with $\log n$, and anti-entropy cost with the number of differences. *Engineering implication.* Replicas can run anti-entropy continuously at negligible network cost when mostly in sync.
 :::
 
 ```python
@@ -1465,10 +1460,10 @@ sequenceDiagram
   A->>A: apply newer versions by timestamp
 ```
 
-**Reading the diagram.** Replica A starts a background repair for one key range by sending its root hash. Replica B replies that its root differs and returns its two child hashes. A compares them with its own, finds that only the right subtree differs, and asks for the next level of that subtree only. The exchange descends about 20 levels and touches only differing paths. At the leaves, the replicas exchange the actual rows for the divergent range, and each applies the newer version using the system's conflict-resolution rule (§27.14). Every message is a synchronous request/response over the internode protocol, but the repair as a whole is asynchronous with respect to client traffic. Storage boundaries: trees are built by scanning each replica's local data (an expensive, I/O-heavy step), then compared over the network. Failure points: building trees on a busy node competes with client reads; a tree whose leaves cover large ranges forces "overstreaming" of whole ranges for one changed row; and comparing trees built at different moments reports spurious differences for in-flight writes. Systems scale this by repairing ranges incrementally and on a schedule.
+**Reading the diagram.** Replica A starts a background repair of one key range by sending its root; B returns its children; A finds only the right subtree differs and descends there, about 20 levels along differing paths only. At the leaves the replicas stream the divergent rows and keep the newer versions (§27.14). Each message is synchronous request/response, but repair is asynchronous to client traffic. Trees are built by scanning local data, an I/O-heavy step. Failure points: tree building competes with client reads; coarse leaves cause "overstreaming" of whole ranges for one changed row; and trees built at different moments show spurious differences for in-flight writes. Systems repair ranges incrementally on a schedule.
 
 ::: industry
-**Dynamo, Cassandra and Git.** Amazon's Dynamo keeps one Merkle tree per key range hosted by a node and uses it to detect and repair divergence between replicas after failures [DeCandia et al. 2007]. Apache Cassandra's anti-entropy repair (`nodetool repair`) builds Merkle trees over token ranges on each replica, compares them and streams only mismatched ranges [Apache Cassandra Docs: Repair]. Git stores every file, directory and commit as an object named by the hash of its content; a commit names the tree hash, which names subtree and file hashes, forming a Merkle structure in which identical commit hashes imply identical histories [Chacon & Straub 2014]. Certificate Transparency logs use Merkle trees so that anyone can verify, with logarithmic-size proofs, that a certificate is in the log and that the log is append-only (§10.5) [RFC 6962].
+**Dynamo, Cassandra, Git and Certificate Transparency.** Dynamo keeps a Merkle tree per key range and uses it to repair replicas after failures [DeCandia et al. 2007]. Cassandra's `nodetool repair` builds Merkle trees over token ranges, compares them and streams mismatched ranges [Apache Cassandra Docs: Repair]. Git names every file, directory and commit by the hash of its content, so equal commit hashes imply identical histories [Chacon & Straub 2014]. Certificate Transparency logs give logarithmic proofs of inclusion and append-only growth (§10.5) [RFC 6962].
 *Evidence: Primary* — [DeCandia et al. 2007; Apache Cassandra Docs; Chacon & Straub 2014; RFC 6962]
 :::
 
