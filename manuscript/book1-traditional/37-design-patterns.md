@@ -1882,3 +1882,896 @@ Factory (§37.3) and Abstract Factory (§37.4) are often what you inject when an
 **Q.** What is the difference between dependency injection and the Dependency Inversion Principle? **A.** Dependency inversion is a design principle: high-level modules and low-level modules should both depend on abstractions, and the abstraction is owned by the high-level side (§36.7). Dependency injection is a technique for supplying concrete implementations from outside. You can inject concrete classes (DI without inversion) or depend on abstractions but look them up from a global (inversion without injection); good designs do both.
 :::
 
+## 37.15 State, Template Method and Chain of Responsibility
+
+These three behavioral patterns each organize *control flow*: State by the object's current mode, Template Method by a fixed skeleton with variable steps, Chain of Responsibility by a sequence of handlers.
+
+### 37.15.1 State
+
+#### Intent
+
+::: definition
+**Definition — State.** An object delegates its behavior to a separate state object and changes behavior by swapping that state object, so it appears to change its class; each state class handles the transitions that are legal from it [Gamma et al. 1994].
+:::
+
+#### Problem it solves
+
+An order moves from `PENDING` to `PAID` to `SHIPPED`, and can be cancelled while pending or paid (with a refund if paid) but not after shipping. Implemented with `if self.status == ...` inside every method, the rules for one state are spread across all methods, and an illegal transition (shipping an unpaid order) slips through whichever method forgot a check. The GoF book's own motivating example was a `TCPConnection` whose `open()`, `close()` and `acknowledge()` behave differently in the Established, Listen and Closed states.
+
+#### Structure
+
+**Figure 37.14 — State pattern for the order lifecycle.**
+
+```mermaid
+classDiagram
+  class Order {
+    -state OrderState
+    +pay()
+    +ship()
+    +cancel()
+  }
+  class OrderState {
+    <<abstract>>
+    +pay(order)
+    +ship(order)
+    +cancel(order)
+  }
+  Order o--> OrderState : delegates to
+  OrderState <|-- Pending
+  OrderState <|-- Paid
+  OrderState <|-- Shipped
+  OrderState <|-- Cancelled
+```
+
+**Reading the diagram.** `Order` (the context) forwards every action to its current `OrderState`. The abstract state rejects every action by default; each concrete state overrides only the actions legal from it and performs the transition by replacing the context's state object. Calls are synchronous. The current state is the only data that must be persisted (a status column); the state objects are stateless and can be shared. The failure point is concurrent transitions on the same order from two requests; protect them with optimistic concurrency (a version column) in the repository.
+
+#### Python implementation
+
+```python
+class IllegalTransition(Exception):
+    pass
+
+
+class OrderState:
+    name = "?"
+    def _reject(self, action):
+        raise IllegalTransition(f"cannot {action} an order that is {self.name}")
+    def pay(self, order):    self._reject("pay")
+    def ship(self, order):   self._reject("ship")
+    def cancel(self, order): self._reject("cancel")
+
+
+class Pending(OrderState):
+    name = "PENDING"
+    def pay(self, order):    order.state = PAID
+    def cancel(self, order): order.state = CANCELLED
+
+
+class Paid(OrderState):
+    name = "PAID"
+    def ship(self, order):   order.state = SHIPPED
+    def cancel(self, order):
+        order.refund_due = True
+        order.state = CANCELLED
+
+
+class Shipped(OrderState):   name = "SHIPPED"
+class Cancelled(OrderState): name = "CANCELLED"
+
+PENDING, PAID, SHIPPED, CANCELLED = Pending(), Paid(), Shipped(), Cancelled()  # shared
+
+
+class Order:
+    def __init__(self):
+        self.state, self.refund_due = PENDING, False
+    def pay(self):    self.state.pay(self)
+    def ship(self):   self.state.ship(self)
+    def cancel(self): self.state.cancel(self)
+
+
+if __name__ == "__main__":
+    for actions in (["pay", "ship"], ["pay", "cancel"], ["ship"], ["pay", "ship", "cancel"]):
+        o = Order()
+        try:
+            for a in actions:
+                getattr(o, a)()
+            print(f"{'+'.join(actions):16} -> {o.state.name}, refund_due={o.refund_due}")
+        except IllegalTransition as e:
+            print(f"{'+'.join(actions):16} -> rejected: {e}")
+```
+
+Output:
+
+```text
+pay+ship         -> SHIPPED, refund_due=False
+pay+cancel       -> CANCELLED, refund_due=True
+ship             -> rejected: cannot ship an order that is PENDING
+pay+ship+cancel  -> rejected: cannot cancel an order that is SHIPPED
+```
+
+What to notice: every rule about the `PAID` state is in one class; illegal transitions are rejected by default rather than by remembered checks; and the state objects hold no per-order data, so four shared instances serve every order. For small machines, a transition table (`{(PENDING, "pay"): PAID, ...}`) is a lighter alternative; Chapter 38 draws such machines as state diagrams.
+
+#### When to use and when not
+
+Use State when behavior differs substantially per mode and transitions have rules (orders, payments, connections, workflow steps, circuit breakers with closed, open and half-open states, §22.13). Use a table or an enum with a transition map when states differ only in which transitions are allowed. Related: Strategy (§37.7) has the same shape but is chosen externally. **Interview question:** *Where does the state live when the service has 20 replicas?* In the database row, not in memory; each request loads the order, applies the transition through the state object, and writes back with a version check so two replicas cannot both ship and cancel the same order.
+
+### 37.15.2 Template Method
+
+#### Intent
+
+::: definition
+**Definition — Template Method.** A method in a base class that defines the skeleton of an algorithm as a fixed sequence of steps, some of which are abstract **primitive operations** or overridable **hooks** that subclasses supply, so subclasses vary steps without changing the sequence [Gamma et al. 1994].
+:::
+
+#### Problem it solves
+
+The store exports orders nightly in CSV for finance and JSON Lines for the data lake. Both exports filter, format each row, add an optional header and write output, in that order; only the filter and formatting differ. Duplicating the loop means a fix to one (say, skipping test orders) is forgotten in the other. Frameworks use template methods everywhere: `unittest.TestCase.run()` calls your `setUp`, test method and `tearDown`; `threading.Thread.start()` arranges for your `run()` to execute; Java's `AbstractList` implements iteration on top of your `get()` and `size()`.
+
+#### Structure
+
+**Figure 37.15 — Template Method for export jobs.**
+
+```mermaid
+classDiagram
+  class ExportJob {
+    <<abstract>>
+    +run(rows) str
+    +include(row) bool
+    +header() str
+    +format_row(row)* str
+  }
+  class CsvExport {
+    +header() str
+    +format_row(row) str
+  }
+  class JsonLinesExport {
+    +include(row) bool
+    +format_row(row) str
+  }
+  ExportJob <|-- CsvExport
+  ExportJob <|-- JsonLinesExport
+```
+
+**Reading the diagram.** `run()` in the base class is the template method; it is not overridden. `format_row()` is abstract (a primitive operation every subclass must supply), while `include()` and `header()` are hooks with defaults that subclasses may override. Control flows from the base class down into subclass code, the "Hollywood principle" ("don't call us, we'll call you"). Everything is synchronous; output would cross a storage boundary when written to object storage. The fragility point is the inheritance coupling: a change to the skeleton affects every subclass.
+
+#### Python implementation
+
+```python
+import json
+from abc import ABC, abstractmethod
+
+
+class ExportJob(ABC):
+    def run(self, rows: list[dict]) -> str:          # the template method
+        kept = [r for r in rows if self.include(r)]
+        lines = [self.format_row(r) for r in kept]
+        header = self.header()
+        return "\n".join(([header] if header else []) + lines)
+
+    def include(self, row) -> bool: return not row.get("test", False)   # hook
+    def header(self) -> str | None: return None                         # hook
+    @abstractmethod
+    def format_row(self, row) -> str: ...                               # primitive op
+
+
+class CsvExport(ExportJob):
+    def header(self): return "order_id,total_cents"
+    def format_row(self, r): return f"{r['order_id']},{r['total_cents']}"
+
+
+class JsonLinesExport(ExportJob):
+    def include(self, r): return super().include(r) and r["status"] == "PAID"
+    def format_row(self, r): return json.dumps(r, sort_keys=True)
+
+
+if __name__ == "__main__":
+    rows = [{"order_id": "o-1", "total_cents": 4999, "status": "PAID"},
+            {"order_id": "o-2", "total_cents": 1999, "status": "PENDING"},
+            {"order_id": "o-3", "total_cents": 100, "status": "PAID", "test": True}]
+    print(CsvExport().run(rows))
+    print(JsonLinesExport().run(rows))
+```
+
+Output:
+
+```text
+order_id,total_cents
+o-1,4999
+o-2,1999
+{"order_id": "o-1", "status": "PAID", "total_cents": 4999}
+```
+
+What to notice: the test-order filter lives once, in the base hook, and `JsonLinesExport` extends it with `super()`; neither subclass can reorder the steps.
+
+#### When to use and when not
+
+Use Template Method in frameworks and base classes where the sequence is invariant and must be enforced (test lifecycles, request handling, ETL jobs). Prefer Strategy (§37.7) or passing functions when steps vary independently or must be combined at run time, since inheritance fixes the combination at class-definition time (composition over inheritance, §35.8). **Interview question:** *Template Method or Strategy for a pluggable ETL pipeline?* Template Method if the pipeline shape is fixed and you own the base class; Strategy (inject `extract`, `transform` and `load` objects) if teams must mix and match steps, which is the usual case at scale.
+
+### 37.15.3 Chain of Responsibility
+
+#### Intent
+
+::: definition
+**Definition — Chain of Responsibility.** A request is passed along a chain of handler objects; each handler either handles it, or does some work and passes it to the next, so the sender does not know which handler will act [Gamma et al. 1994].
+:::
+
+#### Problem it solves
+
+Every HTTP request to the order API must be logged, authenticated and rate-limited before reaching the application, and some requests must be stopped early (401, 429). Putting all of that at the top of every endpoint duplicates code and mixes concerns. A chain of middleware applies the concerns in a configured order, and any link can short-circuit. Django's middleware, Java servlet filters, Express and ASGI middleware, gRPC interceptors and Envoy's HTTP filter chain all work this way [Django Docs]. The classic GoF form, in which exactly one handler takes the request (a support ticket escalating from bot to agent to engineer, or nested exception handlers), is the same structure with a different stopping rule.
+
+#### Structure
+
+**Figure 37.16 — Middleware pipeline as a chain of responsibility.**
+
+```mermaid
+classDiagram
+  class Handler {
+    <<interface>>
+    +__call__(request) response
+  }
+  class Middleware {
+    <<interface>>
+    +__call__(next_handler) Handler
+  }
+  class logging_mw
+  class auth_mw
+  class rate_limit_mw {
+    -counts dict
+    -limit int
+  }
+  class app
+  Handler <|.. app
+  Middleware <|.. logging_mw
+  Middleware <|.. auth_mw
+  Middleware <|.. rate_limit_mw
+  Middleware ..> Handler : wraps next
+```
+
+**Reading the diagram.** A `Handler` turns a request into a response. A `Middleware` takes the next handler and returns a new handler that wraps it, so building the chain is function composition: `logging(auth(rate_limit(app)))`. A request flows inward through each link and the response flows back out, so the first middleware sees both the raw request and the final response (ideal for logging and timing). Links run synchronously in one request's call stack. `rate_limit_mw` holds in-memory per-client counters; across replicas this state must move to a shared store (§22.8). Any link can short-circuit, which is also the main failure mode: a misordered chain (rate limiting before authentication, so attackers exhaust real users' quotas).
+
+#### Python implementation
+
+```python
+from typing import Callable
+
+Request = dict
+Response = tuple[int, str]
+Handler = Callable[[Request], Response]
+LOG: list[str] = []
+
+
+def logging_mw(next_h: Handler) -> Handler:
+    def handle(req):
+        status, body = next_h(req)
+        LOG.append(f"{req['client']} {req['path']} -> {status}")
+        return status, body
+    return handle
+
+
+def auth_mw(next_h: Handler) -> Handler:
+    def handle(req):
+        if req.get("token") != "valid":
+            return 401, "unauthorized"                 # short-circuit the chain
+        return next_h(req)
+    return handle
+
+
+def rate_limit_mw(limit: int):
+    counts: dict[str, int] = {}
+    def middleware(next_h: Handler) -> Handler:
+        def handle(req):
+            counts[req["client"]] = counts.get(req["client"], 0) + 1
+            if counts[req["client"]] > limit:
+                return 429, "too many requests"
+            return next_h(req)
+        return handle
+    return middleware
+
+
+def app(req: Request) -> Response:
+    return 200, f"orders for {req['client']}"
+
+
+def build(handler: Handler, middlewares) -> Handler:   # first listed = outermost
+    for mw in reversed(middlewares):
+        handler = mw(handler)
+    return handler
+
+
+if __name__ == "__main__":
+    pipeline = build(app, [logging_mw, auth_mw, rate_limit_mw(limit=2)])
+    for client, token in [("ana", "valid")] * 3 + [("eve", "forged")]:
+        pipeline({"client": client, "token": token, "path": "/orders"})
+    print("\n".join(LOG))
+```
+
+Output:
+
+```text
+ana /orders -> 200
+ana /orders -> 200
+ana /orders -> 429
+eve /orders -> 401
+```
+
+What to notice: because authentication runs before rate limiting, the forged request never consumes a rate-limit slot; and because logging is outermost, it records short-circuited responses too. Reordering the list changes behavior without changing any handler.
+
+#### When to use and when not
+
+Use a chain when several independent handlers must process or filter a request in a configurable order: middleware, validation pipelines, approval workflows, event filters. Avoid long chains with no clear ordering contract; debugging "which link swallowed my request?" requires per-link logging or tracing. **Interview question:** *In what order would you put authentication, rate limiting, request logging, compression and caching middleware, and why?* Logging and tracing outermost to see everything; then a coarse per-IP rate limit to shed floods cheaply; then authentication; then per-user rate limiting; then the cache (keyed by user if responses are personalized); compression closest to the network on the way out.
+
+## 37.16 Concurrency patterns
+
+The patterns so far organize code within one thread of control. Concurrency patterns organize work across threads: who produces work, who executes it, how results come back, and how shared data is protected. They are catalogued in *Pattern-Oriented Software Architecture, Volume 2* [Schmidt et al. 2000], which also covers Reactor and Proactor (the event-loop designs of §6.13), Active Object, Monitor Object and Leader/Followers, and they are treated for the JVM in *Java Concurrency in Practice* [Goetz et al. 2006]. The primitives underneath (mutexes, condition variables, atomics) are in §6.10.
+
+::: note
+**Python and the GIL.** In standard CPython builds the global interpreter lock lets only one thread execute Python bytecode at a time, so threads speed up I/O-bound work (the lock is released while waiting on sockets and disks) but not CPU-bound Python code; use processes (`ProcessPoolExecutor`) for that. Python 3.13 added an experimental free-threaded build without the GIL [PEP 703]. Correct code must not rely on the GIL for thread safety in either case.
+:::
+
+### 37.16.1 Producer–consumer
+
+#### Intent and problem
+
+::: definition
+**Definition — Producer–consumer.** Producers put work items into a shared **bounded** buffer and consumers take them out, decoupling the rate at which work is created from the rate at which it is processed; when the buffer is full, producers block or are rejected, which is **backpressure** (§22.10).
+:::
+
+The order service's request threads produce "send receipt" jobs faster at peak than the email provider accepts them. Calling the provider inline couples checkout latency to the provider; an unbounded in-memory list grows until the process runs out of memory. A bounded queue between request threads and a fixed set of sender threads absorbs bursts and pushes back when sustained load exceeds capacity. Message brokers (Chapter 30) are this pattern across machines.
+
+**Figure 37.17 — Producer–consumer with a bounded queue.**
+
+```mermaid
+classDiagram
+  class Producer {
+    +run()
+  }
+  class BoundedQueue {
+    -maxsize int
+    -items deque
+    -not_full Condition
+    -not_empty Condition
+    +put(item) blocks if full
+    +get() blocks if empty
+  }
+  class Consumer {
+    +run()
+  }
+  Producer ..> BoundedQueue : put
+  Consumer ..> BoundedQueue : get
+```
+
+**Reading the diagram.** Producers and consumers never reference each other; both depend only on the queue. Inside the queue a lock and two condition variables (§6.10.3) implement blocking: `put` waits on "not full", `get` waits on "not empty". The hand-off is asynchronous from the producer's point of view. Items in the queue live only in process memory and are lost if the process crashes, which is the reason to use a durable broker when jobs must survive restarts. Failure points: a consumer that dies silently (work piles up), a poison item that crashes every consumer, and shutdown (consumers must be told to stop). Scale by adding consumers until the downstream resource saturates.
+
+```python
+import queue
+import threading
+import time
+
+
+def producer(q: queue.Queue, pid: int, n: int, stats: dict):
+    for i in range(n):
+        t0 = time.perf_counter()
+        q.put(f"receipt-{pid}-{i}")                    # blocks while the queue is full
+        stats["blocked_s"] += time.perf_counter() - t0
+
+
+def consumer(q: queue.Queue, done: list, lock: threading.Lock):
+    while True:
+        item = q.get()
+        if item is None:                               # sentinel: shut down
+            break
+        time.sleep(0.002)                              # simulated call to email provider
+        with lock:
+            done.append(item)
+
+
+if __name__ == "__main__":
+    q: queue.Queue = queue.Queue(maxsize=10)           # bounded: backpressure
+    done, lock, stats = [], threading.Lock(), {"blocked_s": 0.0}
+    consumers = [threading.Thread(target=consumer, args=(q, done, lock)) for _ in range(4)]
+    producers = [threading.Thread(target=producer, args=(q, p, 100, stats)) for p in range(2)]
+    for t in consumers + producers:
+        t.start()
+    for t in producers:
+        t.join()
+    for _ in consumers:
+        q.put(None)                                    # one sentinel per consumer
+    for t in consumers:
+        t.join()
+    print(f"processed {len(done)} jobs; queue never exceeded {q.maxsize}; "
+          f"producers spent time blocked: {stats['blocked_s'] > 0.01}")
+```
+
+Output:
+
+```text
+processed 200 jobs; queue never exceeded 10; producers spent time blocked: True
+```
+
+What to notice: producers generate 200 jobs instantly but consumers handle about 4 / 0.002 s = 2,000 jobs/s, so producers spend time blocked in `put`; that waiting is backpressure doing its job. One sentinel per consumer gives a clean shutdown. In a web request path, prefer `put(timeout=...)` or `put_nowait` and return 503 rather than blocking a request thread indefinitely (load shedding, §22.9).
+
+### 37.16.2 Thread pool
+
+#### Intent and problem
+
+::: definition
+**Definition — Thread pool.** A fixed or bounded set of worker threads that take tasks from a queue and execute them, so the cost of creating threads is paid once and the number of concurrent tasks is capped [Goetz et al. 2006].
+:::
+
+Creating a thread per request costs memory (often 1 MiB or more of reserved stack per thread, §6.3.5) and scheduling overhead, and under a spike it creates thousands of threads that thrash. A pool is producer–consumer with tasks as the items: callers submit tasks (Commands, §37.12) and receive futures. Java's `ThreadPoolExecutor` and Python's `concurrent.futures.ThreadPoolExecutor` are standard implementations. The key design decision is the pool size.
+
+**Figure 37.18 — Thread pool returning futures.**
+
+```mermaid
+classDiagram
+  class Executor {
+    -work_queue Queue
+    -workers list
+    +submit(fn, args) Future
+    +shutdown(wait)
+  }
+  class Worker {
+    +run()
+  }
+  class Future {
+    -state str
+    -result object
+    -exception Exception
+    +result(timeout) object
+    +done() bool
+    +add_done_callback(fn)
+  }
+  class Client
+  Client ..> Executor : submit
+  Executor *--> "N" Worker : owns
+  Executor ..> Future : returns
+  Worker ..> Future : completes
+  Client ..> Future : waits or registers callback
+```
+
+**Reading the diagram.** The client submits a callable and immediately receives a `Future`; submission is asynchronous. The executor owns N workers (composition, filled diamond), which pull tasks from the internal queue, run them, and complete the matching future with a result or an exception. The client later blocks on `result(timeout)` or registers a callback. State lives in memory: the task queue (which should be bounded) and the futures. Failure points: an unbounded queue that hides overload until memory runs out, tasks that block forever and starve the pool, and exceptions that vanish if no one calls `result()`. Scale by sizing N (below) and by separate pools per dependency (bulkheads, §22.14).
+
+#### Mathematical foundations
+
+::: formula
+**Thread-pool sizing for mixed CPU and I/O work [Goetz et al. 2006]**
+
+$$N_{threads} = N_{cpu} \times U_{cpu} \times \left(1 + \frac{W}{C}\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N_{threads}$ | Number of worker threads that keeps the CPU at the target utilization | threads |
+| $N_{cpu}$ | Number of CPU cores available to the process | cores |
+| $U_{cpu}$ | Target CPU utilization, between 0 and 1 | dimensionless |
+| $W$ | Time a task spends waiting (I/O, locks) per task | ms |
+| $C$ | CPU time a task spends computing per task | ms |
+:::
+
+::: example
+**Worked example — Sizing the receipt-rendering pool.** Each task spends $C = 5$ ms of CPU rendering a receipt and $W = 95$ ms waiting on the template store and the email provider. The service has $N_{cpu} = 8$ cores and you target $U_{cpu} = 0.75$ to leave headroom.
+
+1. Wait-to-compute ratio: $W/C = 95/5 = 19$.
+2. Threads: $N_{threads} = 8 \times 0.75 \times (1 + 19) = 8 \times 0.75 \times 20 = 120$.
+3. Throughput ceiling, by Little's Law (§4.11) with each task holding a thread for $W + C = 100$ ms: $\lambda_{max} = 120 / 0.1\ \text{s} = 1{,}200$ tasks/s.
+4. CPU check: $1{,}200 \times 5$ ms $= 6$ core-seconds per second, which is $6/8 = 75\%$ of the cores, matching the target.
+
+**Interpretation.** A pool of 8 (one per core) would cap throughput at $8/0.1 = 80$ tasks/s with the CPU 95% idle; a pool of 1,000 would not raise throughput above what the CPU and the downstream provider allow, and would add memory and contention. **Engineering implication.** Measure $W$ and $C$ under realistic load, size the pool from the formula, and check the downstream limit separately: if the email provider allows only 500 requests/s, the provider, not the pool, is the bottleneck, and the pool should be sized for 500 tasks/s ($500 \times 0.1 = 50$ threads).
+:::
+
+```python
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def fetch_rate(currency: str) -> tuple[str, float]:
+    time.sleep(0.05)                                   # simulated 50 ms I/O call
+    if currency == "XXX":
+        raise ValueError("unknown currency")
+    return currency, {"USD": 1.0, "EUR": 1.08}.get(currency, 0.5)
+
+
+if __name__ == "__main__":
+    currencies = ["USD", "EUR"] * 31 + ["GBP", "XXX"]  # 64 tasks
+    t0 = time.perf_counter()
+    ok, failed = 0, []
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        futures = {pool.submit(fetch_rate, c): c for c in currencies}
+        for fut in as_completed(futures):              # in completion order
+            try:
+                fut.result(timeout=1.0)
+                ok += 1
+            except ValueError as e:
+                failed.append(f"{futures[fut]}: {e}")
+    elapsed = time.perf_counter() - t0
+    print(f"{ok} ok, failed={failed}")
+    print(f"sequential would take {len(currencies) * 0.05:.1f} s; pool took {elapsed:.1f} s")
+```
+
+Output:
+
+```text
+63 ok, failed=['XXX: unknown currency']
+sequential would take 3.2 s; pool took 0.2 s
+```
+
+What to notice: 64 tasks of 50 ms on 16 workers take $\lceil 64/16 \rceil \times 0.05 = 0.2$ s. The exception raised inside a worker is re-raised by `result()` in the caller; if nobody calls `result()`, it is silently lost. The `with` block shuts the pool down and waits for running tasks.
+
+### 37.16.3 Future and promise
+
+::: definition
+**Definition — Future and promise.** A **future** is a read-only placeholder for a result that will be available later; a **promise** (Java's `CompletableFuture`, Python's `asyncio.Future`) is the writable side that the producer completes with a value or an error. Together they let a caller start work, continue, and later wait for or chain on the result.
+:::
+
+Futures turn "call and wait" into "call, do other work, join". Their real power is composition: start the price lookup and the stock check in parallel and combine them when both finish, so latency is the maximum of the two rather than the sum. Composition is where Java adds something language-specific: `CompletableFuture` chains asynchronous stages without blocking a thread.
+
+**Figure 37.19 — Composing futures.**
+
+```mermaid
+classDiagram
+  class CompletableFuture~T~ {
+    +supplyAsync(supplier, executor)$ CompletableFuture
+    +thenApply(fn) CompletableFuture
+    +thenCombine(other, fn) CompletableFuture
+    +exceptionally(fn) CompletableFuture
+    +orTimeout(t, unit) CompletableFuture
+    +join() T
+  }
+  class Executor
+  class QuoteService {
+    +quote(sku) CompletableFuture
+  }
+  QuoteService ..> CompletableFuture~T~ : composes
+  CompletableFuture~T~ ..> Executor : runs stages on
+```
+
+**Reading the diagram.** `QuoteService` starts two asynchronous stages on an executor and combines their futures with `thenCombine`; each stage runs on a pool thread and completes its future, which triggers dependent stages. No thread blocks until the final `join()` (or never, if the result is returned as a future to an asynchronous web framework). Results live in memory. Failure points are a stage that never completes (add `orTimeout`) and errors, which propagate along the chain until handled by `exceptionally`. Scaling depends on the executor; using the default common pool for blocking I/O is a classic mistake.
+
+```java
+import java.util.concurrent.*;
+
+public class Quote {
+    public static void main(String[] args) {
+        ExecutorService io = Executors.newFixedThreadPool(8);   // dedicated pool for I/O
+        CompletableFuture<Integer> price = CompletableFuture.supplyAsync(() -> sleepThen(80, 4999), io);
+        CompletableFuture<Integer> stock = CompletableFuture.supplyAsync(() -> sleepThen(60, 3), io);
+        long t0 = System.nanoTime();
+        String quote = price.thenCombine(stock, (p, s) -> s > 0 ? "price " + p : "out of stock")
+                            .orTimeout(500, TimeUnit.MILLISECONDS)
+                            .exceptionally(e -> "fallback: cached price")
+                            .join();
+        System.out.printf("%s in ~%d ms%n", quote, (System.nanoTime() - t0) / 1_000_000);
+        io.shutdown();
+    }
+    static int sleepThen(int ms, int v) {
+        try { Thread.sleep(ms); } catch (InterruptedException e) { throw new RuntimeException(e); }
+        return v;
+    }
+}
+```
+
+The program prints `price 4999 in ~80 ms` (the time varies slightly): the two calls overlap, so latency is the longer one, not 140 ms. In Python the same composition is `asyncio.gather(price(), stock())` inside an event loop, or two `executor.submit` calls followed by two `result()` calls.
+
+### 37.16.4 Read-write lock
+
+::: definition
+**Definition — Read-write lock.** A lock that allows any number of concurrent readers or exactly one writer, never both; it improves throughput when reads greatly outnumber writes and each read holds the lock long enough for contention to matter (§6.10.5).
+:::
+
+A routing table or price list in memory is read by every request and replaced a few times per minute. A plain mutex serializes all readers; a read-write lock lets them proceed together. The design question is fairness: a reader-preferring lock can starve writers forever under constant reads, so most implementations prefer waiting writers. Python's standard library has no read-write lock; Java provides `ReentrantReadWriteLock` and `StampedLock` (which adds optimistic reads).
+
+**Figure 37.20 — A writer-preferring read-write lock.**
+
+```mermaid
+classDiagram
+  class RWLock {
+    -cond Condition
+    -readers int
+    -writer bool
+    -waiting_writers int
+    +read_locked() context
+    +write_locked() context
+  }
+  class PriceTable {
+    -lock RWLock
+    -prices dict
+    +get(sku) int
+    +replace_all(new_prices)
+  }
+  class RequestThread
+  class RefreshThread
+  PriceTable *--> RWLock
+  RequestThread ..> PriceTable : get under read lock
+  RefreshThread ..> PriceTable : replace under write lock
+```
+
+**Reading the diagram.** `PriceTable` owns a `RWLock` built from one condition variable and three counters. Many request threads read at once; the refresh thread takes the write lock, which waits for active readers to drain and blocks new readers while it waits (writer preference). All access is synchronous and in-process; the protected data is in memory. Failure points: writer starvation (prevented here), upgrading a read lock to a write lock (deadlocks if two readers try), and long work done while holding the lock. An alternative that often scales better is copy-on-write: build a new immutable table and swap one reference, so readers take no lock at all.
+
+```python
+import threading
+import time
+from contextlib import contextmanager
+
+
+class RWLock:
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._readers, self._writer, self._waiting_writers = 0, False, 0
+
+    @contextmanager
+    def read_locked(self):
+        with self._cond:
+            while self._writer or self._waiting_writers:   # writer preference
+                self._cond.wait()
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._cond.notify_all()
+
+    @contextmanager
+    def write_locked(self):
+        with self._cond:
+            self._waiting_writers += 1
+            while self._writer or self._readers:
+                self._cond.wait()
+            self._waiting_writers -= 1
+            self._writer = True
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._writer = False
+                self._cond.notify_all()
+
+
+if __name__ == "__main__":
+    lock, accounts = RWLock(), {"a": 500, "b": 500}     # invariant: a + b == 1000
+    stats = {"violations": 0, "active": 0, "peak": 0}
+    stats_lock = threading.Lock()
+
+    def reader():
+        for _ in range(300):
+            with lock.read_locked():
+                with stats_lock:
+                    stats["active"] += 1
+                    stats["peak"] = max(stats["peak"], stats["active"])
+                time.sleep(0.0002)                      # simulated work: readers overlap
+                if accounts["a"] + accounts["b"] != 1000:
+                    stats["violations"] += 1
+                with stats_lock:
+                    stats["active"] -= 1
+
+    def writer():
+        for i in range(200):
+            with lock.write_locked():
+                accounts["a"] -= 1                      # invariant broken ...
+                time.sleep(0)                           # yield mid-update
+                accounts["b"] += 1                      # ... and restored
+    threads = [threading.Thread(target=reader) for _ in range(6)] + [threading.Thread(target=writer)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    print(f"violations seen by readers: {stats['violations']}; "
+          f"readers overlapped: {stats['peak'] > 1}; final {accounts}")
+```
+
+Output:
+
+```text
+violations seen by readers: 0; readers overlapped: True; final {'a': 300, 'b': 700}
+```
+
+What to notice: readers never observe the moment between the writer's two updates, yet several readers hold the lock simultaneously. Releasing in `finally` ensures an exception inside the critical section cannot leave the lock held forever.
+
+### 37.16.5 Double-checked locking and its pitfalls
+
+::: definition
+**Definition — Double-checked locking.** A lazy-initialization idiom that checks whether an object exists without a lock (fast path), and only if it does not, takes a lock, checks again, and creates it. It avoids locking on every access but is only correct if the language's memory model guarantees that a thread seeing the reference also sees the fully constructed object.
+:::
+
+The Singleton in §37.6 used this idiom safely in Python. In Java before the Java 5 memory model (JSR-133, 2004), and in Java today without `volatile`, it is broken [Bacon et al.; Manson et al. 2005]. The compiler and CPU may reorder the steps of `instance = new Config()` (allocate memory, run the constructor, publish the reference) so that the reference is published *before* the constructor finishes. A second thread on the fast path sees a non-null reference, skips the lock, and reads fields that still hold default values.
+
+**Figure 37.21 — How double-checked locking fails without volatile.**
+
+```mermaid
+sequenceDiagram
+  participant A as Thread A
+  participant M as Shared memory
+  participant B as Thread B
+  A->>M: read instance, null
+  A->>A: acquire lock, re-check null
+  A->>M: allocate object, fields default
+  A->>M: publish reference, reordered early
+  B->>M: read instance, not null
+  B->>M: read config.timeout, sees 0
+  Note over B: uses half-built object
+  A->>M: constructor sets timeout to 500
+  A->>A: release lock
+```
+
+**Reading the diagram.** Thread A takes the slow path and Thread B the fast path; both read and write shared memory. Without a happens-before edge, A's write of the reference may become visible to B before A's writes of the fields: B never takes the lock, so nothing orders its reads after A's constructor. The failure is silent and rare, appearing under load on weakly ordered hardware or after a JIT optimization. The fixes below create the missing ordering; none adds a lock to the fast path.
+
+```java
+public final class ConfigHolder {
+    private static volatile Config instance;      // volatile: safe publication
+
+    static Config get() {
+        Config local = instance;                   // one volatile read on the fast path
+        if (local == null) {
+            synchronized (ConfigHolder.class) {
+                local = instance;
+                if (local == null) {
+                    instance = local = new Config(500);   // fully built before publication
+                }
+            }
+        }
+        return local;
+    }
+
+    static final class Config {
+        final int timeoutMs;                       // final fields add a further guarantee
+        Config(int timeoutMs) { this.timeoutMs = timeoutMs; }
+    }
+}
+```
+
+What to notice: `volatile` makes the write of `instance` a release and the read an acquire, so a thread that sees the reference also sees the constructor's writes. Simpler fixes usually win: the holder idiom or an enum (§37.6), eager initialization, or a plain `synchronized` method if the access is not hot. In Python, the risk is not reordering but the unlocked check-then-act race shown in §37.6.
+
+**Table 37.3 — Concurrency failure scenarios.**
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Unbounded queue exhausts memory | Producers faster than consumers, no backpressure | Queue depth and memory climb steadily | Shed load, restart | Bounded queues, reject or block when full |
+| Pool starvation | Tasks block waiting on tasks in the same pool | All workers busy, throughput zero, no CPU | Restart, raise timeouts | Separate pools per dependency; no nested waits |
+| Lost exceptions | Future never inspected | Missing results, no error logs | Re-run failed tasks | Always call `result()` or attach a callback that logs |
+| Writer starvation | Reader-preferring lock under constant reads | Config refresh latency grows without bound | Pause readers | Writer-preferring lock or copy-on-write swap |
+| Half-built object visible | Unsafe publication in double-checked locking | Rare `NullPointerException` or default values under load | Restart | `volatile`, holder idiom, immutable objects |
+
+## 37.17 Choosing a pattern
+
+Patterns are answers; start from the question. Name the force that hurts (a growing `if` chain, an untestable class, a slow dependency on the request path), find the pattern that addresses that force, and state the trade-off you accept. If you cannot name the force, you do not need the pattern.
+
+**Table 37.4 — Pattern selection: problem → pattern → trade-off.**
+
+| Problem you have | Pattern | Trade-off you accept |
+|---|---|---|
+| Concrete class chosen at run time from data | Simple factory (§37.3.1) | One more indirection; registry must be kept complete |
+| Framework workflow needs a part supplied by extensions | Factory method (§37.3.2) | A subclass per variant |
+| Several products must vary together per environment | Abstract factory (§37.4) | Adding a product type changes every factory |
+| Object with many optional parts and cross-field rules | Builder (§37.5) | Extra class; mostly unnecessary with keyword arguments |
+| Exactly one instance per process | Module or composition-root instance; Singleton (§37.6) | Global state, hidden dependencies, test leakage |
+| Interchangeable algorithms chosen by config | Strategy (§37.7) | Clients must know which strategy to pick |
+| Open-ended reactions to a change in one process | Observer (§37.8) | Synchronous fan-out latency; lapsed listeners |
+| Third-party interface does not match yours | Adapter (§37.9) | Translation layer to maintain |
+| Optional cross-cutting behavior to combine freely | Decorator (§37.10) | Many small objects; order-dependent stacks |
+| Lazy creation, access control or remote object | Proxy (§37.11) | Hidden cost (N+1 queries, network calls) |
+| Undo, queueing, logging or replaying requests | Command (§37.12) | A class per operation; undo must be exact |
+| Domain logic tangled with storage code | Repository (§37.13) | Fake drifts unless contract-tested; poor for reporting |
+| Classes create their own dependencies; hard to test | Dependency injection (§37.14) | Wiring code or a container to understand |
+| Behavior and legal actions depend on mode | State (§37.15.1) | A class per state; transition logic spread across classes |
+| Fixed algorithm skeleton with variable steps | Template Method (§37.15.2) | Inheritance coupling |
+| Ordered, short-circuiting request processing | Chain of Responsibility (§37.15.3) | Order bugs; harder debugging |
+| Bursty work must not overwhelm a slow consumer | Producer–consumer (§37.16.1) | Queueing delay; in-memory work lost on crash |
+| Many short tasks, bounded concurrency | Thread pool + futures (§37.16.2–3) | Sizing, starvation and lost exceptions to manage |
+| Read-mostly shared data | Read-write lock or copy-on-write (§37.16.4) | Writer starvation or copy cost |
+| Hot lazy initialization | Holder idiom, `volatile` DCL (§37.16.5) | Subtle memory-model reasoning |
+
+::: recommendation
+**Recommendation — Earn each pattern.** Write the straightforward version first. Introduce a pattern when the second variant arrives (a second notifier, a second storage backend) or when a test cannot be written. In Python, try the lightest form first: a function argument before a Strategy hierarchy, a module before a Singleton, a closure before a Command class. Patterns applied speculatively add indirection that every future reader pays for.
+:::
+
+## 37.18 Summary and revision notes
+
+::: summary
+- A **design pattern** is a named solution shape with known trade-offs. GoF groups patterns as creational, structural and behavioral; Repository and DI are enterprise patterns; producer–consumer, thread pools and futures are concurrency patterns.
+- **Creational:** a simple factory centralizes a run-time class choice; a factory method lets subclasses choose the product; an abstract factory creates consistent families; a builder validates cross-field rules and emits an immutable product.
+- **Singleton** means one instance *per process*; prefer one instance created in the composition root and injected. In Python, a module is the idiomatic singleton; in Java, the enum or holder idiom.
+- **Strategy** swaps algorithms by composition; in Python a strategy is often a function. **State** swaps behavior as the object changes mode. **Template Method** fixes a skeleton and varies steps through inheritance.
+- **Observer** is in-process, synchronous publish/subscribe; isolate failing observers and move slow ones behind a queue or broker (§30.5).
+- **Adapter** changes an interface, **Decorator** keeps it and adds behavior, **Proxy** keeps it and controls access, **Facade** simplifies a subsystem. Python's `@decorator` syntax is a language feature, not the GoF pattern.
+- **Command** turns requests into values for undo, queueing and replay. **Chain of Responsibility** underlies middleware; order matters.
+- **Repository** hides storage behind a domain collection interface; contract-test every implementation. **Dependency injection** supplies dependencies from a composition root and realizes dependency inversion (§36.7).
+- **Concurrency:** bound every queue; size pools with $N_{cpu} U_{cpu} (1 + W/C)$ and check downstream limits; always inspect futures; prefer writer-preferring read-write locks or copy-on-write for read-mostly data; double-checked locking in Java requires `volatile`.
+:::
+
+## 37.19 Knowledge checkpoint
+
+1. What problem does a simple factory solve that a constructor call does not?
+2. When does an abstract factory become painful to extend?
+3. Name two reasons to make a builder's product immutable.
+4. A service with a "singleton" cache runs 30 pods with 2 processes each. How many caches exist?
+5. Why does the naive singleton in §37.6 create several instances under concurrency?
+6. How do Strategy and State differ, given that their class diagrams are almost identical?
+7. List two differences between Observer and broker-based publish/subscribe.
+8. Classify each as Adapter, Decorator or Proxy: a retry wrapper; a gRPC client stub; a wrapper converting a vendor SDK's dictionaries into domain objects.
+9. Name two uses of Python's `@` decorator syntax that are not the GoF Decorator.
+10. Why does running a new command clear the redo stack?
+11. What keeps an in-memory fake repository honest?
+12. What is the difference between dependency injection and a service locator?
+13. Using the sizing formula, how many threads for 16 cores, 50% target utilization, $W = 40$ ms and $C = 10$ ms?
+14. Why should authentication run before per-user rate limiting in a middleware chain?
+15. What exactly goes wrong in Java double-checked locking without `volatile`?
+
+<details><summary>Answers</summary>
+
+1. It moves the "which concrete class?" decision, driven by run-time data, into one place, so callers depend only on the interface and new variants do not touch call sites.
+2. When you add a new product type: every concrete factory must implement a new creation method.
+3. Invariants checked in `build()` cannot later be broken; immutable objects are thread-safe to share and safe to use as cache keys or to retry.
+4. $30 \times 2 = 60$ independent caches, each with its own contents.
+5. Check-then-act is not atomic: all threads read `None` before any assigns, and each constructs an instance.
+6. A strategy is chosen by the client from outside and usually stays fixed; a state object changes the context's state itself as transitions occur.
+7. Observer is synchronous and in-process with no durability; pub/sub through a broker is asynchronous, durable, and decouples publisher and subscribers in time and deployment.
+8. Retry wrapper: Decorator. gRPC stub: Proxy (remote). SDK translator: Adapter.
+9. Registration (`@app.route`), `@property`, `@dataclass` and `@staticmethod` transform or register rather than wrap an object behind the same interface.
+10. Redo replays undone commands on the state they were undone from; after a new command, that state no longer exists, so replaying them would corrupt the history.
+11. A shared contract test suite run against both the fake and the real implementation.
+12. With DI, dependencies are passed in and visible in the constructor; with a service locator, the object fetches them from a registry, hiding them and coupling it to the locator.
+13. $16 \times 0.5 \times (1 + 40/10) = 16 \times 0.5 \times 5 = 40$ threads.
+14. Unauthenticated (possibly forged) requests would otherwise consume a real user's quota, enabling a cheap denial of service against that user; also, user identity is not known until authentication runs.
+15. The write publishing the reference can become visible before the constructor's field writes; a thread on the unlocked fast path sees a non-null reference to a partially constructed object.
+</details>
+
+## 37.20 Interview questions
+
+### Basic
+
+**Q1. What is the Strategy pattern? Give a system-design example.** **Answer.** It encapsulates interchangeable algorithms behind one interface, chosen at run time. Examples: load-balancing policies (round robin, least connections) in a proxy, cache eviction policies (LRU, LFU), and retry backoff policies. It keeps the context closed to modification and makes each algorithm testable alone.
+
+**Q2. Why is Singleton considered an anti-pattern?** **Answer.** It is global mutable state: dependencies are hidden, tests leak state into one another, two configurations cannot coexist, and it invites contention. It also misleads in distributed systems, being one per process, not per system. Create one instance in the composition root and inject it instead.
+
+### Intermediate
+
+**Q3. Compare Adapter, Decorator and Proxy.** **Answer.** All wrap another object. Adapter presents a *different* interface to make incompatible code fit; Decorator presents the *same* interface and adds behavior, and decorators stack; Proxy presents the same interface and controls access (lazy creation, permissions, remoteness). Infrastructure analogues: an anti-corruption layer (adapter), a caching or retrying client (decorator), an API gateway or sidecar (proxy).
+
+**Q4. How would you make an `OrderService` unit-testable if it currently constructs a database client, an HTTP payment client and calls `datetime.now()`?** **Answer.** Define ports for the repository, payment gateway and clock; implement adapters for production; change `OrderService` to receive them via its constructor; wire them in a composition root; in tests pass an in-memory repository, a fake gateway and a fixed clock. Add contract tests so the fakes match the real adapters.
+
+### Advanced
+
+**Q5. Design the in-process notification pipeline for a service that sends 2,000 receipts per second at peak through a provider with 100 ms latency and a 1,500 requests/s limit.** **Answer.** Request threads produce Commands into a bounded queue (producer–consumer); a sender pool consumes them. By Little's Law the provider limit allows $1{,}500 \times 0.1 = 150$ requests in flight, so about 150 sender threads (fewer with an asynchronous client). Because 2,000/s exceeds 1,500/s, the queue grows at 500/s during the peak; bound it by memory (100,000 items ≈ 200 s of peak excess), and beyond that reject or spill to a durable broker. Wrap the client in decorators for retry with jitter and a circuit breaker, and make sends idempotent by order ID.
+
+**Q6. A Java service occasionally reads a configuration timeout of 0 under load. The config is lazily created with double-checked locking. Explain and fix.** **Answer.** Without `volatile`, the reference to the config can be published before its constructor's writes are visible; a thread on the unlocked fast path sees a non-null, partially constructed object with default field values. Fix by declaring the field `volatile`, or better, use the initialization-on-demand holder idiom or eager initialization, and make the config's fields `final`.
+
+## 37.21 Practical exercises
+
+1. Add a `WhatsAppNotifier` to §37.3 by registering it from a separate module at import time. Which files changed?
+2. Add a cloud family to the abstract factory in §37.4 with fake network latency, and write one contract test that runs against all three families.
+3. Reorder the decorators in §37.10 to `RetryingPriceSource(CachingPriceSource(db))` and predict, then measure, the database call count.
+4. Extend the Command example with an `ApplyCoupon` command whose undo restores the previous total, and persist the history to a JSON file.
+5. Replace the read-write lock in §37.16.4 with copy-on-write (build a new dictionary, swap a reference) and compare reader throughput with 8 readers.
+6. Vary `max_workers` in §37.16.2 from 1 to 64 and plot elapsed time; explain the curve with the sizing formula.
+
+## 37.22 Design challenges
+
+1. **Pluggable payments.** Design the payment module of a store that supports three processors, per-country routing, retries with idempotency keys, and a test mode. Identify where you would use Adapter, Strategy, Decorator, Abstract Factory and DI, and draw the class diagram.
+2. **Collaborative editor backend.** Support undo/redo per user, an audit log, and asynchronous persistence of edits. Decide what the Command objects contain, where they are queued, and how undo interacts with other users' later edits.
+
+## 37.23 References
+
+1. Gamma, E., Helm, R., Johnson, R., Vlissides, J. *Design Patterns: Elements of Reusable Object-Oriented Software*. Addison-Wesley, 1994.
+2. Freeman, E., Robson, E. *Head First Design Patterns*, 2nd ed. O'Reilly Media, 2020.
+3. Fowler, M. *Patterns of Enterprise Application Architecture*. Addison-Wesley, 2002.
+4. Fowler, M. "Inversion of Control Containers and the Dependency Injection pattern." martinfowler.com, 2004. https://martinfowler.com/articles/injection.html
+5. Goetz, B., Peierls, T., Bloch, J., Bowbeer, J., Holmes, D., Lea, D. *Java Concurrency in Practice*. Addison-Wesley, 2006.
+6. Schmidt, D., Stal, M., Rohnert, H., Buschmann, F. *Pattern-Oriented Software Architecture, Volume 2: Patterns for Concurrent and Networked Objects*. Wiley, 2000.
+7. Bloch, J. *Effective Java*, 3rd ed. Addison-Wesley, 2018.
+8. Evans, E. *Domain-Driven Design: Tackling Complexity in the Heart of Software*. Addison-Wesley, 2003.
+9. Bacon, D., Bloch, J., Bogda, J., et al. "The 'Double-Checked Locking is Broken' Declaration." https://www.cs.umd.edu/~pugh/java/memoryModel/DoubleCheckedLocking.html
+10. Manson, J., Pugh, W., Adve, S. "The Java Memory Model." *ACM POPL*, 2005.
+11. Norvig, P. "Design Patterns in Dynamic Programming." Presentation, Object World, 1996. https://norvig.com/design-patterns/
+12. Brooker, M. "Exponential Backoff And Jitter." AWS Architecture Blog, 2015.
+13. Smith, K. D., et al. "PEP 318 – Decorators for Functions and Methods." 2003. https://peps.python.org/pep-0318/
+14. Gross, S. "PEP 703 – Making the Global Interpreter Lock Optional in CPython." 2023. https://peps.python.org/pep-0703/
+15. Django Software Foundation. *Django documentation: Middleware*. https://docs.djangoproject.com/en/stable/topics/http/middleware/
+16. Spring. *Spring Framework Reference: The IoC Container; Proxying Mechanisms*. https://docs.spring.io/spring-framework/reference/
+17. Spring. *Spring Data JPA Reference: Repositories*. https://docs.spring.io/spring-data/jpa/reference/
+18. Python Software Foundation. *Python 3 Standard Library: `queue`, `concurrent.futures`, `threading`, `functools`, `logging`*. https://docs.python.org/3/library/
+
+## 37.24 Open verification items
+
+- Norvig (1996): exact presentation title, venue and the "16 of 23 patterns" figure; URL of the slides.
+- Bacon et al. declaration: full author list and date.
+- PEP 318 author attribution (Kevin D. Smith, Jim Jewett, Skip Montanaro, Anthony Baxter).
+- Spring documentation wording recommending constructor injection for mandatory dependencies (as of 2026).
+- PEP 703 free-threaded build status in current CPython releases (experimental in 3.13; status as of 2026).

@@ -695,3 +695,1085 @@ Calibrate by level: a junior candidate who meets the bar on the first five rows 
 | Race condition pointed out | Shared mutable state with check-then-act | Two threads can both see a spot as free | Wrap check and act in one critical section | List shared state explicitly in step 8 |
 | Code does not run | Untested edge case or typo | Interviewer traces an example | Walk through a small example by hand | Write a 5-line driver early and grow it |
 
+## 38.10 LLD exercises
+
+Each exercise follows the method of §38.9: requirements, a class diagram, one sequence or state diagram, runnable core code (tested with `python3`), the patterns used, and the extensions and follow-up questions interviewers ask. Exercises 1–4 are worked in full; 5–8 are more compact and focus on the one design decision that makes each problem interesting. All designs run in a single process; turning one into a distributed service is a high-level design question (Part X).
+
+**Table 38.10 — The eight exercises at a glance.**
+
+| # | Problem | Core design decision | Main patterns | Concurrency concern |
+|---|---|---|---|---|
+| 1 | Parking lot | Spot allocation and pricing as pluggable policies | Strategy, Facade | Two cars claiming one spot |
+| 2 | Elevator system | Dispatch policy separate from car state machine | Strategy, State machine | Hall calls from many panels |
+| 3 | LRU cache | Hash map plus doubly linked list for O(1) | Interface + implementation | `get` mutates recency order |
+| 4 | Vending machine | Behavior varies by state | State | Events during dispensing |
+| 5 | Library system | Title versus physical copy; holds queue | Observer | Two members, one copy |
+| 6 | Rate limiter | Algorithm behind an interface | Strategy, Decorator, Factory | Per-key atomic update |
+| 7 | Key-value store | TTL expiry and nested transactions | Command-like write buffers | Commit atomicity, conflicts |
+| 8 | Chess | Legal-move validation in layers | Polymorphism, Template-like hierarchy | Usually single-threaded |
+
+### 38.10.1 Exercise 1: Parking lot
+
+#### Requirements
+
+Clarified with the interviewer:
+
+1. A lot has several levels; each level has spots of three sizes: small (motorcycles), medium (cars) and large (vans and buses).
+2. A vehicle may park in a spot of its size or larger. Choose the smallest fitting size first, then the lowest level, then the lowest spot number.
+3. Entry issues a ticket; exit computes a fee from the vehicle size and the duration: an hourly rate with a daily cap.
+4. Report "full" when no suitable spot exists. One vehicle (plate) cannot be parked twice.
+5. Non-functional: thread safe (several gates operate concurrently); new allocation rules and pricing rules must not require changes to `ParkingLot`.
+
+Out of scope: payment processing, reservations, physical sensors.
+
+**Figure 38.8 — Parking lot class diagram.**
+
+```mermaid
+classDiagram
+  class ParkingLot {
+    -Lock lock
+    +park(Vehicle v) Ticket
+    +unpark(int ticketId) int
+  }
+  class Level {
+    +int index
+    +take(Size s) Spot
+    +release(Spot s) void
+  }
+  class Spot {
+    +int number
+    +Size size
+  }
+  class Vehicle {
+    +String plate
+    +Size size
+  }
+  class Ticket {
+    +int ticketId
+    +int entryMinute
+  }
+  class AllocationStrategy {
+    <<interface>>
+    +choose(levels, vehicle) Spot
+  }
+  class FeePolicy {
+    <<interface>>
+    +fee(Size s, int minutes) int
+  }
+  class Size {
+    <<enumeration>>
+    SMALL
+    MEDIUM
+    LARGE
+  }
+  ParkingLot "1" *-- "1..*" Level
+  Level "1" *-- "1..*" Spot
+  ParkingLot "1" --> "*" Ticket : active
+  Ticket "*" --> "1" Spot
+  Ticket "*" --> "1" Vehicle
+  Spot "1" --> "0..1" Vehicle : occupiedBy
+  ParkingLot --> AllocationStrategy
+  ParkingLot --> FeePolicy
+  AllocationStrategy <|.. BestFitLowestLevel
+  FeePolicy <|.. HourlyWithDailyCap
+```
+
+**Reading the diagram.** `ParkingLot` *composes* its levels and each `Level` composes its spots: they are created with the lot and meaningless without it. Vehicles and tickets are associations: a vehicle exists before and after parking. Each spot is occupied by at most one vehicle (`0..1`). The two interfaces are the variation points named in requirement 5: `AllocationStrategy` decides *which* spot, `FeePolicy` decides *how much*; the lot depends only on the interfaces (Dependency Inversion, §36.7). Vehicle kinds are a `Size` enumeration, not a subclass hierarchy, because the only behavior that differs is which spots fit. The single lock in `ParkingLot` is the concurrency boundary; there is no storage boundary in this in-memory design.
+
+**Figure 38.9 — Sequence diagram for parking a vehicle.**
+
+```mermaid
+sequenceDiagram
+  actor D as Driver
+  participant G as EntryGate
+  participant L as ParkingLot
+  participant S as AllocationStrategy
+  participant V as Level
+  D->>G: arrive(vehicle)
+  G->>+L: park(vehicle)
+  Note over L: acquire lot lock
+  L->>+S: choose(levels, vehicle)
+  loop fitting sizes, then levels in order
+    S->>+V: take(size)
+    V-->>-S: spot or none
+  end
+  S-->>-L: spot or none
+  alt spot found
+    L-->>G: ticket
+    G-->>D: print ticket, raise barrier
+  else lot full for this size
+    L-->>G: LotFullError
+    G-->>D: show FULL sign
+  end
+  Note over L: release lot lock
+  deactivate L
+```
+
+**Reading the diagram.** The entry gate calls `park` synchronously. The lot takes its lock *before* asking the strategy, so the search and the claim of the spot form one critical section: two gates cannot both receive the last medium spot. The strategy loops over fitting sizes and levels, asking each level to `take` a spot (a heap pop, which both finds and removes it). The `alt` fragment covers success (ticket printed) and the full case. The failure point is the lock: a strategy that does slow work (a database call, say) would serialize all gates, so strategies must be fast and in-memory. Scaling to a chain of lots means one `ParkingLot` per site, not one lock for all.
+
+#### Mathematical foundations
+
+::: formula
+**Formula 38.1 — Parking fee with an hourly rate and a daily cap**
+
+$$F(t) = \left\lfloor \frac{t}{1440} \right\rfloor C + \min\!\left(C,\; r\left\lceil \frac{t \bmod 1440}{60} \right\rceil\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $F(t)$ | Fee charged at exit | dollars |
+| $t$ | Parked duration | minutes |
+| $r$ | Hourly rate for the vehicle size; each started hour is charged in full | dollars/hour |
+| $C$ | Daily cap for the vehicle size, charged for each full 24 hours | dollars/day |
+| $1440$ | Minutes in a day | minutes |
+:::
+
+::: example
+**Worked example — three exits.** Rates: car $r = 4$, $C = 30$; van $r = 8$, $C = 60$.
+
+1. Car, $t = 130$ min: full days $\lfloor 130/1440 \rfloor = 0$; started hours $\lceil 130/60 \rceil = 3$; $F = \min(30, 4 \times 3) = \$12$.
+2. Car, $t = 540$ min: $\lceil 540/60 \rceil = 9$ hours; $4 \times 9 = 36 > 30$, so $F = \$30$.
+3. Van, $t = 1{,}565$ min: one full day ($\$60$) plus $1{,}565 - 1{,}440 = 125$ min; $\lceil 125/60 \rceil = 3$ hours; $\min(60, 8 \times 3) = 24$; $F = 60 + 24 = \$84$.
+
+**Interpretation.** For cars the cap binds once $4h > 30$, that is from the 8th started hour (any stay over 420 minutes). **Engineering implication.** Pricing rules change often (weekend rates, grace periods, event pricing). Because they live behind `FeePolicy`, each new rule is a new class tested in isolation, and `ParkingLot` does not change (Open/Closed, §36.4). The code below reproduces all three numbers.
+:::
+
+#### Code
+
+```python
+from __future__ import annotations
+
+import heapq
+import itertools
+import math
+import threading
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import IntEnum
+
+
+class Size(IntEnum):
+    SMALL = 1    # motorcycle
+    MEDIUM = 2   # car
+    LARGE = 3    # van or bus
+
+
+@dataclass(frozen=True)
+class Vehicle:
+    plate: str
+    size: Size
+
+
+@dataclass
+class Spot:
+    level: int
+    number: int
+    size: Size
+    vehicle: Vehicle | None = None
+
+
+@dataclass(frozen=True)
+class Ticket:
+    ticket_id: int
+    vehicle: Vehicle
+    spot: Spot
+    entry_minute: int
+
+
+class Level:
+    """Owns its spots (composition) and a min-heap of free spot numbers per size."""
+    def __init__(self, index: int, counts: dict[Size, int]):
+        self.index, self.spots = index, []
+        self._free: dict[Size, list[int]] = {s: [] for s in Size}
+        for size, count in counts.items():
+            for _ in range(count):
+                n = len(self.spots)
+                self.spots.append(Spot(index, n, size))
+                heapq.heappush(self._free[size], n)
+
+    def take(self, size: Size) -> Spot | None:
+        return self.spots[heapq.heappop(self._free[size])] if self._free[size] else None
+
+    def release(self, spot: Spot) -> None:
+        heapq.heappush(self._free[spot.size], spot.number)
+
+    def free_count(self, size: Size) -> int:
+        return len(self._free[size])
+
+
+class AllocationStrategy(ABC):                      # Strategy pattern
+    @abstractmethod
+    def choose(self, levels: list[Level], vehicle: Vehicle) -> Spot | None: ...
+
+
+class BestFitLowestLevel(AllocationStrategy):
+    """Smallest spot size that fits, then lowest level, then lowest spot number."""
+    def choose(self, levels, vehicle):
+        for size in (s for s in Size if s >= vehicle.size):
+            for level in levels:
+                if (spot := level.take(size)) is not None:
+                    return spot
+        return None
+
+
+class FeePolicy(ABC):                               # Strategy pattern
+    @abstractmethod
+    def fee(self, size: Size, minutes: int) -> int: ...
+
+
+class HourlyWithDailyCap(FeePolicy):
+    RATES = {Size.SMALL: (2, 15), Size.MEDIUM: (4, 30), Size.LARGE: (8, 60)}  # $/h, $/day cap
+
+    def fee(self, size, minutes):
+        rate, cap = self.RATES[size]
+        days, rest = divmod(minutes, 24 * 60)
+        return days * cap + min(cap, rate * math.ceil(rest / 60))
+
+
+class LotFullError(Exception):
+    pass
+
+
+class ParkingLot:                                    # Facade over levels, strategy, fees
+    def __init__(self, levels, strategy: AllocationStrategy, fees: FeePolicy, clock):
+        self.levels, self.strategy, self.fees, self.clock = levels, strategy, fees, clock
+        self._lock = threading.Lock()                # guards spots, tickets and plates
+        self._tickets: dict[int, Ticket] = {}
+        self._plates: set[str] = set()
+        self._ids = itertools.count(1)
+
+    def park(self, vehicle: Vehicle) -> Ticket:
+        with self._lock:
+            if vehicle.plate in self._plates:
+                raise ValueError(f"{vehicle.plate} is already parked")
+            spot = self.strategy.choose(self.levels, vehicle)
+            if spot is None:
+                raise LotFullError(f"no spot for {vehicle.size.name}")
+            spot.vehicle = vehicle
+            ticket = Ticket(next(self._ids), vehicle, spot, self.clock())
+            self._tickets[ticket.ticket_id] = ticket
+            self._plates.add(vehicle.plate)
+            return ticket
+
+    def unpark(self, ticket_id: int) -> int:
+        with self._lock:
+            ticket = self._tickets.pop(ticket_id)    # KeyError: unknown or already used
+            ticket.spot.vehicle = None
+            self.levels[ticket.spot.level].release(ticket.spot)
+            self._plates.discard(ticket.vehicle.plate)
+            minutes = self.clock() - ticket.entry_minute
+            return self.fees.fee(ticket.vehicle.size, minutes)
+
+
+if __name__ == "__main__":
+    now = [0]                                        # fake clock in minutes
+    lot = ParkingLot([Level(0, {Size.SMALL: 1, Size.MEDIUM: 2, Size.LARGE: 1}),
+                      Level(1, {Size.MEDIUM: 2, Size.LARGE: 1})],
+                     BestFitLowestLevel(), HourlyWithDailyCap(), lambda: now[0])
+    moto = lot.park(Vehicle("M-1", Size.SMALL))
+    cars = [lot.park(Vehicle(f"C-{i}", Size.MEDIUM)) for i in range(3)]
+    print([(t.spot.level, t.spot.number, t.spot.size.name) for t in [moto, *cars]])
+    vans = [lot.park(Vehicle(f"V-{i}", Size.LARGE)) for i in range(2)]
+    try:
+        lot.park(Vehicle("V-9", Size.LARGE))
+    except LotFullError as e:
+        print("rejected:", e)
+    now[0] = 130
+    print("car, 130 min:", lot.unpark(cars[0].ticket_id))          # ceil(130/60)=3 h -> $12
+    now[0] = 540
+    print("car, 540 min:", lot.unpark(cars[1].ticket_id))          # 9 h -> $36 -> cap $30
+    now[0] = 1565
+    print("van, 1565 min:", lot.unpark(vans[0].ticket_id))         # 1 day $60 + 3 h $24
+    car = lot.park(Vehicle("C-7", Size.MEDIUM))                     # reuses lowest free spot
+    print("C-7 ->", car.spot.level, car.spot.number)
+
+    # Concurrency check: 50 threads race for 10 medium spots; exactly 10 must win.
+    big = ParkingLot([Level(0, {Size.MEDIUM: 10})], BestFitLowestLevel(),
+                     HourlyWithDailyCap(), lambda: 0)
+    wins = []
+    def attempt(i):
+        try:
+            wins.append(big.park(Vehicle(f"T-{i}", Size.MEDIUM)).spot.number)
+        except LotFullError:
+            pass
+    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(50)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert sorted(wins) == list(range(10)), wins
+    print("concurrent winners:", len(wins))
+```
+
+Output:
+
+```text
+[(0, 0, 'SMALL'), (0, 1, 'MEDIUM'), (0, 2, 'MEDIUM'), (1, 0, 'MEDIUM')]
+rejected: no spot for LARGE
+car, 130 min: 12
+car, 540 min: 30
+van, 1565 min: 84
+C-7 -> 0 1
+concurrent winners: 10
+```
+
+What to notice:
+
+- Each level keeps a min-heap of free spot numbers per size, so finding *and* claiming a spot is $O(\log n)$ per level instead of a linear scan of all spots; with $S$ sizes and $L$ levels the search is $O(SL\log n)$, which is constant for a fixed building.
+- The check ("is there a free spot?") and the act ("mark it occupied") happen under one lock. Splitting them is the classic check-then-act race (§6.9); the 50-thread test would then occasionally hand one spot to two cars.
+- Time comes from an injected `clock`, so fees are testable without waiting hours; tickets are single-use because `unpark` pops them.
+
+#### Patterns used
+
+**Strategy** for allocation and pricing (§37.7); **Facade**: `ParkingLot` is the only class the gates talk to; **composition** for lot–level–spot ownership; value objects (`Vehicle`, `Ticket`) are immutable dataclasses.
+
+#### Extensions and follow-up questions
+
+- *Electric-vehicle spots with chargers?* Add a `features` set to `Spot` and a strategy that prefers matching features; nothing else changes.
+- *Reduce lock contention with 20 gates?* Lock per level and let the strategy try levels in a gate-specific order; or keep free counts per level in atomics and lock only the chosen level. Measure first: at a few cars per second, one lock is not a bottleneck.
+- *Display free spots per level in real time?* Have `ParkingLot` publish `SpotTaken`/`SpotFreed` events to display boards (Observer, §37.8).
+- *Lost ticket?* Look up the active ticket by plate (the `_plates` set becomes a plate→ticket map) and charge per policy.
+- *Multiple lots across a city?* That becomes a high-level design: a reservation service with a database per region; the LLD here is the per-lot component.
+
+### 38.10.2 Exercise 2: Elevator system
+
+#### Requirements
+
+1. A building has $N$ floors and $M$ cars. Passengers press *hall calls* (floor plus direction) on each floor and *car calls* (destination) inside a car.
+2. A dispatcher assigns each hall call to one car; the policy must be replaceable.
+3. Each car serves its stops using the LOOK policy: keep moving in the current direction while stops remain ahead, then reverse; idle when there are no stops.
+4. A car in maintenance is not dispatched.
+5. Non-functional: hall calls arrive concurrently from many panels; the simulation must be deterministic for tests.
+
+Out of scope: weight sensors, door obstruction, fire mode, energy optimization (all good follow-ups).
+
+**Figure 38.10 — Elevator system class diagram.**
+
+```mermaid
+classDiagram
+  class ElevatorController {
+    -Lock lock
+    +hallCall(int floor, Direction d) String
+    +carCall(String carId, int floor) void
+    +tick() void
+  }
+  class Elevator {
+    +String eid
+    +int floor
+    +Direction direction
+    +State state
+    -Set~int~ stops
+    +addStop(int floor) void
+    +step() void
+  }
+  class DispatchStrategy {
+    <<interface>>
+    +choose(cars, floor, direction) Elevator
+  }
+  class EstimatedTimeDispatch {
+    +float tFloor
+    +float tStop
+    +cost(car, floor, direction) float
+  }
+  class Direction {
+    <<enumeration>>
+    UP
+    DOWN
+    NONE
+  }
+  class State {
+    <<enumeration>>
+    IDLE
+    MOVING
+    DOORS_OPEN
+    MAINTENANCE
+  }
+  ElevatorController "1" *-- "1..*" Elevator
+  ElevatorController --> DispatchStrategy
+  DispatchStrategy <|.. EstimatedTimeDispatch
+  Elevator ..> Direction
+  Elevator ..> State
+```
+
+**Reading the diagram.** The `ElevatorController` composes the cars and owns the lock that serializes calls and ticks. *Which car* is decided by a `DispatchStrategy` (here `EstimatedTimeDispatch`); *how a car moves* is the car's own state machine (`step`). Keeping the two separate means you can swap in zoning or destination dispatch without touching car movement, and you can test each in isolation. A car's pending work is a set of stop floors. There is no storage boundary; the real-world failure points are a car that stops responding (mark it `MAINTENANCE` so the dispatcher skips it) and the controller itself, which in a real building has a hardware fallback.
+
+**Figure 38.11 — State machine of one elevator car.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Moving : stop added [stop != floor]
+  Idle --> DoorsOpen : stop added [stop = floor]
+  Moving --> Moving : tick [no stop here] / floor += direction
+  Moving --> DoorsOpen : tick [floor in stops] / remove stop
+  DoorsOpen --> Moving : tick [stops remain] / pick direction
+  DoorsOpen --> Idle : tick [no stops]
+  Idle --> Maintenance : fault
+  Moving --> Maintenance : fault
+  Maintenance --> Idle : repaired
+  DoorsOpen : DoorsOpen
+  DoorsOpen : entry / open doors
+  DoorsOpen : exit / close doors
+```
+
+**Reading the diagram.** A car starts *Idle*. When a stop is added it either opens its doors (the stop is the current floor) or starts *Moving*. Each tick while moving it either advances one floor or, if the current floor is a stop, removes the stop and enters *DoorsOpen*, whose entry action opens the doors and exit action closes them. Leaving *DoorsOpen* it re-applies LOOK: continue if stops remain, otherwise go *Idle*. A fault from *Idle* or *Moving* sends the car to *Maintenance* until repaired. There is deliberately no transition from *DoorsOpen* to *Moving* without passing the exit action, so a car can never move with open doors, the most important safety property in the whole design. In the code below, the guards are checked in `step()`, and the timed ticks are deterministic so tests do not depend on wall-clock time.
+
+#### Mathematical foundations
+
+::: formula
+**Formula 38.2 — Estimated time for car $e$ to reach a hall call $r$**
+
+$$T(e, r) = d \cdot t_{\text{floor}} + s \cdot t_{\text{stop}}, \qquad
+d = \begin{cases} |f_e - f_r| & \text{if } e \text{ is idle, or } f_r \text{ is ahead and } e \text{ moves in the call's direction} \\ |f_e - f_x| + |f_x - f_r| & \text{otherwise} \end{cases}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T(e, r)$ | Estimated time until car $e$ arrives at the caller | s |
+| $f_e$, $f_r$ | Current floor of the car; floor of the call | floor index |
+| $f_x$ | Farthest pending stop in the car's current direction (where it will turn around) | floor index |
+| $d$ | Floors the car travels before reaching the caller | floors |
+| $s$ | Pending stops on that path before the caller | stops |
+| $t_{\text{floor}}$ | Travel time per floor | s/floor |
+| $t_{\text{stop}}$ | Time lost per intermediate stop (decelerate, doors, accelerate) | s/stop |
+:::
+
+::: example
+**Worked example — hall call at floor 7 going up.** $t_{\text{floor}} = 2$ s, $t_{\text{stop}} = 10$ s. Three cars:
+
+1. Car A at floor 3, moving up, stops {5, 9}. The call is ahead and in A's direction: $d = |3 - 7| = 4$; stops before 7: {5}, $s = 1$. $T = 4 \times 2 + 1 \times 10 = 18$ s.
+2. Car B at floor 10, moving down, stop {2}. B moves *toward* floor 7 but in the wrong direction, so it finishes its sweep first: $f_x = 2$, $d = |10 - 2| + |2 - 7| = 8 + 5 = 13$; $s = 1$ (floor 2). $T = 13 \times 2 + 10 = 36$ s.
+3. Car C idle at floor 1: $d = 6$, $s = 0$, $T = 6 \times 2 = 12$ s.
+
+The dispatcher picks C (12 s), even though A is closer (4 floors versus 6). **Interpretation.** Stops cost more than distance: one stop (10 s) equals five floors of travel. **Engineering implication.** "Nearest car" is the wrong heuristic; minimize estimated arrival time instead, and keep the policy behind an interface, because real buildings tune $t_{\text{stop}}$ and add penalties (for example for a car that is nearly full).
+:::
+
+#### Code
+
+```python
+from __future__ import annotations
+
+import threading
+from abc import ABC, abstractmethod
+from enum import Enum
+
+
+class Direction(Enum):
+    UP = 1
+    DOWN = -1
+    NONE = 0
+
+
+class State(Enum):
+    IDLE = "idle"
+    MOVING = "moving"
+    DOORS_OPEN = "doors_open"
+    MAINTENANCE = "maintenance"
+
+
+class Elevator:
+    """One car. step() advances one tick: move one floor, or open/close doors."""
+    def __init__(self, eid: str, floor: int = 0):
+        self.eid, self.floor = eid, floor
+        self.direction, self.state = Direction.NONE, State.IDLE
+        self.stops: set[int] = set()
+        self.served: list[int] = []
+
+    def add_stop(self, floor: int) -> None:
+        self.stops.add(floor)
+
+    def stops_ahead(self) -> list[int]:
+        d = self.direction.value
+        return [s for s in self.stops if d and (s - self.floor) * d > 0]
+
+    def _pick_direction(self) -> None:          # LOOK: keep going while work lies ahead
+        if self.stops_ahead():
+            return
+        if not self.stops:
+            self.direction = Direction.NONE
+            return
+        nearest = min(self.stops, key=lambda s: abs(s - self.floor))
+        self.direction = Direction.UP if nearest > self.floor else Direction.DOWN
+
+    def step(self) -> None:
+        if self.state is State.MAINTENANCE:
+            return
+        if self.state is State.DOORS_OPEN:      # doors close after one tick of dwell
+            self._pick_direction()
+            self.state = State.MOVING if self.stops else State.IDLE
+            return
+        if self.floor in self.stops:            # arrived at a stop: open doors
+            self.stops.discard(self.floor)
+            self.served.append(self.floor)
+            self.state = State.DOORS_OPEN
+            return
+        self._pick_direction()
+        if self.direction is Direction.NONE:
+            self.state = State.IDLE
+            return
+        self.floor += self.direction.value
+        self.state = State.MOVING
+
+
+class DispatchStrategy(ABC):                      # Strategy pattern
+    @abstractmethod
+    def choose(self, cars: list[Elevator], floor: int, direction: Direction) -> Elevator: ...
+
+
+class EstimatedTimeDispatch(DispatchStrategy):
+    """Pick the car with the lowest estimated time to reach the caller (Formula 38.2)."""
+    def __init__(self, t_floor: float = 2.0, t_stop: float = 10.0):
+        self.t_floor, self.t_stop = t_floor, t_stop
+
+    def cost(self, car: Elevator, floor: int, direction: Direction) -> float:
+        d = car.direction.value
+        between = lambda a, b: [s for s in car.stops if min(a, b) <= s <= max(a, b) and s != floor]
+        on_the_way = car.direction is Direction.NONE or (
+            (floor - car.floor) * d >= 0 and car.direction is direction)
+        if on_the_way:
+            dist = abs(car.floor - floor)
+            stops = between(car.floor, floor)
+        else:                                     # finish this sweep, then come back
+            far = max(car.stops_ahead(), key=lambda s: abs(s - car.floor), default=car.floor)
+            dist = abs(car.floor - far) + abs(far - floor)
+            stops = set(between(car.floor, far)) | set(between(far, floor))
+        return dist * self.t_floor + len(stops) * self.t_stop
+
+    def choose(self, cars, floor, direction):
+        candidates = [c for c in cars if c.state is not State.MAINTENANCE]
+        return min(candidates, key=lambda c: (self.cost(c, floor, direction), c.eid))
+
+
+class ElevatorController:
+    def __init__(self, cars: list[Elevator], strategy: DispatchStrategy):
+        self.cars = {c.eid: c for c in cars}
+        self.strategy = strategy
+        self._lock = threading.Lock()             # hall calls arrive from many panels
+
+    def hall_call(self, floor: int, direction: Direction) -> str:
+        with self._lock:
+            car = self.strategy.choose(list(self.cars.values()), floor, direction)
+            car.add_stop(floor)
+            return car.eid
+
+    def car_call(self, eid: str, floor: int) -> None:
+        with self._lock:
+            self.cars[eid].add_stop(floor)
+
+    def tick(self) -> None:
+        with self._lock:
+            for car in self.cars.values():
+                car.step()
+
+
+if __name__ == "__main__":
+    a, b, c = Elevator("A", 3), Elevator("B", 10), Elevator("C", 1)
+    a.direction, a.stops = Direction.UP, {5, 9}
+    b.direction, b.stops = Direction.DOWN, {2}
+    strat = EstimatedTimeDispatch()
+    costs = {car.eid: strat.cost(car, 7, Direction.UP) for car in (a, b, c)}
+    print("costs for hall call 7 UP:", costs)
+    assert costs == {"A": 18.0, "B": 36.0, "C": 12.0}
+
+    ctl = ElevatorController([a, b, c], strat)
+    print("assigned to:", ctl.hall_call(7, Direction.UP))
+    ctl.car_call("A", 2)                          # 2 is behind A: served on the way back
+    for _ in range(40):
+        ctl.tick()
+    print({car.eid: car.served for car in (a, b, c)})
+    assert a.served == [5, 9, 2] and b.served == [2] and c.served == [7]
+```
+
+Output:
+
+```text
+costs for hall call 7 UP: {'A': 18.0, 'B': 36.0, 'C': 12.0}
+assigned to: C
+{'A': [5, 9, 2], 'B': [2], 'C': [7]}
+```
+
+What to notice:
+
+- Car A receives a car call for floor 2 while moving up; LOOK finishes the upward sweep (5, 9) before reversing, which is why it serves `[5, 9, 2]` rather than turning back immediately.
+- `cost()` implements Formula 38.2 directly, so the worked example doubles as a unit test.
+- The controller lock covers both dispatch and ticks, so a hall call can never be assigned on the basis of a car's half-updated state.
+
+#### Patterns used
+
+**Strategy** for dispatch; an explicit **state machine** for each car (an enum plus guarded transitions in `step`; with more states and per-state behavior, refactor to the State pattern of §38.10.4); **composition** of cars in the controller.
+
+#### Extensions and follow-up questions
+
+- *Hall calls should only be served by a car going the same way.* Store stops as `(floor, direction)` and let a car skip opposite-direction hall stops on the current sweep.
+- *Peak-hour zoning.* A `ZonedDispatch` strategy assigns cars to floor bands at 08:30–09:30; select the strategy by time of day (a strategy that delegates to others).
+- *Destination dispatch* (passengers enter their destination in the lobby): the dispatcher now sees both ends of each trip and can group passengers by destination; the car model is unchanged.
+- *Starvation:* a call that is always outbid by newer calls. Add an age term to the cost or a maximum wait that forces assignment.
+- *Real-time control:* replace the discrete tick with an event-driven controller (arrival sensors), keeping the same state machine.
+
+### 38.10.3 Exercise 3: LRU cache
+
+#### Requirements
+
+1. `get(key)` returns the value or a miss; `put(key, value)` inserts or updates.
+2. Fixed capacity $n$; when full, `put` of a new key evicts the **least recently used** entry. Both reads and writes count as use.
+3. Both operations in $O(1)$ time.
+4. Thread safe; expose hit, miss and eviction counts.
+
+The policy itself and its hit-ratio behavior are covered in §20.9; here the question is the data structure and the class design.
+
+#### Why a hash map plus a doubly linked list
+
+A hash map alone gives $O(1)$ lookup but no order. A list alone keeps order but finding a key is $O(n)$. Combined, the map stores `key → node` and the list keeps nodes in recency order: on each access you unlink the node (constant time, because a *doubly* linked node knows its predecessor) and move it to the front; to evict you remove the node before the tail. Two **sentinel** nodes at head and tail remove every empty-list special case.
+
+**Figure 38.12 — LRU cache class diagram.**
+
+```mermaid
+classDiagram
+  class Cache~K,V~ {
+    <<interface>>
+    +get(K key) V
+    +put(K key, V value) void
+  }
+  class LRUCache~K,V~ {
+    -int capacity
+    -Map~K,Node~ map
+    -Node head
+    -Node tail
+    -Lock lock
+    +get(K key) V
+    +put(K key, V value) void
+    -unlink(Node n) void
+    -pushFront(Node n) void
+  }
+  class Node {
+    +K key
+    +V value
+    +Node prev
+    +Node next
+  }
+  Cache <|.. LRUCache
+  LRUCache "1" *-- "2..*" Node : sentinels and entries
+  Node "0..1" --> "0..1" Node : prev and next
+```
+
+**Reading the diagram.** Clients depend on the generic `Cache` interface, so an LFU or TinyLFU implementation (§20.9.3) can replace the LRU without changing them. `LRUCache` composes its nodes (at least the two sentinels, hence `2..*`); nodes are never handed out. Each node links to its neighbors in both directions, which is what makes unlinking $O(1)$. The private `unlink` and `pushFront` are the only list operations, and both assume the lock is held. The single lock is the concurrency boundary; there is no storage boundary, since the cache is in memory.
+
+**Figure 38.13 — Sequence diagram for get and put, including eviction.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant L as LRUCache
+  participant M as HashMap
+  participant D as LinkedList
+  C->>+L: get(k)
+  Note over L: acquire lock
+  L->>M: lookup(k)
+  alt hit
+    L->>D: unlink(node) and pushFront(node)
+    L-->>C: value
+  else miss
+    L-->>C: none
+  end
+  deactivate L
+  C->>+L: put(k2, v2)
+  Note over L: acquire lock
+  opt map is full and k2 is new
+    L->>D: remove tail.prev
+    L->>M: delete(evicted key)
+  end
+  L->>M: insert(k2, node)
+  L->>D: pushFront(node)
+  L-->>-C: done
+```
+
+**Reading the diagram.** `get` takes the lock, looks the key up in the map and, on a hit, moves the node to the front before returning; a miss changes nothing. `put` of a new key into a full cache first evicts the node before the tail sentinel and deletes its key from the map, then inserts and links the new node. All calls are synchronous and in memory. The failure point the diagram makes visible: `get` *writes* to the list, so it needs the same exclusive lock as `put`; a read-write lock that lets readers share would corrupt the list.
+
+#### Code
+
+```python
+from __future__ import annotations
+
+import threading
+from abc import ABC, abstractmethod
+from typing import Generic, Hashable, Optional, TypeVar
+
+K = TypeVar("K", bound=Hashable)
+V = TypeVar("V")
+
+
+class Cache(ABC, Generic[K, V]):                    # the interface clients depend on
+    @abstractmethod
+    def get(self, key: K) -> Optional[V]: ...
+    @abstractmethod
+    def put(self, key: K, value: V) -> None: ...
+
+
+class _Node:
+    __slots__ = ("key", "value", "prev", "next")
+
+    def __init__(self, key=None, value=None):
+        self.key, self.value = key, value
+        self.prev: _Node | None = None
+        self.next: _Node | None = None
+
+
+class LRUCache(Cache[K, V]):
+    """Hash map for O(1) lookup + doubly linked list for O(1) recency updates.
+    Order: head.next is most recently used, tail.prev is least recently used."""
+
+    def __init__(self, capacity: int):
+        if capacity <= 0:
+            raise ValueError("capacity must be positive")
+        self.capacity = capacity
+        self._map: dict[K, _Node] = {}
+        self._head, self._tail = _Node(), _Node()   # sentinels: no None checks at the ends
+        self._head.next, self._tail.prev = self._tail, self._head
+        self._lock = threading.Lock()                # get() mutates order, so it locks too
+        self.hits = self.misses = self.evictions = 0
+
+    # -- list primitives, each O(1); callers hold the lock --
+    def _unlink(self, node: _Node) -> None:
+        node.prev.next, node.next.prev = node.next, node.prev
+
+    def _push_front(self, node: _Node) -> None:
+        node.prev, node.next = self._head, self._head.next
+        self._head.next.prev = node
+        self._head.next = node
+
+    def get(self, key):
+        with self._lock:
+            node = self._map.get(key)
+            if node is None:
+                self.misses += 1
+                return None
+            self._unlink(node)
+            self._push_front(node)                   # mark as most recently used
+            self.hits += 1
+            return node.value
+
+    def put(self, key, value):
+        with self._lock:
+            node = self._map.get(key)
+            if node is not None:                     # update in place, refresh recency
+                node.value = value
+                self._unlink(node)
+                self._push_front(node)
+                return
+            if len(self._map) == self.capacity:      # evict the least recently used
+                lru = self._tail.prev
+                self._unlink(lru)
+                del self._map[lru.key]
+                self.evictions += 1
+            node = _Node(key, value)
+            self._map[key] = node
+            self._push_front(node)
+
+    def keys_mru_to_lru(self) -> list:
+        with self._lock:
+            out, n = [], self._head.next
+            while n is not self._tail:
+                out.append(n.key)
+                n = n.next
+            return out
+
+
+if __name__ == "__main__":
+    c = LRUCache[str, int](3)
+    for k, v in [("a", 1), ("b", 2), ("c", 3)]:
+        c.put(k, v)
+    c.get("a")                                       # a becomes most recent
+    c.put("d", 4)                                    # evicts b, the least recent
+    print(c.keys_mru_to_lru(), c.get("b"))
+    assert c.keys_mru_to_lru() == ["d", "a", "c"] and c.get("b") is None
+
+    # Stress: 8 threads x 20,000 mixed operations; invariants must hold afterwards.
+    import random
+    big = LRUCache[int, int](100)
+    def worker(seed):
+        rng = random.Random(seed)
+        for _ in range(20_000):
+            k = rng.randrange(300)
+            if rng.random() < 0.7:
+                big.get(k)
+            else:
+                big.put(k, k * k)
+    ts = [threading.Thread(target=worker, args=(s,)) for s in range(8)]
+    for t in ts: t.start()
+    for t in ts: t.join()
+    order = big.keys_mru_to_lru()
+    assert len(order) == len(big._map) == 100 and set(order) == set(big._map)
+    assert all(big._map[k].value == k * k for k in order)
+    total = big.hits + big.misses
+    print(f"ops={total} hit ratio={big.hits / total:.2f} evictions={big.evictions}")
+```
+
+Output: `['d', 'a', 'c'] None`, then a line such as `ops=111952 hit ratio=0.33 evictions=32220` (`ops` counts only the `get` calls, about 70% of the 160,000 operations; the exact numbers vary with thread scheduling, while the invariants are asserted).
+
+What to notice:
+
+- Every operation does a constant number of map operations and pointer swaps: $O(1)$ time. Memory is one node per entry plus a map slot, roughly 100–200 bytes of overhead per entry in CPython, which matters when $n$ reaches millions.
+- The stress test checks *structural* invariants after 160,000 concurrent operations: the list and the map hold the same 100 keys and every value is intact. Without the lock, two threads can interleave the pointer assignments of `_unlink` and `_push_front` and lose or duplicate nodes; CPython's global interpreter lock makes this rare but does not prevent it, and free-threaded builds make it likely.
+- The hit ratio of about 0.33 is what theory predicts for uniformly random keys: capacity 100 over 300 keys. Real workloads are skewed and do much better (§20.3.3).
+
+#### Concurrency options
+
+One lock serializes all operations, which is fine up to a few million operations per second in a compiled language and far beyond what one CPython process can issue. Beyond that, **lock striping** splits the cache into $k$ independent LRU segments keyed by `hash(key) mod k`, each with its own lock (approximate global LRU, near-linear scaling). Libraries such as Caffeine avoid locking on reads entirely by recording accesses in buffers and replaying them under a lock in batches. Neither changes the class design: both are new implementations of `Cache`.
+
+::: industry
+**Standard-library LRU implementations.** CPython's `functools.lru_cache` (pure-Python fallback in `Lib/functools.py`) uses exactly this structure: a dictionary from key to link and a circular doubly linked list with a root sentinel, guarded by a lock. Java's `LinkedHashMap` constructed with `accessOrder = true` maintains entries in access order, and its documentation recommends overriding `removeEldestEntry` to build an LRU cache.
+*Evidence: Primary* — [Python Software Foundation: functools source; Oracle: LinkedHashMap]
+:::
+
+#### Extensions and follow-up questions
+
+- *Use `OrderedDict`?* Yes in production Python (`move_to_end`, `popitem(last=False)`); the interviewer usually wants the underlying structure first.
+- *Add TTL.* Store an expiry in each node and treat expired entries as misses (lazy expiry); combine with Exercise 7's sweeper.
+- *Evict by size in bytes rather than count.* Track a running byte total and evict from the tail until the new entry fits.
+- *Prevent one scan from flushing the cache.* Segmented LRU or W-TinyLFU (§20.9.3), behind the same interface.
+
+### 38.10.4 Exercise 4: Vending machine
+
+#### Requirements
+
+1. Customers insert coins (5, 10, 25 and 100 cents), select a product by slot code, receive the product and change, or cancel for a full refund.
+2. A selection fails with a clear message if the slot is empty, the balance is short, or the machine cannot make change.
+3. While the motor is dispensing, all input is rejected; when every slot is empty the machine is *sold out*.
+4. Extensible: adding a state (for example *maintenance*) must not require editing every method of the machine.
+
+The fourth requirement is the reason for the **State pattern** (§37.15). Behavior depends heavily on state, and the naive implementation, one `if state == ...` chain in every method, grows with states × events and scatters each state's rules across the class.
+
+**Figure 38.14 — Vending machine class diagram (State pattern).**
+
+```mermaid
+classDiagram
+  class VendingMachine {
+    -VendingState state
+    -Map stock
+    -Counter coins
+    -List escrow
+    +insert(int coin) void
+    +select(String code) Product
+    +cancel() List
+    +dispensed() void
+    +makeChange(int amount) List
+  }
+  class VendingState {
+    <<abstract>>
+    +insert(m, coin) void
+    +select(m, code) Product
+    +cancel(m) List
+    +dispensed(m) void
+  }
+  class Product {
+    +String code
+    +String name
+    +int price
+  }
+  VendingMachine "1" --> "1" VendingState : current
+  VendingState <|-- Idle
+  VendingState <|-- HasMoney
+  VendingState <|-- Dispensing
+  VendingState <|-- SoldOut
+  VendingMachine "1" o-- "*" Product
+```
+
+**Reading the diagram.** `VendingMachine` is the pattern's *Context*: its public methods forward every event to the current `VendingState` object. The abstract state rejects every event by default; each concrete state overrides only the events that are legal in it and decides the next state. Adding *Maintenance* means one new subclass and the transitions into it. Products are aggregated (the catalog is configured from outside). The coin box and escrow (coins inserted for the current purchase) are the machine's money state, and keeping escrow separate from the coin box is what makes `cancel` a simple refund.
+
+**Figure 38.15 — Vending machine state diagram.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> HasMoney : insert coin [valid coin]
+  HasMoney --> HasMoney : insert coin
+  HasMoney --> HasMoney : select [unavailable or short or no change] / show error
+  HasMoney --> Dispensing : select [in stock and paid and change ok] / take payment
+  HasMoney --> Idle : cancel / refund escrow
+  Dispensing --> Idle : dispensed [stock remains]
+  Dispensing --> SoldOut : dispensed [all slots empty]
+  SoldOut --> Idle : restocked
+  Dispensing : Dispensing
+  Dispensing : entry / run motor and release change
+```
+
+**Reading the diagram.** From *Idle*, a valid coin moves the machine to *HasMoney*, where more coins accumulate. A selection that fails one of its guards leaves the state unchanged and shows an error; a successful one takes payment and enters *Dispensing*, whose entry action drives the motor and returns change. Only the `dispensed` event from the motor sensor leaves *Dispensing*, so coins or selections made mid-vend are rejected. When the last item is sold the machine goes to *SoldOut* until restocked. The failure point is the motor: if `dispensed` never arrives, the machine is stuck, so a real controller adds a timeout transition to a *Fault* state with a refund.
+
+#### Code
+
+```python
+from __future__ import annotations
+
+from abc import ABC
+from collections import Counter
+from dataclasses import dataclass
+
+COINS = (100, 25, 10, 5)                             # cents, largest first
+
+
+class InvalidAction(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Product:
+    code: str
+    name: str
+    price: int                                       # cents
+
+
+class VendingState(ABC):
+    """Every event is rejected unless a concrete state overrides it."""
+    name = "abstract"
+
+    def insert(self, m: "VendingMachine", coin: int) -> None:
+        raise InvalidAction(f"cannot insert coins while {self.name}")
+
+    def select(self, m: "VendingMachine", code: str):
+        raise InvalidAction(f"cannot select while {self.name}")
+
+    def cancel(self, m: "VendingMachine") -> list[int]:
+        raise InvalidAction(f"cannot cancel while {self.name}")
+
+    def dispensed(self, m: "VendingMachine") -> None:
+        raise InvalidAction(f"nothing is being dispensed while {self.name}")
+
+
+class Idle(VendingState):
+    name = "idle"
+
+    def insert(self, m, coin):
+        m.accept(coin)
+        m.state = HasMoney()
+
+    def cancel(self, m):
+        return []
+
+
+class HasMoney(VendingState):
+    name = "has_money"
+
+    def insert(self, m, coin):
+        m.accept(coin)
+
+    def select(self, m, code):
+        product = m.products.get(code)
+        if product is None or m.stock[code] == 0:
+            raise InvalidAction(f"{code} unavailable")
+        if m.balance < product.price:
+            raise InvalidAction(f"insert {product.price - m.balance} more cents")
+        change = m.make_change(m.balance - product.price)
+        if change is None:
+            raise InvalidAction("cannot make change; press cancel")
+        m.complete_sale(code, change)
+        m.state = Dispensing()
+        return product, change
+
+    def cancel(self, m):
+        refund, m.escrow = m.escrow, []
+        m.state = Idle()
+        return refund
+
+
+class Dispensing(VendingState):
+    name = "dispensing"
+
+    def dispensed(self, m):                          # event from the motor sensor
+        m.state = SoldOut() if sum(m.stock.values()) == 0 else Idle()
+
+
+class SoldOut(VendingState):
+    name = "sold_out"
+
+    def cancel(self, m):
+        return []
+
+
+class VendingMachine:                                # the Context of the State pattern
+    def __init__(self, products: list[Product], stock: dict[str, int], coins: Counter):
+        self.products = {p.code: p for p in products}
+        self.stock, self.coins = dict(stock), Counter(coins)
+        self.escrow: list[int] = []
+        self.state: VendingState = Idle() if sum(self.stock.values()) else SoldOut()
+
+    # Public API: each call is delegated to the current state object.
+    def insert(self, coin): self.state.insert(self, coin)
+    def select(self, code): return self.state.select(self, code)
+    def cancel(self): return self.state.cancel(self)
+    def dispensed(self): self.state.dispensed(self)
+
+    @property
+    def balance(self) -> int:
+        return sum(self.escrow)
+
+    def accept(self, coin: int) -> None:
+        if coin not in COINS:
+            raise InvalidAction(f"rejected coin {coin}")
+        self.escrow.append(coin)
+
+    def make_change(self, amount: int) -> list[int] | None:
+        available = self.coins + Counter(self.escrow)    # inserted coins can be reused
+        out = []
+        for coin in COINS:
+            n = min(amount // coin, available[coin])
+            out += [coin] * n
+            amount -= n * coin
+        return out if amount == 0 else None
+
+    def complete_sale(self, code: str, change: list[int]) -> None:
+        self.coins += Counter(self.escrow)
+        self.coins -= Counter(change)
+        self.escrow = []
+        self.stock[code] -= 1
+
+
+if __name__ == "__main__":
+    vm = VendingMachine([Product("A1", "Water", 65), Product("B2", "Chips", 150)],
+                        {"A1": 1, "B2": 0}, Counter({25: 2, 10: 2, 5: 2}))
+    for action in (lambda: vm.select("A1"), lambda: vm.dispensed()):
+        try:
+            action()
+        except InvalidAction as e:
+            print("idle:", e)
+    vm.insert(100)
+    print("balance", vm.balance, "state", vm.state.name)
+    try:
+        vm.select("B2")
+    except InvalidAction as e:
+        print("has_money:", e)
+    product, change = vm.select("A1")                # 100 - 65 = 35 -> 25 + 10
+    print(product.name, "change", change, "state", vm.state.name)
+    try:
+        vm.insert(25)
+    except InvalidAction as e:
+        print("dispensing:", e)
+    vm.dispensed()
+    print("state", vm.state.name, "coin box", dict(vm.coins))
+    assert change == [25, 10] and vm.state.name == "sold_out"
+```
+
+Output:
+
+```text
+idle: cannot select while idle
+idle: nothing is being dispensed while idle
+balance 100 state has_money
+has_money: B2 unavailable
+Water change [25, 10] state dispensing
+dispensing: cannot insert coins while dispensing
+state sold_out coin box {25: 1, 10: 1, 5: 2, 100: 1}
+```
+
+What to notice:
+
+- `VendingMachine` contains no conditionals on state; each rule lives in exactly one state class (Single Responsibility per state, Open/Closed for new states).
+- `make_change` may use the coins just inserted, which matters when the coin box is nearly empty.
+- Greedy change-making is optimal for unlimited US-style coins but can fail with *limited* coins: to return 30 cents from {one 25, three 10s}, greedy takes the 25 and then cannot make 5, although 10 + 10 + 10 works. A dynamic-programming search over available counts fixes it; the interface does not change.
+
+#### Patterns used
+
+**State** (§37.15) for behavior by state; the machine is the Context; states are stateless and could be shared singletons.
+
+#### Extensions and follow-up questions
+
+- *Card payments?* A `PaymentMethod` strategy; the *HasMoney* state becomes *Authorized* for cards.
+- *Concurrency?* A physical machine has one user, but its controller receives events from buttons, the coin mechanism and the motor; serialize them through one event queue rather than locks in every state.
+- *Remote telemetry and restocking alerts?* Observer on stock changes.
+- *Why not the transition table of §38.6?* A table suits uniform behavior; the State pattern suits states with substantially different logic. Both are defensible; say which and why.
+

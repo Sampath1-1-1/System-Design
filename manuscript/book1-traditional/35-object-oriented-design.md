@@ -1792,7 +1792,7 @@ classDiagram
 - **Components.** `Inventory` tracks stock on hand and stock reserved for unpaid orders. `FlashSaleInventory` is a subclass. `Checkout` is client code.
 - **Notes.** The notes record the contract: one invariant, plus the precondition and postcondition of `reserve`. The subclass note shows the extra condition it adds.
 - **Direction and sync.** `Checkout` calls `available` then `reserve` synchronously. It was written against `Inventory`'s contract and is handed a `FlashSaleInventory` at run time.
-- **Storage.** In memory here. In production the counts live in a database, and the "check then reserve" pair must be atomic, for example a single `UPDATE ... WHERE available >= qty` (§11), or two concurrent checkouts can both pass the check.
+- **Storage.** In memory here. In production the counts live in a database, and the "check then reserve" pair must be atomic, for example a single `UPDATE ... WHERE available >= qty` (Ch 11), or two concurrent checkouts can both pass the check.
 - **Failure point.** The subclass rejects a call the parent's contract allows. `Checkout` checked the parent's precondition, so from its point of view the failure is impossible, and it has no handling for it.
 - **Scaling.** Contracts scale with the team: every new caller and every new subclass can be checked against the same written rules.
 
@@ -1983,4 +1983,356 @@ What to notice:
 
 ::: mistake
 **Misconception — "A subclass that adds a safety check is always safer."** Adding a check to the *precondition* is exactly what breaks substitutability: callers that obey the parent's contract now fail. Extra checks on *outputs* (a stronger postcondition) are safe; extra demands on *inputs* are not.
+:::
+
+## 35.10 Cohesion and coupling
+
+### 35.10.1 Two measures of a good module
+
+::: definition
+**Definition — Cohesion and coupling.** **Cohesion** is how strongly the elements inside one module (here, one class) belong together: whether they serve a single purpose. **Coupling** is how strongly one module depends on others: how much it must know about them, and how likely a change in one is to force a change in the other. Good designs have **high cohesion and low coupling**. Both terms come from structured design [Stevens, Myers & Constantine 1974].
+:::
+
+#### First-principles explanation
+
+A well-run kitchen has stations: one cook does sauces, another grills. Everything at the sauce station is about sauces (high cohesion). The grill cook needs only "two portions of pepper sauce, please", not the recipe (low coupling). Now imagine one cook who does sauces, the accounts and the window cleaning, and a grill cook who walks over and adjusts the sauce burner directly. Any change to either person's routine breaks the other.
+
+Every principle in this chapter so far is a way to get one or both properties. Encapsulation lowers coupling (callers know only methods). Tell, don't ask raises cohesion (rules sit with their data). Composition lowers coupling (black-box parts). Contracts make the remaining coupling explicit.
+
+#### Why does this exist?
+
+Stevens, Myers and Constantine observed in 1974 that the cost of changing a program depends on how far a change spreads. If modules are cohesive, a change in requirements maps to a change in one module. If they are loosely coupled, the change stops there. Their paper and the later book by Yourdon and Constantine [Yourdon & Constantine 1979] ranked kinds of coupling and cohesion from worst to best, and these rankings are still the standard vocabulary.
+
+#### How it works internally: kinds of coupling
+
+**Table 35.10 — Kinds of coupling, from tightest (worst) to loosest (best), with shop examples.**
+
+| Kind | What it means | Shop example | Fix |
+|---|---|---|---|
+| Content | One module reads or changes another's internals | Report job edits `cart._lines` directly | Encapsulate (§35.4) |
+| Common | Modules share global mutable data | Every module reads a global `CURRENT_DISCOUNT` | Pass values; one owner |
+| External | Modules share an externally imposed format or device | Two classes parse the same payment-provider file layout | One adapter owns the format |
+| Control | One module passes a flag that steers the other's logic | `total(cart, mode="gift")` with branches inside | Polymorphism or separate methods |
+| Stamp | A whole structure is passed when only part is used | `shipping_cost(order)` reads only the weight | Pass what is needed |
+| Data | Only needed elementary data passed as parameters | `shipping_cost(weight_grams)` | — |
+| Message | Modules interact only by calling public methods | `order.settle()` | — (object-oriented ideal) |
+
+Message coupling is not in the 1974 paper; it is commonly added at the loose end for object-oriented systems. **Inheritance** is another strong form of coupling not in the original list: a subclass depends on its parent's implementation (§35.5.2). Coupling is not bad in itself: a system with no coupling does nothing. The goal is that each dependency is *necessary*, *narrow* and *visible*.
+
+#### How it works internally: kinds of cohesion
+
+**Table 35.11 — Kinds of cohesion, from weakest to strongest.**
+
+| Kind | Elements are grouped because... | Shop example |
+|---|---|---|
+| Coincidental | No real reason | `ShopUtils` with `format_price`, `send_sms`, `parse_csv` |
+| Logical | They do the same *kind* of thing | `Validators` for carts, emails and addresses |
+| Temporal | They run at the same time | `on_startup()` that loads config, warms cache, opens logs |
+| Procedural | They run in a fixed sequence | `checkout_steps()` mixing pricing, stock and email |
+| Communicational | They work on the same data | Methods that all read the order record |
+| Sequential | The output of one is the input of the next | Price → apply discount → add tax |
+| Functional | All contribute to one well-defined task | `Cart`: manage lines and compute totals |
+
+#### Mathematical foundations: the LCOM intuition
+
+You can approximate cohesion mechanically. If the methods of a class use disjoint sets of fields, the class is probably several classes glued together. Chidamber and Kemerer turned this into a metric, **Lack of Cohesion in Methods** [Chidamber & Kemerer 1994].
+
+::: formula
+**LCOM1 (Chidamber–Kemerer lack of cohesion in methods)**
+
+$$\text{LCOM} = \begin{cases} |P| - |Q| & \text{if } |P| > |Q| \\ 0 & \text{otherwise} \end{cases}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $m$ | Number of methods in the class | count |
+| $I_j$ | Set of instance fields used by method $j$ | set of fields |
+| $P$ | Pairs of methods $(j, k)$ with $I_j \cap I_k = \emptyset$ (share no field) | pairs |
+| $Q$ | Pairs of methods with $I_j \cap I_k \neq \emptyset$ (share at least one field) | pairs |
+| $\lvert P\rvert + \lvert Q\rvert$ | Total method pairs, $m(m-1)/2$ | pairs |
+| LCOM | Lack of cohesion; 0 is best, larger is worse | pairs |
+:::
+
+A related variant, often called **LCOM4** (attributed to Hitz and Montazeri), counts the **connected components** of the graph in which methods are linked when they share a field. One component means one responsibility; three components suggest three classes.
+
+::: example
+**Worked example — A `CheckoutManager` god class.**
+
+The class has six methods with these field uses: `add_item` {lines}; `subtotal` {lines}; `apply_coupon` {coupon, lines}; `send_receipt` {smtp, email_template}; `render_invoice` {pdf_engine, email_template}; `log_event` {logger}.
+
+1. Total pairs: $m(m-1)/2 = 6 \times 5 / 2 = 15$.
+2. Pairs that share a field ($Q$): add_item–subtotal, add_item–apply_coupon, subtotal–apply_coupon (all share `lines`), send_receipt–render_invoice (share `email_template`). $|Q| = 4$.
+3. Pairs that share nothing: $|P| = 15 - 4 = 11$.
+4. $\text{LCOM} = 11 - 4 = 7$.
+5. Connected components: {add_item, subtotal, apply_coupon}, {send_receipt, render_invoice}, {log_event}: three.
+6. After splitting out the cart methods into `Cart`: 3 methods, 3 pairs, all sharing `lines`, so $|P| = 0$, $|Q| = 3$ and LCOM $= 0$.
+
+**Interpretation.** An LCOM of 7 on a six-method class means most pairs of methods have nothing to do with each other; the three components name the classes hiding inside: `Cart`, a receipt/invoice sender, and a logger that should be injected rather than owned.
+
+**Engineering implication.** Use LCOM as a *pointer* to classes worth reading, not as a target to optimize. It ignores methods that call each other, treats getters as tiny methods that inflate $P$, and varies between tools that use different LCOM definitions. A high value plus a vague class name (`Manager`, `Helper`, `Utils`) is a strong signal.
+:::
+
+The calculation is mechanical, so here it is as a short script (Python only, since it is a measuring tool rather than an object-oriented construct):
+
+```python
+from itertools import combinations
+
+
+def lcom1(uses):
+    """Chidamber-Kemerer LCOM: uses maps method name -> set of attributes it touches."""
+    p = q = 0
+    for a, b in combinations(uses, 2):
+        if uses[a] & uses[b]:
+            q += 1                      # pair shares at least one attribute
+        else:
+            p += 1                      # pair shares nothing
+    return max(p - q, 0), p, q
+
+
+def components(uses):
+    """Groups of methods linked by shared attributes (the LCOM4 intuition)."""
+    groups = []
+    for method, attrs in uses.items():
+        merged = [g for g in groups if g[1] & attrs]
+        names, fields = {method}, set(attrs)
+        for g in merged:
+            names |= g[0]
+            fields |= g[1]
+            groups.remove(g)
+        groups.append((names, fields))
+    return [sorted(g[0]) for g in groups]
+
+
+checkout_manager = {
+    "add_item":       {"lines"},
+    "subtotal":       {"lines"},
+    "apply_coupon":   {"coupon", "lines"},
+    "send_receipt":   {"smtp", "email_template"},
+    "render_invoice": {"pdf_engine", "email_template"},
+    "log_event":      {"logger"},
+}
+print(lcom1(checkout_manager))          # (7, 11, 4)
+for group in components(checkout_manager):
+    print(group)
+# ['add_item', 'apply_coupon', 'subtotal']
+# ['render_invoice', 'send_receipt']
+# ['log_event']
+
+cart = {k: v for k, v in checkout_manager.items() if k in ("add_item", "subtotal", "apply_coupon")}
+print(lcom1(cart))                      # (0, 0, 3)
+```
+
+**Figure 35.10 — Splitting a low-cohesion class along its LCOM components.**
+
+```mermaid
+classDiagram
+  class CheckoutManager {
+    -lines
+    -coupon
+    -smtp
+    -pdf_engine
+    -email_template
+    -logger
+    +add_item()
+    +subtotal()
+    +apply_coupon()
+    +send_receipt()
+    +render_invoice()
+    +log_event()
+  }
+  class Cart {
+    -lines
+    -coupon
+    +add_item()
+    +subtotal()
+    +apply_coupon()
+  }
+  class ReceiptSender {
+    -smtp
+    -pdf_engine
+    -email_template
+    +send_receipt(order)
+    +render_invoice(order)
+  }
+  class Logger {
+    <<interface>>
+    +log_event(event)
+  }
+  CheckoutManager ..> Cart : split into
+  CheckoutManager ..> ReceiptSender : split into
+  CheckoutManager ..> Logger : split into
+```
+
+**Reading the diagram.**
+
+- **Components.** Left: the original god class with six fields and six unrelated methods. Right: three classes, one per connected component found by the script.
+- **Relationships.** The dotted "split into" arrows show the refactoring, not run-time calls. After the split, an order-placement service would call `Cart` for totals and `ReceiptSender` after payment, and receive a `Logger` from outside.
+- **Sync/async.** Sending a receipt is a natural candidate for asynchronous processing via a queue (Ch 30), which is only easy once it is its own class.
+- **Storage.** `Cart` state goes to the cart store; `ReceiptSender` is stateless apart from its configuration.
+- **Failure points.** In the god class, an SMTP outage can fail a method that also holds cart state; after the split, a receipt failure cannot corrupt the cart.
+- **Scaling.** Each new class can change, be tested and, in a service architecture, be deployed independently.
+
+### 35.10.2 The Law of Demeter
+
+::: definition
+**Definition — Law of Demeter (object form).** A method `M` of an object `O` should call methods only on: `O` itself; `M`'s parameters; objects `M` creates; and `O`'s own fields (its direct parts) [Lieberherr & Holland 1989]. Informally: "talk only to your immediate friends", or "use only one dot" (excluding fluent builders and value-object chains).
+:::
+
+#### First-principles explanation
+
+When you pay in a shop, the cashier asks you to pay. The cashier does not reach into your bag, open your wallet, take out a card and swipe it. If you change wallets, or pay by phone, the cashier's procedure does not change. Code like `order.customer.wallet.balance_cents -= total` is the cashier rummaging in your bag: the checkout now depends on `Order` having a customer, the customer having a wallet, and the wallet storing its balance in a field called `balance_cents`. Three classes' internals, one line. Martin calls such chains **train wrecks** [Martin 2008, ch. 6].
+
+#### Why does this exist?
+
+The Law of Demeter was formulated in the late 1980s by Karl Lieberherr's Demeter project at Northeastern University as a style rule that limits how much of the object structure any one method knows. Each method that obeys it depends only on its immediate neighbors, so a change to one class's structure affects only that class's neighbors. It is the object-level form of low coupling, and it pushes you towards tell, don't ask: instead of reaching through objects, you add a method to the nearest one.
+
+#### Architecture diagram
+
+**Figure 35.11 — Reaching through objects versus talking to neighbors.**
+
+```mermaid
+classDiagram
+  class CheckoutService {
+    +place(order)
+  }
+  class Order {
+    -customer: Customer
+    -total_cents: int
+    +settle()
+  }
+  class Customer {
+    -wallet: Wallet
+    +pay(amount_cents)
+  }
+  class Wallet {
+    -balance_cents: int
+    +debit(amount_cents)
+  }
+  CheckoutService --> Order : settle
+  Order --> Customer : pay
+  Customer --> Wallet : debit
+  CheckoutService ..> Wallet : violation, reaches 3 levels deep
+```
+
+**Reading the diagram.**
+
+- **Components.** A checkout service, an order, the customer who placed it and the customer's wallet.
+- **Direction and sync.** Solid arrows are the compliant path: each object calls only its direct part, synchronously. The dotted arrow is the train-wreck dependency that compliant code removes.
+- **Storage.** The wallet balance would be persisted by the payment component; only `Wallet` knows its representation.
+- **Failure points.** With the violation, a change to `Wallet` (say, balances move to an external provider) breaks `CheckoutService`. With the compliant design, only `Customer` might change.
+- **Scaling.** Adding a second way to pay (a company account) changes `Customer.pay`, not every caller.
+
+#### Code example
+
+```python
+class Wallet:
+    def __init__(self, balance_cents):
+        self._balance_cents = balance_cents
+
+    def debit(self, amount_cents):
+        if amount_cents > self._balance_cents:
+            raise ValueError("insufficient funds")
+        self._balance_cents -= amount_cents
+
+    def balance_cents(self):
+        return self._balance_cents
+
+
+class Customer:
+    def __init__(self, name, wallet):
+        self.name = name
+        self._wallet = wallet
+
+    def pay(self, amount_cents):                  # Customer talks to its own part
+        self._wallet.debit(amount_cents)
+
+
+class Order:
+    def __init__(self, customer, total_cents):
+        self._customer = customer
+        self._total_cents = total_cents
+        self.paid = False
+
+    def settle(self):                             # Order talks to its own part
+        self._customer.pay(self._total_cents)
+        self.paid = True
+
+
+# Violates the Law of Demeter: the checkout reaches through three objects.
+#   order.customer.wallet.balance_cents -= order.total_cents
+# Follows it: the checkout talks only to the order.
+wallet = Wallet(10_000)
+order = Order(Customer("Ada", wallet), 4548)
+order.settle()
+print(order.paid, wallet.balance_cents())         # True 5452
+```
+
+```java
+final class Wallet {
+    private long balanceCents;
+    Wallet(long balanceCents) { this.balanceCents = balanceCents; }
+
+    void debit(long amountCents) {
+        if (amountCents > balanceCents) throw new IllegalStateException("insufficient funds");
+        balanceCents -= amountCents;
+    }
+    long balanceCents() { return balanceCents; }
+}
+
+final class Customer {
+    private final String name;
+    private final Wallet wallet;
+    Customer(String name, Wallet wallet) { this.name = name; this.wallet = wallet; }
+
+    String name() { return name; }
+    void pay(long amountCents) { wallet.debit(amountCents); }   // talks to its own field
+}
+
+final class Order {
+    private final Customer customer;
+    private final long totalCents;
+    private boolean paid = false;
+    Order(Customer customer, long totalCents) { this.customer = customer; this.totalCents = totalCents; }
+
+    void settle() { customer.pay(totalCents); paid = true; }    // talks to its own field
+    boolean isPaid() { return paid; }
+}
+
+class Main {
+    public static void main(String[] args) {
+        // Violation (would need getters all the way down):
+        //   order.getCustomer().getWallet().debit(order.getTotalCents());
+        Wallet wallet = new Wallet(10_000);
+        Order order = new Order(new Customer("Ada", wallet), 4548);
+        order.settle();
+        System.out.println(order.isPaid() + " " + wallet.balanceCents());   // true 5452
+    }
+}
+```
+
+What to notice:
+
+- Each method calls only its own fields: `Order.settle` → `customer.pay`; `Customer.pay` → `wallet.debit`. No class knows the structure two levels away.
+- The cost is small **wrapper methods** (`Customer.pay`). If a class accumulates dozens of pass-through methods, that is a sign the caller needs a different object, not that the law should be broken.
+- The law is about *objects with behavior*. Chaining over data or fluent APIs (`text.strip().lower()`, a stream pipeline) returns new values rather than reaching into structure, and is not a violation in spirit.
+
+#### Real-world industry applications
+
+::: industry
+**Demeter project.** The Law of Demeter was developed in the Demeter project on adaptive software at Northeastern University and published as a style rule with a formal statement and examples of mechanically transforming non-compliant programs into compliant ones. The authors present it as a heuristic that limits the spread of change, not an absolute law, and discuss the trade-off of extra wrapper methods.
+*Evidence: Primary* — [Lieberherr & Holland 1989]
+:::
+
+#### Failure scenarios
+
+**Table 35.12 — Failure scenarios from poor cohesion and coupling.**
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Small change touches 15 files | High coupling (content, common, control) | Large diffs for small features; merge conflicts | Introduce interfaces and owners | Message/data coupling; Law of Demeter |
+| SMTP outage blocks cart updates | Low cohesion: unrelated duties in one class | Incident shows unrelated failure | Split class | Review LCOM components and class names |
+| Refactoring `Wallet` breaks checkout | Train-wreck chains | Compile errors far away | Add delegating methods | One-dot rule for behavior objects |
+| Global discount flag changed by a test leaks into others | Common coupling | Flaky tests | Pass configuration explicitly | No global mutable state |
+
+::: mistake
+**Misconception — "Low coupling means fewer classes."** Merging classes reduces the number of dependencies *between classes* by hiding them inside one class, where they become low cohesion instead. The goal is the right boundaries: each class cohesive, each dependency narrow.
 :::

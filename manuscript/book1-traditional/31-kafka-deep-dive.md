@@ -2,7 +2,7 @@
 
 > **Level:** 3 · **Track:** A (Traditional) · **Estimated reading time:** 3 h
 
-Chapter 30 introduced message queues, publish/subscribe and delivery guarantees in general terms. This chapter takes one system apart: **Apache Kafka**, the distributed log that LinkedIn built in 2010–2011 and that now sits at the center of most large event-driven architectures. Kafka is worth a whole chapter because it is not "a queue with extra features". It is a replicated, partitioned, append-only log, and nearly every behavior you will meet (ordering per partition but not per topic, consumers that can rewind, durability that depends on three separate settings, exactly-once that stops at Kafka's edge) follows from that one design decision. You will follow a record from the producer's batch buffer, through the leader's segment file and the followers' fetch requests, to a consumer's committed offset, and you will size partitions, disks and brokers with real arithmetic. Version-specific facts are stated **as of 2026** (Kafka 4.x).
+Chapter 30 introduced queues, publish/subscribe and delivery guarantees in general terms. This chapter takes one system apart: **Apache Kafka**, the distributed log built at LinkedIn in 2010–2011 that now sits at the center of most large event-driven architectures. Kafka is not "a queue with extra features" but a replicated, partitioned, append-only log, and nearly every behavior you will meet (per-partition ordering, consumers that rewind, durability that depends on three settings, exactly-once that stops at Kafka's edge) follows from that decision. You will follow a record from the producer's batch buffer to a consumer's committed offset and size partitions, disks and brokers with real arithmetic. Version-specific facts are stated **as of 2026** (Kafka 4.x).
 
 ## 31.1 Learning objectives
 
@@ -45,13 +45,13 @@ After this chapter you should be able to:
 
 Think of a ship's logbook. Entries are written one after another, each line gets the next number, nobody erases a line, and anyone can read from line 1 or from line 9,000. Two readers can be at different places in the book at the same time without disturbing each other or the writer. If a reader loses its place, it only needs to remember one number.
 
-That is all a log is, and it is the most important data structure in this chapter. A database's write-ahead log (§13.5) is a log hidden inside one machine. Raft's replicated log (§26.7) is a log copied across machines to agree on an order. Kafka takes the same structure, exposes it to applications, partitions it for scale, and replicates it for durability.
+A database's write-ahead log (§13.5) is a log hidden inside one machine; Raft's replicated log (§26.7) is a log copied across machines to agree on an order. Kafka exposes the same structure to applications, partitions it for scale and replicates it for durability.
 
 #### Why does this exist?
 
 At LinkedIn around 2010, dozens of systems needed the same data: page views, profile updates and metrics flowed into Hadoop, search indexes, the social graph, monitoring and recommendation services. Each pair of systems had its own custom pipeline, so $N$ sources and $M$ destinations needed up to $N \times M$ integrations, each with its own failure modes. Existing message brokers kept messages in memory, deleted them once consumed, and handled neither the volume (billions of events per day) nor slow batch consumers such as Hadoop that read once an hour [Kreps et al. 2011].
 
-Jay Kreps's 2013 essay "The Log" argued that the answer was a single abstraction: put every change into an ordered log, and let every system **subscribe** to the log at its own pace [Kreps 2013]. The integration count falls from $N \times M$ to $N + M$. A new consumer can **replay** history to build its own copy. A slow consumer does not slow the producer, because the log holds the data on disk rather than in a bounded in-memory queue. And because the order is fixed, two consumers that apply the same log reach the same state: the **state machine replication** principle of §26.3.2 applied to whole data systems.
+Jay Kreps's 2013 essay "The Log" argued for a single abstraction: put every change into an ordered log and let every system **subscribe** at its own pace [Kreps 2013]. Integrations fall from $N \times M$ to $N + M$; a new consumer can **replay** history to build its own copy; a slow consumer does not slow the producer, because the log holds data on disk. And because the order is fixed, two consumers that apply the same log reach the same state: **state machine replication** (§26.3.2) applied to whole data systems.
 
 #### How it works internally
 
@@ -95,10 +95,10 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** In the left subgraph, every source has a custom pipeline to every destination: six links for two sources and three destinations, each a separate failure point and format. In the right subgraph, sources write once to the *Kafka log* and destinations subscribe asynchronously, so a new destination adds one link and can backfill by replaying. The log becomes a storage boundary that decouples producers and consumers in time and in speed. The new failure point is the log itself, which is why the rest of this chapter is about making it replicated and scalable.
+**Reading the diagram.** On the left, every source has a custom pipeline to every destination: six links, each a separate failure point and format. On the right, sources write once to the *Kafka log* and destinations subscribe asynchronously, so a new destination adds one link and can backfill by replaying. The log is a storage boundary decoupling producers and consumers in time and speed; it is also the new single failure point, which is why the rest of the chapter replicates and partitions it.
 
 ::: industry
-**LinkedIn's activity pipeline.** Kafka was built at LinkedIn to collect user activity events and operational metrics for both online consumers and offline Hadoop loads, replacing per-system pipelines. The original design deliberately used a pull model, stored messages in segment files on disk, kept no per-message acknowledgement state on the broker (consumers track offsets), and relied on the OS page cache [Kreps et al. 2011]. Later work added intra-cluster replication and described LinkedIn's deployment at hundreds of billions of messages per day [Wang et al. 2015].
+**LinkedIn's activity pipeline.** Kafka was built at LinkedIn to collect user activity events and operational metrics for both online consumers and offline Hadoop loads, replacing per-system pipelines. The original design deliberately used a pull model, stored messages in segment files on disk, kept no per-message acknowledgement state on the broker (consumers track offsets), and relied on the OS page cache [Kreps et al. 2011]. Later work added intra-cluster replication and described its design and LinkedIn's production use [Wang et al. 2015].
 *Evidence: Primary* — [Kreps et al. 2011]; [Wang et al. 2015]
 :::
 
@@ -118,15 +118,15 @@ flowchart LR
 
 #### First-principles explanation
 
-A cluster of brokers is like a library with many branches. Each branch stores some books (partitions) and serves readers. Someone must keep the master catalog: which branch holds the authoritative copy of each book, and which branch takes over when one closes. That catalog keeper is the controller. The catalog must never have two conflicting versions, so the controller itself must be fault tolerant and agree on one history of changes, which is a consensus problem (Chapter 26).
+A cluster is like a library with many branches, each storing some books (partitions). Someone must keep the catalog of which branch holds the authoritative copy of each book and who takes over when a branch closes. That is the controller, and because the catalog must never have two conflicting versions, the controller itself is a consensus problem (Chapter 26).
 
 #### Why does this exist? From ZooKeeper to KRaft
 
 From 2011 until 2022, Kafka stored its metadata in **Apache ZooKeeper** (§26.8). One broker won an election in ZooKeeper to become the controller; it read all metadata from ZooKeeper, made decisions, wrote them back, and pushed them to other brokers with RPCs. This had three costs that grew with scale [KIP-500]:
 
-1. **Two systems to operate.** Every Kafka deployment needed a separate ZooKeeper ensemble with its own configuration, security model, monitoring and upgrade cycle.
-2. **Slow controller failover.** A newly elected controller had to load the full state of every partition from ZooKeeper before it could act. Time to recover grew linearly with partition count, which capped practical cluster size.
-3. **Divergence.** Metadata lived in ZooKeeper while brokers held cached copies updated by RPC; the two could disagree, producing subtle bugs.
+1. **Two systems to operate**, each with its own configuration, security, monitoring and upgrades.
+2. **Slow controller failover.** A new controller had to load every partition's state from ZooKeeper before acting, so recovery time grew linearly with partition count, capping cluster size.
+3. **Divergence.** Brokers held cached metadata updated by RPC, which could disagree with ZooKeeper.
 
 **KIP-500** proposed replacing ZooKeeper with a **self-managed metadata quorum** that stores metadata as a Kafka log replicated with a Raft variant. The result, **KRaft** (Kafka Raft), was marked production-ready in Kafka 3.3 (2022); ZooKeeper mode was deprecated in 3.5, and **Kafka 4.0 (March 2025) removed ZooKeeper mode entirely**. As of 2026, every supported Kafka release runs only in KRaft mode, and a ZooKeeper-based cluster must first migrate to KRaft on a 3.x bridge release before upgrading to 4.x [Apache Kafka 4.0 Release Notes].
 
@@ -137,9 +137,9 @@ From 2011 until 2022, Kafka stored its metadata in **Apache ZooKeeper** (§26.8)
 3. **Brokers** fetch the metadata log from the active controller exactly as followers fetch a partition, and apply records to an in-memory metadata image. Every broker therefore sees the same ordered history; a lagging broker knows exactly how far behind it is (its metadata offset).
 4. Brokers **register** with the controller and send **heartbeats**. A broker that stops heartbeating is **fenced**: the controller moves leadership of its partitions to other in-sync replicas by writing new leader records.
 5. The quorum takes periodic **snapshots** of the metadata image so the log can be truncated, like Raft snapshotting (§26.7.8).
-6. If the active controller fails, the remaining controllers elect a new Raft leader that *already has the metadata in memory*. Failover no longer requires reloading state, which is what lets KRaft clusters support far more partitions than ZooKeeper-mode clusters.
+6. If the active controller fails, a standby that *already has the metadata in memory* becomes Raft leader, so failover no longer reloads state and clusters can hold far more partitions.
 
-Small development setups can run a node in **combined mode** (broker and controller in one process); production deployments usually run dedicated controllers so a busy broker cannot starve the quorum.
+Development setups may run broker and controller in one process (**combined mode**); production usually runs dedicated controllers.
 
 **Figure 31.3 — A KRaft cluster: controller quorum and brokers.**
 
@@ -162,7 +162,7 @@ flowchart TB
   B3 -.->|fetch| CO([Consumers])
 ```
 
-**Reading the diagram.** The *controller quorum* (top) replicates the `__cluster_metadata` log from the active controller to two voters; a record commits when two of three have it, so the quorum survives one controller failure. *Brokers* pull metadata from the active controller and send heartbeats over the Kafka protocol (TCP); that path is synchronous request/response but metadata propagation to brokers is eventually consistent, measured by each broker's metadata offset. *Producers* and *consumers* talk only to brokers, never to controllers, so client traffic does not touch the quorum. Failure points: losing a majority of controllers stops metadata changes (no leader elections, no topic creation) while existing leaders keep serving; losing a broker triggers leader moves recorded in the log. Scaling: add brokers for data capacity; the controller count stays at 3 or 5.
+**Reading the diagram.** The *controller quorum* replicates `__cluster_metadata` from the active controller to two voters; a record commits when two of three have it, so one controller may fail. *Brokers* pull metadata and send heartbeats over TCP; each request is synchronous, but propagation is eventually consistent, measured by each broker's metadata offset. *Producers* and *consumers* talk only to brokers. Failure points: losing a controller majority stops metadata changes (no elections, no new topics) while existing leaders keep serving; losing a broker triggers leader moves. Scaling: add brokers for capacity; controllers stay at 3 or 5.
 
 #### Alternatives and trade-offs
 
@@ -199,7 +199,7 @@ flowchart TB
 
 #### First-principles explanation
 
-One logbook can be written by one hand at a time and read only as fast as one machine can serve it. To scale, Kafka gives a topic many logbooks (partitions) on different brokers. Writers and readers then work in parallel. The price is that there is no single order across the logbooks: record 5 in partition 0 and record 5 in partition 1 have no defined "before" relationship. If you need two events in order (an order's "created" before its "paid"), they must land in the same partition, which is what the record key is for.
+One logbook can be served only as fast as one machine allows, so Kafka gives a topic many logbooks (partitions) on different brokers, written and read in parallel. The price is that there is no order across them: record 5 in partition 0 and record 5 in partition 1 have no "before" relationship. Two events that must stay ordered (an order's "created" before its "paid") must land in the same partition, which is what the record key is for.
 
 #### How it works internally: segments and indexes
 
@@ -231,7 +231,7 @@ flowchart LR
   RET[Retention task] -.->|delete whole file| S0
 ```
 
-**Reading the diagram.** The partition directory holds three segments; only the *active segment* receives appends from producers. A *fetch* for offset 368,800 picks the segment by base offset, uses the sparse *index* to find a nearby byte position, then scans a few kilobytes. The *retention task* runs asynchronously in the background and deletes whole closed segments, never single records. The storage boundary is the broker's local file system and OS page cache. Failure points: a crash can leave a torn final batch, which recovery detects by CRC and truncates; index files can be rebuilt from the log. Scaling: smaller segments allow finer-grained deletion but mean more open files.
+**Reading the diagram.** Only the *active segment* receives appends. A *fetch* for offset 368,800 picks the segment by base offset, uses the sparse *index* to find a nearby byte position, then scans a few kilobytes. The *retention task* runs asynchronously and deletes whole closed segments. The storage boundary is the local file system and page cache. Failure points: a torn final batch after a crash is detected by CRC and truncated; indexes can be rebuilt from the log. Scaling: smaller segments allow finer deletion but more open files.
 
 ### 31.5.2 Choosing the number of partitions
 
@@ -393,10 +393,10 @@ customer-42 -> 3 with 6, 1 with 8
 
 What to notice:
 
-- Java's `int` arithmetic wraps at 32 bits; the Python port masks with `M32` after every multiplication to reproduce it exactly, and the asserts prove the port matches Kafka.
-- Kafka clears the sign bit (`& 0x7fffffff`) rather than taking an absolute value, because `abs(Integer.MIN_VALUE)` is still negative in Java.
+- Java's `int` arithmetic wraps at 32 bits; masking with `M32` after each multiplication reproduces it, and the asserts prove the port matches Kafka.
+- Kafka clears the sign bit rather than taking `abs()`, because `abs(Integer.MIN_VALUE)` is still negative in Java.
 - The measured fractions match the formula: 75%, 50% and 92%.
-- A non-Java client must use the same hash, or the same key lands on different partitions depending on which client wrote it. Some clients (for example, librdkafka-based ones) default to a different hash unless configured with the murmur2 partitioner.
+- Every client must use the same hash. Some non-Java clients (for example, librdkafka-based ones) default to a different hash unless configured for murmur2.
 
 #### Failure scenarios
 
@@ -522,7 +522,7 @@ sequenceDiagram
 
 ### 31.7.1 The pull model and the poll loop
 
-Kafka consumers **pull**: they send fetch requests saying "give me partition 3 from offset 5,120". Pulling lets each consumer go at its own speed, lets a batch job read hours of data in large chunks, and makes backpressure automatic: a slow consumer simply asks less often [Kreps et al. 2011]. To avoid busy polling on an idle topic, a fetch waits at the broker until `fetch.min.bytes` (default 1 byte) is available or `fetch.max.wait.ms` (default 500 ms) passes. The application runs a loop: `poll()` returns up to `max.poll.records` (default 500) records, the application processes them, then calls `poll()` again.
+Kafka consumers **pull** ("partition 3 from offset 5,120"), so each goes at its own speed, batch jobs read in large chunks, and backpressure is automatic [Kreps et al. 2011]. On an idle topic a fetch waits at the broker until `fetch.min.bytes` (default 1 byte) arrive or `fetch.max.wait.ms` (default 500 ms) passes. The application loops: `poll()` returns up to `max.poll.records` (default 500), it processes them, and polls again [Shapira et al. 2021].
 
 ### 31.7.2 Consumer groups and partition assignment
 
@@ -569,7 +569,7 @@ flowchart LR
   P3 -.-> D
 ```
 
-**Reading the diagram.** The *billing* group has three members sharing four partitions, so consumer A owns two and B and C own one each; no partition is shared within the group. The *analytics* group has one member that reads all four partitions independently of billing, with its own offsets. All arrows are asynchronous pull fetches. Failure points: if B crashes, its partition P2 is reassigned to A or C after a rebalance; until then P2 is not consumed by billing. Scaling: billing can grow to four useful members; a fifth would be idle.
+**Reading the diagram.** The *billing* group's three members share four partitions: A owns two, B and C one each. The *analytics* group's single member reads all four independently, with its own offsets. Arrows are asynchronous pull fetches. Failure point: if B crashes, P2 is unconsumed by billing until a rebalance gives it to A or C. Scaling: billing can use at most four members.
 
 ### 31.7.3 Parallelism ceiling and consumer lag
 
@@ -637,15 +637,15 @@ sequenceDiagram
   Note over C,K: new owner restarts at 200, offsets 100-199 never processed
 ```
 
-**Reading the diagram.** In the upper half the consumer writes effects to the *database* first; the crash prevents the commit, so the restarted owner resumes at offset 100 and the database sees those effects twice unless writes are idempotent. In the lower half the commit to the *coordinator* happens first; the crash prevents processing, and the restarted owner resumes at 200, so records 100–199 are silently lost. Both calls are synchronous; the failure point is the gap between the two writes, which live in different storage systems and cannot be made atomic without transactions or an idempotent sink.
+**Reading the diagram.** Upper half: effects reach the *database* first, the crash prevents the commit, and the new owner reprocesses 100–199, duplicating effects unless writes are idempotent. Lower half: the commit reaches the *coordinator* first, the crash prevents processing, and the new owner starts at 200, silently losing 100–199. Both calls are synchronous; the failure point is the gap between two writes to different storage systems, which cannot be atomic without transactions or an idempotent sink.
 
 **Table 31.3 — Offset commit strategies.**
 
 | Strategy | How | Guarantee | Cost | Use when |
 |---|---|---|---|---|
-| Auto commit | `enable.auto.commit=true` (default); commits the last polled position every `auto.commit.interval.ms` (5 s) during `poll()` | At-least-once if all records of a poll are processed before the next `poll()`; at-most-once if processing is handed off asynchronously | Free; up to 5 s of reprocessing after a crash | Simple, idempotent processing |
+| Auto commit | Default; commits polled position every 5 s inside `poll()` | At-least-once if processing finishes before the next `poll()`; at-most-once if handed off asynchronously | Up to 5 s reprocessed after a crash | Simple, idempotent processing |
 | Synchronous commit | `commitSync()` after processing | At-least-once; blocks until acknowledged | One round trip per commit; lower throughput | Correctness first, moderate rate |
-| Asynchronous commit | `commitAsync()` with callback | At-least-once; failed commits are not retried, to avoid committing an older offset after a newer one | Non-blocking | High throughput; finish with `commitSync()` on shutdown and in the rebalance callback |
+| Asynchronous commit | `commitAsync()` | At-least-once; failures not retried (could overwrite a newer offset) | Non-blocking | High throughput; `commitSync()` on shutdown and revocation |
 | Offsets stored with results | Write offset in the same database transaction as the output; seek on start-up | Effectively-once for that sink | Requires transactional sink | Database sinks needing no duplicates |
 | Kafka transactions | `sendOffsetsToTransaction()` (§31.11) | Exactly-once for Kafka-to-Kafka | Transaction overhead | Read-process-write pipelines |
 
@@ -703,7 +703,7 @@ flowchart LR
   LD -.->|ack after HW passes batch| PR
 ```
 
-**Reading the diagram.** The *producer* writes to the *leader* on broker B1. Both *followers* pull from the leader with fetch requests that carry their LEOs, so replication is follower-driven and asynchronous with respect to the write, but the `acks=all` acknowledgement is held until the *HW* passes the batch. *Consumers* read only below the HW, so they never see records that could vanish in a failover. Storage boundaries: each replica is a separate broker disk. Failure points: lagging B3 holds back the HW until it is removed from the ISR; leader failure triggers election (§31.9.3). Scaling: replication traffic is (RF − 1) times the produce traffic.
+**Reading the diagram.** The *producer* writes to the *leader* on broker B1. *Followers* pull with fetches carrying their LEOs, so replication is asynchronous to the write, but the `acks=all` acknowledgement waits until the *HW* passes the batch. *Consumers* read only below the HW, never seeing records that could vanish in a failover. Each replica is a separate broker disk. Failure points: lagging B3 holds back the HW until removed from the ISR; leader failure triggers election (§31.9.3). Scaling: replication traffic is (RF − 1) times produce traffic.
 
 ### 31.9.2 Kafka's ISR versus majority quorums
 
@@ -933,10 +933,10 @@ D: same stall, min.insync.replicas=2
 
 What to notice:
 
-- **A versus B** use the same replication timing. With `acks=1`, r9 was acknowledged from the leader's log alone and vanished in the failover, as in Figure 31.11. With `acks=all`, r9 was never acknowledged, so the producer still holds it and retries against the new leader; nothing acknowledged is lost.
-- **C** shows that `acks=all` alone is not enough. Both followers stalled, the ISR shrank to the leader, so "all ISR members" meant one broker and every write was acknowledged. Unclean election then promoted an empty replica: ten acknowledged records lost.
-- **D** adds `min.insync.replicas=2`. Once the ISR shrank, new writes were refused and pending ones never acknowledged, and with unclean election off the partition went offline instead of losing data. That is the trade: availability for durability.
-- The model omits real details (per-record fetch, HW propagation delay, retries, timeouts), but the safety argument it shows is the one Kafka makes.
+- **A versus B** share replication timing. With `acks=1`, r9 was acknowledged from the leader's log alone and vanished in the failover (Figure 31.11). With `acks=all`, r9 was never acknowledged, so the producer retries it against the new leader; nothing acknowledged is lost.
+- **C** shows `acks=all` alone is not enough: the ISR shrank to the leader, so "all ISR members" meant one broker, and unclean election then promoted an empty replica, losing ten acknowledged records.
+- **D** adds `min.insync.replicas=2`: writes are refused once the ISR shrinks, and the partition goes offline rather than losing data. Availability is traded for durability.
+- The model omits HW propagation delay, retries and timeouts, but its safety argument is the one Kafka makes.
 
 ## 31.10 Retention and log compaction
 
@@ -965,12 +965,15 @@ A phone book printed yearly does not list every address a person has ever had, o
 **Figure 31.12 — Compaction keeps the latest value per key.**
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph Before["Before: offsets 0-6"]
+    direction LR
     A0["0 k1=a"] --- A1["1 k2=b"] --- A2["2 k1=c"] --- A3["3 k3=d"] --- A4["4 k2=null"] --- A5["5 k1=e"] --- A6["6 k3=f"]
   end
-  CL[Log cleaner] -.->|recopy latest per key| After
+  Before -.->|scan dirty part| CL[Log cleaner]
+  CL -.->|recopy latest per key| After
   subgraph After["After: gaps in offsets"]
+    direction LR
     B4["4 k2=null tombstone"] --- B5["5 k1=e"] --- B6["6 k3=f"]
   end
 ```
@@ -1017,21 +1020,21 @@ sequenceDiagram
   participant TC as Transaction coordinator
   participant IN as Input partition
   participant OUT as Output partitions
-  participant OFF as __consumer_offsets
+  participant CO as __consumer_offsets
   A->>TC: initTransactions, epoch 5
   A->>IN: poll records 100-199
   A->>TC: add OUT p0, OUT p1, offsets
   A->>OUT: write results, uncommitted
-  A->>OFF: offsets 200 for group, uncommitted
+  A->>CO: offsets 200 for group, uncommitted
   A->>TC: commitTransaction
   TC->>TC: log PREPARE_COMMIT
   TC->>OUT: commit markers
-  TC->>OFF: commit marker
+  TC->>CO: commit marker
   TC->>TC: log COMPLETE_COMMIT
   Note over OUT: read_committed consumers now see results
 ```
 
-**Reading the diagram.** The application reads input, writes outputs to two partitions and its input offsets to `__consumer_offsets`, all inside one transaction. Calls are synchronous; the coordinator's own log (`__transaction_state`, replicated like any partition) is the storage boundary that records the decision. Once `PREPARE_COMMIT` is durable the transaction will commit even if the coordinator crashes, because the new coordinator replays the log and finishes writing markers. If the application crashes before committing, the coordinator aborts the transaction (after `transaction.timeout.ms`, default 60 s, or when the restarted instance calls `initTransactions()`), and `read_committed` consumers never see the partial output; the restarted instance resumes from the last committed offsets.
+**Reading the diagram.** Outputs and input offsets are written inside one transaction with synchronous calls; the coordinator's replicated `__transaction_state` log records the decision. Once `PREPARE_COMMIT` is durable the transaction commits even if the coordinator crashes, because its successor replays the log and finishes the markers. If the application crashes first, the transaction is aborted (on timeout, `transaction.timeout.ms`, default 60 s, or when the restarted instance calls `initTransactions()`); `read_committed` consumers never see the partial output, and the restart resumes from the last committed offsets.
 
 ### 31.11.3 Limits of exactly-once
 
@@ -1073,7 +1076,7 @@ sequenceDiagram
   Note over A: A keeps consuming P0 P1 throughout
 ```
 
-**Reading the diagram.** In the eager half, C's arrival forces A and B to give up all four partitions, so nothing is consumed until the new assignment arrives. In the cooperative half, the coordinator asks only B to release P3, then assigns it to C; A never pauses and B pauses only P3. All messages are synchronous group-protocol calls. Failure point: a member slow to rejoin stretches an eager rebalance for the whole group. Scaling: in large groups (hundreds of members) eager rebalances can take minutes, which is the problem cooperative rebalancing and KIP-848 address.
+**Reading the diagram.** In the eager half, C's arrival forces A and B to give up all four partitions, so nothing is consumed until the new assignment arrives. In the cooperative half, the coordinator asks only B to release P3, then assigns it to C; A never pauses and B pauses only P3. All messages are synchronous group-protocol calls. Failure point: one member slow to rejoin stretches an eager rebalance for the whole group, a cost that grows with group size.
 
 **Table 31.7 — Rebalance protocols (as of 2026).**
 
@@ -1095,9 +1098,9 @@ sequenceDiagram
 Kafka's throughput comes from a few hardware facts (Chapter 5) applied consistently [Apache Kafka Docs: Design]:
 
 1. **Sequential I/O.** Appends and most reads are sequential, which disks and SSDs serve far faster than random access (§5.6).
-2. **The page cache.** Brokers do not cache records in the JVM heap. They write to the OS page cache and let the kernel flush in the background (§6.6.6); consumers near the head of the log read from memory. This avoids double caching, avoids garbage-collection pressure, and keeps the cache warm across broker restarts. Kafka does not `fsync` each write by default; durability comes from replication across machines.
-3. **Zero-copy transfer.** For plaintext connections, the broker sends log data to consumer sockets with `sendfile`, which moves bytes from the page cache to the network card without copying them through user space. With TLS the bytes must be encrypted in user space, so this optimization is lost (kernel TLS can recover part of it).
-4. **End-to-end batching.** The producer's compressed batch is stored as-is, replicated as-is, and sent to consumers as-is, so per-record costs (system calls, headers, compression) are paid once per batch and the broker never decompresses (except to validate).
+2. **The page cache.** Brokers write to the OS page cache rather than a JVM-heap cache and let the kernel flush (§6.6.6); consumers near the head read from memory. This avoids double caching and garbage-collection pressure and survives broker restarts. Kafka does not `fsync` each write by default; durability comes from replication.
+3. **Zero-copy transfer.** For plaintext connections the broker uses `sendfile` to move bytes from the page cache to the socket without user-space copies. TLS requires encryption in user space, which loses this (kernel TLS recovers part of it).
+4. **End-to-end batching.** The producer's compressed batch is stored, replicated and sent to consumers as-is, so per-record costs are paid once per batch.
 
 **Figure 31.15 — Read path with and without zero-copy.**
 
@@ -1111,7 +1114,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** In the classic path, data crosses the kernel–user boundary twice, through the application's buffer and back into a socket buffer, costing CPU copies and system calls. With `sendfile`, the kernel hands page-cache pages straight to the network card (with scatter-gather DMA), so the broker's CPU barely touches the bytes. Both paths serve the same consumer fetch synchronously. Failure point: a consumer reading old data causes disk reads that evict hot pages and slow other consumers. Scaling: many consumers of recent data are served from memory at network speed.
+**Reading the diagram.** In the classic path, data crosses the kernel–user boundary twice, costing CPU copies and system calls. With `sendfile`, the kernel hands page-cache pages straight to the network card, so the broker's CPU barely touches the bytes. Both serve the same synchronous fetch. Failure point: a consumer reading old data causes disk reads that evict hot pages. Scaling: consumers of recent data are served from memory at network speed.
 
 ### 31.13.2 Sizing brokers for throughput
 
@@ -1210,7 +1213,7 @@ flowchart LR
   RS[(RocksDB local state)] --- KS
 ```
 
-**Reading the diagram.** A *Debezium* source connector tails PostgreSQL's WAL asynchronously and publishes row changes to `orders.cdc`. A *Kafka Streams* application joins and aggregates them, keeping state in local *RocksDB* backed by a compacted *changelog topic*, and writes results to `order-totals`. A *sink connector* bulk-indexes those into a search cluster. Storage boundaries: the database, Kafka topics, local RocksDB and the search index. Failure points: a dead Streams instance's tasks move to another instance, which restores state from the changelog; a sink outage builds consumer lag but loses nothing within retention. Scaling: add Connect workers or Streams instances up to the topics' partition counts.
+**Reading the diagram.** A *Debezium* source connector tails PostgreSQL's WAL asynchronously and publishes row changes to `orders.cdc`. A *Kafka Streams* application joins and aggregates them, keeping state in local *RocksDB* backed by a compacted *changelog topic*, and writes results to `order-totals`. A *sink connector* bulk-indexes those into a search cluster. Failure points: a dead Streams instance's tasks move elsewhere and restore state from the changelog; a sink outage builds lag but loses nothing within retention. Scaling: add workers or instances up to the partition counts.
 
 ## 31.15 Operating Kafka
 
@@ -1271,3 +1274,117 @@ With **tiered storage**, closed segments are copied to a remote store (typically
 | Under-min-ISR during maintenance | Two brokers restarted at once | `UnderMinIsrPartitionCount` > 0 | Bring brokers back | Restart one broker at a time; wait for ISR to recover |
 | Cross-zone transfer cost spike | Consumers fetch from leaders in other zones | Cloud bill, network metrics | Enable follower fetching (KIP-392) | Rack-aware placement and clients |
 
+## 31.16 Summary and revision notes
+
+::: summary
+- Kafka is a **partitioned, replicated, append-only log**. Consumers track their own offsets, so reading does not delete, many groups read independently, and history can be replayed (§31.3).
+- **KRaft** stores metadata in a Raft-replicated `__cluster_metadata` log; ZooKeeper mode was removed in Kafka 4.0 (2025). Data partitions still use ISR replication (§31.4).
+- Order holds **within a partition only**. Keys pick partitions by `murmur2 mod P`; changing $P$ moves $1 - \min(P,P')/\operatorname{lcm}(P,P')$ of keys, so size keyed topics up front: $P = \lceil h \max(T/t_p, T/t_c) \rceil$ (§31.5).
+- Producers batch by `linger.ms` and `batch.size`, compress per batch, and default to `acks=all` with idempotence (PID + sequence numbers, ordering preserved with up to 5 in-flight requests) (§31.6).
+- A consumer group gives each partition to one member; parallelism ≤ partitions; lag drains in $L/(\mu - \lambda)$ (§31.7).
+- Commit after processing = at-least-once; commit before = at-most-once; offsets live in compacted `__consumer_offsets` (§31.8).
+- HW = min LEO over the ISR; consumers read below it. RF = 3, `min.insync.replicas=2`, `acks=all`, unclean election off survives one failure with no loss and no write outage. Leader epochs fence stale leaders and make truncation safe (§31.9).
+- Retention deletes whole segments by time or size; compaction keeps the latest value per key and turns a topic into a changelog (§31.10).
+- Transactions (2PC through a coordinator, fenced by `transactional.id` epochs, read via `read_committed`) give exactly-once for Kafka-to-Kafka read-process-write only (§31.11).
+- Cooperative rebalancing, static membership and KIP-848 (GA in 4.0) cut rebalance pauses (§31.12).
+- Speed comes from sequential I/O, the page cache, `sendfile` zero-copy and end-to-end batching; size brokers by disk, egress and especially retention: $S = W t_{\text{ret}} R / u$; tiered storage decouples retention from broker disks (§31.13–§31.15).
+:::
+
+## 31.17 Knowledge checkpoint
+
+1. Why can a Kafka consumer replay data that a classic queue consumer cannot?
+2. What problem with ZooKeeper-mode controller failover did KRaft solve?
+3. How does a broker find offset 368,800 in a partition with many segments?
+4. A keyed topic grows from 10 to 15 partitions. What fraction of keys move?
+5. With `linger.ms=5` and 400 records/s into a partition, how many records are in each batch?
+6. Why does an idempotent producer preserve order with five requests in flight?
+7. A group has 8 members and the topic has 6 partitions. What happens?
+8. Which commit timing gives at-most-once delivery, and why?
+9. Leader LEO 500, follower LEOs 480 and 470, all in the ISR. What is the HW, and what can consumers read?
+10. Why is RF = 3 with `min.insync.replicas=3` a poor choice?
+11. What does unclean leader election trade?
+12. What does a tombstone do in a compacted topic, and why is it kept for a while?
+13. What exactly does Kafka's exactly-once guarantee cover?
+14. Why does TLS reduce Kafka's zero-copy benefit?
+15. Retention 3 days, 50 MB/s, RF = 3, $u = 0.75$: how much disk?
+
+<details><summary>Answers</summary>
+
+1. Reading only advances the consumer's own offset; records remain until retention removes them, so any consumer can seek back.
+2. A new controller had to reload all metadata from ZooKeeper, taking time proportional to partition count; KRaft standbys already hold the metadata log in memory.
+3. Binary-search segments by base offset, binary-search that segment's sparse `.index`, then scan forward a few kilobytes.
+4. $\operatorname{lcm}(10,15) = 30$, $\min = 10$: $1 - 10/30 = 2/3 \approx 67\%$.
+5. $400 \times 0.005 = 2$ records (assuming they fit in `batch.size`).
+6. The leader accepts batches only in sequence order per producer and partition; an out-of-order batch is rejected and resent.
+7. Six members get one partition each; two are idle standbys.
+8. Commit before processing: a crash after the commit skips the uncommitted work, losing it but never duplicating it.
+9. HW = 470; consumers read offsets 0–469.
+10. Any single broker outage, including a rolling restart, shrinks the ISR below 3 and blocks `acks=all` writes.
+11. It restores availability by electing an out-of-sync replica, losing acknowledged records that replica lacked.
+12. It marks the key deleted; it is retained for `delete.retention.ms` so consumers replaying the log see the deletion before it disappears.
+13. Atomic output to Kafka topics plus input offset commits in a read-process-write pipeline, seen by `read_committed` consumers; not external side effects.
+14. Data must be encrypted in user space, so the kernel cannot send page-cache pages directly to the socket.
+15. $50 \times 10^6 \times 259{,}200 \times 3 / 0.75 = 5.18 \times 10^{13}$ B ≈ 52 TB.
+</details>
+
+## 31.18 Interview questions
+
+### Basic
+
+**Q1. How does Kafka guarantee ordering?** **Answer.** Only within a partition: the leader assigns increasing offsets and consumers read in offset order. Records that must stay ordered share a key so they hash to one partition. There is no order across partitions, and changing the partition count breaks per-key order for in-flight data.
+
+**Q2. What is a consumer group?** **Answer.** Consumers sharing a `group.id` that divide partitions so each partition has one owner; different groups read independently. Parallelism is capped by partition count.
+
+### Intermediate
+
+**Q3. Configure a topic so an acknowledged write survives any single broker failure without making writes unavailable.** **Answer.** RF = 3 across three racks or zones, `min.insync.replicas=2`, producer `acks=all` with idempotence, unclean leader election disabled. One failure leaves two in-sync replicas, so writes continue and every acknowledged record is on at least two brokers.
+
+**Q4. Consumer lag is growing after a deploy. How do you diagnose it?** **Answer.** Check whether lag grows on all partitions (throughput: processing slowed, too few consumers, downstream database slow) or a few (hot key, poison record, stuck consumer). Look for frequent rebalances (processing exceeding `max.poll.interval.ms`), compare production rate with consumption rate, compute drain time, and scale consumers only up to the partition count.
+
+### Advanced
+
+**Q5. Design exactly-once processing from a Kafka topic into PostgreSQL.** **Answer.** Kafka transactions do not cover PostgreSQL. Either write results and the consumed offset in one PostgreSQL transaction and seek to the stored offset on start-up, or make writes idempotent (upsert keyed by event ID or a processed-events table) with at-least-once commits. Mention zombie consumers after rebalance: the database transaction or a fencing check on partition ownership must reject stale writers.
+
+**Q6. Why does Kafka use ISR replication for data but Raft for metadata?** **Answer.** ISR commits when all in-sync replicas have a record, tolerating $f$ failures with $f+1$ copies, which halves storage relative to majority quorums for large data volumes; it relies on an external authority to manage ISR membership and elections. That authority must itself be consistent without external help, so the metadata quorum uses Raft, where majority commit needs no outside arbiter and slow members do not block progress.
+
+## 31.19 Practical exercises
+
+1. Run the simulation of §31.9.5 with `fetch_every=(1, 1, 1)` and `acks=1`. Is anything lost? Explain why the loss window depends on replication lag.
+2. Extend the simulation with HW propagation delay: followers learn the HW one fetch later. Construct a double failure that loses committed data if followers truncate to their own HW, then fix it with leader-epoch truncation.
+3. Using the partitioner code, measure per-partition counts for 1,000,000 keys of the form `tenant-<n>` with 48 partitions, then for keys where 5% of traffic is one tenant. Compute the hottest partition's share.
+4. Write a consumer loop (pseudo-code) that commits asynchronously during normal operation and synchronously on revocation and shutdown.
+5. Size a cluster for 1 GB/s, 3-day retention, RF = 3, 5 consumer groups, 20 TB disks and 25 Gb/s NICs, using the formulas of §31.13.2 and §31.15.2.
+
+## 31.20 Design challenges
+
+1. **Order event backbone.** Design topics, keys, partition counts and durability settings for an e-commerce platform with 30,000 orders/s at peak, per-order ordering, a 30-day replay requirement and consumers for billing, search and analytics. Justify each number and plan how to grow partitions in two years.
+2. **Multi-region log.** Two regions must both consume all orders, and the platform must survive a region loss with at most 5 seconds of data loss. Compare stretched clusters with asynchronous cross-cluster replication, and state the recovery point and recovery time of each.
+3. **Changelog-backed cache.** Replace nightly cache rebuilds with a compacted topic fed by CDC. Specify tombstone handling, bootstrap time for a new cache node, and how consumers detect that they have caught up.
+
+## 31.21 References
+
+1. Kreps, J., Narkhede, N., Rao, J. *Kafka: a Distributed Messaging System for Log Processing*. NetDB Workshop, 2011.
+2. Kreps, J. *The Log: What every software engineer should know about real-time data's unifying abstraction*. LinkedIn Engineering blog, 2013. https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying
+3. Wang, G., Koshy, J., Subramanian, S., Paramasivam, K., Zadeh, M., Narkhede, N., Rao, J., Kreps, J., Stein, J. *Building a Replicated Logging System with Apache Kafka*. Proceedings of the VLDB Endowment 8(12), 2015.
+4. Shapira, G., Palino, T., Sivaram, R., Petty, K. *Kafka: The Definitive Guide*, 2nd ed. O'Reilly Media, 2021.
+5. Apache Software Foundation. *Apache Kafka Documentation* (Design, Replication, Configuration, Operations). Accessed 2026. https://kafka.apache.org/documentation/
+6. Apache Software Foundation. *Apache Kafka 4.0.0 Release Announcement and Upgrade Notes*. March 2025. https://kafka.apache.org/blog
+7. Apache Kafka. *KIP-500: Replace ZooKeeper with a Self-Managed Metadata Quorum*. https://cwiki.apache.org/confluence/display/KAFKA/KIP-500%3A+Replace+ZooKeeper+with+a+Self-Managed+Metadata+Quorum
+8. Apache Kafka. *KIP-98: Exactly Once Delivery and Transactional Messaging*. 2017. https://cwiki.apache.org/confluence/display/KAFKA/KIP-98+-+Exactly+Once+Delivery+and+Transactional+Messaging
+9. Apache Kafka. *KIP-101: Alter Replication Protocol to use Leader Epoch rather than High Watermark for Truncation*. 2017. https://cwiki.apache.org/confluence/display/KAFKA/
+10. Apache Kafka. *KIP-405: Kafka Tiered Storage*. https://cwiki.apache.org/confluence/display/KAFKA/KIP-405%3A+Kafka+Tiered+Storage
+11. Apache Kafka. *KIP-848: The Next Generation of the Consumer Rebalance Protocol*. https://cwiki.apache.org/confluence/display/KAFKA/
+12. Apache Kafka. *KIP-345 (static membership), KIP-392 (follower fetching), KIP-429 (incremental cooperative rebalancing), KIP-480 and KIP-794 (sticky partitioner), KIP-679 (producer safety defaults), KIP-932 (queues for Kafka), KIP-1030 (default value changes in 4.0)*. https://cwiki.apache.org/confluence/display/KAFKA/Kafka+Improvement+Proposals
+13. Rao, J. *How to choose the number of topics/partitions in a Kafka cluster?* Confluent blog, 2015.
+14. Kreps, J. *Benchmarking Apache Kafka: 2 Million Writes Per Second (On Three Cheap Machines)*. LinkedIn Engineering blog, 2014.
+15. Svingen, B. *Publishing with Apache Kafka at The New York Times*. Confluent blog, 2017.
+16. Debezium Project. *Debezium Documentation*. Accessed 2026. https://debezium.io/documentation/
+
+## 31.22 Open verification items
+
+- Exact Kafka release for each status as of 2026: KRaft production-ready 3.3, ZooKeeper deprecated 3.5, removed 4.0 (March 2025); KIP-848 GA in 4.0 with client opt-in via `group.protocol=consumer`; tiered storage production-ready in 3.9.
+- KIP-932 share groups: maturity level in the current 4.x release.
+- Defaults quoted: `linger.ms` 5 ms (4.0, KIP-1030), `session.timeout.ms` 45 s, `replica.lag.time.max.ms` 30 s, `__consumer_offsets` 50 partitions, Streams EOS commit interval 100 ms.
+- Kreps 2014 benchmark figures and Svingen 2017 details (single-partition compacted topic) against the original posts.
+- Exact URLs for KIP-101, KIP-848 and the 4.0 release announcement.
+- The brief listed *Kafka: The Definitive Guide* (2nd ed.) as Narkhede, Shapira and Palino; the 2021 edition's authors are Shapira, Palino, Sivaram and Petty (Narkhede co-authored the 2017 first edition).

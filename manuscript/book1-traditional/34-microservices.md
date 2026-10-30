@@ -2,72 +2,61 @@
 
 > **Level:** 3 · **Track:** A (Traditional) · **Estimated reading time:** 6 h
 
-Chapter 33 placed microservices among the architecture styles and compared them with the monolith and the modular monolith. This chapter is about doing microservices well, and about recognizing when not to. Most microservice failures come from where the lines are drawn, not from the technology. Split a system along the wrong seams and every feature needs five teams, every release needs a coordinated deploy, and every user request crosses a dozen network hops, each of which can fail. Split it along the right seams and teams ship independently, failures stay contained, and each part scales on its own.
+Chapter 33 placed microservices among the architecture styles. This chapter is about doing microservices well, and about recognizing when not to. Most microservice failures come from where the lines are drawn, not from the technology. Split a system along the wrong seams and every feature needs five teams, every release needs a coordinated deploy, and every request crosses a dozen network hops. Split it along the right seams and teams ship independently, failures stay contained, and each part scales on its own.
 
-The chapter has three parts. The first is about **boundaries**: how to choose them (cohesion, change coupling, team ownership) and the modelling discipline that helps most, domain-driven design, with its aggregates, bounded contexts and context maps. The second is about **plumbing**: API gateways and backends for frontends, service discovery, synchronous and asynchronous communication, contract testing, tracing and service meshes, each with its latency and cost arithmetic. The third is about **data and change**: database-per-service, querying across services, independent deployment, migrating a monolith with the strangler fig pattern, and the anti-patterns, above all the distributed monolith. QuickBite, the food-delivery platform from Chapter 2, is the running example throughout.
+The chapter has three parts. **Boundaries**: cohesion, change coupling, team ownership and domain-driven design. **Plumbing**: gateways, backends for frontends, discovery, communication, contract testing, tracing and service meshes, each with its latency and cost arithmetic. **Data and change**: database-per-service, independent deployment, monolith migration and anti-patterns. QuickBite, the food-delivery platform of Chapter 2, is the running example.
 
 ## 34.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Define a microservice and choose service boundaries using cohesion, change coupling, team ownership and explicit sizing heuristics.
-- Apply the tactical patterns of domain-driven design (entities, value objects, aggregates, domain events) and size an aggregate using a contention estimate.
-- Draw a context map using shared kernel, customer–supplier, conformist, anticorruption layer and open host service relationships, and implement an anticorruption layer.
-- Place an API gateway and backends for frontends, and compute the latency saved by aggregating chatty calls.
-- Compare client-side and server-side service discovery and compute the stale-endpoint window of a registry.
-- Choose between synchronous and asynchronous communication, version APIs across services and write a consumer-driven contract test.
-- Explain traces, spans and context propagation, and the data plane and control plane of a service mesh, including sidecarless (ambient) mode, and estimate mesh overhead per hop.
-- Apply database-per-service, replicate data with events and query across services with API composition or CQRS views.
-- Plan a monolith migration with the strangler fig, branch by abstraction and parallel run, and diagnose the distributed monolith and other anti-patterns, including the $A^n$ availability of a synchronous call chain.
+- Choose service boundaries using cohesion, change coupling, team ownership and sizing heuristics.
+- Apply entities, value objects, aggregates and domain events, and size an aggregate with a contention estimate.
+- Draw a context map and implement an anticorruption layer.
+- Place an API gateway and backends for frontends, and compute the latency saved by aggregating calls.
+- Compare client-side and server-side discovery and compute a registry's stale-endpoint window.
+- Choose synchronous or asynchronous communication, version APIs and write a consumer-driven contract test.
+- Explain trace context propagation and service-mesh data and control planes, including ambient mode, and estimate mesh overhead.
+- Apply database-per-service, and query across services with API composition or CQRS views.
+- Plan a strangler-fig migration and diagnose anti-patterns, including the $A^n$ availability of call chains.
 
 ## 34.2 Prerequisites
 
-- Monolith, modular monolith and the microservices overview — §33.4, §33.5 and §33.7 (this chapter assumes you know why a team might split a monolith at all).
-- Conway's law and the QuickBite decomposition — §1.4 and §2.3 (the running example).
-- Percentiles and fan-out amplification — §4.8 (fan-out tail latency is reused in §34.8).
-- Series availability — §4.14.2 (the $A^n$ law is applied to call chains in §34.14).
-- REST, gRPC and API versioning — §8.6, §8.8 and §8.15 (inter-service calls use these protocols).
-- Client-side load balancing — §19.10 (service discovery feeds it).
-- Timeouts, retries, circuit breakers and idempotency — §22.11–§22.15 (every inter-service call needs them).
-- Messaging, the transactional outbox and sagas — Chapters 30 and 32 (cross-service consistency is built from them; summarized here, not repeated).
+- Monolith, modular monolith and microservices overview — §33.4, §33.5, §33.7.
+- Conway's law and the QuickBite decomposition — §1.4, §2.3.
+- Fan-out tail latency and series availability — §4.8.4, §4.14.2.
+- REST, gRPC and API versioning — §8.6, §8.8, §8.15.
+- Client-side load balancing — §19.10.
+- Timeouts, retries, circuit breakers and idempotency — §22.11–§22.15.
+- Messaging, outbox and sagas — Chapters 30 and 32 (summarized here, not repeated).
 
 ## 34.3 Service boundaries
 
 ### 34.3.1 What a microservice is
 
 ::: definition
-**Definition — Microservice.** A service (a deployable unit with an API) that is built around one business capability, owned by one team, deployable independently of other services, and the sole owner of its data, which other services reach only through its API or the events it publishes. Lewis and Fowler describe the **microservice architectural style** as "an approach to developing a single application as a suite of small services, each running in its own process and communicating with lightweight mechanisms," built around business capabilities and independently deployable by fully automated machinery [Lewis and Fowler 2014].
+**Definition — Microservice.** A service built around one business capability, owned by one team, deployable independently, and the sole owner of its data, which others reach only through its API or events. Lewis and Fowler describe the style as "an approach to developing a single application as a suite of small services, each running in its own process and communicating with lightweight mechanisms," built around business capabilities and independently deployable [Lewis and Fowler 2014].
 :::
 
 #### First-principles explanation
 
-Think of a restaurant kitchen. A small kitchen has one cook who does everything; that is a monolith, and it works well while the menu is short. A large kitchen is divided into **stations**: grill, sauce, pastry, cold starters. Each station has its own staff, tools and ingredients, and stations talk to each other through a small, fixed protocol: the ticket from the pass. The pastry chef can rearrange the pastry station, change suppliers or hire a new assistant without asking the grill. The division is not by *activity* (one person chops for everyone, another fries for everyone) but by *outcome* (desserts, grilled meat), because outcomes change together: a new dessert touches only the pastry station.
-
-Microservices make the same cut in software. A service is a station: it owns an outcome, its own data (ingredients) and its own team, and others reach it only through its API (the ticket).
+A large restaurant kitchen is divided into **stations**: grill, sauce, pastry. Each has its own staff, tools and ingredients, and stations communicate through one fixed protocol, the ticket. The pastry chef can change suppliers without asking the grill. The division is by *outcome* (desserts), not by *activity* (one person chops for everyone), because outcomes change together: a new dessert touches only pastry. A microservice is a station: it owns an outcome, its data and its team, and others reach it only through its API.
 
 #### Why does this exist?
 
-A monolith shares three things across the whole organization: one codebase, one deployable and one database. Below roughly a few dozen engineers that sharing is cheap and powerful. Beyond it, three pains appear. **Release coupling**: every change waits for the slowest change in the same deploy. **Scaling coupling**: the component with the heaviest load forces the whole application to scale. **Failure coupling**: a memory leak in a reporting job takes down checkout. Microservices trade those pains for distributed-systems pains (network failures, eventual consistency, operational load). The trade is worth making only when the first set hurts more than the second. Newman's summary is that microservices buy **options**, chiefly independent deployability, at a substantial cost in complexity [Newman 2021].
+A monolith shares one codebase, one deployable and one database. Beyond a few dozen engineers this causes **release coupling** (every change waits for the slowest change in the deploy), **scaling coupling** (the hottest component forces the whole application to scale) and **failure coupling** (a reporting job's memory leak takes down checkout). Microservices trade these for distributed-systems pains. Newman's summary: microservices buy options, chiefly independent deployability, at a substantial cost in complexity [Newman 2021].
 
 ### 34.3.2 Cohesion and coupling at service scale
 
-The two forces that decide a good boundary are the same ones that decide a good class (§35.10), applied at the scale of teams and deployables.
-
 ::: definition
-**Definition — Cohesion and coupling (service level).** **Cohesion** is the degree to which the code inside one service changes together for the same reasons. **Coupling** is the degree to which a change in one service forces a change, a redeploy or a coordinated release in another. A good boundary maximizes cohesion inside and minimizes coupling across. Newman's shorthand: "the code that changes together, stays together" [Newman 2021].
+**Definition — Cohesion and coupling (service level).** **Cohesion** is the degree to which code inside one service changes together for the same reasons. **Coupling** is the degree to which a change in one service forces a change, redeploy or coordinated release in another. Newman's shorthand: "the code that changes together, stays together" [Newman 2021].
 :::
 
-Coupling comes in several forms, from mildest to most damaging [Newman 2021]:
-
-1. **Domain coupling.** Service A calls service B because it needs B's capability (Order needs Payment to charge). Unavoidable; keep the interface small.
-2. **Temporal coupling.** A needs B to be *up right now* to finish its work. Synchronous calls create it; asynchronous events remove it (§34.8).
-3. **Pass-through coupling.** A passes data to B only because C, further down, needs it, so a change in C's needs changes A's interface.
-4. **Common coupling.** Several services read and write the same shared data, for example a shared table (§34.11).
-5. **Content coupling.** A reaches into B's internals, typically B's database, and changes its state directly. The worst form: B can no longer reason about its own data.
+Newman orders coupling from mild to damaging: **domain** coupling (A uses B's capability; unavoidable), **temporal** coupling (B must be up now; removed by events, §34.8), **pass-through** coupling (A carries data only because C needs it), **common** coupling (shared data) and **content** coupling (A changes B's database directly, the worst) [Newman 2021].
 
 #### How it works internally: measuring change coupling
 
-You do not have to guess which code changes together. Version-control history records it. Every commit (or merged pull request) that touches files in two candidate modules is evidence that they change for the same reason. Tornhill's work on behavioral code analysis popularized mining these **change-coupling** (or "temporal coupling") metrics from Git history to find hidden dependencies [Tornhill 2015].
+Version-control history records which code changes together: every commit touching two modules is evidence that they change for the same reason. Tornhill popularized mining such change-coupling metrics from Git [Tornhill 2015].
 
 ::: formula
 **Change coupling between two modules (Jaccard index of co-changes)**
@@ -83,25 +72,17 @@ $$C(A,B) = \frac{n_{AB}}{n_A + n_B - n_{AB}}$$
 :::
 
 ::: example
-**Worked example — Should QuickBite's payment code be its own service?** Over the last six months of QuickBite's monolith history, 120 merged pull requests touched the `ordering` package, 80 touched `payments` and 60 touched both. For comparison, 90 touched `catalog` and only 6 touched both `ordering` and `catalog`.
+**Worked example — Should QuickBite's payment code be its own service?** In six months of monolith history, 120 pull requests touched `ordering`, 80 touched `payments` and 60 touched both; 90 touched `catalog`, of which 6 also touched `ordering`.
 
 1. Ordering–payments: $C = 60 / (120 + 80 - 60) = 60 / 140 = 0.43$.
 2. Ordering–catalog: $C = 6 / (120 + 90 - 6) = 6 / 204 = 0.029$.
 
-**Interpretation.** Almost half of all changes to ordering or payments touch both. If they were separate services owned by different teams, 43% of their changes would need cross-team coordination and probably a coordinated release. Ordering and catalog, by contrast, change together only 3% of the time; a boundary between them is cheap.
-
-**Engineering implication.** Extract catalog first. Before splitting payments from ordering, inspect the 60 co-changing pull requests: if most are about one concept (for example "payment status shown on the order"), redesign the interface (an event `PaymentAuthorized` that ordering consumes) so the co-change disappears. Splitting first and fixing later produces a distributed monolith (§34.14). Treat a threshold such as $C > 0.2$ as a prompt for investigation, not as a rule.
+**Interpretation.** As separate services, ordering and payments would need cross-team coordination on 43% of their changes; ordering and catalog on 3%. **Engineering implication.** Extract catalog first. Before splitting payments, inspect the 60 shared pull requests and redesign the interface (for example a `PaymentAuthorized` event) until the co-change disappears; otherwise you build a distributed monolith (§34.14). Treat $C > 0.2$ as a prompt to investigate, not a rule.
 :::
 
 ### 34.3.3 Team ownership and Conway's law
 
-Conway observed that a system's structure tends to copy the communication structure of the organization that builds it [Conway 1968] (§1.4). Microservices make this deliberate: the **inverse Conway maneuver** shapes the teams first so the architecture you want is the one the organization naturally produces. Skelton and Pais formalize the team side: a **stream-aligned team** owns a flow of business change end to end, and a service boundary should fit within one team's **cognitive load**, the amount of domain and technology it can hold in its head [Skelton and Pais 2019].
-
-The practical rules that follow:
-
-1. **One owning team per service.** A team may own several services; a service never has two owning teams. Shared ownership means nobody can make a breaking decision, so nothing changes, or everybody can, so everything breaks.
-2. **A change in business capability should land in one team.** If adding "schedule an order for later" needs the ordering, payment, dispatch and notification teams to change code in lockstep, the boundaries cut across the capability.
-3. **Boundaries follow communication cost.** Teams in different time zones or different companies need stable, well-documented interfaces between them; teams in one room can afford a chattier relationship.
+Conway observed that systems copy the communication structure of the organizations that build them [Conway 1968] (§1.4). The **inverse Conway maneuver** shapes teams first so the desired architecture is the natural outcome. Skelton and Pais add that a service should fit within one **stream-aligned team's** cognitive load [Skelton and Pais 2019]. Practical rules: one owning team per service (a team may own several); a change in one business capability should land in one team; and teams with high communication cost (time zones, companies) need stable, documented interfaces between them.
 
 **Figure 34.1 — Two ways to split QuickBite: by technical layer and by business capability.**
 
@@ -123,90 +104,66 @@ flowchart TB
   end
 ```
 
-**Reading the diagram.** The top split follows technical layers: a UI service calls a business-logic service over synchronous RPC, which calls a data-access service, which owns one shared database. A feature such as "scheduled orders" changes all three services and the schema, so every feature is a coordinated three-team release, and every request crosses two extra network hops; any of the three is a single failure point for every capability. The bottom split follows business capabilities: the gateway routes each request to one service (solid arrows, synchronous HTTPS or gRPC), each service owns its own database (a separate storage boundary), and ordering informs dispatch asynchronously through an `OrderPlaced` event (dotted arrow), so a dispatch outage does not block ordering. Each capability scales independently; catalog, which is read-heavy, can run many replicas and a cache while dispatch scales with courier activity. "Scheduled orders" now changes mostly the ordering service.
+**Reading the diagram.** The top split follows technical layers: UI, logic and data-access services call each other synchronously over one shared database, so a feature such as "scheduled orders" changes all three services and the schema, every request crosses two extra hops, and each service is a single failure point for every capability. The bottom split follows capabilities: the gateway routes each request to one service (synchronous HTTPS or gRPC), each service owns its database (separate storage boundaries), and ordering informs dispatch asynchronously with an `OrderPlaced` event (dotted), so a dispatch outage does not block ordering. Each capability scales independently: read-heavy catalog adds replicas and caches; dispatch scales with courier activity.
 
 ### 34.3.4 Sizing heuristics
 
-"How big should a microservice be?" has no numeric answer in lines of code. Size follows from boundaries, not the reverse. The heuristics below are what practitioners actually use; each is a test you can apply to a proposed boundary.
+Size follows from boundaries, not lines of code. Each heuristic below is a test you can apply to a proposed boundary.
 
 **Table 34.1 — Service sizing heuristics.**
 
 | Heuristic | The test | Too big when | Too small when |
 |---|---|---|---|
-| Business capability | Can you name the capability in two or three words of business language? | The name needs "and" ("orders and payments and refunds") | The name is a verb on someone else's noun ("order-validator") |
-| Team ownership | Can one stream-aligned team own it? | More than one team commits weekly | One team owns twenty services and runs out of on-call capacity |
-| Change coupling | Do changes usually stay inside it? | Many unrelated reasons to change | Most changes also change a neighbor ($C$ high, §34.3.2) |
-| Data ownership | Does it own its data outright? | Holds unrelated tables with separate invariants | Needs another service's data for every request |
-| Transaction boundary | Are its invariants enforced inside it? | — | A business invariant spans it and a neighbor, forcing a saga for every write |
-| Independent deployability | Can it ship on its own schedule? | Its deploy is blocked by unrelated work inside it | Its deploy always needs a neighbor's deploy |
-| Rewrite size | Could the team rewrite it in a few weeks? | Rewrite would take quarters | — |
+| Business capability | Nameable in two or three business words? | Name needs "and" | Name is a verb on another's noun ("order-validator") |
+| Team ownership | One stream-aligned team can own it? | Several teams commit weekly | One team owns twenty services |
+| Change coupling | Changes usually stay inside? | Many unrelated reasons to change | Most changes also change a neighbor |
+| Data ownership | Owns its data outright? | Unrelated tables with separate invariants | Needs another service's data on every request |
+| Transaction boundary | Invariants enforced inside? | — | An invariant spans it and a neighbor, forcing sagas |
+| Independent deployability | Ships on its own schedule? | Blocked by unrelated work inside | Always deploys with a neighbor |
 
-The last row is an old rule of thumb (a service small enough that a team could rewrite it in about two weeks is often quoted in microservice talks). Treat it as a smell detector, not a target. The most important row is the **transaction boundary**: if two candidate services must change state atomically for a business rule to hold, they belong together, because splitting them turns one local transaction into a saga with compensations (§32.7) for every write.
+The most important row is the **transaction boundary**: if two candidates must change state atomically for a business rule to hold, they belong together, because splitting them turns one local transaction into a saga with compensations (§32.7).
 
 ::: recommendation
-**Recommendation — Start coarse, split on evidence.** Begin with a modular monolith (§33.5) or a few coarse services aligned with clear capabilities. Split a module out when you have a concrete reason: a team boundary, a different scaling profile, a different failure-isolation need or a different release cadence, and when history shows low change coupling. Merging two services later is far more expensive than splitting a well-modularized module.
+**Recommendation — Start coarse, split on evidence.** Begin with a modular monolith (§33.5) or a few coarse services. Split when there is a concrete reason (team boundary, scaling profile, failure isolation, release cadence) and history shows low change coupling. Merging services later costs far more than splitting a well-modularized module.
 :::
 
 ::: mistake
-**Common misconception — "Micro means small, so smaller is better."** The *micro* is about scope of responsibility, not lines of code. A service that is too small moves its complexity into the network: more calls, more failure modes, more versioned interfaces, more deploy pipelines. Fowler's "Microservice Premium" essay makes the point that the style carries a fixed productivity cost that pays off only above a certain system complexity [Fowler 2015].
+**Common misconception — "Micro means small, so smaller is better."** *Micro* refers to scope of responsibility. A service that is too small moves its complexity into the network: more calls, failure modes, versioned interfaces and pipelines. Fowler's "Microservice Premium" argues that the style carries a fixed productivity cost that pays off only above a certain system complexity [Fowler 2015].
 :::
-
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Every feature needs several teams | Boundaries cut across capabilities (layered split) | Cross-team pull requests; high $C$ between services | Merge or re-cut services along capabilities | Boundary review with change-coupling data before splitting |
-| One service has three owning teams | Shared "platform" service accreting features | Commit authors from many teams | Split by capability or assign one owner | One owning team per service, written down in a service catalog |
-| Services owned by nobody | Reorganization left orphans | No on-call rotation; stale dependencies | Assign or retire | Ownership metadata required in the deploy pipeline |
 
 ## 34.4 Domain-driven design
 
-Section 34.3 said "split by business capability". Domain-driven design (DDD) is the most widely used discipline for finding and modelling those capabilities. It predates microservices by a decade: Evans wrote it to help teams build software for complicated domains such as shipping, banking and insurance [Evans 2003]. It splits into **strategic design** (how to divide a large domain into models and how those models relate; §34.5) and **tactical design** (how to build one model well; this section).
+Domain-driven design (DDD) is the most widely used discipline for finding and modelling business capabilities. Evans wrote it for complicated domains such as shipping and banking, a decade before microservices [Evans 2003]. **Strategic design** divides a domain into models and relates them (§34.5); **tactical design** builds one model well (this section).
 
 ::: definition
-**Definition — Domain-driven design (DDD).** An approach to software development that places a model of the business domain, built and refined jointly by developers and domain experts, at the center of the design, expresses that model directly in code, and divides large domains into explicitly bounded models [Evans 2003; Vernon 2013].
+**Definition — Domain-driven design (DDD).** An approach that places a model of the business domain, built jointly by developers and domain experts, at the center of the design, expresses it directly in code, and divides large domains into explicitly bounded models [Evans 2003; Vernon 2013].
 :::
 
 ### 34.4.1 Ubiquitous language
 
-#### First-principles explanation
-
-Ask three people at QuickBite what an "order" is. The customer-support lead says it is the thing a customer complains about, including its refund. The restaurant-operations manager says it is a ticket the kitchen accepts or rejects. The finance analyst says it is a line on a settlement report that is final 14 days after delivery. All three are right, and code that tries to serve all three with one `Order` class becomes a 4,000-line class with 60 nullable fields.
+Ask three people at QuickBite what an "order" is. Support means the thing a customer complains about, refund included; restaurant operations means a ticket the kitchen accepts; finance means a settlement line that is final 14 days after delivery. Code serving all three with one `Order` class becomes a 4,000-line class with 60 nullable fields.
 
 ::: definition
-**Definition — Ubiquitous language.** A shared, rigorous vocabulary built by developers and domain experts for one model, used consistently in conversation, documents, tests and code (class, method and event names), so that a term means exactly one thing within that model [Evans 2003].
+**Definition — Ubiquitous language.** A rigorous vocabulary built by developers and domain experts for one model and used consistently in conversation, tests and code, so that each term means exactly one thing within that model [Evans 2003].
 :::
 
-The language is "ubiquitous" *within a boundary*, not across the company. In the ordering model, `Order.accept()` means the restaurant has confirmed it can cook the order; in the finance model there is no `accept` at all, only `Settlement.finalize()`. When a developer says "the order is accepted" and the restaurant manager hears the same thing, a whole class of bugs disappears. When code uses `status = 3` and the business says "accepted", the translation happens in people's heads and fails silently.
+The language is ubiquitous *within a boundary*. In ordering, `Order.accept()` means the restaurant confirmed it can cook; finance has no `accept`, only `Settlement.finalize()`. When code says `status = 3` and the business says "accepted", translation happens in people's heads and fails silently.
 
 ### 34.4.2 Entities and value objects
 
 ::: definition
-**Definition — Entity.** A domain object defined by a continuous **identity** that persists through changes to its attributes. Two entities with the same attributes but different identities are different (two orders for the same pizza at the same price are still two orders) [Evans 2003].
+**Definition — Entity and value object.** An **entity** has a continuous identity that persists as its attributes change: two orders for the same pizza are two orders. A **value object** is defined entirely by its attributes, has no identity and is usually immutable: `Money(24.50, "USD")`, `Address` [Evans 2003].
 :::
 
-::: definition
-**Definition — Value object.** A domain object defined entirely by its attributes, with no identity of its own; it is usually immutable, and two value objects with equal attributes are interchangeable. Examples: `Money(24.50, "USD")`, `Address`, `TimeWindow` [Evans 2003].
-:::
-
-Value objects are underrated. Most bugs in money-handling code come from passing around a bare `float` that has lost its currency and precision. A `Money` value object that refuses negative amounts and carries its currency makes those bugs impossible to write. Prefer value objects; promote something to an entity only when the business genuinely tracks its identity over time.
+Prefer value objects. A bare `float` loses its currency and precision; a `Money` value object that refuses negative amounts makes whole classes of bugs impossible to write.
 
 ### 34.4.3 Aggregates and consistency boundaries
 
 ::: definition
-**Definition — Aggregate.** A cluster of entities and value objects treated as one unit for data changes. Each aggregate has one **root** entity; outside objects may hold references only to the root, and every change to anything inside goes through the root, which enforces the aggregate's **invariants** (business rules that must always hold). One transaction modifies one aggregate [Evans 2003; Vernon 2013].
+**Definition — Aggregate.** A cluster of entities and value objects treated as one unit for data changes, with one **root** entity. Outside objects reference only the root, every change goes through it, and it enforces the aggregate's **invariants**. One transaction modifies one aggregate [Evans 2003; Vernon 2013].
 :::
 
-#### Why does this exist?
-
-In a large object graph, every object can reach every other, and any code path can change anything. Then nobody can say which rules hold after a transaction, and locking the whole graph to keep them true does not scale. The aggregate draws a small boundary around exactly the data that one invariant needs. Inside the boundary, consistency is immediate (one ACID transaction). Across boundaries, consistency is eventual, achieved with domain events.
-
-Vernon condenses aggregate design into four rules [Vernon 2013]:
-
-1. **Model true invariants in consistency boundaries.** Put inside the aggregate only what *must* be consistent at the end of every transaction.
-2. **Design small aggregates.** Large aggregates load slowly, lock widely and conflict often.
-3. **Reference other aggregates by identity.** An `Order` holds `restaurant_id`, not a `Restaurant` object.
-4. **Use eventual consistency outside the boundary.** When one aggregate's change must affect another, publish a domain event and update the other in a separate transaction.
+In a large object graph any code can change anything, so nobody can say which rules hold, and locking the whole graph does not scale. An aggregate draws a small boundary around exactly the data one invariant needs: consistency is immediate inside (one ACID transaction) and eventual across boundaries (via domain events). Vernon's rules: model true invariants in consistency boundaries; design small aggregates; reference other aggregates by identity; use eventual consistency outside the boundary [Vernon 2013].
 
 **Figure 34.2 — The QuickBite `Order` aggregate.**
 
@@ -251,11 +208,9 @@ classDiagram
   Order ..> Restaurant : by id only
 ```
 
-**Reading the diagram.** The `Order` root is the only entry point; `OrderLine` entities live and die with it (composition, filled diamond). `Money` and `DeliveryAddress` are immutable value objects. `Restaurant` is a different aggregate, referenced only by its identifier (dotted dependency), so loading an order never loads a restaurant's menu, and the two are stored and locked separately. The root enforces invariants such as "the total equals the sum of lines" and "no lines may be added after `place()`". The `version` field supports optimistic concurrency: a write succeeds only if the version has not changed since the read, so two concurrent writers to the same order cannot both win. The aggregate is the unit of storage (one row plus child rows, or one document), the unit of locking and the natural unit of partitioning, since all its data shares the `OrderId` key.
+**Reading the diagram.** The `Order` root is the only entry point; `OrderLine` entities live and die with it (composition). `Money` and `DeliveryAddress` are immutable value objects. `Restaurant` is a separate aggregate referenced only by identifier (dotted), so loading an order never loads a menu, and the two are stored and locked separately. The root enforces invariants such as "total equals the sum of lines". The `version` field supports optimistic concurrency: a write commits only if the version is unchanged since the read. The aggregate is the unit of storage, locking and partitioning (all its data shares the `OrderId` key).
 
 #### Mathematical foundations: how big may an aggregate be?
-
-A bigger aggregate means more writers compete for the same version number. If writes to one aggregate arrive as a Poisson process, the chance that another write lands while yours is in flight grows quickly with the write rate.
 
 ::: formula
 **Optimistic-concurrency conflict probability for one aggregate**
@@ -270,24 +225,24 @@ $$P_{\text{conflict}} = 1 - e^{-\lambda w}$$
 :::
 
 ::: example
-**Worked example — A restaurant aggregate versus an order aggregate.** A first QuickBite design modelled `Restaurant` as one aggregate that also contained all of the restaurant's active orders, so "the kitchen may not exceed 30 open orders" could be checked in one transaction. At the Friday peak a busy restaurant receives about $\lambda = 2$ writes/s across its orders (new orders, accepts, ready, picked up). Each command takes $w = 100$ ms from read to commit.
+**Worked example — A restaurant aggregate versus an order aggregate.** A first design made `Restaurant` one aggregate containing all active orders, to enforce "at most 30 open orders" in one transaction. At the Friday peak a busy restaurant receives $\lambda = 2$ writes/s; each command takes $w = 100$ ms from read to commit.
 
-1. Big aggregate: $\lambda w = 2 \times 0.1 = 0.2$; $P = 1 - e^{-0.2} = 0.181$. About 18% of writes conflict and retry, and retries add load, raising $\lambda$ further.
-2. Order as its own aggregate: one order sees about 4 updates over a 40-minute life, so $\lambda \approx 4 / 2{,}400 = 0.00167$ writes/s. $\lambda w = 0.000167$; $P \approx 0.00017$, about one write in 6,000.
+1. Big aggregate: $\lambda w = 0.2$; $P = 1 - e^{-0.2} = 0.181$. About 18% of writes retry, and retries raise $\lambda$ further.
+2. Order as its own aggregate: about 4 updates over a 40-minute life, $\lambda \approx 4 / 2{,}400 = 0.00167$ writes/s; $P \approx 0.00017$, one write in 6,000.
 
-**Interpretation.** Splitting the aggregate reduced conflicts by about a factor of 1,000. **Engineering implication.** The capacity rule moves out of the big aggregate: accept it as an eventually consistent check (a per-restaurant counter updated from `OrderPlaced` events, with a small allowed overshoot), or keep a tiny `KitchenCapacity` aggregate holding only the counter. Ask the business whether 31 open orders for a few seconds is truly unacceptable; usually it is not, and the answer decides the aggregate boundary.
+**Interpretation.** Splitting cut conflicts about 1,000-fold. **Engineering implication.** The capacity rule becomes an eventually consistent counter fed by `OrderPlaced` events, or a tiny `KitchenCapacity` aggregate. Ask the business whether 31 open orders for a few seconds is truly unacceptable; the answer decides the boundary.
 :::
 
 ### 34.4.4 Domain events
 
 ::: definition
-**Definition — Domain event.** A record of something that happened in the domain that domain experts care about, named in the past tense in the ubiquitous language (`OrderPlaced`, `PaymentAuthorized`, `CourierAssigned`), immutable, and carrying the identifiers and facts needed by those who react to it [Evans 2003; Vernon 2013].
+**Definition — Domain event.** An immutable record of something domain experts care about that happened, named in the past tense (`OrderPlaced`, `CourierAssigned`), carrying the identifiers and facts its consumers need [Evans 2003; Vernon 2013].
 :::
 
-Domain events are the glue between aggregates and, at a larger scale, between services. Inside a service, an aggregate records events as it changes; after the transaction commits, they are dispatched to handlers that update other aggregates. Across services, the same events are published to a message broker (Chapter 30) and consumed by other bounded contexts. Publishing reliably needs the **transactional outbox**: the event is written to an outbox table in the same local transaction as the aggregate change, and a relay publishes it afterwards, so the state change and the event cannot diverge (§32.5). Note the vocabulary of §30.6: an *event* states a fact ("order placed"); a *command* asks for something ("place order") and may be refused.
+Inside a service, aggregates record events that handlers apply to other aggregates after commit. Across services, the same events go to a broker (Chapter 30), published reliably with the **transactional outbox**: the event row is written in the same local transaction as the aggregate change and relayed afterwards (§32.5). An *event* states a fact; a *command* asks for something and may be refused (§30.6).
 
 ::: mistake
-**Common misconception — "DDD means using entities, repositories and factories."** The tactical patterns are the visible part, but most of DDD's value is strategic: finding the boundaries between models and naming things in the business's language. A codebase full of `OrderRepository` and `OrderFactory` classes that still has one model of "order" for support, kitchen and finance has adopted the vocabulary without the design. Conversely, a small CRUD service with no complicated invariants gains little from tactical DDD; Evans himself reserves the full investment for the **core domain**, the part of the business that differentiates it [Evans 2003].
+**Common misconception — "DDD means repositories and factories."** Most of DDD's value is strategic: finding boundaries and naming things in the business's language. A codebase full of `OrderRepository` classes that still has one "order" model for support, kitchen and finance has adopted the vocabulary without the design. Evans reserves the full investment for the **core domain**, the part that differentiates the business [Evans 2003].
 :::
 
 ## 34.5 Bounded contexts and context maps
@@ -295,41 +250,84 @@ Domain events are the glue between aggregates and, at a larger scale, between se
 ### 34.5.1 Bounded contexts
 
 ::: definition
-**Definition — Bounded context.** An explicit boundary (in code, data and team ownership) within which one domain model and its ubiquitous language apply consistently. The same word may mean different things in different bounded contexts, and each context keeps its own model of shared concepts [Evans 2003].
+**Definition — Bounded context.** An explicit boundary (in code, data and team ownership) within which one domain model and its ubiquitous language apply consistently. The same word may mean different things in different contexts [Evans 2003].
 :::
 
-#### First-principles explanation
-
-A "ticket" means one thing at a railway station, another in a police car and a third in a software team's backlog. Nobody is confused, because each word lives inside a context: the station, the patrol, the sprint. Software gets confused because a single codebase tries to be all three places at once. A bounded context gives each meaning its own place.
-
-QuickBite's "order" therefore becomes several models. In the **Ordering** context, an order has lines, a status machine and a total. In **Kitchen** (restaurant operations), the same real-world order is a `Ticket` with preparation steps and a promised-ready time. In **Delivery**, it is a `Delivery` with pickup and drop-off points and a courier. In **Billing**, it is a `Charge` and later a `Settlement`. Each context stores only the attributes it needs, keyed by a shared `order_id`.
-
-#### Why does this exist?
-
-One unified enterprise model was the goal of 1990s enterprise data modelling, and it routinely failed: the model became so general that it served nobody, and every change needed agreement from every department. Bounded contexts accept that large organizations have several legitimate models and make the translation between them explicit instead of accidental.
+A "ticket" means different things at a railway station, in a police car and in a sprint backlog; nobody is confused because each word lives in a context. QuickBite's order therefore becomes several models keyed by a shared `order_id`: in **Ordering**, lines, a status machine and a total; in **Kitchen**, a `Ticket` with a promised-ready time; in **Delivery**, pickup, drop-off and courier; in **Billing**, a `Charge` and later a `Settlement`. Single enterprise-wide models, the goal of 1990s data modelling, became so general that they served nobody; bounded contexts make the translation between legitimate models explicit.
 
 ::: concept
-**Concept — A bounded context is the best first candidate for a service boundary.** A bounded context already has high cohesion (one model, one language) and a deliberately narrow interface to its neighbors, which are exactly the properties a microservice needs. Newman recommends bounded contexts as the starting point for service boundaries, noting that one context may later be split into several services, but a service should rarely span two contexts [Newman 2021].
+**Concept — A bounded context is the best first candidate for a service boundary.** It already has high cohesion and a deliberately narrow interface. Newman recommends contexts as the starting point: one context may later become several services, but a service should rarely span two contexts [Newman 2021].
 :::
 
 ### 34.5.2 Context maps
 
-A **context map** is a diagram and a description of the bounded contexts in a system and the relationships between them. Evans named the recurring relationship patterns; Vernon and later Evans's own reference added a few [Evans 2003; Vernon 2013]. Each pattern describes both a technical integration style and a *team* relationship, because who must adapt to whom is a political as well as a technical question. In the patterns, **upstream** (U) contexts influence **downstream** (D) contexts: changes flow down.
+A **context map** shows the bounded contexts and their relationships. Each relationship pattern describes both an integration style and a team relationship: **upstream** contexts influence **downstream** ones [Evans 2003; Vernon 2013].
 
 **Table 34.2 — Context-map relationship patterns.**
 
-| Pattern | What it is | Team relationship | Choose when | Risk |
-|---|---|---|---|---|
-| Shared kernel | Two contexts share a small, explicitly agreed subset of the model (code or schema) | Tight cooperation; changes need both teams' consent | Two teams work closely on genuinely shared concepts | The kernel grows; becomes a shared library coupling (§34.14) |
-| Customer–supplier | Upstream supplier plans its work to meet downstream customers' needs | Downstream has a voice in upstream's priorities | Teams in one organization with aligned goals | Supplier overwhelmed by many customers |
-| Conformist | Downstream adopts upstream's model as is | Downstream has no influence | Upstream is large or external and its model is acceptable | Upstream's model leaks into and distorts downstream |
-| Anticorruption layer (ACL) | Downstream builds a translation layer that converts upstream's model into its own | Downstream protects itself unilaterally | Upstream model is poor, legacy or external | Translation code to maintain |
-| Open host service (OHS) | Upstream offers a well-defined, stable protocol for all consumers | Upstream serves many downstreams uniformly | Many consumers; avoid one-off integrations | Protocol must evolve compatibly |
-| Published language | A documented shared exchange format, often paired with OHS (e.g. a schema in a registry) | Neutral | Many parties exchange data | Format governance |
-| Separate ways | No integration; contexts duplicate what they need | None | Integration cost exceeds benefit | Duplicated effort |
-| Partnership | Two teams succeed or fail together and coordinate releases | Mutual dependency | Short-lived, jointly delivered capabilities | Coupled release cadence |
+| Pattern | What it is | Choose when | Risk |
+|---|---|---|---|
+| Shared kernel | Small, jointly owned subset of the model | Two closely cooperating teams | Kernel grows into shared-library coupling |
+| Customer–supplier | Upstream plans for downstream's needs | Teams with aligned goals | Supplier overwhelmed by customers |
+| Conformist | Downstream adopts upstream's model | Upstream is large or external and acceptable | Upstream model distorts downstream |
+| Anticorruption layer | Downstream translates upstream's model into its own | Upstream is legacy, poor or external | Translation code to maintain |
+| Open host service | Upstream offers one stable protocol for all | Many consumers | Protocol must evolve compatibly |
+| Published language | Documented shared exchange format | Many parties exchange data | Format governance |
+| Separate ways | No integration | Integration costs more than it returns | Duplicated effort |
+| Partnership | Two teams coordinate releases | Jointly delivered capability | Coupled release cadence |
 
 **Figure 34.3 — QuickBite context map.**
+
+```mermaid
+classDiagram
+  class Order {
+    <<aggregate root>>
+    +OrderId id
+    +CustomerId customerId
+    +RestaurantId restaurantId
+    +OrderStatus status
+    +int version
+    +addItem(menuItemId, qty, price)
+    +place()
+    +accept()
+    +cancel(reason)
+  }
+  class OrderLine {
+    <<entity>>
+    +LineId id
+    +MenuItemId menuItemId
+    +int quantity
+  }
+  class Money {
+    <<value object>>
+    +Decimal amount
+    +String currency
+  }
+  class DeliveryAddress {
+    <<value object>>
+    +String street
+    +GeoPoint location
+  }
+  class Restaurant {
+    <<separate aggregate>>
+    +RestaurantId id
+  }
+  Order "1" *-- "1..*" OrderLine : contains
+  OrderLine --> Money : unitPrice
+  Order --> Money : total
+  Order --> DeliveryAddress : deliverTo
+  Order ..> Restaurant : by id only
+```
+
+**Reading the diagram.** Arrows run from upstream to downstream and are labelled with the pattern; this models influence and translation, not request direction. Catalog's **open host service** publishes a menu schema that Ordering consumes. Ordering is a **supplier** to Delivery and Kitchen, which consume its events asynchronously. Billing receives order events through Ordering's open host service and shields itself from the payment provider with an **anticorruption layer**; Kitchen does the same for many restaurant point-of-sale systems. Delivery is **conformist** toward the maps provider, whose geometry types are acceptable. Identity and Ordering share a tiny **kernel**. Each box is a storage and ownership boundary. Failure points: Kitchen's ACL must stop malformed POS data; a maps model change forces Delivery to change. Each context scales independently.
+
+### 34.5.3 The anticorruption layer in code
+
+::: definition
+**Definition — Anticorruption layer (ACL).** A layer owned by a downstream context that translates between an upstream model and its own, so the upstream's concepts, codes and quirks never appear in the downstream model [Evans 2003].
+:::
+
+The payment provider speaks in statuses such as `AUTHORISED`, `CAPTURED`, `REFUSED` and `PENDING_3DS`, numeric refusal codes and string amounts in minor units. Billing knows three outcomes: authorized, declined (with a business reason) and "customer must act". The ACL below is the only code that knows the provider's vocabulary.
 
 ```mermaid
 flowchart LR
@@ -347,15 +345,7 @@ flowchart LR
   ID[Identity] -->|"shared kernel:<br/>CustomerId, auth claims"| ORD
 ```
 
-**Reading the diagram.** Every arrow points from an upstream context to a downstream one and is labelled with the relationship pattern; this is a model of influence and translation, not of request direction. Catalog exposes an **open host service** with a published menu schema that Ordering consumes. Ordering is a **supplier** to Delivery and Kitchen, which consume its order events asynchronously and can negotiate what those events carry. Billing receives order events through Ordering's open host service and protects itself from the external payment provider's model with an **anticorruption layer**; Kitchen does the same for dozens of different restaurant point-of-sale systems. Delivery is **conformist** toward the maps provider: its geometry types are acceptable, and translating them would buy nothing. Identity and Ordering share a tiny **kernel** (identifier types and token claims). Each box is a storage and ownership boundary. Failure points: Kitchen's ACL is where malformed POS data must be stopped; if the maps provider changes its model, Delivery changes too, which is the accepted price of conformity. Scaling: each context scales independently; the core domain (Ordering, Delivery) gets the most modelling investment.
-
-### 34.5.3 The anticorruption layer in code
-
-::: definition
-**Definition — Anticorruption layer (ACL).** A layer owned by a downstream context that translates between an upstream system's model and its own, in both directions if needed, so that the upstream's concepts, codes and quirks never appear in the downstream model. It usually combines a facade, adapters and translators [Evans 2003].
-:::
-
-QuickBite's Billing context receives payment-provider responses. The provider's world has statuses such as `AUTHORISED`, `CAPTURED`, `REFUSED` and `PENDING_3DS`, numeric refusal codes, amounts as strings in minor units, and lower-case currency codes. None of that should leak into Billing's model, which knows three outcomes: authorized, declined (with a business reason) and "customer must act". The ACL below is the only code that knows the provider's vocabulary.
+Running it with `python3` prints:
 
 ```python
 from dataclasses import dataclass
@@ -460,7 +450,27 @@ if __name__ == "__main__":
     print("all ACL tests passed")
 ```
 
-Running it with `python3` prints:
+What to notice:
+
+- **Two upstream words, one meaning.** `AUTHORISED` and `CAPTURED` both become `PaymentAuthorized`.
+- **Units are translated at the edge.** The currency's exponent is applied, so a yen amount is not divided by 100.
+- **Unknown codes are mapped deliberately.** An unknown refusal code safely becomes `OTHER`, but an unknown *status* raises, because guessing whether money moved is never safe; route it to a dead-letter queue and alert (§30.11).
+- **Isolation.** When the provider changes, one file and its tests change, not Billing's model.
+
+### 34.5.4 Event storming
+
+::: definition
+**Definition — Event storming.** A collaborative workshop technique created by Alberto Brandolini in which domain experts and developers place domain events (past tense, on sticky notes) along a timeline, then add commands, actors, policies ("whenever X, then Y"), external systems and hotspots (open questions), and group the result into aggregates and candidate bounded contexts [Brandolini: Introducing EventStorming].
+:::
+
+#### How it works internally
+
+1. **Chaotic exploration.** Everyone writes the events they know and sticks them roughly in time order.
+2. **Enforce the timeline.** Sort, remove duplicates and mark disagreements as **hotspots**; disagreements reveal where one word has two meanings.
+3. **Add causes.** For each event, add the command and actor, policy or external system that caused it.
+4. **Find aggregates and boundaries.** Group commands around what decides whether they are allowed (aggregates); draw lines where the language or the owning department changes (candidate contexts).
+
+**Figure 34.4 — Event-storming output for QuickBite's order flow (simplified).**
 
 ```text
 rejected: missing merchant_reference
@@ -468,62 +478,15 @@ rejected: unknown provider status 'PARTIALLY_AUTHORISED'
 all ACL tests passed
 ```
 
-What to notice:
-
-- **Two upstream words, one domain meaning.** `AUTHORISED` and `CAPTURED` both become `PaymentAuthorized`; Billing never learns the provider's British spelling or its capture lifecycle.
-- **Units are translated at the edge.** Minor units become a `Decimal` with the currency's exponent (two digits for USD, zero for JPY), so a yen amount is not silently divided by 100.
-- **Unknown codes are mapped deliberately.** An unknown refusal code becomes `OTHER` (safe: the order is still declined), but an unknown *status* raises an error, because guessing whether money moved is never safe. The error should go to a dead-letter queue and an alert (§30.11), not be swallowed.
-- **The layer is easy to test in isolation.** When the provider adds a field or a status, one file and its tests change; the Billing model does not.
-
-### 34.5.4 Event storming
-
-::: definition
-**Definition — Event storming.** A collaborative workshop technique, created by Alberto Brandolini, in which domain experts and developers model a business process by placing domain events (orange sticky notes, past tense) on a long timeline, then adding the commands that cause them, the actors who issue commands, policies ("whenever X, then Y"), external systems, read models and hotspots (open questions), and finally grouping the result into aggregates and candidate bounded contexts [Brandolini: Introducing EventStorming].
-:::
-
-#### How it works internally
-
-1. **Chaotic exploration.** Everyone writes the domain events they know, in the past tense, and sticks them on the wall roughly in time order. No discussion of correctness yet.
-2. **Enforce the timeline.** The group sorts events into one consistent timeline, removes duplicates and marks disagreements as **hotspots** (pink notes). Disagreements are the most valuable output: they show where people use the same word differently.
-3. **Add commands, actors and policies.** For each event, ask what caused it: a command issued by an actor, a reaction by a policy to an earlier event, or an external system.
-4. **Find aggregates.** Group commands and events around the thing that must decide whether the command is allowed: that thing is an aggregate.
-5. **Draw boundaries.** Where the language changes, or where a group of events is owned by a different department, draw a line. These lines are candidate bounded contexts.
-
-**Figure 34.4 — Event-storming output for QuickBite's order flow (simplified).**
-
-```mermaid
-flowchart LR
-  A1([Customer]) --> C1[/Place order/]
-  C1 --> E1[OrderPlaced]
-  E1 --> P1{{"Policy: when placed,<br/>authorize payment"}}
-  P1 --> C2[/Authorize payment/]
-  C2 --> E2[PaymentAuthorized]
-  E2 --> P2{{"Policy: when paid,<br/>send to kitchen"}}
-  P2 --> E3[TicketCreated]
-  A2([Restaurant staff]) --> C3[/Accept ticket/]
-  E3 -.-> C3
-  C3 --> E4[TicketAccepted]
-  E4 --> E5[CourierAssigned]
-  E5 --> E6[OrderPickedUp]
-  E6 --> E7[OrderDelivered]
-  E7 --> H1["HOTSPOT: when is<br/>an order final?"]
-```
-
-**Reading the diagram.** This is a modelling artifact, not a runtime diagram, so the arrows show causality, not network calls; the book's shapes are reused loosely: stadiums are actors, parallelograms are commands, rectangles are domain events and hexagons are policies. Reading left to right: a customer issues *Place order*, which produces `OrderPlaced`; a policy reacts by issuing *Authorize payment*; and so on. The dotted arrow marks a human waiting step (staff see the ticket and decide), which is where latency and timeouts will appear in the system. The vocabulary shifts at three points: payment terms appear around `PaymentAuthorized` (Billing), "ticket" replaces "order" around the kitchen (Kitchen), and "courier" and "pickup" appear later (Delivery). Those shifts are the candidate bounded-context boundaries of Figure 34.3. The final hotspot shows a genuine disagreement (support says delivery, finance says 14 days later), which becomes a design decision instead of a production bug.
-
-::: industry
-**Event storming in practice.** Brandolini developed event storming as a lightweight alternative to long requirements workshops, and it has become a common way for teams adopting DDD and microservices to discover bounded contexts; Newman and Vernon both discuss it as a discovery technique [Brandolini: Introducing EventStorming; Newman 2021]. A typical "big picture" session runs for a few hours to a day with a long paper roll and a mix of domain experts and engineers. Its main output is shared understanding plus a list of hotspots, not a finished design.
-*Evidence: Secondary* — [Brandolini: Introducing EventStorming; Newman 2021]
-:::
+**Reading the diagram.** This is a modelling artifact: arrows show causality, not network calls. Stadiums are actors, parallelograms commands, rectangles domain events and hexagons policies. A customer's *Place order* produces `OrderPlaced`; a policy reacts with *Authorize payment*, and so on. The dotted arrow marks a human waiting step, where latency and timeouts will appear in the system. The vocabulary shifts around `PaymentAuthorized` (Billing), at "ticket" (Kitchen) and at "courier" (Delivery): these are the candidate boundaries of Figure 34.3. The final hotspot (support says delivery, finance says 14 days later) becomes a design decision instead of a production bug.
 
 #### Failure scenarios
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Upstream model leaks downstream | Conformist by accident; no ACL | Upstream field names and codes appear in downstream domain classes | Introduce an ACL; migrate callers behind it | Decide each relationship on the context map explicitly |
-| Shared kernel keeps growing | Convenient place to put common code | Kernel changes in most releases of both teams | Shrink the kernel; move code into owners | Kernel limited to identifiers and stable value types |
-| ACL silently mistranslates | Unknown codes mapped to a default | Business metrics drift (e.g. payments "declined: other" spike) | Fix mapping; replay dead-lettered messages | Fail loudly on unknown statuses; alert on default-mapped codes |
-| Contexts drawn around data, not language | "Customer service" owning a customer table for everyone | Every context calls it for every request | Re-cut by capability; replicate needed fields via events | Event storming before drawing boundaries |
+| Upstream model leaks downstream | Accidental conformist | Upstream codes in downstream domain classes | Introduce an ACL | Decide each relationship explicitly |
+| Shared kernel grows | Convenient home for common code | Kernel changes in most releases | Move code to owners | Kernel limited to identifiers and stable values |
+| ACL silently mistranslates | Unknown codes mapped to defaults | "Declined: other" spikes | Fix mapping; replay dead letters | Fail loudly on unknown statuses |
 
 ## 34.6 API gateways and backends for frontends
 
@@ -1403,3 +1366,144 @@ flowchart LR
 | Long synchronous chains | $A^n$ availability; summed latency | Events, local copies, fewer hops |
 | Gateway with business logic | Every change goes through the platform team | Move logic into services or BFFs |
 
+## 34.15 Summary and revision notes
+
+::: summary
+- A microservice is built around one business capability, owned by one team, independently deployable and the sole owner of its data. Its main benefit is independent change; its main cost is distribution.
+- Choose boundaries by cohesion and change coupling ($C = n_{AB}/(n_A + n_B - n_{AB})$ from version history), team ownership and transaction boundaries, not by technical layer or size.
+- DDD supplies the model: ubiquitous language, entities, value objects, small aggregates (one transaction, one aggregate; conflict probability $1 - e^{-\lambda w}$) and domain events.
+- Bounded contexts are the best first service boundaries. Context maps make relationships explicit; an anticorruption layer keeps foreign models out. Event storming finds the boundaries.
+- An API gateway handles edge concerns; BFFs shape APIs per client and save expensive round trips. Keep business logic out of both.
+- Service discovery combines a registry, health checks and client-side or server-side lookup. Stale entries persist for about $k \cdot h + t_{\text{prop}} + t_{\text{cache}}$, so add passive ejection and retries.
+- Prefer one synchronous call on the critical path and events elsewhere; batch chatty calls; fan-out exposes you to $p^N$ tails; version with expand and contract; verify compatibility with consumer-driven contracts.
+- Tracing links spans across services by propagating trace context; Chapter 40 goes deeper.
+- A service mesh moves mTLS, retries and telemetry into proxies; sidecars add roughly 0.2–0.25 ms per hop and per-pod memory; Istio's ambient mode (GA in 1.24) uses per-node ztunnels and optional waypoints.
+- Database-per-service is mandatory; share data by events, query with API composition or CQRS views, and keep invariants inside one service or use sagas.
+- Migrate with the strangler fig, branch by abstraction and parallel run, least-coupled capabilities first.
+- The distributed monolith is the main failure mode; synchronous chains have availability $A^n$.
+:::
+
+## 34.16 Knowledge checkpoint
+
+1. State four properties of a microservice.
+2. Modules A and B were touched by 50 and 40 commits, 30 of them shared. Compute $C(A,B)$ and interpret it.
+3. Why is content coupling worse than domain coupling?
+4. Distinguish an entity from a value object, with one QuickBite example of each.
+5. An aggregate receives 5 writes/s from others and each write takes 40 ms. What is the conflict probability?
+6. What is the difference between a conformist relationship and an anticorruption layer?
+7. Why should an unknown payment status raise an error in an ACL while an unknown decline code may map to a default?
+8. A mobile screen needs 5 sequential calls, mobile RTT 80 ms, service time 10 ms, datacenter RTT 1 ms. Compare direct calls with a BFF calling sequentially.
+9. Why does Eureka keep possibly stale instances during a heartbeat drop?
+10. Health checks every 5 s, 3 misses, 1 s propagation, 10 s client cache: what is the stale window?
+11. What does a consumer-driven contract check, and what does it not check?
+12. What does the `traceparent` header carry?
+13. Name the two layers of Istio ambient mode and what each handles.
+14. With 300 pods, 60 MB per sidecar and 15,000 internal requests/s at 0.2 vCPU per 1,000 requests/s per proxy, estimate sidecar memory and CPU.
+15. When would you choose a CQRS view over API composition?
+16. What is the availability of eight services in series at 99.95% each, and the monthly downtime?
+
+<details><summary>Answers</summary>
+
+1. Built around one business capability; owned by one team; independently deployable; sole owner of its data.
+2. $30/(50 + 40 - 30) = 0.5$: half of all changes to either touch both; they probably belong together or need a better interface.
+3. Content coupling lets another service change your internal state directly, so you can no longer enforce invariants or change your schema; domain coupling only uses your published API.
+4. An entity has identity over time (an `Order`); a value object is defined by its attributes and immutable (`Money`).
+5. $1 - e^{-5 \times 0.04} = 1 - e^{-0.2} = 0.181$.
+6. A conformist adopts the upstream model unchanged; an ACL translates it into the downstream's own model.
+7. Mapping an unknown decline code to `OTHER` still declines the order safely; guessing whether an unknown status means money moved could ship unpaid orders or double-charge.
+8. Direct: $5 \times 90 = 450$ ms. BFF: $80 + 5 \times 11 = 135$ ms.
+9. A sudden drop in heartbeats is more likely a network problem than mass failure; a stale list is better than none (availability over consistency).
+10. $3 \times 5 + 1 + 10 = 26$ s.
+11. It checks that the provider still satisfies the request and response shapes the consumer relies on; it does not check business correctness.
+12. A version, the trace ID, the parent span ID and trace flags such as sampled.
+13. ztunnel, a per-node L4 proxy for mTLS, identity and L4 policy; waypoint proxies for L7 routing, retries and policy where needed.
+14. Memory $300 \times 60 = 18{,}000$ MB = 18 GB; CPU $(15{,}000 \times 2/1{,}000) \times 0.2 = 6$ vCPU.
+15. When the query is frequent, joins many owners or needs search or aggregation, and seconds of staleness are acceptable.
+16. $0.9995^8 = 0.99601$; about $0.004 \times 720 = 2.87$ hours per month.
+
+</details>
+
+## 34.17 Interview questions
+
+### Basic
+
+**Q1. How do you decide service boundaries?**
+**Answer.** Start from business capabilities and bounded contexts, found with event storming. Check that each candidate has one owning team, keeps its invariants inside one transaction and has low change coupling with its neighbors (measured from history). Prefer coarse services first and split on evidence such as different scaling or release needs.
+
+**Q2. What does an API gateway do, and what should it not do?**
+**Answer.** It is the single entry point: TLS termination, authentication, rate limiting, routing, observability and sometimes aggregation. It should not contain business logic, which would make it a shared monolith that every team must change.
+
+### Intermediate
+
+**Q3. Orders, payments and inventory each have their own database. How do you place an order consistently?**
+**Answer.** Keep payment authorization synchronous if the customer needs the result, and make the overall flow a saga: each service commits locally and publishes events through an outbox; failures trigger compensations (release stock, refund). Consumers are idempotent. Explain the accepted intermediate states and how the UI shows them.
+
+**Q4. How do you prevent a provider change from breaking consumers without end-to-end test environments?**
+**Answer.** Consumer-driven contracts: consumers generate contracts from their tests and publish them to a broker; the provider verifies all of them in CI using provider states; deployment is gated on verification against the versions in the target environment. Combine with additive changes, tolerant readers and expand and contract.
+
+### Advanced
+
+**Q5. Should we adopt a service mesh?**
+**Answer.** Identify the problem: uniform mTLS and identity-based policy, polyglot telemetry and traffic shifting are good reasons. Quantify cost: about 0.2–0.25 ms per hop at p99 for two proxies, CPU proportional to internal traffic, memory per pod for sidecars. Consider ambient mode to cut per-pod cost, and plan for control-plane operations, upgrades and retry duplication with libraries.
+
+**Q6. A company has 120 services, releases need coordination and incidents cascade. Diagnose and plan.**
+**Answer.** Likely a distributed monolith. Measure change coupling between services, map synchronous critical paths and compute their $A^n$, and find shared databases and shared domain libraries. Merge strongly coupled services, move non-essential calls to events with local copies, introduce contract testing and expand-and-contract, and set ownership so each service has one team. Track deploy independence and critical-path length as metrics.
+
+## 34.18 Practical exercises
+
+1. Compute change coupling for every pair of top-level directories in a repository you know, using `git log --name-only`; list the five most coupled pairs.
+2. Extend the ACL of §34.5.3 with a refund response and outbound translation of a `ChargeRequest`; add tests.
+3. Extend the contract library of §34.8.5 with an array matcher (`each_like`) and a message (event) contract.
+4. Simulate the stale-endpoint window of §34.7.4 with 20 instances, one crash and passive ejection after 5 errors; compare failures with and without retries.
+5. Draw QuickBite's context map for a new "group ordering" feature and state each relationship pattern.
+
+## 34.19 Design challenges
+
+1. **Ride-hailing decomposition.** Propose bounded contexts, a context map and the synchronous critical path for "request a ride"; compute its availability at 99.9% per service.
+2. **Strangling a billing monolith.** Plan a four-phase migration of invoicing out of a 15-year-old ERP, with ACLs, CDC and a parallel run; define exit criteria per phase.
+3. **Mesh or library.** A trading platform has a 2 ms internal latency budget across 3 hops and 40,000 requests/s. Decide between sidecars, ambient mode and an RPC library, with numbers.
+
+## 34.20 References
+
+1. Evans, E. *Domain-Driven Design: Tackling Complexity in the Heart of Software*. Addison-Wesley, 2003.
+2. Vernon, V. *Implementing Domain-Driven Design*. Addison-Wesley, 2013.
+3. Newman, S. *Building Microservices: Designing Fine-Grained Systems*, 2nd ed. O'Reilly, 2021.
+4. Newman, S. *Monolith to Microservices*. O'Reilly, 2019.
+5. Richardson, C. *Microservices Patterns*. Manning, 2018.
+6. Lewis, J., Fowler, M. *Microservices: a definition of this new architectural term*. martinfowler.com, 2014. https://martinfowler.com/articles/microservices.html
+7. Fowler, M. *StranglerFigApplication*. martinfowler.com, 2004. https://martinfowler.com/bliki/StranglerFigApplication.html
+8. Fowler, M. *BranchByAbstraction*. martinfowler.com, 2014. https://martinfowler.com/bliki/BranchByAbstraction.html
+9. Fowler, M. *TolerantReader*. martinfowler.com, 2011. https://martinfowler.com/bliki/TolerantReader.html
+10. Fowler, M. *MicroservicePremium*. martinfowler.com, 2015. https://martinfowler.com/bliki/MicroservicePremium.html
+11. Conway, M. E. *How Do Committees Invent?* Datamation 14(4), 1968.
+12. Skelton, M., Pais, M. *Team Topologies*. IT Revolution, 2019.
+13. Tornhill, A. *Your Code as a Crime Scene*. Pragmatic Bookshelf, 2015.
+14. Brandolini, A. *Introducing EventStorming*. Leanpub. https://leanpub.com/introducing_eventstorming
+15. Newman, S. *Pattern: Backends For Frontends*. samnewman.io, 2015. https://samnewman.io/patterns/architectural/bff/
+16. Plotnicki, L. *BFF @ SoundCloud*. ThoughtWorks Insights, 2015. https://www.thoughtworks.com/insights/blog/bff-soundcloud
+17. Jacobson, D. *Embracing the Differences: Inside the Netflix API Redesign*. Netflix Technology Blog, 2012.
+18. Netflix Technology Blog. *Zuul 2: The Netflix Journey to Asynchronous, Non-Blocking Systems*. 2016.
+19. Netflix. *Eureka* (wiki and documentation). https://github.com/Netflix/eureka/wiki
+20. HashiCorp. *Consul Documentation: Service discovery; health checks*. https://developer.hashicorp.com/consul/docs
+21. Kubernetes. *Documentation: Services; DNS for Services and Pods; Liveness, Readiness and Startup Probes*. https://kubernetes.io/docs/
+22. Robinson, I. *Consumer-Driven Contracts: A Service Evolution Pattern*. martinfowler.com, 2006. https://martinfowler.com/articles/consumerDrivenContracts.html
+23. Pact Foundation. *Pact Documentation* (consumer tests, provider verification, provider states, can-i-deploy). https://docs.pact.io/
+24. Sigelman, B. H., et al. *Dapper, a Large-Scale Distributed Systems Tracing Infrastructure*. Google Technical Report dapper-2010-1, 2010.
+25. W3C. *Trace Context* (Recommendation). https://www.w3.org/TR/trace-context/
+26. Istio. *Documentation: Architecture; Distributed Tracing; Performance and Scalability*. https://istio.io/latest/docs/
+27. Istio. *Fast, Secure, and Simple: Istio's Ambient Mode Reaches General Availability in v1.24*. Istio Blog, 2024. https://istio.io/blog/2024/ambient-reaches-ga/
+28. Linkerd. *Documentation: Architecture*. https://linkerd.io/2/reference/architecture/
+29. Westeinde, K. *Deconstructing the Monolith: Designing Software that Maximizes Developer Productivity*. Shopify Engineering, 2019.
+30. GitHub. *Scientist: a Ruby library for carefully refactoring critical paths*. https://github.com/github/scientist
+31. Noonan, A. *Goodbye Microservices: From 100s of problem children to 1 superstar*. Segment Engineering Blog, 2018.
+32. Kolny, M. *Scaling up the Prime Video audio/video monitoring service and reducing costs by 90%*. Prime Video Tech Blog, 2023.
+
+## 34.21 Open verification items
+
+- Origin of the "BFF" name (Phil Calçado at SoundCloud) and exact dates of Plotnicki 2015 and Newman 2015.
+- Netflix API redesign (Jacobson 2012) and Zuul 2 post (2016): titles and dates.
+- Dapper's first production sampling rate of 1/1024.
+- Istio performance figures quoted in §34.10.3 (1.21, 1.22 and 1.24 measurements) for the current release.
+- Linkerd remaining sidecar-only as of 2026.
+- Eureka default lease intervals and self-preservation behavior in current releases.
+- Author attribution of the Prime Video 2023 post.

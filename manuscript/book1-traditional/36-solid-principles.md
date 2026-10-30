@@ -1880,3 +1880,304 @@ DIP makes policy testable in milliseconds, lets you replace vendors and database
 ::: tip
 **DIP in LLD interviews.** When you introduce a repository or gateway interface, say who owns it ("the domain layer defines `OrderRepository`; the Postgres adapter implements it") and how you would test the domain with an in-memory fake. Distinguishing DI from DIP in one sentence is a common senior-level signal.
 :::
+
+## 36.8 SOLID at the architecture level
+
+### 36.8.1 From classes to components and services
+
+The same forces that act on classes act on packages, deployable components and services, only with higher costs: a change that crosses a service boundary needs coordinated releases, API versioning and sometimes a data migration. Martin restated the principles for components in his component cohesion and coupling principles [Martin 2002; Martin 2017].
+
+**Table 36.8 — Each SOLID principle at the component and service level.**
+
+| Principle | Class level | Component and service level |
+|---|---|---|
+| SRP | One actor per class | **Common Closure Principle**: group into one component the classes that change for the same reasons; split services along business capabilities and teams (§34.3) |
+| OCP | New variant = new class | **Plugin architecture**: the core exposes extension points; features ship as plugins or new services consuming events |
+| LSP | Subtypes honor contracts | Every implementation of an API, and every new version of a service, honors the published contract; breaking changes need a new version |
+| ISP | Role interfaces | **Common Reuse Principle**: do not force users of a component to depend on classes they do not use; per-client APIs such as the backend-for-frontend (§34.6) |
+| DIP | Policy owns interfaces | Hexagonal **ports and adapters** (§33.10) and the clean-architecture dependency rule (§33.11): source dependencies point toward the domain |
+
+**Figure 36.15 — The order module as ports and adapters.**
+
+```mermaid
+flowchart LR
+  WEB([Web and mobile clients]) -->|HTTPS| API[HTTP adapter]
+  subgraph core["Domain core: policy"]
+    CS[CheckoutService]
+    NS[NotificationService]
+    P1[PaymentGateway port]
+    P2[OrderRepository port]
+    P3[Notifier port]
+  end
+  API --> CS
+  CS --> P1
+  CS --> P2
+  CS -.->|order placed| NS
+  NS --> P3
+  A1[AcmePay adapter] -->|implements| P1
+  A2[Postgres adapter] -->|implements| P2
+  A3[SMS and email adapters] -->|implements| P3
+  A1 --> V{{Payment provider}}
+  A2 --> DB[(Orders DB)]
+  A3 --> MS{{SMS and mail providers}}
+```
+
+**Reading the diagram.** The domain core contains the policy classes and the ports they own; it imports nothing outside itself. Driving adapters (the HTTP adapter receiving HTTPS requests from clients) call into the core; driven adapters (payment, persistence, messaging) implement the core's ports and are the only components that talk to external systems (hexagons) and the database (cylinder, the storage boundary). Solid arrows are synchronous calls or source dependencies; the dotted arrow is the asynchronous order-placed event that triggers notification. Failure points are concentrated in adapters, where timeouts, retries and circuit breakers belong (Chapter 39). Adapters scale and deploy independently: the SMS adapter can become a separate service consuming events without the core changing.
+
+### 36.8.2 Measuring dependency direction: stability and abstractness
+
+DIP at the component level says that dependencies should point toward stable, abstract components. Martin made this measurable with three metrics [Martin 2002; Martin 2017].
+
+::: formula
+**Instability, abstractness and distance from the main sequence**
+
+$$I = \frac{C_e}{C_a + C_e} \qquad A = \frac{N_a}{N_c} \qquad D = |A + I - 1|$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $C_a$ | Afferent couplings: number of other components that depend on this one (fan-in) | components |
+| $C_e$ | Efferent couplings: number of other components this one depends on (fan-out) | components |
+| $I$ | Instability: 0 = maximally stable (many dependents, no dependencies), 1 = maximally unstable | dimensionless, 0–1 |
+| $N_a$ | Number of abstract classes and interfaces in the component | types |
+| $N_c$ | Total number of classes and interfaces in the component | types |
+| $A$ | Abstractness | dimensionless, 0–1 |
+| $D$ | Distance from the "main sequence" line $A + I = 1$; 0 is ideal | dimensionless, 0–1 |
+:::
+
+The **Stable Dependencies Principle** says to depend in the direction of stability (decreasing $I$). The **Stable Abstractions Principle** says a component should be as abstract as it is stable: stable components ($I \approx 0$) should be abstract ($A \approx 1$) so that they can be extended without modification, while unstable ones ($I \approx 1$) can be concrete. A component that is stable and concrete ($D$ near 1 with low $I$, low $A$) sits in the **zone of pain**: many things depend on it, so it is hard to change, yet it is full of details that want to change.
+
+::: example
+**Worked example — Metrics for the order module.** The components of Figure 36.15 have these dependencies: `web-api` depends on `checkout-core` and `notification-core`; the payment and Postgres adapters depend on `checkout-core`; the SMS and SMTP adapters depend on `notification-core`; `checkout-core` depends on `notification-core`. `checkout-core` has 8 types, 3 of them interfaces; `notification-core` has 4 types, 2 of them interfaces.
+
+1. `checkout-core`: $C_a$ = 3 (web-api, payment adapter, Postgres adapter); $C_e$ = 1 (notification-core). $I = 1 / (3 + 1) = 0.25$. $A = 3 / 8 = 0.375$. $D = |0.375 + 0.25 - 1| = 0.375$.
+2. `notification-core`: $C_a$ = 4 (web-api, two adapters, checkout-core); $C_e$ = 0. $I = 0 / 4 = 0$. $A = 2 / 4 = 0.5$. $D = |0.5 + 0 - 1| = 0.5$.
+3. Each adapter: $C_a$ = 0, $C_e$ = 1, so $I = 1$; with no interfaces, $A = 0$ and $D = |0 + 1 - 1| = 0$.
+
+**Interpretation.** All dependencies point from $I = 1$ (adapters, web-api) toward $I = 0.25$ and $I = 0$: the Stable Dependencies Principle holds. The adapters sit exactly on the main sequence. The two cores are more concrete than their stability suggests ($D$ = 0.375 and 0.5). **Engineering implication.** That is acceptable for concrete classes that rarely change, such as the `Invoice` value object; it becomes a problem if volatile logic lives in `notification-core`, because four components must be retested whenever it changes. Watch $D$ over time rather than chasing 0.
+:::
+
+The arithmetic is easy to automate from an import graph:
+
+```python
+# Martin's component metrics: instability I, abstractness A, distance D.
+DEPENDS_ON = {                     # component -> components it imports
+    "web-api":           ["checkout-core", "notification-core"],
+    "acmepay-adapter":   ["checkout-core"],
+    "postgres-adapter":  ["checkout-core"],
+    "smtp-adapter":      ["notification-core"],
+    "sms-adapter":       ["notification-core"],
+    "checkout-core":     ["notification-core"],
+    "notification-core": [],
+}
+CLASSES = {                        # component -> (abstract types, all types)
+    "web-api": (0, 6), "acmepay-adapter": (0, 2), "postgres-adapter": (0, 3),
+    "smtp-adapter": (0, 1), "sms-adapter": (0, 2),
+    "checkout-core": (3, 8), "notification-core": (2, 4),
+}
+
+def metrics(deps: dict, classes: dict) -> dict:
+    fan_in = {c: 0 for c in deps}
+    for targets in deps.values():
+        for t in targets:
+            fan_in[t] += 1
+    out = {}
+    for c, targets in deps.items():
+        ca, ce = fan_in[c], len(targets)
+        i = ce / (ca + ce) if ca + ce else 0.0
+        n_abstract, n_total = classes[c]
+        a = n_abstract / n_total
+        out[c] = (ca, ce, round(i, 3), round(a, 3), round(abs(a + i - 1), 3))
+    return out
+
+print(f"{'component':<18} Ca Ce     I     A     D")
+for name, (ca, ce, i, a, d) in sorted(metrics(DEPENDS_ON, CLASSES).items(),
+                                      key=lambda kv: kv[1][2]):
+    print(f"{name:<18} {ca:>2} {ce:>2} {i:>5} {a:>5} {d:>5}")
+# notification-core   4  0   0.0   0.5   0.5
+# checkout-core       3  1  0.25 0.375 0.375
+# web-api             0  2   1.0   0.0   0.0   (adapters likewise: I=1, A=0, D=0)
+```
+
+What to notice: an isolated component ($C_a = C_e = 0$) is given $I = 0$ by convention here to avoid division by zero. In practice the dependency map comes from a build tool or import analysis.
+
+**Figure 36.16 — Component dependencies point toward stability.**
+
+```mermaid
+flowchart BT
+  WA[web-api<br/>I = 1.0]
+  AP[acmepay-adapter<br/>I = 1.0]
+  PA[postgres-adapter<br/>I = 1.0]
+  SM[smtp-adapter<br/>I = 1.0]
+  SA[sms-adapter<br/>I = 1.0]
+  CC[checkout-core<br/>I = 0.25, A = 0.375]
+  NC[notification-core<br/>I = 0, A = 0.5]
+  WA --> CC
+  WA --> NC
+  AP --> CC
+  PA --> CC
+  SM --> NC
+  SA --> NC
+  CC --> NC
+```
+
+**Reading the diagram.** Each node is a component (a package or deployable module) labeled with its computed metrics; arrows are compile-time dependencies, drawn upward toward stability. Every arrow goes from a higher $I$ to a lower $I$, which is the Stable Dependencies Principle in picture form. A dependency arrow pointing downward, for example `notification-core` importing `sms-adapter`, would be a DIP violation and would raise the core's instability. The most stable component, `notification-core`, is the riskiest place for volatile code, since a change there forces rebuilding and retesting four dependents.
+
+### 36.8.3 When SOLID is over-applied
+
+Every principle in this chapter adds structure: more classes, more interfaces, more indirection. Structure pays for itself only when the change it anticipates actually happens. Martin himself lists **needless complexity** among the symptoms of poor design, alongside rigidity and fragility [Martin 2002]. Extreme Programming's **YAGNI** ("you aren't gonna need it") rule says not to build capability for features you only presume you will need, because the presumed need often never arrives and the unused structure still costs effort to carry [Fowler 2015]. Fowler's catalog of code smells calls the result **speculative generality** [Fowler 2018].
+
+**Table 36.9 — Signs that SOLID has been over-applied.**
+
+| Symptom | Example | Better default |
+|---|---|---|
+| Interface with exactly one implementation and no test fake | `IInvoiceCalculator` with `InvoiceCalculatorImpl` | Use the concrete class; extract an interface when a second implementation or a fake is needed |
+| Abstraction for a variation that never came | `TaxStrategyFactoryProvider` for one country | Wait for the second real variant ("rule of three") |
+| Classes split by technical step, not by actor | `OrderValidator`, `OrderMapper`, `OrderHelper` all edited together | Merge classes that always change together |
+| Every call goes through a DI container | Business logic unreadable without the container configuration | Hand-written composition root for small systems |
+| Ports that mirror one vendor's SDK | `PaymentGateway.createStripeCharge(...)` | Write ports in domain vocabulary, or skip the port |
+
+**Figure 36.17 — Should you add an abstraction here?**
+
+```mermaid
+flowchart TD
+  Q1{Does this code cross a<br/>process or vendor boundary?}
+  Q2{Do you need a fake<br/>to test policy?}
+  Q3{Are there two real variants<br/>now, or one scheduled?}
+  Q4{Do different actors<br/>change it?}
+  Y[Add an interface<br/>owned by the client]
+  S[Split by actor]
+  N[Keep it concrete<br/>refactor later]
+  Q1 -->|yes| Y
+  Q1 -->|no| Q2
+  Q2 -->|yes| Y
+  Q2 -->|no| Q3
+  Q3 -->|yes| Y
+  Q3 -->|no| Q4
+  Q4 -->|yes| S
+  Q4 -->|no| N
+```
+
+**Reading the diagram.** Diamonds are decisions, evaluated top to bottom; rectangles are outcomes. The first two questions capture the cheap, almost always justified uses of DIP: external boundaries (databases, vendors, networks, clocks), which are failure points and slow in tests, and policy that needs a fake. The third applies OCP only when variation is real. The fourth applies SRP when more than one actor edits the code. The default, at the bottom, is concrete code, because extracting an interface later in a statically typed language is a mechanical, IDE-assisted refactor, while removing a wrong abstraction is usually a manual one.
+
+::: recommendation
+**A practical rule.** Apply DIP at every boundary to I/O and to other teams' systems from day one; apply SRP when you can name two actors; apply OCP and ISP when you see the second variant or the second kind of client. Revisit when change history (which files change together, which teams edit them) tells you where the real axes are.
+:::
+
+::: tip
+**SOLID in LLD interviews, overall.** Interviewers rarely ask "recite SOLID". They give a design (parking lot, notification service, rate limiter) and ask for an extension. Show a small, concrete design first, name the axis of change you are protecting, and justify each interface by a client, a test fake or a real variant. Saying "I would not add an interface here yet, because..." is a strong signal, not a weak one.
+:::
+
+## 36.9 Summary and revision notes
+
+::: summary
+- SOLID limits how far a change spreads. Each principle blocks one path along which changes ripple.
+- **SRP**: a module answers to one actor. Shared helpers between actors are accidental coupling; split by actor behind a facade.
+- **OCP**: add expected variants as new classes behind a stable abstraction. Meyer used implementation inheritance; Martin uses interfaces and polymorphism. Closure is strategic: choose the axis.
+- **LSP**: subtypes may weaken preconditions and strengthen postconditions, never the reverse; they keep invariants and history. Enforce with contract tests at the boundaries.
+- **ISP**: clients see role interfaces sized to their needs. Throwing stubs signal a fat interface.
+- **DIP**: policy owns the interfaces; details implement them. DI is a technique, IoC a framework property, DIP a rule about dependency direction. Fakes of owned ports make policy testable without I/O.
+- At architecture level: Common Closure (SRP), plugins (OCP), versioned contracts (LSP), Common Reuse and BFFs (ISP), ports and adapters (DIP). Instability $I = C_e/(C_a + C_e)$ should decrease along dependencies.
+- Over-application costs real money: add abstractions for boundaries, fakes, real variants and real actors, not for imagined ones.
+:::
+
+## 36.10 Knowledge checkpoint
+
+1. Restate SRP using the word "actor", and explain why "a class should do one thing" is a different rule.
+2. In the worked example of §36.3.2, what was the receipt's unexplained difference after finance's change, and why?
+3. How does Meyer's mechanism for the open–closed principle differ from Martin's?
+4. What is "strategic closure"?
+5. Write the Liskov–Wing precondition and postcondition rules as implications.
+6. Why does a mutable `Square` subclass of a mutable `Rectangle` violate LSP, while an immutable one need not?
+7. How many SMS parts does a 500-character message need under GSM-7 concatenation?
+8. Which is worse, a subtype that strengthens a precondition or one that weakens a postcondition, and why?
+9. Give two symptoms of a fat interface.
+10. In DIP, which module should own the `PaymentGateway` interface, and why?
+11. Distinguish DIP, DI and IoC in one sentence each.
+12. Compute $I$ for a component with 6 dependents and 2 dependencies.
+13. Name two signs that SOLID has been over-applied.
+
+<details><summary>Answers</summary>
+
+1. A module should be responsible to one, and only one, actor: one group of people who request its changes for the same reasons. "Do one thing" is about function size; a class can do many things that all change for one actor's reasons.
+2. \$6.90 between "items 40.00" and "total due 46.90": the \$4.00 wrap fee disappeared from the items line because the shared `_subtotal` changed for finance's reasons.
+3. Meyer closes a module by freezing it and extends it through implementation inheritance; Martin closes clients by having them depend on an abstraction, with new behavior added as new implementations.
+4. Choosing which kinds of change a design is closed against, since no design is closed against all changes.
+5. $\text{Pre}_T \Rightarrow \text{Pre}_S$ and $\text{Post}_S \Rightarrow \text{Post}_T$.
+6. The mutable rectangle promises that setting the width leaves the height unchanged; a square cannot keep that promise. With no mutators there is no such promise to break, and a rectangle's history cannot reach a non-square state through a square.
+7. ⌈500 / 153⌉ = ⌈3.27⌉ = 4 parts.
+8. Usually the weakened postcondition, because it fails silently (truncated text, lost data), while a strengthened precondition fails loudly.
+9. Implementers write throwing stubs; unrelated clients rebuild or retest when methods they do not call change; signatures do not reveal what a function uses.
+10. The high-level checkout module, so that the interface is written in policy terms and source dependencies point from the adapter toward policy.
+11. DIP: policy and detail both depend on abstractions owned by policy. DI: collaborators are passed in rather than constructed. IoC: the framework calls your code.
+12. $I = 2 / (6 + 2) = 0.25$.
+13. Interfaces with one implementation and no fake; abstractions for variants that never arrived; classes that always change together; ports that mirror one vendor's SDK.
+</details>
+
+## 36.11 Interview questions
+
+### Basic
+
+**Q1. What is the Single Responsibility Principle? Give an example.**
+**Answer.** A module should answer to one actor. An `Employee` or `Order` class that computes pay or tax (finance), formats reports (operations or communications) and saves itself (DBA) answers to three actors; a change for one can break another through shared code. Split it into a calculator, a formatter and a repository, with a facade if callers want one entry point.
+
+**Q2. How would you add a new payment method to an existing checkout without modifying it?**
+**Answer.** Checkout depends on a `PaymentMethod` (or `PaymentGateway`) interface; each method is a class implementing it, selected by a registry or configuration. The new method is a new class plus one registration line. That is OCP, and it holds only if the new class honors the interface's contract (LSP).
+
+### Intermediate
+
+**Q3. Is a square a rectangle? Answer as a software designer.**
+**Answer.** It depends on the contract. If `Rectangle` has independent setters whose postconditions leave the other side unchanged, a mutable `Square` cannot honor them, and code like "set width 5, set height 4, expect area 20" breaks. If rectangles are immutable values, a square can be a rectangle, because no operation promises independent mutation.
+
+**Q4. What is the difference between dependency injection and dependency inversion?**
+**Answer.** DI is a technique: pass collaborators in. DIP is a structural rule: high-level policy defines the interfaces it needs, and low-level details implement them, so source dependencies point toward policy. You can inject a concrete vendor class (DI without DIP) or follow DIP with a service locator.
+
+### Advanced
+
+**Q5. A team's codebase has an interface for every class, a DI container and 40% of its classes named `*Impl`. Changes are still slow. What is going on?**
+**Answer.** Likely speculative generality: interfaces mirror classes one to one, so they add indirection without changing dependency direction or isolating actors. Check whether core packages still import infrastructure, whether interfaces have a second implementation or a fake, and which files change together. Remove single-implementation interfaces not at I/O boundaries, split by actor where change history shows conflicts, and move ports into the policy packages.
+
+**Q6. How do SOLID principles map to a microservice architecture, and where does the analogy break?**
+**Answer.** SRP becomes services aligned to business capabilities and teams; OCP becomes event-driven extension (new consumers without changing producers); LSP becomes backward-compatible API versions; ISP becomes client-specific APIs (BFFs); DIP becomes ports and adapters inside each service. The analogy breaks on cost: crossing a service boundary adds network latency, partial failure and data consistency problems that do not exist between classes, so service boundaries should be fewer and coarser than class boundaries.
+
+## 36.12 Practical exercises
+
+1. **Actor audit.** Take a 300+ line class from a codebase you know. List each public method's actor, draw a Figure 36.3-style diagram, and propose a split.
+2. **Contract test.** Write a pytest or JUnit contract test for a `Repository` interface (save, find by id, delete) and run it against an in-memory fake and a SQLite implementation.
+3. **Remove a switch.** Find an `if/elif` or `switch` on a type code repeated in more than one place and replace it with polymorphism. Count files touched before and after when adding a new type.
+4. **Metrics.** Run the §36.8.2 script on a real project's import graph (generate it with a tool such as `pydeps` or `jdeps`) and identify components in the zone of pain.
+
+## 36.13 Design challenges
+
+1. **Notification platform.** Extend the running example to support quiet hours, per-customer channel preferences and per-channel rate limits. Show which classes change, which are added, and which principle protects each existing class.
+2. **Multi-provider payments.** Design ports and adapters for two payment providers with different refund semantics (one allows partial refunds, one does not). Make the base contract honest so that both adapters satisfy LSP.
+3. **Plugin pricing engine.** Design a pricing core that lets regional teams add discount rules without redeploying the core. Decide what is closed, what is open, and how a faulty plugin is contained.
+
+## 36.14 References
+
+1. Bloch, J. *Effective Java*, 3rd ed. Addison-Wesley, 2018.
+2. Cockburn, A. *Hexagonal Architecture*. alistair.cockburn.us, 2005.
+3. Fowler, M. *Inversion of Control Containers and the Dependency Injection pattern*. martinfowler.com, 2004. https://martinfowler.com/articles/injection.html
+4. Fowler, M. *RoleInterface*. martinfowler.com bliki, 2006. https://martinfowler.com/bliki/RoleInterface.html
+5. Fowler, M. *Yagni*. martinfowler.com bliki, 2015. https://martinfowler.com/bliki/Yagni.html
+6. Fowler, M. *Refactoring: Improving the Design of Existing Code*, 2nd ed. Addison-Wesley, 2018.
+7. Larman, C. *Protected Variation: The Importance of Being Closed*. IEEE Software 18(3), 2001.
+8. Levkivskyi, I., Lehtosalo, J., Langa, Ł. *PEP 544 — Protocols: Structural subtyping (static duck typing)*. Python Software Foundation, 2017. https://peps.python.org/pep-0544/
+9. Linux kernel documentation. *Overview of the Linux Virtual File System*. Accessed 2026. https://docs.kernel.org/filesystems/vfs.html
+10. Liskov, B. *Data Abstraction and Hierarchy*. Keynote, OOPSLA '87 Addendum to the Proceedings; reprinted in ACM SIGPLAN Notices 23(5), 1988.
+11. Liskov, B. H., Wing, J. M. *A Behavioral Notion of Subtyping*. ACM Transactions on Programming Languages and Systems 16(6), 1994.
+12. Martin, R. C. *Agile Software Development, Principles, Patterns, and Practices*. Prentice Hall, 2002.
+13. Martin, R. C. *The Single Responsibility Principle*. The Clean Code Blog, 2014. https://blog.cleancoder.com/uncle-bob/2014/05/08/SingleReponsibilityPrinciple.html
+14. Martin, R. C. *Clean Architecture: A Craftsman's Guide to Software Structure and Design*. Prentice Hall, 2017.
+15. Meszaros, G. *xUnit Test Patterns: Refactoring Test Code*. Addison-Wesley, 2007.
+16. Meyer, B. *Object-Oriented Software Construction*. Prentice Hall, 1988; 2nd ed. 1997.
+17. Oracle. *Java SE API documentation*: `java.util.Date`, `java.time`, `java.sql.Timestamp`, `java.sql.DriverManager`, `java.util.ServiceLoader`; and *Java Collections API Design FAQ*. Accessed 2026.
+18. Parnas, D. L. *On the Criteria To Be Used in Decomposing Systems into Modules*. Communications of the ACM 15(12), 1972.
+19. Python Software Foundation. *collections.abc — Abstract Base Classes for Containers*. Python documentation, accessed 2026.
+20. SLF4J project. *SLF4J user manual*. Accessed 2026. https://www.slf4j.org/manual.html
+
+## 36.15 Open verification items
+
+- The Xerox `Job`-class origin story of ISP: confirm it appears in Martin 2002 (it may come from Martin's 1996 C++ Report column or a later talk).
+- Exact URL of Martin's 2014 SRP blog post (the path is spelled "SingleReponsibilityPrinciple" as recalled).
+- Wording of Liskov's 1987 substitution property quoted from the SIGPLAN Notices reprint; page numbers not checked.
+- Attribution of the "SOLID" acronym (commonly credited to Michael Feathers, c. 2004) was not verified and is not asserted in the text.
