@@ -21,7 +21,7 @@ REQUIRED_END = ["Summary", "Knowledge checkpoint", "Interview questions", "Pract
                 "Design challenges", "References", "Open verification items"]
 CALLOUT_CLASSES = {"definition", "concept", "example", "formula", "tip", "recommendation",
                    "mistake", "warning", "industry", "note", "summary"}
-TERM_AVOID = [r"\bmaster/slave\b", r"\bslave\b", r"\boptimis", r"\bbehaviour\b", r"\butilis"]
+TERM_AVOID = [r"\bmaster/slave\b", r"\bslave\b", r"\boptimis(?:e|es|ed|ing|ation|ations|er|ers)\b", r"\bbehaviour\b", r"\butilis(?:e|es|ed|ing|ation)\b"]
 
 
 def check_chapter(num, files):

@@ -171,7 +171,7 @@ The creation-cost figures are orders of magnitude, not benchmarks; measure on yo
 #### Common misconceptions
 
 ::: mistake
-**"A thread is a lightweight process, so threads are free."** Threads are cheaper than processes, but each still costs a kernel task, a kernel stack, a user stack reservation, scheduler bookkeeping and context-switch time. Ten thousand threads is feasible; one million kernel threads on one machine is not a sensible design (§6.15.6).
+**"Threads are free."** Each costs a kernel task, kernel stack, user stack and scheduling work. Ten thousand threads is feasible; a million kernel threads on one machine is not (§6.15.6).
 :::
 
 
@@ -181,11 +181,11 @@ The creation-cost figures are orders of magnitude, not benchmarks; measure on yo
 **Definition — Context switch.** The kernel operation that stops one thread running on a CPU core, saves its CPU state into its PCB, and loads the saved state of another thread so that it resumes where it left off.
 :::
 
-#### First-principles explanation
+### First-principles explanation
 
 Switching between two books, noting your page is quick; reloading the plot into your head is what costs. Likewise, saving and loading registers is quick; the expensive part is that the new thread finds the CPU's caches full of the *old* thread's data. Switching exists because a core runs one thread at a time: pausing a thread that waits for a 10 ms disk read lets the core do useful work meanwhile.
 
-#### How it works internally
+### How it works internally
 
 A switch is triggered in one of two ways. A **voluntary** switch happens when the running thread blocks (reads from an empty socket, waits for a lock, sleeps). An **involuntary** switch happens when the kernel preempts the thread, usually because a periodic **timer interrupt** found its time slice used up or a higher-priority thread became ready.
 
@@ -210,7 +210,7 @@ sequenceDiagram
 
 **Reading the diagram.** The dotted arrow is asynchronous: the timer interrupt arrives regardless of what A is doing and forces the CPU into kernel mode, saving A's instruction pointer and stack pointer. Solid arrows are synchronous steps on the same core. The kernel saves A's remaining registers, returns A to the Ready queue and asks the scheduling policy (§6.5) for the next task. If B belongs to a *different process*, the kernel loads B's page-table root (on x86-64, the `CR3` register); **process-context identifiers (PCIDs)** let TLB entries of different processes coexist, avoiding a full TLB flush. B's registers are restored and the CPU returns to user mode. No storage or network is involved; the failure point is performance: too-frequent switches leave the core in the kernel and refilling caches.
 
-#### Mathematical foundations
+### Mathematical foundations
 
 There are two costs.
 
@@ -257,7 +257,7 @@ $C_{\text{refill}} = 16{,}384 \times 90 / 8 = 184{,}320$ ns ≈ **184 µs**, abo
 **Interpretation.** Context switches are cheap when threads run for milliseconds and expensive when they run for microseconds. **Engineering implication:** for high-rate, short-request workloads, prefer designs that do many small units of work per switch: event loops (§6.13), batching (§23.8), fewer threads than cores-times-a-small-factor for CPU-bound pools, and pinning hot threads to cores.
 :::
 
-#### How to observe it
+### How to observe it
 
 - `vmstat 1` — the `cs` column is context switches per second for the whole machine. Tens of thousands per second per core is normal for a busy server; hundreds of thousands per core deserves investigation.
 - `pidstat -w 1` or `/proc/<pid>/status` — per-task voluntary switches (blocking: lock contention, small I/Os) versus involuntary ones (preemption: CPU contention). If thread migrations between NUMA sockets are frequent, pin threads (§5.10).
@@ -273,7 +273,7 @@ $C_{\text{refill}} = 16{,}384 \times 90 / 8 = 184{,}320$ ns ≈ **184 µs**, abo
 **Definition — CPU scheduler.** The part of the kernel that decides which ready thread runs next on each core and for how long. The rule it follows is the **scheduling policy**; the mechanism that performs the switch is the dispatcher (§6.4).
 :::
 
-#### First-principles explanation
+### First-principles explanation
 
 A doctor with a waiting room is a scheduler. Strict arrival order leaves a 2-minute renewal stuck behind a 60-minute consultation; quickest-first minimizes average waiting but may leave the long case waiting all day; 10 minutes each in rotation means nobody waits long to be *seen*, but long cases finish later. Every CPU scheduling policy is one of these trade-offs. It optimizes some mix of:
 
@@ -318,7 +318,7 @@ $$\bar{T}_{\text{turn}} = \frac{1}{n}\sum_{i=1}^{n}\left(T^{\,i}_{\text{completi
 
 ### 6.5.3 Priority scheduling
 
-Each thread has a priority; the highest-priority ready thread runs. This lets important work (an audio driver, a heartbeat thread) preempt bulk work, but low-priority threads can **starve**: wait forever because higher-priority work keeps arriving. The classic remedy is **aging**: gradually raise the priority of threads that have waited a long time. Priorities also create **priority inversion** with locks (§6.11.6).
+Each thread has a priority; the highest-priority ready thread runs. This lets important work (an audio driver, a heartbeat thread) preempt bulk work, but low-priority threads can **starve**: wait forever because higher-priority work keeps arriving. The classic remedy is **aging**: gradually raise the priority of threads that have waited a long time. Priorities also create **priority inversion** with locks (§6.11.5).
 
 ### 6.5.4 Multi-level feedback queue (MLFQ)
 
@@ -527,11 +527,11 @@ Linux uses almost all otherwise-free RAM as page cache, so `free` reports little
 **Definition — System call (syscall).** A controlled entry from user mode into the kernel to request a privileged service, such as reading a file, sending on a socket, allocating memory or creating a process. Linux x86-64 has a few hundred system calls, each identified by a number [Linux man-pages: syscalls(2)].
 :::
 
-#### First-principles explanation
+### First-principles explanation
 
 A bank customer cannot walk into the vault; they hand a slip through one narrow window where every request is checked. A system call is that window, and library functions such as `printf` or Python's `open()` are wrappers that fill in the slip.
 
-#### How it works internally
+### How it works internally
 
 **Figure 6.6 — A `read()` system call that must wait for the disk.**
 
@@ -555,7 +555,7 @@ sequenceDiagram
 
 **Reading the diagram.** The library wrapper puts the system-call number and arguments in registers and executes the `syscall` instruction, entering the kernel at a fixed entry point, the only way in. The kernel *validates* everything, since user code can pass any value: is the descriptor open, does the buffer lie in the caller's memory? On a page-cache hit (§6.6.6) it copies the data and returns within about a microsecond. On a miss it submits a request across the storage boundary and the thread **blocks** (a voluntary context switch). The dotted arrow is the device's asynchronous completion interrupt; the thread becomes Ready, runs again, and the kernel copies the data out and returns. Failure points: bad arguments return `EBADF` or `EFAULT`, device errors `EIO`, and a signal can interrupt a slow call with `EINTR`, which callers must retry.
 
-#### What it costs
+### What it costs
 
 A trivial system call costs on the order of **100 ns to a few hundred ns** on modern x86-64 Linux, against about 1–5 ns for a function call (as of the 2020s). The cost rose in 2018 when **kernel page-table isolation (KPTI)**, the Meltdown mitigation, began switching page tables on every kernel entry on affected CPUs. A rough Python measurement on this chapter's test VM found `os.getppid()` at about 190 ns per call against about 50 ns for a built-in function call.
 
@@ -593,7 +593,7 @@ CPython's **global interpreter lock (GIL)** is the standard illustration: Python
 **Definition — Critical section.** A region of code that accesses shared state and must not be executed by more than one thread at a time. Guaranteeing this is **mutual exclusion**.
 :::
 
-#### First-principles explanation
+### First-principles explanation
 
 Two people deposit $50 at the same moment into a shared account holding $100, at different cash machines. Each machine reads $100, adds $50 and writes $150; the correct balance is $200. Neither machine erred alone: the bug is the *interleaving* of read, modify and write, the **lost update**.
 
@@ -616,7 +616,7 @@ sequenceDiagram
 
 **Reading the diagram.** Each arrow is a synchronous step, but the two threads' steps interleave in an order chosen by the scheduler and hardware. Both read before either writes, so one increment is lost. The critical section is *read, compute, write*; making it indivisible, with a lock or one atomic instruction, removes the bug. The same failure occurs across machines when two service instances read-modify-write a database row (§11.13, §26.13).
 
-#### Code example
+### Code example
 
 The Python program below makes the race visible. `counter += 1` in CPython is not atomic, but the GIL makes the bad interleaving rare, so `time.sleep(0)` deliberately yields the CPU between the read and the write, exactly where a preemption could occur.
 
@@ -672,8 +672,8 @@ A run on CPython 3.13 printed `expected = 40000`, `without a lock = 10000` and `
 
 What to notice:
 
-- The unsafe version loses roughly three quarters of the increments: almost every thread's write is overwritten by another thread that read the same old value.
-- `with lock:` makes read-compute-write a critical section. The program is now correct but slower, because threads take turns.
+- The unsafe version loses about three quarters of the increments: writes overwrite each other.
+- `with lock:` makes read-compute-write a critical section: correct, but threads now take turns.
 - Removing `time.sleep(0)` makes the race *rarer*, not absent. Tests that pass "most of the time" are the hallmark of races.
 
 The Go version needs no artificial delay, because goroutines run in parallel on multiple cores:
@@ -747,9 +747,9 @@ On a 4-core VM with Go 1.24, `go run .` printed `racy: 493557` against `expected
 
 What to notice:
 
-- `go run -race .` runs Go's **race detector**, which reports `WARNING: DATA RACE` with both stack traces. Run tests with `-race` in CI; it finds races that never show up as wrong answers in testing [Go Docs: Data Race Detector].
-- `atomic.Int64` (Go 1.19+) compiles to a single locked hardware instruction and is usually faster than a mutex for one counter. For anything involving two or more variables, use a mutex.
-- In Go, Java and C/C++, a data race is not just a wrong count: the language memory models give racy programs weak or undefined semantics, so the compiler and CPU may reorder or cache values in surprising ways [Go Docs: Memory Model].
+- `go run -race .` runs Go's **race detector**, which reports `WARNING: DATA RACE` with both stack traces; use `-race` in CI [Go Docs: Data Race Detector].
+- `atomic.Int64` (Go 1.19+) is one locked hardware instruction, usually faster than a mutex for a single counter; for two or more variables, use a mutex.
+- In Go, Java and C/C++, racy programs have weak or undefined semantics: compilers and CPUs may reorder or cache values [Go Docs: Memory Model].
 
 ::: mistake
 **"It is only a counter; a small error is fine."** The same pattern guards bank balances, inventory counts, rate-limit tokens and "is this seat booked?" flags. Treat every read-modify-write of shared state as a critical section, or replace it with a single atomic operation.
@@ -765,7 +765,7 @@ Each primitive below answers a specific coordination problem. Table 6.3 at the e
 **Definition — Mutex (mutual-exclusion lock).** An object with two operations, `lock` and `unlock`, guaranteeing that at most one thread holds it at a time. A thread that calls `lock` while another holds it waits.
 :::
 
-A mutex is the key to a single-occupancy bathroom. A **spinlock** waits by looping, burning CPU but reacting within nanoseconds; it suits tiny kernel critical sections. A **blocking mutex** puts the waiter to sleep (§6.4) and wakes it on unlock. Linux implements user-space mutexes with **futexes** ("fast user-space mutexes"): an uncontended lock or unlock is a single atomic instruction in user space with no system call; only when there is contention does the thread call `futex()` to sleep in the kernel [Franke et al. 2002]. Modern mutexes are usually *adaptive*: they spin briefly and then sleep. An uncontended lock costs tens of nanoseconds; a contended one can cost microseconds because of the context switches it causes.
+A mutex is the key to a single-occupancy bathroom. A **spinlock** waits by looping, burning CPU but reacting within nanoseconds; it suits tiny kernel critical sections. A **blocking mutex** puts the waiter to sleep (§6.4) and wakes it on unlock. Linux builds mutexes on **futexes**: an uncontended lock is one atomic instruction in user space; only under contention does the thread call `futex()` to sleep in the kernel [Franke et al. 2002]. Most mutexes spin briefly, then sleep. Uncontended locks cost tens of nanoseconds; contended ones cost microseconds of context switching.
 
 ### 6.10.2 Semaphores
 
@@ -839,9 +839,9 @@ Output: `consumed: 30000 unique: 30000`.
 
 What to notice:
 
-- The condition is re-checked in a **`while` loop**. Under the **Mesa semantics** used by almost every real system, a woken thread merely becomes runnable; by the time it reacquires the mutex, another thread may have taken the item. Implementations may also produce **spurious wake-ups** [Lampson & Redell 1980].
-- `wait()` releases the lock while sleeping and reacquires it before returning. Waiting while holding the lock would deadlock the producer against the consumer.
-- The bounded capacity is **backpressure** (§22.10): fast producers are slowed to the consumer's pace instead of exhausting memory. Python's `queue.Queue` is built exactly this way.
+- The condition is re-checked in a **`while` loop**: under **Mesa semantics**, used by almost every real system, a woken thread only becomes runnable, and another thread may take the item first; **spurious wake-ups** are also allowed [Lampson & Redell 1980].
+- `wait()` releases the lock while sleeping and reacquires it before returning.
+- The bounded capacity is **backpressure** (§22.10): producers slow to the consumer's pace instead of exhausting memory. Python's `queue.Queue` works this way.
 
 ### 6.10.4 Atomics and compare-and-swap
 
@@ -893,9 +893,9 @@ On JDK 21 with 4 threads this printed `max = 3999999` and several hundred thousa
 
 What to notice:
 
-- No thread ever blocks; a failed CAS just means "someone else made progress, try again". This is **lock-free** progress: some thread always succeeds.
-- The retry count shows the cost of contention: every failed CAS bounced a cache line between cores (§5.4). Under heavy contention on one location, a CAS loop can be slower than a mutex.
-- Atomics also impose **memory ordering**: Java's `AtomicLong`, C++ `std::atomic` with default ordering and Go's `sync/atomic` make writes before the atomic visible to threads that observe it. Plain variables carry no such guarantee.
+- No thread blocks; a failed CAS means another thread made progress. This is **lock-free** progress.
+- Each retry bounced a cache line between cores (§5.4); under heavy contention a CAS loop can be slower than a mutex.
+- Atomics also impose **memory ordering**: writes before an atomic store become visible to threads that observe it. Plain variables have no such guarantee.
 
 ### 6.10.5 Read-write locks
 
@@ -1059,12 +1059,12 @@ Priority inversion also appears in servers, when a background job holds a lock, 
 
 Processes have private address spaces (§6.3.2), so they cooperate through kernel-provided channels, trading speed, structure and reach.
 
-- **Pipes** — a one-way byte stream with a kernel buffer (64 KiB by default on Linux), created by `pipe()`. Shell pipelines (`grep error log | wc -l`) use them. *Named pipes* (FIFOs) have a filesystem name so unrelated processes can use them. A writer to a full pipe blocks: built-in backpressure.
-- **Unix domain sockets** — the socket API (§7.7) on one machine, addressed by a file path. Bidirectional, support datagram and stream modes, and can pass file descriptors and credentials between processes. Docker's API socket and many database local connections use them; they avoid the TCP/IP stack and are faster than loopback TCP.
-- **TCP/UDP sockets** — the only option that also works across machines; slower locally than Unix sockets but the same code scales out.
-- **Shared memory** — two processes map the same physical pages (`shm_open` + `mmap`, or `mmap` of a shared file). The fastest option: after setup, data moves at memory speed with no system calls, but the processes must synchronize themselves, with process-shared mutexes, futexes or lock-free rings. PostgreSQL's shared buffer pool and many low-latency trading systems use it.
-- **Message queues** — POSIX message queues (`mq_open`) keep discrete, optionally prioritized messages in the kernel. They preserve message boundaries but are limited in size and local to one machine; distributed message brokers (Chapter 30) generalize the idea.
-- **Signals** — tiny asynchronous notifications identified only by a number: `SIGTERM` (please exit), `SIGKILL` (exit now, cannot be caught), `SIGINT` (Ctrl-C), `SIGHUP` (often "reload config"), `SIGCHLD` (a child exited). A handler interrupts the program at an arbitrary point, so it may call only **async-signal-safe** functions; the robust pattern is to set a flag or write a byte to a pipe and handle it in the main loop [Linux man-pages: signal(7)]. Kubernetes stops a pod by sending `SIGTERM`, waiting a grace period (30 s by default), then `SIGKILL`, so services must handle `SIGTERM` to drain gracefully (see §43.4).
+- **Pipes** — a one-way byte stream through a kernel buffer (64 KiB by default on Linux), as in `grep error log | wc -l`; *named pipes* (FIFOs) let unrelated processes connect. A writer to a full pipe blocks: built-in backpressure.
+- **Unix domain sockets** — the socket API on one machine, addressed by a file path; bidirectional, and able to pass file descriptors. Docker's API and local database connections use them; they skip the TCP/IP stack.
+- **TCP/UDP sockets** — slower locally, but the same code works across machines (§7.7).
+- **Shared memory** — processes map the same physical pages (`shm_open` + `mmap`). Fastest, with no system calls after setup, but the processes must synchronize themselves. PostgreSQL's shared buffer pool uses it.
+- **Message queues** — POSIX `mq_open` keeps discrete, prioritized messages in the kernel, locally; distributed brokers (Chapter 30) generalize the idea.
+- **Signals** — asynchronous notifications carrying only a number: `SIGTERM` (please exit), `SIGKILL` (exit now, uncatchable), `SIGINT` (Ctrl-C), `SIGHUP` (often "reload"), `SIGCHLD` (child exited). Handlers interrupt the program anywhere, so they may call only **async-signal-safe** functions; set a flag and act in the main loop [Linux man-pages: signal(7)]. Kubernetes sends `SIGTERM`, waits a grace period (30 s by default), then `SIGKILL`, so services must handle `SIGTERM` to drain gracefully (§43.4).
 
 **Table 6.5 — IPC mechanisms compared.**
 
@@ -1089,14 +1089,12 @@ With **blocking I/O**, `read()` on a socket with no data puts the thread to slee
 
 **I/O multiplexing** lets one thread ask the kernel: "here are my sockets; sleep until at least one can be read or written without blocking, and tell me which." These are **readiness** notifications.
 
-- **`select`** (4.2BSD, 1983) passes bitmaps of file descriptors on every call. It is limited to descriptor numbers below `FD_SETSIZE` (1,024 on Linux/glibc), and both kernel and application scan every descriptor on each call: $O(n)$ work per wake-up even if one socket is ready.
-- **`poll`** replaces the bitmap with an array, removing the 1,024 limit, but still copies and scans all $n$ descriptors per call.
-- **`epoll`** (Linux 2.6) separates *registration* from *waiting*. `epoll_ctl` registers interest once; the kernel keeps a ready list updated by device callbacks; `epoll_wait` returns only ready descriptors. Cost per wake-up is proportional to the number of *ready* descriptors, not watched ones [Linux man-pages: epoll(7)].
-- **`kqueue`** (FreeBSD 4.1 in 2000, also macOS) offers the same scalability with a more general interface that also covers files, signals, timers and process events [Lemon 2001].
+- **`select`** (4.2BSD) passes descriptor bitmaps on every call, is limited to descriptors below `FD_SETSIZE` (1,024 on Linux/glibc), and scans all of them: $O(n)$ work per wake-up.
+- **`poll`** uses an array, removing the limit, but still scans all $n$.
+- **`epoll`** (Linux 2.6) registers interest once (`epoll_ctl`); the kernel maintains a ready list, and `epoll_wait` returns only ready descriptors, so cost scales with *ready*, not watched, descriptors [Linux man-pages: epoll(7)].
+- **`kqueue`** (FreeBSD 4.1, 2000; also macOS) scales the same way and also covers files, signals, timers and processes [Lemon 2001].
 
-Notifications are **level-triggered** (keep reporting a socket while data remains; forgiving) or **edge-triggered** (report only when new data arrives; the application must read until `EAGAIN` or it may never be told again). `epoll` supports both; level-triggered is the default.
-
-Readiness has a blind spot: regular files are always "ready" to `epoll`, yet reading them can still block on a disk fault. This is why Node.js's libuv performs file-system operations on a small thread pool (4 threads by default) rather than on its event loop [Node.js Docs: Don't Block the Event Loop].
+**Level-triggered** notification keeps reporting a socket while data remains; **edge-triggered** reports only new arrivals, so the program must read until `EAGAIN`. Readiness has a blind spot: regular files are always "ready" yet reads can block on disk, which is why Node.js's libuv runs file operations on a thread pool (4 threads by default) [Node.js Docs: Don't Block the Event Loop].
 
 ### 6.13.3 The C10K problem
 
@@ -1245,13 +1243,13 @@ flowchart LR
 
 Durability pitfalls, each of which has caused real data loss:
 
-1. **`write()` is not durable.** Without `fsync` (or `fdatasync`, which skips non-essential metadata such as modification times), a crash can lose seconds of acknowledged writes.
-2. **The directory also needs `fsync`.** Creating or renaming a file changes the *directory*. To make a new file's existence durable you must `fsync` the file *and* its parent directory [Linux man-pages: fsync(2); Pillai et al. 2014].
-3. **"Write to temp, then rename" needs fsync before the rename.** `rename()` is atomic, but without an `fsync` of the temporary file first, a crash can leave the new name pointing at an empty or partial file. ext4 developers added heuristics after this pattern caused zero-length files in 2009, but portable code must not rely on them.
-4. **fsync errors are not retryable.** On Linux, when writeback fails, the kernel may mark the dirty pages clean and report the error once; a second `fsync` can then succeed although the data was never written. After a 2018 investigation known as "fsyncgate", PostgreSQL changed to crash and recover from its write-ahead log on any `fsync` failure rather than retry [PostgreSQL Wiki: Fsync Errors; Rebello et al. 2020].
-5. **Platform differences.** On macOS, `fsync` does not ask the drive to flush its cache; durable writes need `fcntl(fd, F_FULLFSYNC)` [Apple: fsync(2) man page].
-6. **`O_DIRECT` is not `O_SYNC`.** Bypassing the page cache does not by itself make writes durable; it still requires `fsync` or `O_DSYNC`.
-7. **Partial and torn writes.** A crash during a multi-sector write can leave half old, half new data; databases detect this with checksums (§13.12).
+1. **`write()` is not durable.** Without `fsync` (or `fdatasync`, which skips non-essential metadata), a crash loses acknowledged writes.
+2. **The directory needs `fsync` too.** Creating or renaming a file changes the *directory*, which must also be synced [Linux man-pages: fsync(2); Pillai et al. 2014].
+3. **"Write temp, then rename" needs `fsync` before the rename**, or a crash can leave the new name pointing at an empty file.
+4. **`fsync` errors are not retryable.** On Linux a failed writeback may mark pages clean, so a second `fsync` can succeed although the data was lost. After the 2018 "fsyncgate" investigation, PostgreSQL crashes and recovers from its write-ahead log on any `fsync` failure [PostgreSQL Wiki: Fsync Errors; Rebello et al. 2020].
+5. **macOS `fsync` does not flush the drive cache**; use `fcntl(fd, F_FULLFSYNC)` [Apple: fsync(2) man page].
+6. **`O_DIRECT` is not `O_SYNC`**: bypassing the page cache does not make writes durable.
+7. **Torn writes**: a crash mid-write can leave half-old, half-new sectors; databases detect this with checksums (§13.12).
 
 The program below replaces a file atomically and durably on POSIX systems:
 
@@ -1454,7 +1452,6 @@ CPU check: $2{,}000 \times 0.010$ s = 20 core-seconds per second, so at least **
 ## 6.16 Summary and revision notes
 
 ::: summary
-- The kernel virtualizes the CPU (processes, threads, scheduling), virtualizes memory (address spaces, paging) and provides persistence (file systems), and is entered only through system calls, interrupts and faults.
 - A **process** is a running program with a private address space; a **thread** is an execution context sharing its process's memory. The PCB (`task_struct`) stores everything needed to resume. States: New → Ready ⇄ Running → Blocked → Ready → … → Terminated.
 - A **context switch** costs ~1–5 µs directly, but cache and TLB refill can cost 10–100× more. Overhead fraction $f = C/(Q + C)$: it matters when threads run only microseconds between switches.
 - **Scheduling** trades turnaround, response time and fairness. RR fixes FCFS's convoy effect; MLFQ learns interactivity; Linux uses weighted fair sharing (CFS from 2.6.23, EEVDF from 6.6). CPU quotas in containers can throttle a service even when the host is idle.
@@ -1464,7 +1461,7 @@ CPU check: $2{,}000 \times 0.010$ s = 20 core-seconds per second, so at least **
 - A **race condition** is a timing-dependent bug; protect every read-modify-write of shared state as a **critical section**, and run race detectors in CI.
 - Mutex for exclusion; semaphore to limit concurrency; condition variable (in a `while` loop) to wait for a predicate; atomics/CAS for single-word updates; read-write locks for long read-mostly sections; lock-free structures only from proven libraries, minding ABA.
 - **Deadlock** needs all four Coffman conditions; break circular wait with lock ordering. Livelock → randomized backoff; starvation → fairness; priority inversion → priority inheritance (Mars Pathfinder, 1997).
-- IPC: pipes, Unix and TCP sockets, shared memory (fastest), message queues, signals (lifecycle control; handle `SIGTERM`).
+- IPC: pipes, sockets, shared memory (fastest), message queues, signals (handle `SIGTERM`).
 - I/O: blocking needs a thread per connection; `epoll`/`kqueue` readiness notification solved C10K; `io_uring` adds batched completion-based I/O. An event loop must never block.
 - `write()` is not durable. Use `fsync` on the file *and* its directory, treat `fsync` errors as fatal, and batch commits (group commit $X = B/t_{\text{fsync}}$).
 - Thread-per-request is simple but costs ~100 KB per connection; event loops, goroutines, virtual threads and async/await make waiting cheap. Size pools with Little's Law and bound them.
@@ -1633,7 +1630,7 @@ print(f"{elapsed / ROUNDS * 1e6:.1f} us per round trip")
 
 ## 6.22 Open verification items
 
-- EEVDF default base slice (0.75 ms) and its CPU-count scaling across Linux 6.6–6.x; exact LWN article URL for [Corbet 2023].
+- Exact LWN article URL and date for [Corbet 2023] (lwn.net was unreachable from the authoring environment). EEVDF merge in 6.6 and the 0.75 ms × (1 + log2 ncpus) base slice were confirmed against the v6.6 scheduler pull request and commit e4ec3318; whether later 6.x releases changed the default is not verified.
 - Magnitude of indirect context-switch cost reported by [Li et al. 2007]; direct-cost range 1–5 µs on current hardware.
 - Mars Pathfinder details (task names, watchdog mechanism, remote patch via on-board interpreter) against Reeves's original text; Cornell mirror URL.
 - Google Security Blog 2023 io_uring statistics and the exact scope of the restriction; full article URL.

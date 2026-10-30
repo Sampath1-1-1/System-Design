@@ -853,7 +853,7 @@ What to notice:
 
 If TCP is registered mail with numbered pages and receipts, UDP is a postcard: cheap, immediate, and with no guarantee it arrives or that two postcards arrive in order. UDP does preserve message boundaries: one `sendto()` produces one datagram, and the receiver gets exactly that datagram or nothing.
 
-#### Why does this exist?
+### Why does this exist?
 
 Some applications are hurt more by TCP's guarantees than helped:
 
@@ -878,7 +878,7 @@ Some applications are hurt more by TCP's guarantees than helped:
 | Typical uses | HTTP/1.1, HTTP/2, databases, RPC | DNS, VoIP, games, QUIC/HTTP/3, DHCP, telemetry |
 | Choose when | You need every byte, in order, and can tolerate setup cost | Timeliness beats completeness, or you are building your own transport |
 
-#### What you must rebuild on UDP
+### What you must rebuild on UDP
 
 Choosing UDP moves responsibilities into your application: detecting loss (sequence numbers), deciding whether to retransmit, reordering, splitting messages to fit the path MTU (a UDP datagram larger than the MTU gets fragmented by IP, and losing any fragment loses the whole datagram), and above all **congestion control**. A UDP application that sends at a fixed high rate regardless of loss harms every other flow on the path; RFC 8085 gives guidelines for responsible UDP use.
 
@@ -1163,7 +1163,7 @@ sequenceDiagram
 
 **Reading the diagram.** A private host (left) opens a connection to a public server (right) through a NAT gateway (middle). In step 1 the packet carries the host's private address. The NAT rewrites the source to its own public address and a free public port, recording the mapping (steps 2–3). The server replies to the public address (step 4), and the NAT reverses the translation using the table (steps 5–6). All traffic is synchronous and flows through the same NAT in both directions: the NAT is **stateful**, which makes it a failure point (if it restarts or the mapping times out, existing connections die) and a scaling limit (ports per destination).
 
-#### Consequences for system design
+### Consequences for system design
 
 - **Inbound connections are impossible by default**, because no mapping exists until the inside host sends first. Peer-to-peer systems (WebRTC, §9.7) use STUN to discover their public mapping and fall back to TURN relays when NAT behavior prevents direct connections.
 - **Mappings time out.** Idle UDP mappings may expire in tens of seconds and TCP mappings in minutes to hours, depending on the device. Long-lived idle connections need keep-alives shorter than the NAT timeout, or they become half-open (§7.7).
@@ -1190,7 +1190,7 @@ Cloud providers expose two common forms. A **security group** (AWS, similar cons
 | Typical placement | Subnet boundary | Each instance or interface | In front of web apps, often at the CDN |
 | Choose when | Coarse subnet guardrails | Default micro-segmentation between tiers | Blocking injection, bots, abusive patterns |
 
-#### Practical rules
+### Practical rules
 
 1. **Default deny.** Allow only the ports and sources each tier needs: the load balancer may reach the app tier on port 8080; only the app tier may reach the database on 5432.
 2. **Reference groups, not addresses.** Security groups can name other groups as sources ("allow from sg-app"), which keeps rules correct as instances scale in and out.

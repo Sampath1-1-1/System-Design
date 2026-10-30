@@ -62,3 +62,11 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-055 | 9 | Default idle timeouts for AWS ALB, NGINX, Kubernetes ingress | Open | Version-dependent |
 | UQ-056 | 9 | Author lists for RFC 8489 (STUN) and RFC 8656 (TURN) | Open | |
 | UQ-057 | 9 | Per-connection memory figures are illustrative | Accepted | Labeled in text |
+| UQ-058 | 6 | URL for Corbet (2023) LWN article on EEVDF | Open | EEVDF merged in Linux 6.6 (verified) |
+| UQ-059 | 6 | Li et al. (2007) indirect context-switch cost; 1–5 µs direct-cost range | Open | |
+| UQ-060 | 6 | Mars Pathfinder priority-inversion details and Reeves account URL (Cornell-hosted copy) | Open | |
+| UQ-061 | 6 | Google 2023 io_uring vulnerability statistics | Open | |
+| UQ-062 | 6 | WhatsApp 2012 "1 million is so 2011" blog post URL | Open | Also used in Ch 9 |
+| UQ-063 | 6 | Erlang process initial size; Python 3.14 free-threading status | Open | Merge with UQ-028 |
+| UQ-064 | 6 | Banker's algorithm source memo (EWD 108 vs EWD 123) | Open | |
+| UQ-065 | 6 | MySQL docs page title cited; TLB entry counts per core | Open | |
