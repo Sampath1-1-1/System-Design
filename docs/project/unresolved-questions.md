@@ -126,3 +126,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-119 | 19 | HAProxy default number of draws for `balance random` | Open | |
 | UQ-120 | 19 | Vimeo bounded-loads post (Rodland 2016) title/date/results; Google Cloud Pub/Sub use of bounded loads | Open | |
 | UQ-121 | 19 | Facebook Katran blog post authors and date; subset sizes 20–100 in Google SRE book ch. 20 | Open | |
+| UQ-122 | 23 | RED method origin: Wilkie's original venue/date (reportedly 2015; Grafana blog 2018) | Open | |
+| UQ-123 | 23 | Dean & Barroso (2013): slowest 5% of leaves ≈ half of root p99; tied requests near idle-cluster latency with <1% disk overhead | Open | Merge with UQ-047 |
+| UQ-124 | 23 | Netflix "Java in Flames" post — authors, date, URL | Open | |
+| UQ-125 | 23 | Facebook Kraken (OSDI 2016) description; Discord two-minute forced GC (Go) | Open | |
+| UQ-126 | 23 | Compression table values (zstd README, 2026); JVM collector version dates; Go GC 25% marking CPU target | Open | Time-sensitive |
+| UQ-127 | 23 | Venue/year for Tene's "How NOT to Measure Latency" talk | Open | |

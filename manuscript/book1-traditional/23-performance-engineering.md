@@ -1078,7 +1078,7 @@ $$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p + w}{I_{\
 
 1. $I_{\text{minor}} = 2{,}000/500 = 4$ s between pauses.
 2. Requests overlapping a pause: $f_{\text{hit}} \approx (30 + 5)/4{,}000 \approx 0.9\%$ (in flight when it starts, or arriving during it), each delayed by up to 30 ms.
-3. So the service's p99 sits at the edge of the GC effect and its p99.9 includes most of a full pause; at 100-way fan-out, nearly every root request ($1 - 0.991^{100} = 60\%$) sees one.
+3. So the service's p99 sits at the edge of the GC effect and its p99.9 includes most of a full pause; at 100-way fan-out, most root requests ($1 - 0.99125^{100} \approx 58\%$) see one.
 4. Halving the allocation rate doubles the interval and halves the exposure. For a Go service with 1 GB live heap and GOGC = 100, the heap grows to $1 \times 2 = 2$ GB before the next cycle; GOGC = 50 caps it at 1.5 GB but runs GC twice as often.
 
 **Interpretation.** GC pauses are a *rate* problem (how often) times a *size* problem (how long). **Engineering implication.** Reduce allocation first (it lowers both CPU and pause frequency), then choose a collector whose pause behavior fits the SLO.
