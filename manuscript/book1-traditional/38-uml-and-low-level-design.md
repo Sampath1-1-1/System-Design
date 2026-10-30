@@ -1777,3 +1777,868 @@ What to notice:
 - *Remote telemetry and restocking alerts?* Observer on stock changes.
 - *Why not the transition table of §38.6?* A table suits uniform behavior; the State pattern suits states with substantially different logic. Both are defensible; say which and why.
 
+### 38.10.5 Exercise 5: Library management system
+
+**Requirements.** Members borrow and return physical copies of books (21-day loans, at most 3 at a time); a late return is fined 25 cents per day, capped at $10; when no copy is available a member places a hold, and the next returned copy is set aside for the first member in the queue, who is notified.
+
+**The key modeling decision** is separating the *title* (`Book`, one per ISBN) from the *physical item* (`BookCopy`, many per title). Candidates who merge them cannot express "the library owns four copies of this book, two are on loan", and the hold queue belongs to the title, not to a copy. Librarians call the same distinction *manifestation* versus *item* [IFLA 1998]. `Loan` is an association class (§38.8.2) between member and copy that carries the due date.
+
+**Figure 38.16 — Library class diagram.**
+
+```mermaid
+classDiagram
+  class Library {
+    +checkout(Member m, String isbn) Loan
+    +placeHold(Member m, String isbn) void
+    +returnCopy(Loan l) int
+  }
+  class Book {
+    +String isbn
+    +String title
+  }
+  class BookCopy {
+    +String copyId
+    +CopyStatus status
+    +String heldFor
+  }
+  class Member {
+    +String memberId
+    +int maxLoans
+  }
+  class Loan {
+    +Date due
+    +Date returned
+  }
+  Library "1" *-- "*" BookCopy
+  Book "1" <-- "*" BookCopy : copy of
+  Member "1" --> "0..3" Loan : current
+  Loan "*" --> "1" BookCopy
+  Library ..> Member
+```
+
+**Reading the diagram.** Each `BookCopy` refers to one `Book`; one book has many copies. A `Member` has at most three current `Loan`s, and each loan refers to exactly one copy. The library owns its copies and the hold queues (a FIFO of member IDs per ISBN, kept as an attribute in the code). In a database this becomes `books`, `copies`, `members`, `loans` and `holds` tables; the concurrency hazard is two checkouts of the last copy, solved with a conditional update on the copy's status.
+
+**Figure 38.17 — Sequence diagram for returning a copy that has a waiting hold.**
+
+```mermaid
+sequenceDiagram
+  actor M as Member
+  participant L as Library
+  participant C as BookCopy
+  participant Q as HoldQueue
+  participant N as Notifier
+  M->>+L: returnCopy(loan)
+  L->>L: fine = min(cap, lateDays x 25)
+  L->>Q: next member for this ISBN
+  alt queue not empty
+    L->>C: status = ON_HOLD, heldFor = next
+    L-)N: notify(next, title)
+  else queue empty
+    L->>C: status = AVAILABLE
+  end
+  L-->>-M: fine
+```
+
+**Reading the diagram.** Returning computes the fine, then checks the title's hold queue. If someone is waiting, the copy is set aside for them and a notification is sent *asynchronously* (an e-mail must not block the return desk); otherwise the copy becomes available. A later checkout by anyone other than the holder is refused.
+
+```python
+from __future__ import annotations
+
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from enum import Enum
+from typing import Callable
+
+
+class CopyStatus(Enum):
+    AVAILABLE = "available"
+    ON_LOAN = "on_loan"
+    ON_HOLD = "on_hold"          # set aside for the member at the head of the hold queue
+
+
+@dataclass(frozen=True)
+class Book:                      # the title: one per ISBN
+    isbn: str
+    title: str
+
+
+@dataclass
+class BookCopy:                  # the physical item: many per Book
+    copy_id: str
+    book: Book
+    status: CopyStatus = CopyStatus.AVAILABLE
+    held_for: str | None = None
+
+
+@dataclass
+class Member:
+    member_id: str
+    max_loans: int = 3
+    loans: list["Loan"] = field(default_factory=list)
+
+
+@dataclass
+class Loan:
+    copy: BookCopy
+    member: Member
+    due: date
+    returned: date | None = None
+
+
+class Library:
+    LOAN_DAYS, FINE_PER_DAY, FINE_CAP = 21, 25, 1_000      # cents
+
+    def __init__(self, today: Callable[[], date]):
+        self.today = today
+        self.copies: dict[str, BookCopy] = {}
+        self.by_isbn: dict[str, list[BookCopy]] = defaultdict(list)
+        self.holds: dict[str, deque[str]] = defaultdict(deque)
+        self.listeners: list[Callable[[str, str], None]] = []    # Observer
+
+    def add_copy(self, copy: BookCopy) -> None:
+        self.copies[copy.copy_id] = copy
+        self.by_isbn[copy.book.isbn].append(copy)
+
+    def checkout(self, member: Member, isbn: str) -> Loan:
+        if len(member.loans) >= member.max_loans:
+            raise ValueError("loan limit reached")
+        copy = next((c for c in self.by_isbn[isbn]
+                     if c.status is CopyStatus.AVAILABLE
+                     or (c.status is CopyStatus.ON_HOLD and c.held_for == member.member_id)), None)
+        if copy is None:
+            raise LookupError("no copy available; place a hold")
+        copy.status, copy.held_for = CopyStatus.ON_LOAN, None
+        loan = Loan(copy, member, self.today() + timedelta(days=self.LOAN_DAYS))
+        member.loans.append(loan)
+        return loan
+
+    def place_hold(self, member: Member, isbn: str) -> None:
+        self.holds[isbn].append(member.member_id)
+
+    def return_copy(self, loan: Loan) -> int:
+        loan.returned = self.today()
+        loan.member.loans.remove(loan)
+        late_days = max(0, (loan.returned - loan.due).days)
+        copy, queue = loan.copy, self.holds[loan.copy.book.isbn]
+        if queue:                                       # hand the copy to the next in line
+            copy.status, copy.held_for = CopyStatus.ON_HOLD, queue.popleft()
+            for notify in self.listeners:
+                notify(copy.held_for, copy.book.title)
+        else:
+            copy.status = CopyStatus.AVAILABLE
+        return min(self.FINE_CAP, late_days * self.FINE_PER_DAY)
+
+
+if __name__ == "__main__":
+    day = [date(2026, 1, 5)]
+    lib = Library(lambda: day[0])
+    lib.listeners.append(lambda m, t: print(f"notify {m}: '{t}' is ready for pickup"))
+    sicp = Book("978-0262510875", "SICP")
+    lib.add_copy(BookCopy("c1", sicp))
+    ann, bob = Member("ann"), Member("bob")
+    loan = lib.checkout(ann, sicp.isbn)
+    try:
+        lib.checkout(bob, sicp.isbn)
+    except LookupError as e:
+        print("bob:", e)
+    lib.place_hold(bob, sicp.isbn)
+    day[0] = loan.due + timedelta(days=6)               # six days late
+    print("fine (cents):", lib.return_copy(loan))
+    try:
+        lib.checkout(Member("cat"), sicp.isbn)         # held for bob, not cat
+    except LookupError as e:
+        print("cat:", e)
+    print("bob gets", lib.checkout(bob, sicp.isbn).copy.copy_id)
+```
+
+Output: `bob: no copy available; place a hold`, `notify bob: 'SICP' is ready for pickup`, `fine (cents): 150` (6 days × 25), `cat: no copy available; place a hold`, `bob gets c1`.
+
+**Patterns and follow-ups.** Listeners implement **Observer** (§37.8) so e-mail, SMS and push channels can be added without touching `Library`. Typical follow-ups: hold expiry (a copy on hold for more than 3 days passes to the next member, needing a scheduled sweep like Exercise 7's); different loan policies per member type (a `LoanPolicy` strategy, not `StudentMember` subclasses); search by title or author (an index from words to ISBNs, or a search engine, §16); and concurrent checkouts across branches (a database transaction with `UPDATE copies SET status = 'ON_LOAN' WHERE copy_id = ? AND status = 'AVAILABLE'`, checking the affected row count).
+
+### 38.10.6 Exercise 6: Rate limiter class design
+
+**Requirements.** Offer `allow(key, cost)` returning a decision (allowed, remaining, retry-after); support at least two algorithms selected by configuration; be safe under concurrent calls; let operators add metrics without modifying algorithms. The token bucket algorithm itself, its formula and its parameter choices are in §22.4, and distributed enforcement is in §22.8; this exercise is about the *class design* around them.
+
+**Figure 38.18 — Rate limiter class diagram.**
+
+```mermaid
+classDiagram
+  class RateLimiter {
+    <<interface>>
+    +allow(String key, float cost) Decision
+  }
+  class Decision {
+    +bool allowed
+    +float remaining
+    +float retryAfter
+  }
+  class TokenBucketLimiter {
+    -float rate
+    -float capacity
+    -Map state
+  }
+  class FixedWindowLimiter {
+    -int limit
+    -float window
+    -Map state
+  }
+  class CountingLimiter {
+    -RateLimiter inner
+    -Counter counts
+  }
+  class StripedLocks {
+    -List locks
+    +lockFor(String key) Lock
+  }
+  RateLimiter <|.. TokenBucketLimiter
+  RateLimiter <|.. FixedWindowLimiter
+  RateLimiter <|.. CountingLimiter
+  CountingLimiter o-- RateLimiter : wraps
+  TokenBucketLimiter --|> StripedLocks
+  FixedWindowLimiter --|> StripedLocks
+  RateLimiter ..> Decision
+```
+
+**Reading the diagram.** Callers (gateway middleware) depend only on `RateLimiter` and the immutable `Decision` value object. Two algorithms realize the interface; `CountingLimiter` is a **Decorator** (§37.10) that also realizes it and wraps any other limiter to add metrics. Both algorithms inherit lock striping, a fixed array of locks indexed by key hash, so unrelated keys rarely contend while operations on one key stay atomic. A factory (`build_limiter`) builds the right object from configuration.
+
+**Figure 38.19 — Sequence diagram for one admission decision.**
+
+```mermaid
+sequenceDiagram
+  participant G as GatewayMiddleware
+  participant D as CountingLimiter
+  participant T as TokenBucketLimiter
+  participant K as Stripe lock
+  G->>+D: allow(apiKey, 1)
+  D->>+T: allow(apiKey, 1)
+  T->>K: acquire lock for hash(apiKey)
+  T->>T: refill, compare tokens with cost
+  T->>K: release
+  T-->>-D: Decision
+  D->>D: count allowed or rejected
+  D-->>-G: Decision
+  alt not allowed
+    G-->>G: respond 429 with Retry-After
+  end
+```
+
+**Reading the diagram.** The middleware calls the decorator, which delegates to the token bucket. The bucket takes only its key's stripe lock, refills lazily and decides, so the read-modify-write is atomic per key. The decorator counts the outcome; the middleware turns a rejection into HTTP 429 with `Retry-After` from the decision (§22.3.4). Everything is in process; in a fleet, the same interface would be implemented by a Redis-backed class (§22.8.2) and callers would not change.
+
+```python
+from __future__ import annotations
+
+import threading
+import time
+from abc import ABC, abstractmethod
+from collections import Counter
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Decision:
+    allowed: bool
+    remaining: float
+    retry_after: float          # seconds; 0 when allowed
+
+
+class RateLimiter(ABC):                              # what callers depend on (DIP)
+    @abstractmethod
+    def allow(self, key: str, cost: float = 1.0) -> Decision: ...
+
+
+class _Striped:
+    """Lock striping: N locks shared by all keys, so unrelated keys rarely contend."""
+    def __init__(self, stripes: int = 64):
+        self._locks = [threading.Lock() for _ in range(stripes)]
+
+    def lock_for(self, key: str) -> threading.Lock:
+        return self._locks[hash(key) % len(self._locks)]
+
+
+class TokenBucketLimiter(RateLimiter, _Striped):
+    """Per-key token bucket; the algorithm itself is explained in §22.4."""
+    def __init__(self, rate: float, capacity: float, clock=time.monotonic):
+        _Striped.__init__(self)
+        self.rate, self.capacity, self.clock = rate, capacity, clock
+        self._state: dict[str, tuple[float, float]] = {}       # key -> (tokens, last)
+
+    def allow(self, key, cost=1.0):
+        with self.lock_for(key):
+            now = self.clock()
+            tokens, last = self._state.get(key, (self.capacity, now))
+            tokens = min(self.capacity, tokens + max(0.0, now - last) * self.rate)
+            if tokens >= cost:
+                self._state[key] = (tokens - cost, now)
+                return Decision(True, tokens - cost, 0.0)
+            self._state[key] = (tokens, now)
+            return Decision(False, tokens, (cost - tokens) / self.rate)
+
+
+class FixedWindowLimiter(RateLimiter, _Striped):
+    def __init__(self, limit: int, window: float, clock=time.monotonic):
+        _Striped.__init__(self)
+        self.limit, self.window, self.clock = limit, window, clock
+        self._state: dict[str, tuple[int, int]] = {}           # key -> (window id, count)
+
+    def allow(self, key, cost=1.0):
+        with self.lock_for(key):
+            now = self.clock()
+            wid = int(now // self.window)
+            cur, count = self._state.get(key, (wid, 0))
+            if cur != wid:
+                count = 0
+            if count + cost <= self.limit:
+                self._state[key] = (wid, count + cost)
+                return Decision(True, self.limit - count - cost, 0.0)
+            self._state[key] = (wid, count)
+            return Decision(False, self.limit - count, (wid + 1) * self.window - now)
+
+
+class CountingLimiter(RateLimiter):                  # Decorator: adds metrics, same interface
+    def __init__(self, inner: RateLimiter):
+        self.inner, self.counts = inner, Counter()
+
+    def allow(self, key, cost=1.0):
+        d = self.inner.allow(key, cost)
+        self.counts["allowed" if d.allowed else "rejected"] += 1
+        return d
+
+
+def build_limiter(config: dict, clock=time.monotonic) -> RateLimiter:   # Factory
+    kind = config["algorithm"]
+    if kind == "token_bucket":
+        inner = TokenBucketLimiter(config["rate"], config["burst"], clock)
+    elif kind == "fixed_window":
+        inner = FixedWindowLimiter(config["limit"], config["window_s"], clock)
+    else:
+        raise ValueError(f"unknown algorithm {kind}")
+    return CountingLimiter(inner)
+
+
+if __name__ == "__main__":
+    t = [0.0]
+    rl = build_limiter({"algorithm": "token_bucket", "rate": 10, "burst": 20}, lambda: t[0])
+    results = [rl.allow("key-42") for _ in range(25)]
+    print(sum(d.allowed for d in results), "allowed; retry after",
+          round(results[-1].retry_after, 2), "s;", dict(rl.counts))
+    t[0] = 1.0
+    print("after 1 s:", sum(rl.allow("key-42").allowed for _ in range(25)), "allowed")
+    print("other key:", rl.allow("key-7").allowed)
+
+    fw = build_limiter({"algorithm": "fixed_window", "limit": 5, "window_s": 60}, lambda: t[0])
+    print("fixed window:", [fw.allow("u").allowed for _ in range(6)],
+          "retry", fw.allow("u").retry_after)
+
+    # 16 threads x 1,000 calls on one key with the clock frozen: exactly 20 may pass.
+    tb = TokenBucketLimiter(rate=10, capacity=20, clock=lambda: 0.0)
+    passed = []
+    def hammer():
+        passed.append(sum(tb.allow("hot").allowed for _ in range(1_000)))
+    ts = [threading.Thread(target=hammer) for _ in range(16)]
+    for th in ts: th.start()
+    for th in ts: th.join()
+    assert sum(passed) == 20, passed
+    print("concurrent admits:", sum(passed))
+```
+
+Output:
+
+```text
+20 allowed; retry after 0.1 s; {'allowed': 20, 'rejected': 5}
+after 1 s: 10 allowed
+other key: True
+fixed window: [True, True, True, True, True, False] retry 59.0
+concurrent admits: 20
+```
+
+**Patterns and follow-ups.** **Strategy** (algorithms behind one interface), **Decorator** (metrics, logging, a "shadow mode" that logs but never rejects), **Factory** (configuration to object). The 16-thread test admits exactly 20 requests with the clock frozen, which proves per-key atomicity. Follow-ups: idle keys accumulate forever (evict with an LRU of keys, Exercise 3, or a TTL); hierarchical limits (a `CompositeLimiter` that must check all buckets *before* debiting any, or debit and refund on rejection); and fail-open versus fail-closed when a remote store is unreachable (§22.8.5), which is another decorator.
+
+### 38.10.7 Exercise 7: In-memory key-value store with TTL and transactions
+
+**Requirements.** `get`, `set(key, value, ttl)` and `delete`; keys with a time to live (TTL) disappear when it elapses; clients can `begin`, `commit` and `rollback` transactions, nested to any depth, and see their own uncommitted writes; a commit is all-or-nothing and fails if another client changed a key that this transaction read.
+
+**Design.** Expiry uses two mechanisms, like Redis [Redis Docs: EXPIRE]: **lazy** expiry on every read (an expired key is deleted when touched) and an **active** sweep from a min-heap of `(expires_at, key)` with a work budget, so memory is reclaimed even for keys nobody reads. Transactions live in a per-client `Session` holding a stack of write buffers: `begin` pushes, `rollback` pops, an inner `commit` merges into the level below, and the outermost `commit` validates and applies the buffer under the store lock. Validation is **optimistic concurrency** (§11.15.3): the session records the version of each key it read, and the commit fails if any version changed.
+
+**Figure 38.20 — Key-value store class diagram.**
+
+```mermaid
+classDiagram
+  class KVStore {
+    -Map~String,Entry~ data
+    -Map~String,int~ version
+    -Heap expiryHeap
+    -Lock lock
+    +get(key) Object
+    +set(key, value, ttl) void
+    +delete(key) void
+    +sweep(budget) int
+    +session() Session
+  }
+  class Entry {
+    +Object value
+    +float expiresAt
+  }
+  class Session {
+    -List~Map~ stack
+    -Map~String,int~ reads
+    +begin() void
+    +get(key) Object
+    +set(key, value, ttl) void
+    +commit() void
+    +rollback() void
+  }
+  KVStore "1" *-- "*" Entry
+  Session "*" --> "1" KVStore
+```
+
+**Reading the diagram.** The store composes its entries and keeps a version counter per key that increases on every write, delete or expiry. Many sessions share one store. Each session's buffers and read-set are private, so uncommitted writes are invisible to other clients (no dirty reads). The store lock is the only synchronization point, and commits hold it for validation and application together.
+
+**Figure 38.21 — Sequence diagram for two conflicting transactions.**
+
+```mermaid
+sequenceDiagram
+  participant A as Session A
+  participant B as Session B
+  participant S as KVStore
+  A->>S: get balance, record version 1
+  B->>S: get balance, record version 1
+  B->>B: buffer balance = 50
+  B->>+S: commit
+  S->>S: versions match, apply, version 2
+  S-->>-B: ok
+  A->>A: buffer balance = 70
+  A->>+S: commit
+  S->>S: balance version 2 differs from 1
+  S-->>-A: ConflictError
+```
+
+**Reading the diagram.** Both sessions read `balance` at version 1 and buffer their writes locally. B commits first; validation passes and the write bumps the version to 2. A's commit then finds a changed version and fails instead of silently overwriting B's debit (a lost update, §11.13.1). A retries the whole transaction with fresh reads.
+
+```python
+from __future__ import annotations
+
+import heapq
+import threading
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+
+TOMBSTONE = object()                                  # "deleted inside this transaction"
+
+
+class ConflictError(Exception):
+    pass
+
+
+@dataclass
+class Entry:
+    value: object
+    expires_at: float | None
+
+
+class KVStore:
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self._data: dict[str, Entry] = {}
+        self._version: dict[str, int] = defaultdict(int)     # bumps on every change
+        self._heap: list[tuple[float, str]] = []              # (expires_at, key)
+        self._lock = threading.Lock()
+
+    def _live(self, key: str) -> Entry | None:               # lazy (passive) expiry
+        e = self._data.get(key)
+        if e is not None and e.expires_at is not None and e.expires_at <= self.clock():
+            del self._data[key]
+            self._version[key] += 1
+            return None
+        return e
+
+    def _apply(self, writes: dict) -> None:                   # caller holds the lock
+        now = self.clock()
+        for key, (value, ttl) in writes.items():
+            if value is TOMBSTONE:
+                self._data.pop(key, None)
+            else:
+                exp = None if ttl is None else now + ttl
+                self._data[key] = Entry(value, exp)
+                if exp is not None:
+                    heapq.heappush(self._heap, (exp, key))
+            self._version[key] += 1
+
+    def get(self, key):
+        with self._lock:
+            e = self._live(key)
+            return None if e is None else e.value
+
+    def set(self, key, value, ttl: float | None = None) -> None:
+        with self._lock:
+            self._apply({key: (value, ttl)})
+
+    def delete(self, key) -> None:
+        with self._lock:
+            self._apply({key: (TOMBSTONE, None)})
+
+    def sweep(self, budget: int = 1_000) -> int:              # active expiry, bounded work
+        removed = 0
+        with self._lock:
+            now = self.clock()
+            while self._heap and self._heap[0][0] <= now and budget > 0:
+                exp, key = heapq.heappop(self._heap)
+                budget -= 1
+                e = self._data.get(key)
+                if e is not None and e.expires_at == exp:     # skip stale heap entries
+                    del self._data[key]
+                    self._version[key] += 1
+                    removed += 1
+        return removed
+
+    def session(self) -> "Session":
+        return Session(self)
+
+
+class Session:
+    """Nested transactions with read-your-writes and optimistic conflict detection."""
+    def __init__(self, store: KVStore):
+        self.store = store
+        self._stack: list[dict] = []                          # one write buffer per level
+        self._reads: dict[str, int] = {}                      # key -> version first seen
+
+    def begin(self) -> None:
+        self._stack.append({})
+
+    def get(self, key):
+        for layer in reversed(self._stack):
+            if key in layer:
+                value = layer[key][0]
+                return None if value is TOMBSTONE else value
+        with self.store._lock:
+            e = self.store._live(key)
+            if self._stack:
+                self._reads.setdefault(key, self.store._version[key])
+            return None if e is None else e.value
+
+    def set(self, key, value, ttl=None) -> None:
+        if self._stack:
+            self._stack[-1][key] = (value, ttl)               # TTL counts from commit
+        else:
+            self.store.set(key, value, ttl)
+
+    def delete(self, key) -> None:
+        self.set(key, TOMBSTONE)
+
+    def rollback(self) -> None:
+        if not self._stack:
+            raise RuntimeError("no transaction")
+        self._stack.pop()
+        if not self._stack:
+            self._reads.clear()
+
+    def commit(self) -> None:
+        if not self._stack:
+            raise RuntimeError("no transaction")
+        top = self._stack.pop()
+        if self._stack:                                       # inner commit: merge down
+            self._stack[-1].update(top)
+            return
+        reads, self._reads = self._reads, {}
+        with self.store._lock:
+            for key, seen in reads.items():
+                self.store._live(key)
+                if self.store._version[key] != seen:
+                    raise ConflictError(f"{key!r} changed since it was read")
+            self.store._apply(top)                            # all writes or none
+
+
+if __name__ == "__main__":
+    t = [0.0]
+    kv = KVStore(clock=lambda: t[0])
+    kv.set("session:9", "alice", ttl=10)
+    t[0] = 9.9
+    print("t=9.9:", kv.get("session:9"))
+    t[0] = 10.0
+    print("t=10.0:", kv.get("session:9"))
+
+    s = kv.session()
+    s.begin(); s.set("x", 1)
+    s.begin(); s.set("x", 2); print("inner sees", s.get("x")); s.rollback()
+    print("outer sees", s.get("x"), "store sees", kv.get("x"))
+    s.commit(); print("after commit store sees", kv.get("x"))
+
+    kv.set("balance", 100)
+    a, b = kv.session(), kv.session()
+    a.begin(); a.set("balance", a.get("balance") - 30)
+    b.begin(); b.set("balance", b.get("balance") - 50); b.commit()
+    try:
+        a.commit()
+    except ConflictError as e:
+        print("a:", e, "| balance =", kv.get("balance"))
+
+    for i in range(1_000):
+        kv.set(f"tmp:{i}", i, ttl=5 if i % 2 else 50)
+    t[0] += 6
+    print("swept", kv.sweep(), "keys; remaining tmp keys:",
+          sum(kv.get(f"tmp:{i}") is not None for i in range(1_000)))
+```
+
+Output:
+
+```text
+t=9.9: alice
+t=10.0: None
+inner sees 2
+outer sees 1 store sees None
+after commit store sees 1
+a: 'balance' changed since it was read | balance = 50
+swept 500 keys; remaining tmp keys: 500
+```
+
+**Patterns and follow-ups.** Write buffers are a form of the **Command** pattern (recorded operations applied later, §37.12); the session-per-client design is a **Unit of Work**. A TTL inside a transaction counts from commit time, which you should state. Follow-ups: durability (an append-only log of committed buffers, fsync policy per §6.14); isolation level (every read is validated at commit under the store lock, so committed transactions are serializable in commit order, but a transaction can *observe* a mix of old and new values before it aborts, because reads do not come from a snapshot; MVCC snapshots, §11.14, fix that); memory limits (evict with LRU, Exercise 3); and why Redis transactions differ: `MULTI`/`EXEC` queue commands and run them without interleaving but do not roll back a failed command, while `WATCH` provides the same optimistic check-and-set as this design [Redis Docs: Transactions].
+
+### 38.10.8 Exercise 8: Chess (move validation)
+
+**Requirements.** Two players alternate moves on a standard board; the system rejects illegal moves, reports check, checkmate and stalemate. Out of scope for the first pass: castling, en passant, promotion, draw rules (all follow-ups).
+
+**The key design decision** is validating moves in two layers. Each piece knows only its own geometry and produces **pseudo-legal** moves (moves that follow the piece's movement rules and do not land on a friendly piece). A separate `MoveValidator` filters them to **legal** moves by applying each one to a copy of the board and rejecting it if the mover's king is attacked afterwards. This keeps check logic, which concerns the whole position, out of every piece class, and is the same split that the python-chess library exposes as `pseudo_legal_moves` and `legal_moves` [python-chess docs].
+
+**Figure 38.22 — Chess class diagram.**
+
+```mermaid
+classDiagram
+  class Game {
+    -Board board
+    -String turn
+    +move(String uci) String
+    +status() String
+  }
+  class Board {
+    -Map grid
+    +at(Square s) Piece
+    +moved(Square from, Square to) Board
+    +inCheck(String color) bool
+  }
+  class Piece {
+    <<abstract>>
+    +String color
+    +pseudoMoves(Board b, Square s) List*
+  }
+  class MoveValidator {
+    +legalMoves(Board b, String color) List
+  }
+  Game "1" *-- "1" Board
+  Game --> MoveValidator
+  Board "1" o-- "0..32" Piece
+  Piece <|-- Stepper
+  Piece <|-- Slider
+  Piece <|-- Pawn
+  Stepper <|-- King
+  Stepper <|-- Knight
+  Slider <|-- Rook
+  Slider <|-- Bishop
+  Slider <|-- Queen
+  MoveValidator ..> Board
+```
+
+**Reading the diagram.** `Game` owns the board and the turn and delegates legality to `MoveValidator`. The piece hierarchy is a justified use of inheritance: behavior genuinely differs by kind and every subclass is substitutable for `Piece` (Liskov, §36.5). The two intermediate classes remove duplication: a `Stepper` hops by fixed offsets (king, knight); a `Slider` follows rays until blocked (rook, bishop, queen), so a queen is just "a slider with eight rays". Pieces are immutable and shared between board copies; `Board.moved` returns a new board, which removes all undo bugs from validation.
+
+**Figure 38.23 — Sequence diagram for validating and applying a move.**
+
+```mermaid
+sequenceDiagram
+  actor P as Player
+  participant G as Game
+  participant V as MoveValidator
+  participant B as Board
+  participant X as Piece
+  P->>+G: move e2e4
+  G->>+V: legalMoves(board, turn)
+  loop each own piece
+    V->>X: pseudoMoves(board, square)
+    loop each pseudo-legal target
+      V->>B: moved(from, to)
+      V->>B: copy.inCheck(turn)
+    end
+  end
+  V-->>-G: legal moves
+  alt move is legal
+    G->>B: board = moved(from, to)
+    G->>G: switch turn, compute status
+    G-->>P: ok, check, checkmate or stalemate
+  else illegal
+    G-->>P: error
+  end
+  deactivate G
+```
+
+**Reading the diagram.** For every own piece, the validator asks for pseudo-legal targets, builds the resulting board, and keeps the move only if the mover's king is not attacked. `Game` applies a legal move, switches the turn and computes the status by generating the opponent's legal moves: none plus check is checkmate, none without check is stalemate. The cost is visible as two nested loops; about 20–40 moves per position, each needing an attack test, is trivial for a game server but too slow for an engine searching millions of positions, which uses bitboards and incremental updates instead.
+
+```python
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+Square = tuple[int, int]                                   # (file 0-7, rank 0-7)
+ORTHO = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+DIAG = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
+
+
+def on_board(f: int, r: int) -> bool:
+    return 0 <= f < 8 and 0 <= r < 8
+
+
+class Piece(ABC):
+    symbol = "?"
+
+    def __init__(self, color: str):
+        self.color = color                                  # "w" or "b"
+
+    @abstractmethod
+    def pseudo_moves(self, board: "Board", sq: Square) -> list[Square]:
+        """Moves that obey this piece's geometry, ignoring whether the own king is left in check."""
+
+
+class Stepper(Piece):                                       # king, knight: one hop
+    offsets: list[Square] = []
+
+    def pseudo_moves(self, board, sq):
+        out = []
+        for df, dr in self.offsets:
+            t = (sq[0] + df, sq[1] + dr)
+            if on_board(*t) and (board.at(t) is None or board.at(t).color != self.color):
+                out.append(t)
+        return out
+
+
+class Slider(Piece):                                        # bishop, rook, queen: rays
+    rays: list[Square] = []
+
+    def pseudo_moves(self, board, sq):
+        out = []
+        for df, dr in self.rays:
+            f, r = sq[0] + df, sq[1] + dr
+            while on_board(f, r):
+                occupant = board.at((f, r))
+                if occupant is None:
+                    out.append((f, r))
+                else:
+                    if occupant.color != self.color:
+                        out.append((f, r))                  # capture, then the ray stops
+                    break
+                f, r = f + df, r + dr
+        return out
+
+
+class King(Stepper):   symbol, offsets = "K", ORTHO + DIAG
+class Knight(Stepper): symbol, offsets = "N", [(1, 2), (2, 1), (-1, 2), (-2, 1),
+                                               (1, -2), (2, -1), (-1, -2), (-2, -1)]
+class Bishop(Slider):  symbol, rays = "B", DIAG
+class Rook(Slider):    symbol, rays = "R", ORTHO
+class Queen(Slider):   symbol, rays = "Q", ORTHO + DIAG
+
+
+class Pawn(Piece):
+    symbol = "P"
+
+    def pseudo_moves(self, board, sq):
+        d, start = (1, 1) if self.color == "w" else (-1, 6)
+        f, r = sq
+        out = []
+        if on_board(f, r + d) and board.at((f, r + d)) is None:
+            out.append((f, r + d))
+            if r == start and board.at((f, r + 2 * d)) is None:
+                out.append((f, r + 2 * d))
+        for df in (-1, 1):
+            t = (f + df, r + d)
+            if on_board(*t) and board.at(t) is not None and board.at(t).color != self.color:
+                out.append(t)
+        return out
+
+
+class Board:
+    def __init__(self):
+        self.grid: dict[Square, Piece] = {}
+
+    @classmethod
+    def standard(cls) -> "Board":
+        b, back = cls(), [Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook]
+        for f, kind in enumerate(back):
+            b.grid[(f, 0)], b.grid[(f, 7)] = kind("w"), kind("b")
+            b.grid[(f, 1)], b.grid[(f, 6)] = Pawn("w"), Pawn("b")
+        return b
+
+    def at(self, sq: Square) -> Piece | None:
+        return self.grid.get(sq)
+
+    def moved(self, src: Square, dst: Square) -> "Board":   # copy-on-move: no undo bugs
+        b = Board()
+        b.grid = dict(self.grid)
+        b.grid[dst] = b.grid.pop(src)
+        return b
+
+    def attacked(self, sq: Square, by: str) -> bool:
+        return any(p.color == by and sq in p.pseudo_moves(self, s) for s, p in self.grid.items())
+
+    def in_check(self, color: str) -> bool:
+        king = next(s for s, p in self.grid.items() if isinstance(p, King) and p.color == color)
+        return self.attacked(king, "b" if color == "w" else "w")
+
+
+class MoveValidator:
+    """Legal = pseudo-legal for the piece AND does not leave the mover's king attacked."""
+    def legal_moves(self, board: Board, color: str) -> list[tuple[Square, Square]]:
+        return [(s, t) for s, p in list(board.grid.items()) if p.color == color
+                for t in p.pseudo_moves(board, s) if not board.moved(s, t).in_check(color)]
+
+
+class Game:
+    def __init__(self, validator: MoveValidator | None = None):
+        self.board, self.turn = Board.standard(), "w"
+        self.validator = validator or MoveValidator()
+
+    @staticmethod
+    def parse(sq: str) -> Square:
+        return ord(sq[0]) - ord("a"), int(sq[1]) - 1
+
+    def move(self, uci: str) -> str:
+        src, dst = self.parse(uci[:2]), self.parse(uci[2:4])
+        if (src, dst) not in self.validator.legal_moves(self.board, self.turn):
+            raise ValueError(f"illegal move {uci} for {self.turn}")
+        self.board = self.board.moved(src, dst)
+        self.turn = "b" if self.turn == "w" else "w"
+        return self.status()
+
+    def status(self) -> str:
+        has_moves = bool(self.validator.legal_moves(self.board, self.turn))
+        if self.board.in_check(self.turn):
+            return "check" if has_moves else "checkmate"
+        return "ok" if has_moves else "stalemate"
+
+
+if __name__ == "__main__":
+    g = Game()
+    print("white opening moves:", len(g.validator.legal_moves(g.board, "w")))   # 20
+    g.move("e2e4"); g.move("d7d6")
+    print("after f1b5:", g.move("f1b5"))                 # bishop checks the king via d7
+    try:
+        g.move("a7a6")                                   # ignores the check: illegal
+    except ValueError as e:
+        print(e)
+    print("after c7c6:", g.move("c7c6"))                 # blocks the check: legal
+
+    fool = Game()
+    for uci in ["f2f3", "e7e5", "g2g4"]:
+        fool.move(uci)
+    print("Fool's mate, after d8h4:", fool.move("d8h4"))
+```
+
+Output:
+
+```text
+white opening moves: 20
+after f1b5: check
+illegal move a7a6 for b
+after c7c6: ok
+Fool's mate, after d8h4: checkmate
+```
+
+**Patterns and follow-ups.** Polymorphism over a small class hierarchy; validation as a separate policy object (it could become a chain of rules for variants such as Chess960). The 20 opening moves match the known count for the initial position, a quick correctness check. Follow-ups: castling and en passant need *history* (has the king moved? what was the last move?), so the board state grows into a `Position` with castling rights and an en-passant square; promotion turns a move into a value object with an optional piece; undo and replay come from storing moves as **Commands** (§37.12); draw by threefold repetition needs a position hash (Zobrist hashing); and online play turns `Game` into a server-side aggregate whose moves are validated on the server, never trusted from the client.
+

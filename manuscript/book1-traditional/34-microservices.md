@@ -493,45 +493,26 @@ all ACL tests passed
 ### 34.6.1 The API gateway
 
 ::: definition
-**Definition — API gateway.** A reverse proxy (§7.12) that is the single entry point for external clients into a set of services. It routes each request to the right service and applies cross-cutting **edge concerns** once: TLS termination, authentication, coarse authorization, rate limiting and quotas, request validation, response caching, protocol translation and, sometimes, aggregation of several service calls into one response [Richardson 2018].
+**Definition — API gateway.** A reverse proxy (§7.12) that is the single entry point for external clients into a set of services. It routes requests and applies **edge concerns** once: TLS termination, authentication, rate limiting, request validation, caching, protocol translation and sometimes aggregation [Richardson 2018].
 :::
 
-#### First-principles explanation
+A hotel guest asks the front desk rather than searching the corridors for housekeeping; the desk checks who they are, knows where everything is and enforces house rules in one place. Without a gateway, a mobile app must know every service's address, every service must validate tokens and enforce rate limits in every language, and every internal refactoring breaks published clients. The gateway decouples the **external API**, which must stay stable for years because old app versions persist (§8.4.3), from the **internal topology**, which should be free to change weekly.
 
-A large hotel has one front desk. Guests do not wander the corridors looking for housekeeping, the restaurant and the concierge; they ask the desk, which checks who they are, knows where everything is and forwards the request. The desk also enforces house rules (no visitors after midnight) in one place instead of on every floor. Without it, every department would need its own security guard.
-
-#### Why does this exist?
-
-Without a gateway, a mobile app would need to know the address of every service, every service would need to validate tokens and enforce rate limits itself (in every language the company uses), and every internal refactoring (splitting a service in two) would break published clients. The gateway decouples the **external API**, which must be stable for years because old app versions never die (§8.4.3), from the **internal topology**, which should be free to change weekly.
-
-#### How it works internally
-
-1. **Terminate TLS** and parse the HTTP request.
-2. **Authenticate**: validate the access token (for example a JWT's signature and expiry, §8.13) or exchange an opaque token with the identity service, and attach a verified identity header for downstream services.
-3. **Apply policies**: rate limits per API key or user (Chapter 22), request size limits, schema validation, IP allow lists.
-4. **Route**: match host, path, method and headers to a route; resolve the target service through service discovery (§34.7); pick an instance (§19.10).
-5. **Optionally aggregate**: call several services and merge the results (or leave this to a BFF, §34.6.2).
-6. **Observe**: start or continue a trace (§34.9), emit access logs and metrics, and add a request ID.
-
-Products include Kong, Envoy-based gateways, NGINX, Apigee, AWS API Gateway and the Kubernetes Gateway API implementations (§42.10). The gateway itself should hold no business state; it scales horizontally behind an L4 load balancer and is often deployed per region.
+For each request it terminates TLS; authenticates (validates a JWT, §8.13, and attaches a verified identity header); applies rate limits (Chapter 22) and validation; matches the route and resolves the target through discovery (§34.7); optionally aggregates; and starts or continues a trace (§34.9). Common choices include Kong, Envoy-based gateways, NGINX, cloud API gateways and Kubernetes Gateway API implementations (§42.10). The gateway holds no business state and scales horizontally.
 
 ::: warning
-**Warning — The gateway is not a place for business logic.** Every team needs to change routes and policies, so a gateway that accumulates business rules becomes a shared monolith that every release passes through, owned by one overloaded platform team. Keep business logic in services; keep the gateway configuration declarative and owned per route by the team behind it. Lewis and Fowler's phrase for the principle is "smart endpoints and dumb pipes" [Lewis and Fowler 2014].
+**Warning — Keep business logic out of the gateway.** Every team needs route changes, so a gateway accumulating business rules becomes a shared monolith owned by one overloaded team. Lewis and Fowler's principle is "smart endpoints and dumb pipes" [Lewis and Fowler 2014].
 :::
 
 ### 34.6.2 Backends for frontends (BFF)
 
 ::: definition
-**Definition — Backend for frontend (BFF).** A server-side component dedicated to one kind of user interface (for example iOS, Android, web or a partner API), owned by or closely aligned with the team that builds that interface, which aggregates and reshapes calls to downstream services into exactly the API that interface needs [Newman 2015].
+**Definition — Backend for frontend (BFF).** A server-side component dedicated to one kind of user interface (iOS, web, partner API), owned by or aligned with that interface's team, which aggregates and reshapes downstream calls into exactly the API that interface needs [Newman 2015].
 :::
 
-#### Why does this exist?
+One general-purpose API serves no client well. The mobile home screen needs 6 fields from 5 services in one round trip over a cellular network; the web dashboard needs 40 fields; a partner needs a stable, versioned contract. A single gateway serving all three accumulates per-client conditionals and makes every UI change wait for the gateway team.
 
-One general-purpose API for every client serves none of them well. The mobile home screen needs 6 fields from 5 services in one round trip over a cellular network; the web dashboard needs 40 fields and can make several calls; a partner integration needs a stable, versioned, documented contract. A single gateway that tries to serve all three accumulates conditional logic for each, and every UI change needs the gateway team. A BFF per client type lets each UI team shape its own backend.
-
-#### Origins, cited carefully
-
-The idea has two well-documented roots. At **Netflix**, the API team redesigned its API around 2012 so that device-specific "adapter" code, written by the teams that built each device's user interface, ran on the server and called a set of general-purpose backend services; each device could then fetch exactly what its screens needed in one request [Jacobson 2012]. At **SoundCloud**, engineers built per-client backends during the company's move from a monolith to services, starting around 2013; Lukasz Plotnicki described the approach, and Sam Newman, who interviewed SoundCloud engineers, named and popularized it as the "Backends For Frontends" pattern in 2015 [Plotnicki 2015; Newman 2015]. Phil Calçado, then at SoundCloud, is widely credited with the name; see the open verification items.
+**Origins, cited carefully.** At **Netflix**, the API was redesigned around 2012 so that device-specific adapter code, written by each device's UI team, ran on the server and called general-purpose backend services, letting each device fetch what its screens needed in one request [Jacobson 2012]. At **SoundCloud**, per-client backends emerged from about 2013 during the move from a monolith to services; Lukasz Plotnicki described them, and Sam Newman, who interviewed SoundCloud engineers, named and popularized the pattern in 2015 [Plotnicki 2015; Newman 2015].
 
 **Figure 34.5 — Edge gateway with one BFF per client type.**
 
@@ -554,7 +535,7 @@ flowchart LR
   DLV --> DDB[(Delivery DB)]
 ```
 
-**Reading the diagram.** All three client types reach one edge gateway over HTTPS; the gateway terminates TLS, authenticates and rate-limits, then routes by host or path prefix to a BFF over HTTP/2 inside the network. Each BFF calls domain services synchronously over gRPC and merges their responses into a client-shaped payload; the Mobile BFF, for example, builds the home screen from catalog, ordering and delivery in one client round trip. Each domain service owns its database; BFFs own no business data (at most a cache), so they scale horizontally. Failure points: a BFF fans out to several services, so its availability and tail latency are bounded by its dependencies (§34.8.3); it needs timeouts, partial responses and fallbacks (Chapter 22). Scaling: the gateway scales with total traffic, each BFF with its client's traffic.
+**Reading the diagram.** All clients reach one edge gateway over HTTPS; it terminates TLS, authenticates, rate-limits and routes to a BFF over HTTP/2. Each BFF calls domain services synchronously over gRPC and merges the responses into a client-shaped payload. Domain services own their databases; BFFs own no business data, so they scale horizontally with their client's traffic. Failure points: a BFF's availability and tail latency are bounded by its dependencies (§34.8.3), so it needs deadlines, partial responses and fallbacks (Chapter 22).
 
 #### Mathematical foundations: why aggregation near the services pays off
 
@@ -573,135 +554,112 @@ $$L_{\text{seq}} = \sum_{i=1}^{n} \left(R_i + s_i\right) \qquad L_{\text{par}} =
 :::
 
 ::: example
-**Worked example — The QuickBite home screen over a mobile network.** The home screen needs 8 calls (profile, address, nearby restaurants, promotions, active order, courier position, recommendations, unread messages). Each call takes $s = 20$ ms in its service. The phone's round trip to the gateway is $R_{\text{mobile}} = 100$ ms; inside the datacenter a call costs $R_{\text{dc}} = 1$ ms.
+**Worked example — The QuickBite home screen over a mobile network.** The screen needs 8 calls, each taking $s = 20$ ms in its service. The phone's round trip is $R_{\text{mobile}} = 100$ ms; inside the datacenter $R_{\text{dc}} = 1$ ms.
 
-1. Phone calls each service in sequence: $L = 8 \times (100 + 20) = 960$ ms.
-2. Phone fires all 8 in parallel: $L \approx 100 + 20 = 120$ ms in theory, but mobile radios, HTTP/2 stream limits and dependent calls (recommendations need the address) push this up, and battery cost rises; in practice apps get two or three dependency "waves", about $3 \times 120 = 360$ ms.
-3. BFF, one phone round trip, BFF calls the 8 services sequentially: $L = 100 + 8 \times (1 + 20) = 100 + 168 = 268$ ms.
-4. BFF calls in three dependency waves of parallel calls: $L = 100 + 3 \times (1 + 20) = 163$ ms.
+1. Phone calls sequentially: $L = 8 \times (100 + 20) = 960$ ms.
+2. Phone calls in parallel: $100 + 20 = 120$ ms in theory, but dependent calls (recommendations need the address) typically force about three waves: $3 \times 120 = 360$ ms.
+3. BFF, one phone round trip, sequential inside: $L = 100 + 8 \times (1 + 20) = 268$ ms.
+4. BFF with three parallel waves inside: $L = 100 + 3 \times 21 = 163$ ms.
 
-**Interpretation.** Moving aggregation from the phone to a BFF one network hop from the services saves about 0.8 s against the naive design and 0.2 s against the best realistic client design, because expensive round trips are paid once and cheap ones are paid many times. **Engineering implication.** Put aggregation where round trips are cheapest, and inside the BFF run independent calls in parallel. But parallel fan-out is exposed to the slowest dependency (§34.8.3), so give every call a deadline and return partial results when non-essential calls (recommendations, promotions) are late.
+**Interpretation.** Paying the expensive round trip once and the cheap ones many times saves 0.8 s against the naive design and 0.2 s against the best realistic client design. **Engineering implication.** Aggregate where round trips are cheapest, parallelize independent calls, and give each a deadline so late optional data (promotions) is dropped rather than awaited.
 :::
-
-::: industry
-**Netflix Zuul.** Netflix built Zuul as the edge gateway in front of its streaming API, handling routing, authentication, traffic shaping and resilience at the edge, and rewrote it in 2016 as Zuul 2 on an asynchronous, non-blocking Netty core to handle large numbers of persistent connections [Netflix Technology Blog 2016]. The device-specific adapters of the 2012 API redesign sat behind it.
-*Evidence: Primary* — [Netflix Technology Blog 2016; Jacobson 2012]
-:::
-
-#### Alternatives and trade-offs
 
 **Table 34.3 — Gateway, BFF and GraphQL compared.**
 
 | | Single API gateway | Gateway + BFF per client | GraphQL federation (§8.7) |
 |---|---|---|---|
-| What it is | One edge proxy, one public API | Thin edge plus a backend per client type | One graph schema composed from service subgraphs |
-| Advantages | Simple; one place for policy | Each UI team shapes its API; fewer round trips | Clients choose fields; one endpoint |
-| Disadvantages | Becomes a bottleneck of conditional logic | Duplication across BFFs; more deployables | Query cost control; caching is harder; resolver fan-out |
-| Choose when | Few client types, similar needs | Several client types with different needs and teams | Many clients with varied, evolving data needs |
+| Advantages | Simple; one place for policy | UI teams shape their APIs; fewer round trips | Clients choose fields; one endpoint |
+| Disadvantages | Accumulates per-client logic | Duplication across BFFs; more deployables | Query cost control; harder caching |
+| Choose when | Few, similar client types | Several client types and teams | Many clients with varied data needs |
 
-The main risk of BFFs is **duplication**: the same "is this restaurant open?" logic implemented in three BFFs, slowly diverging. The fix is to push domain logic down into the owning service and keep BFFs to aggregation and presentation.
+The main BFF risk is **duplication**: "is this restaurant open?" implemented three times and diverging. Push domain logic into the owning service; keep BFFs to aggregation and presentation.
 
 ## 34.7 Service discovery
 
-### 34.7.1 The problem
-
-In a monolith, a function call needs no address. In a microservice system, the Ordering service must find a healthy instance of Payment, and that set changes constantly: autoscaling adds instances, deploys replace them, nodes fail, and in containers each instance gets a new IP address every time it starts. Hard-coded addresses or hand-edited configuration files cannot keep up.
-
 ::: definition
-**Definition — Service discovery.** The mechanism by which a client finds the current network locations of healthy instances of a service. It has two parts: a **service registry**, a database of service instances and their locations and health; and a **lookup** path, by which a client (client-side discovery) or a router (server-side discovery) queries the registry [Richardson 2018].
+**Definition — Service discovery.** The mechanism by which a client finds the current network locations of healthy instances of a service. A **service registry** stores instances, locations and health; a **lookup** path lets a client (client-side discovery) or a router (server-side discovery) query it [Richardson 2018].
 :::
 
-#### First-principles explanation
+In containers, instances appear and disappear with autoscaling, deploys and failures, and each gets a new IP address; hard-coded addresses cannot keep up. Think of a hospital switchboard: doctors check in when they reach a ward and out when they leave, and the operator connects callers to wherever the doctor is. A doctor who forgets to check out gets calls put through to an empty room until someone notices. Registration is checking in; health checks are how the operator notices.
 
-A phone directory works if people rarely move. A hospital switchboard is different: doctors move between wards all day, so each one checks in at the switchboard when arriving at a ward and checks out when leaving, and the operator connects callers to wherever the doctor is now. If a doctor forgets to check out, callers are put through to an empty room until someone notices. Service discovery is the switchboard; registration is checking in; health checks are how the operator notices the empty room.
+### 34.7.1 Registration and health
 
-### 34.7.2 Registration and health
+With **self-registration**, an instance registers on start-up, sends heartbeats and deregisters on shutdown; missing heartbeats expire its lease (Netflix Eureka) [Netflix Eureka Docs]. With **third-party registration**, the platform registers instances: Kubernetes maintains **EndpointSlices** for each Service, including only pods whose **readiness probe** passes [Kubernetes Docs: Services; Kubernetes Docs: Probes], and Consul agents register local services and run their checks [HashiCorp Consul Docs]. A registry listing dead instances is worse than none, so distinguish liveness (restart?), readiness (send traffic?) and **passive** health, where callers eject an instance after consecutive errors (Envoy's outlier detection) (§19.5).
 
-Instances get into the registry in one of two ways:
-
-1. **Self-registration.** The instance registers itself on start-up and sends periodic heartbeats; it deregisters on graceful shutdown. If heartbeats stop, the registry expires the entry after a lease. Netflix Eureka works this way [Netflix Eureka Docs].
-2. **Third-party registration.** A platform component observes instances and registers them: the Kubernetes control plane maintains **EndpointSlices** for each Service from the pods matching its selector, and includes only pods whose **readiness probe** is passing [Kubernetes Docs: Services; Kubernetes Docs: Probes]. Consul agents running on each node register local services and run their health checks [HashiCorp Consul Docs].
-
-Health integration is what makes a registry useful. A registry listing dead instances is worse than none, because it directs traffic to them confidently. Distinguish (§19.5): **liveness** (should the process be restarted?), **readiness** (should it receive traffic now?) and **passive** health, in which clients or proxies eject an instance after observing consecutive errors (Envoy calls this outlier detection).
-
-### 34.7.3 Client-side versus server-side discovery
+### 34.7.2 Client-side versus server-side discovery
 
 **Figure 34.6 — Client-side and server-side service discovery.**
 
 ```mermaid
-flowchart TB
-  subgraph ClientSide["Client-side discovery"]
-    O1[Ordering instance] -->|1. lookup payment| R1[(Service registry)]
-    O1 -->|"2. gRPC to chosen instance"| P1A[Payment 10.0.1.7]
-    O1 -.->|other calls| P1B[Payment 10.0.2.9]
-    P1A -.->|heartbeat| R1
-    P1B -.->|heartbeat| R1
-  end
-  subgraph ServerSide["Server-side discovery"]
-    O2[Ordering instance] -->|"1. call payment.svc VIP"| LB2[Router or load balancer]
-    LB2 -->|2. forward| P2A[Payment pod A]
-    LB2 -->|2. forward| P2B[Payment pod B]
-    CP2[(Registry or control plane)] -.->|endpoint updates| LB2
-  end
+flowchart LR
+  M([Mobile app]) -->|HTTPS| GW[Edge API gateway]
+  W([Web app]) -->|HTTPS| GW
+  P([Partner systems]) -->|HTTPS| GW
+  GW -->|HTTP/2| BM[Mobile BFF]
+  GW -->|HTTP/2| BW[Web BFF]
+  GW -->|HTTP/2| BP[Partner API]
+  BM -->|gRPC| CAT[Catalog]
+  BM -->|gRPC| ORD[Ordering]
+  BM -->|gRPC| DLV[Delivery]
+  BW -->|gRPC| CAT
+  BW -->|gRPC| ORD
+  BP -->|gRPC| ORD
+  CAT --> CDB[(Catalog DB)]
+  ORD --> ODB[(Order DB)]
+  DLV --> DDB[(Delivery DB)]
 ```
 
-**Reading the diagram.** In client-side discovery (top), the Ordering instance queries the registry (a replicated store, the storage boundary), caches the instance list and chooses an instance itself with a client-side balancing policy (§19.10), then calls it directly over gRPC; instances keep their registration alive with asynchronous heartbeats (dotted). In server-side discovery (bottom), Ordering calls one stable name or virtual IP; a router (an L4 or L7 load balancer, `kube-proxy` rules or a sidecar proxy) looks up endpoints pushed to it asynchronously by the registry or control plane and forwards the request. Failure points: in both designs a stale entry sends traffic to a dead instance until the entry expires or the caller ejects it; in the server-side design the router is an extra hop and must itself be redundant. Scaling: the registry is read-heavy and serves cached lookups, so it scales with replicas; clients should keep working with their last-known list if the registry is unreachable.
+**Reading the diagram.** Client-side (top): Ordering queries the registry (a replicated store, the storage boundary), caches the list, picks an instance with a client-side policy (§19.10) and calls it directly over gRPC; instances heartbeat asynchronously (dotted). Server-side (bottom): Ordering calls one stable name or virtual IP; a router (load balancer, `kube-proxy` rules or a sidecar) receives endpoint updates asynchronously and forwards the request. Failure points: stale entries send traffic to dead instances in both designs; the server-side router is an extra hop that must be redundant. Scaling: registries are read-heavy and serve cached lookups; clients must keep working on their last-known list if the registry is unreachable.
 
 **Table 34.4 — Client-side versus server-side discovery.**
 
 | | Client-side | Server-side |
 |---|---|---|
-| How it works | Client queries registry, balances itself | Client calls a stable name; a router resolves and balances |
-| Advantages | No extra hop; per-request balancing; rich policies | Clients stay simple and language-agnostic |
-| Disadvantages | Discovery logic in every language's client library | Extra hop or proxy; router must be highly available |
-| Examples | Eureka with a client library; gRPC name resolvers; Consul API lookups | Kubernetes Services and DNS; AWS load balancers; mesh sidecars |
-| Choose when | One or two languages, latency-sensitive internal RPC | Polyglot fleet, platform-managed infrastructure |
+| Advantages | No extra hop; per-request balancing | Simple, language-agnostic clients |
+| Disadvantages | Discovery logic in every language's library | Extra hop; router must be highly available |
+| Examples | Eureka client; gRPC name resolvers; Consul API | Kubernetes Services and DNS; cloud load balancers; mesh sidecars |
+| Choose when | Few languages, latency-sensitive RPC | Polyglot fleet, platform-managed infrastructure |
 
-A service mesh (§34.10) blurs the line: the sidecar proxy does client-side balancing on the caller's behalf, so the application sees server-side simplicity while traffic still goes directly from caller to instance.
+A service mesh (§34.10) blurs the line: the sidecar balances client-side on the application's behalf.
 
-### 34.7.4 Registries: Consul, Eureka and Kubernetes DNS
+### 34.7.3 Registries: Consul, Eureka and Kubernetes DNS
 
-- **Consul** (HashiCorp) keeps its catalog in a set of server nodes replicated with Raft (§26.7), so catalog writes are strongly consistent; agents on each node run health checks and use gossip for membership. Clients query through an HTTP API or a DNS interface (names such as `payment.service.consul`), and only instances passing their checks are returned [HashiCorp Consul Docs].
-- **Eureka** (Netflix OSS) deliberately favors availability: its servers replicate registrations to each other asynchronously, clients cache the full registry and keep using it if Eureka is unreachable, and in **self-preservation mode** Eureka stops expiring instances when heartbeats drop suddenly, on the theory that a network problem is more likely than mass death. It is an AP design in the CAP sense (§25.8): better to return possibly stale instances than none [Netflix Eureka Docs].
-- **Kubernetes DNS.** Each Service gets a DNS name `<service>.<namespace>.svc.cluster.local`, served by CoreDNS from the API server's state. A normal Service resolves to one stable virtual IP, and `kube-proxy` rules on each node spread connections across ready pods; a **headless** Service (no cluster IP) resolves to the pod IPs themselves, which suits client-side balancing such as gRPC's [Kubernetes Docs: DNS for Services and Pods].
+- **Consul** replicates its catalog across server nodes with Raft (§26.7), so catalog writes are strongly consistent; per-node agents run health checks and gossip membership. Lookups use an HTTP API or DNS (`payment.service.consul`) and return only passing instances [HashiCorp Consul Docs].
+- **Eureka** favors availability: servers replicate asynchronously, clients cache the registry and keep using it if Eureka is unreachable, and in **self-preservation mode** Eureka stops expiring instances when heartbeats drop suddenly, assuming a network problem rather than mass death. It is an AP design (§25.8) [Netflix Eureka Docs].
+- **Kubernetes DNS** gives each Service the name `<service>.<namespace>.svc.cluster.local`. A normal Service resolves to a virtual IP spread by `kube-proxy`; a **headless** Service resolves to pod IPs, suiting client-side balancing such as gRPC's [Kubernetes Docs: DNS for Services and Pods].
 
 ::: warning
-**Warning — DNS caching defeats fast discovery.** Plain DNS discovery is only as fresh as the TTL, and some clients cache longer than the TTL (older JVM configurations cached forever by default when a security manager was installed). Long-lived connections are worse: a gRPC client that resolved a headless Service once keeps its connections to the old pods until they close. Use short TTLs, connection maximum ages, or a discovery API that pushes updates.
+**Warning — DNS caching and long-lived connections defeat fast discovery.** DNS is only as fresh as its TTL, and some clients cache longer. A gRPC client that resolved a headless Service once keeps its connections to old pods until they close. Use short TTLs, connection maximum ages or push-based discovery.
 :::
 
 #### Mathematical foundations: how long does a dead instance keep receiving traffic?
 
 ::: formula
-**Stale-endpoint window and failed requests**
+**Latency of sequential and parallel call sequences**
 
-$$T_{\text{stale}} \le k \cdot h + t_{\text{prop}} + t_{\text{cache}} \qquad F \approx \frac{\lambda}{m} \cdot T_{\text{stale}} \cdot (1 - q)$$
+$$L_{\text{seq}} = \sum_{i=1}^{n} \left(R_i + s_i\right) \qquad L_{\text{par}} = \max_{i} \left(R_i + s_i\right)$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $h$ | Heartbeat or health-check interval | s |
-| $k$ | Consecutive missed checks before the instance is removed | count |
-| $t_{\text{prop}}$ | Time for the registry change to reach clients or routers | s |
-| $t_{\text{cache}}$ | Maximum additional client cache age | s |
-| $T_{\text{stale}}$ | Worst-case time a dead instance stays in some client's list | s |
-| $\lambda$ | Total request rate to the service | requests/s |
-| $m$ | Number of instances (traffic share of the dead one is $1/m$) | count |
-| $q$ | Fraction of failed calls rescued by a retry on another instance or by passive ejection | dimensionless |
-| $F$ | Requests that fail during the window | requests |
+| $n$ | Number of calls needed to build one response | calls |
+| $R_i$ | Network round-trip time of call $i$ (including connection reuse) | ms |
+| $s_i$ | Server processing time of call $i$ | ms |
+| $L_{\text{seq}}$ | Total latency when each call waits for the previous one | ms |
+| $L_{\text{par}}$ | Total latency when independent calls run concurrently | ms |
 :::
 
 ::: example
-**Worked example — A Payment instance dies abruptly.** Payment receives $\lambda = 2{,}000$ requests/s spread over $m = 20$ instances. Option A: self-registration with $h = 10$ s, $k = 3$, propagation 2 s and client caches refreshed every 30 s. Option B: Kubernetes with readiness `periodSeconds: 10`, `failureThreshold: 3` (the defaults), endpoint propagation about 2 s, no extra client cache, plus passive outlier detection in the caller's proxy.
+**Worked example — A Payment instance dies abruptly.** Payment receives $\lambda = 2{,}000$ requests/s over $m = 20$ instances. Option A: heartbeats with $h = 10$ s, $k = 3$, propagation 2 s, client caches refreshed every 30 s. Option B: Kubernetes readiness defaults (`periodSeconds: 10`, `failureThreshold: 3`), about 2 s propagation, no client cache.
 
-1. Option A window: $T = 3 \times 10 + 2 + 30 = 62$ s.
-2. Traffic to the dead instance: $2{,}000 / 20 = 100$ requests/s; without retries ($q = 0$): $F = 100 \times 62 = 6{,}200$ failed requests.
-3. Option B readiness window: $T = 3 \times 10 + 2 = 32$ s; $F = 3{,}200$ without retries. (For an abrupt crash, Kubernetes also notices the pod or node failure, often faster than the probe path.)
-4. Add passive ejection after 5 consecutive errors per caller, and one retry on another instance for idempotent calls: most failed calls are retried successfully ($q \approx 0.99$), and each of, say, 50 caller instances ejects the dead endpoint after about 5 errors. Failed requests fall to roughly $6{,}200 \times 0.01 \approx 62$ in option A.
+1. Option A: $T = 3 \times 10 + 2 + 30 = 62$ s; the dead instance's share is $2{,}000 / 20 = 100$ requests/s, so without retries $F = 100 \times 62 = 6{,}200$ failed requests.
+2. Option B: $T = 30 + 2 = 32$ s; $F = 3{,}200$. (Kubernetes often notices a crashed pod sooner through its container or node status.)
+3. Add passive ejection after 5 consecutive errors per caller and one retry elsewhere for idempotent calls ($q \approx 0.99$): option A falls to about $6{,}200 \times 0.01 \approx 62$ failures.
 
-**Interpretation.** The registry alone leaves tens of seconds of failures because detection is periodic and clients cache. **Engineering implication.** Do not rely on the registry for fast failure handling. Combine it with passive ejection and bounded retries of idempotent calls (§22.12, §22.15), and shorten detection only as far as false positives allow: a 1 s check with $k = 1$ would eject healthy instances during every garbage-collection pause.
+**Interpretation.** Periodic detection plus caching leaves tens of seconds of failures. **Engineering implication.** Do not rely on the registry for fast failure handling: combine it with passive ejection and bounded retries of idempotent calls (§22.12, §22.15). Shortening checks to 1 s with $k = 1$ would eject healthy instances during every garbage-collection pause.
 :::
 
 ::: industry
-**Eureka at Netflix.** Netflix built Eureka for its AWS deployment, where instance IPs changed constantly and the AWS load balancers of the time were unsuited to mid-tier service-to-service traffic. The design choice to favor availability over consistency, with client-side caching and self-preservation, reflected the view that during a network problem a possibly stale list is better than no list [Netflix Eureka Docs].
+**Eureka at Netflix.** Netflix built Eureka for AWS, where instance addresses changed constantly and the load balancers of the time did not suit mid-tier service-to-service traffic. Its availability-first design (client caching, self-preservation) reflects the judgment that during a network problem a possibly stale list beats no list.
 *Evidence: Primary* — [Netflix Eureka Docs]
 :::
 
@@ -709,10 +667,9 @@ $$T_{\text{stale}} \le k \cdot h + t_{\text{prop}} + t_{\text{cache}} \qquad F \
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Traffic to dead instances | Stale registry or client caches | Connection errors to specific IPs | Passive ejection; retry elsewhere | Short leases; push-based updates; outlier detection |
-| Registry outage | Registry cluster loses quorum or is overloaded | Lookup errors; registration failures | Clients use cached lists | Replicated registry; clients must tolerate registry absence |
-| Mass self-deregistration | Health check depends on a shared downstream (database) that is down | All instances unhealthy at once; zero endpoints | Fail open: keep last endpoints when all are unhealthy | Readiness checks test the instance, not its dependencies (§19.5.2) |
-| New instance gets traffic before warm-up | Registered before ready | Error spike after each deploy | Readiness gates | Register only after readiness; slow-start weighting |
+| Traffic to dead instances | Stale registry or caches | Errors to specific IPs | Passive ejection; retry elsewhere | Short leases; push updates |
+| Registry outage | Lost quorum or overload | Lookup and registration errors | Clients use cached lists | Replicated registry; tolerate its absence |
+| Mass deregistration | Health check tests a shared dependency | Zero healthy endpoints | Fail open: keep last endpoints | Readiness tests the instance only (§19.5.2) |
 
 ## 34.8 Inter-service communication
 
@@ -990,15 +947,15 @@ What to notice:
 
 ## 34.9 Distributed tracing (introduction)
 
-In a monolith, a slow request leaves one stack trace in one log. In QuickBite, a slow "place order" request passes through the gateway, the Mobile BFF, Ordering, Payment, an external provider and the outbox relay; each writes its own logs on different machines, with different clocks. Which of them made it slow? Distributed tracing answers that question. This section introduces the concepts needed for the rest of the chapter; Chapter 40 (§40.6–§40.7) covers sampling strategies, storage, OpenTelemetry and analysis in depth.
+A slow "place order" request passes through the gateway, BFF, Ordering, Payment and an external provider, each logging on a different machine. Which made it slow? This section introduces the concepts the chapter needs; Chapter 40 (§40.6–§40.7) covers sampling, storage, OpenTelemetry and analysis.
+
+### 34.9.1 Traces, spans and context propagation
 
 ::: definition
-**Definition — Trace, span and context propagation.** A **trace** is the record of one request's path through a distributed system, identified by a globally unique **trace ID**. It is a tree of **spans**; each span records one unit of work (an inbound request, an outbound call, a database query) with its service, operation name, start time, duration, status and attributes, plus its own span ID and its **parent span ID**. **Context propagation** is the passing of the trace ID and current span ID from caller to callee with each request (in HTTP headers or message metadata), so the callee's spans join the same trace [Sigelman et al. 2010; W3C Trace Context].
+**Definition — Trace, span and context propagation.** A **trace** records one request's path through a distributed system under a unique **trace ID**. It is a tree of **spans**, each recording one unit of work (an inbound request, an outbound call, a query) with service, operation, start time, duration, status, its span ID and its **parent span ID**. **Context propagation** passes the trace ID and current span ID from caller to callee (in HTTP headers or message metadata) so the callee's spans join the trace [Sigelman et al. 2010; W3C Trace Context].
 :::
 
-#### Why does this exist?
-
-Google's Dapper paper describes the problem that motivated it: a web search touches many services written by different teams, and engineers could not tell which service caused a slow query, or even which services a query had touched. Dapper's design goals were low overhead, application-level transparency (instrumentation in shared RPC and threading libraries rather than in every application) and ubiquitous deployment; it sampled requests (the first production version used a uniform sampling probability of 1/1024) to keep overhead and storage manageable [Sigelman et al. 2010].
+Google's Dapper paper describes the motivating problem: a web search touched many services built by different teams, and engineers could not tell which caused a slow query. Dapper aimed for low overhead and application transparency by instrumenting shared RPC and threading libraries, and sampled requests (its first production version used a uniform probability of 1/1024) [Sigelman et al. 2010].
 
 **Figure 34.9 — A trace of "place order" as a span tree.**
 
@@ -1012,99 +969,74 @@ flowchart TB
   S3 -.->|"link, async"| S7["Span G: outbox relay publish<br/>420 to 425 ms"]
 ```
 
-**Reading the diagram.** Each box is a span, and each solid arrow points from parent to child; all spans share one trace ID, and the times are offsets from the start of the root span. Reading the durations shows where time went: span F, the external payment provider's HTTPS call, takes 375 ms of the 412 ms total, so tuning Ordering's SQL (6 ms) would not help. Span G runs after the response was sent (it starts at 420 ms), because the event is published asynchronously by the outbox relay; it is connected by a **span link** (dotted), not as a child, since it is not part of the request's critical path. Storage boundary: each service exports spans asynchronously to a collector and trace store, never on the request path. Failure points: a service that does not propagate the context breaks the tree into separate traces. Scaling: storing every span of every request is expensive, so traces are sampled (Chapter 40).
+**Reading the diagram.** Each box is a span; solid arrows point from parent to child, all under one trace ID, with times as offsets from the root. Span F, the external provider's HTTPS call, takes 375 ms of 412 ms, so tuning Ordering's 6 ms SQL insert would not help. Span G starts after the response (420 ms) because the outbox relay publishes asynchronously; it is attached by a **span link** (dotted) rather than as a child. Services export spans asynchronously to a collector and trace store, never on the request path. Failure points: any hop that drops the context splits the trace. Scaling: traces are sampled (Chapter 40).
 
-#### How it works internally
-
-1. The first instrumented component (often the gateway) receives a request without trace context, creates a trace ID and a root span, and makes a sampling decision.
-2. On every outbound call it injects the context. The W3C Trace Context standard defines the `traceparent` header, which carries a version, the 16-byte trace ID, the 8-byte parent span ID and flags including "sampled", for example `traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01` [W3C Trace Context].
-3. The callee extracts the context, creates a child span with the received span ID as its parent, and repeats for its own outbound calls. For messages, the context travels in message headers, and consumers usually start a new span linked to the producer's.
-4. Each process exports finished spans asynchronously (batched, in the background) to a collector; a backend assembles spans by trace ID and shows the tree and timeline.
+The first instrumented component creates the trace ID, root span and sampling decision. Each outbound call carries the W3C `traceparent` header with a version, 16-byte trace ID, 8-byte parent span ID and flags, for example `traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01` [W3C Trace Context]. Callees create child spans; message consumers usually start linked spans.
 
 ::: warning
-**Warning — Propagation is only as good as the weakest hop.** A trace breaks at any service, thread pool, queue or proxy that drops the headers. Use the shared instrumentation of your framework or OpenTelemetry's libraries (§40.7) rather than hand-copying headers, and test propagation through asynchronous paths. A service mesh can emit spans for each hop but cannot by itself connect an inbound request to the outbound calls the application makes; the application must still forward the context headers [Istio Docs: Distributed Tracing].
+**Warning — Propagation is only as good as the weakest hop.** Thread pools, queues and proxies that drop headers break traces; use shared instrumentation (OpenTelemetry, §40.7). A service mesh emits spans per hop but cannot connect an inbound request to the application's outbound calls: the application must still forward the context headers [Istio Docs: Distributed Tracing].
 :::
 
 ## 34.10 Service mesh
 
 ### 34.10.1 What a mesh is and why it exists
 
-By now each inter-service call needs: discovery and load balancing (§34.7), timeouts, retries with budgets and circuit breaking (Chapter 22), mutual TLS for identity and encryption (§10.10.2), metrics and trace spans (§34.9), and traffic control for canaries (§34.12). Implementing all of that in a library is possible, and Netflix's Java libraries did exactly that, but it ties the features to one language and requires every service to upgrade the library to get a fix. A **service mesh** moves these features out of the application into infrastructure.
+Every inter-service call needs discovery and balancing (§34.7), timeouts, retries and circuit breaking (Chapter 22), mutual TLS (§10.10.2), telemetry (§34.9) and traffic control for canaries (§34.12). Libraries can provide all of this, as Netflix's Java libraries did, but that ties features to one language and makes every fix a fleet-wide library upgrade. A **service mesh** moves them into infrastructure.
 
 ::: definition
-**Definition — Service mesh.** A dedicated infrastructure layer that handles service-to-service communication. Its **data plane** is a set of proxies through which all service traffic passes (one per workload instance as a **sidecar**, or shared per node); its **control plane** configures those proxies, distributes certificates and collects their state. It provides traffic management, security (mutual TLS, authorization policy) and telemetry without application code changes [Istio Docs: Architecture; Linkerd Docs: Architecture].
+**Definition — Service mesh.** An infrastructure layer for service-to-service communication. Its **data plane** is a set of proxies through which all service traffic passes (a **sidecar** per workload instance, or shared per-node proxies); its **control plane** configures the proxies, issues certificates and collects state. It provides traffic management, security (mutual TLS, authorization) and telemetry without application changes [Istio Docs: Architecture; Linkerd Docs: Architecture].
 :::
-
-#### First-principles explanation
-
-Think of an embassy. Diplomats (services) want to talk to other embassies; they do not personally check credentials, encrypt messages, keep logs or reroute around closed borders. Each embassy has a communications office (the sidecar) that does all of this for every message, following rules set by the foreign ministry (the control plane), which can change the rules for every office at once. The diplomat just speaks to the office down the hall.
 
 #### How it works internally
 
-1. **Interception.** When a pod starts, the mesh injects a proxy container and programs the pod's network rules (iptables or a CNI plugin) so that all inbound and outbound TCP traffic passes through the proxy. The application still connects to `payment:8080` in plain text; the proxy intercepts it.
-2. **Outbound.** The caller's sidecar resolves the destination from the endpoints the control plane gave it, chooses an instance (§19.10), opens or reuses an mTLS connection to the destination's sidecar, applies timeouts and retry policy, and records metrics and a span.
-3. **Inbound.** The callee's sidecar terminates mTLS, verifies the caller's workload identity from its certificate (for example a SPIFFE ID, §10.10.2), enforces authorization policy ("only `ordering` may call `POST /charge`") and forwards to the application on localhost.
-4. **Control plane.** It watches the platform (Kubernetes services, endpoints, mesh policy resources), translates them into proxy configuration and pushes it, in Istio's case over Envoy's xDS APIs; it also acts as a certificate authority, issuing short-lived workload certificates and rotating them automatically [Istio Docs: Architecture].
+1. **Interception.** The mesh injects a proxy into each pod and redirects the pod's inbound and outbound TCP traffic through it (iptables or a CNI plugin). The application still connects in plain text to `payment:8080`.
+2. **Outbound.** The caller's sidecar picks an instance from control-plane endpoints, opens or reuses an mTLS connection to the destination's sidecar, applies timeouts and retries, and records metrics and a span.
+3. **Inbound.** The callee's sidecar terminates mTLS, verifies the caller's workload identity (a SPIFFE ID, §10.10.2), enforces policy ("only `ordering` may call `POST /charge`") and forwards on localhost.
+4. **Control plane.** It watches services, endpoints and policy resources, pushes proxy configuration (Istio over Envoy's xDS APIs), and acts as a certificate authority issuing short-lived, automatically rotated certificates [Istio Docs: Architecture].
 
 **Figure 34.10 — Sidecar service mesh: data plane and control plane.**
 
 ```mermaid
-flowchart LR
-  subgraph PodO["Pod: ordering"]
-    OA[Ordering app] -->|plain HTTP localhost| OS[Sidecar proxy]
-  end
-  subgraph PodP["Pod: payment"]
-    PS[Sidecar proxy] -->|plain HTTP localhost| PA[Payment app]
-  end
-  OS -->|mTLS HTTP/2| PS
-  CP["Control plane<br/>config, CA, discovery"] -.->|xDS config and certs| OS
-  CP -.->|xDS config and certs| PS
-  OS -.->|metrics and spans| TEL[(Telemetry backend)]
-  PS -.->|metrics and spans| TEL
-  K8S[(Kubernetes API)] -.->|services and endpoints| CP
+flowchart TB
+  S1["Span A: gateway POST /orders<br/>0 to 412 ms"] --> S2["Span B: mobile-bff placeOrder<br/>3 to 409 ms"]
+  S2 --> S3["Span C: ordering CreateOrder<br/>6 to 405 ms"]
+  S3 --> S4["Span D: ordering SQL insert<br/>8 to 14 ms"]
+  S3 --> S5["Span E: payment Authorize<br/>16 to 398 ms"]
+  S5 --> S6["Span F: provider HTTPS call<br/>20 to 395 ms"]
+  S3 -.->|"link, async"| S7["Span G: outbox relay publish<br/>420 to 425 ms"]
 ```
 
-**Reading the diagram.** The Ordering application sends a plain request to localhost, where its sidecar intercepts it; the sidecar sends it over mutual TLS (HTTP/2) to the Payment pod's sidecar, which checks the caller's identity and policy and passes the request to the Payment application on localhost. Solid arrows are the synchronous request path: one logical call now crosses two proxies. Dotted arrows are asynchronous control and telemetry traffic: the control plane reads services and endpoints from the Kubernetes API (a storage boundary), and pushes configuration and certificates to every proxy; proxies export metrics and spans. Failure points: if the control plane is down, proxies keep running with their last configuration and certificates until those expire, so new deploys and certificate rotation stop but traffic continues; a misconfiguration pushed by the control plane can affect every service at once. Scaling: the data plane grows with the number of pods (one proxy each), and the control plane's push cost grows with the number of proxies times the size of their configuration, which is why meshes let you scope which services each proxy needs to know about.
+**Reading the diagram.** The Ordering application sends a plain request to localhost; its sidecar carries it over mutual TLS (HTTP/2) to the Payment sidecar, which checks identity and policy and forwards to the application. Solid arrows are the synchronous path: one logical call crosses two proxies. Dotted arrows are asynchronous: the control plane reads services and endpoints from the Kubernetes API (a storage boundary) and pushes configuration and certificates; proxies export telemetry. Failure points: if the control plane is down, proxies keep their last configuration, so traffic flows but deploys and certificate rotation stall; a bad pushed configuration can affect every service at once. Scaling: data-plane cost grows with pods; control-plane push cost grows with proxies times configuration size.
 
 ### 34.10.2 Features
 
-- **Mutual TLS everywhere** with automatic certificate issuance and rotation, plus identity-based authorization policies. This is often the main reason organizations adopt a mesh, because it delivers zero-trust service-to-service security (§10.10.2) without changing applications.
-- **Traffic management.** Retries, timeouts, circuit breaking and outlier detection configured per route; **traffic shifting** by weight (send 5% of traffic to `payment` v2, §34.12), header-based routing and mirroring (sending a copy of live traffic to a new version and discarding its responses).
-- **Telemetry.** Uniform golden-signal metrics (request rate, errors, latency) for every service pair, access logs and spans for each hop, regardless of language.
+- **Mutual TLS everywhere** with automatic certificates and identity-based authorization: often the main reason to adopt a mesh, since it delivers zero-trust service security without code changes.
+- **Traffic management.** Per-route retries, timeouts, circuit breaking and outlier detection; **traffic shifting** by weight (5% to `payment` v2, §34.12); header-based routing; mirroring live traffic to a new version.
+- **Telemetry.** Uniform request rate, error and latency metrics for every service pair, in any language.
 
 ::: warning
-**Warning — Mesh retries multiply with application retries.** If the application retries 3 times and its sidecar also retries 3 times, the destination can see 9 attempts per request, and more down a chain (§22.12.3). Decide which layer retries, usually the mesh with a retry budget, and turn off the other.
+**Warning — Mesh retries multiply with application retries.** Three application attempts times three sidecar attempts is nine at the destination, more down a chain (§22.12.3). Choose one retrying layer.
 :::
 
 ### 34.10.3 Istio, Linkerd and sidecarless (ambient) mode
 
-**Istio** uses Envoy as its sidecar proxy and `istiod` as its control plane. **Linkerd** uses its own lightweight proxy written in Rust (`linkerd2-proxy`), designed specifically as a sidecar for meshing, with an emphasis on simplicity and low resource use [Linkerd Docs: Architecture]. Both provide automatic mTLS, retries, timeouts, traffic splitting and golden metrics; Istio offers the larger feature set and more configuration surface.
+**Istio** uses Envoy sidecars and the `istiod` control plane. **Linkerd** uses its own lightweight Rust proxy, `linkerd2-proxy`, built specifically as a sidecar, emphasizing simplicity and low resource use [Linkerd Docs: Architecture]. Both offer automatic mTLS, retries, timeouts, traffic splitting and golden metrics; Istio has the larger feature and configuration surface.
 
-The sidecar model has costs: one proxy per pod (memory and CPU multiplied by the number of pods), two proxy traversals per call, pod restarts to upgrade the proxy, and start-up ordering problems (the application starting before its sidecar is ready). This led to **sidecarless** designs. As of 2026, Istio's **ambient mode**, which became generally available in Istio 1.24 in November 2024, splits the data plane into two layers [Istio Blog 2024]:
-
-1. **ztunnel** (zero-trust tunnel), a lightweight per-node proxy written in Rust, which provides L4 features: mTLS, workload identity, L4 authorization and TCP telemetry for all pods on its node.
-2. **Waypoint proxies**, Envoy-based proxies deployed per namespace or per service only where L7 features (HTTP routing, retries, L7 authorization) are needed.
-
-Linkerd, as of 2026, continues to use the sidecar model. Other sidecarless approaches implement parts of the data plane in the kernel with eBPF (for example Cilium's service mesh). Check current documentation before choosing, because this area changes quickly.
+Sidecars cost one proxy per pod, two proxy traversals per call, pod restarts for proxy upgrades and start-up ordering problems. As of 2026, Istio's **ambient mode**, generally available since Istio 1.24 (November 2024), removes the sidecar and splits the data plane in two [Istio Blog 2024]: **ztunnel**, a per-node Rust proxy providing L4 features (mTLS, identity, L4 authorization, TCP telemetry), and **waypoint proxies**, Envoy-based and deployed per namespace or service only where L7 features (HTTP routing, retries, L7 policy) are needed. Linkerd, as of 2026, remains sidecar-based; other sidecarless designs, such as Cilium's, move parts of the data plane into the kernel with eBPF. This area changes quickly; check current documentation.
 
 **Figure 34.11 — Istio ambient mode: per-node ztunnel with an optional waypoint.**
 
 ```mermaid
-flowchart LR
-  subgraph Node1["Node 1"]
-    OA[Ordering pod] --> Z1[ztunnel]
-  end
-  subgraph Node2["Node 2"]
-    Z2[ztunnel] --> PA[Payment pod]
-  end
-  Z1 -->|"HBONE mTLS tunnel"| WP["Waypoint proxy<br/>L7 policy for payment"]
-  WP -->|"HBONE mTLS tunnel"| Z2
-  CP[istiod control plane] -.->|config and certs| Z1
-  CP -.->|config and certs| Z2
-  CP -.->|config| WP
+flowchart TB
+  S1["Span A: gateway POST /orders<br/>0 to 412 ms"] --> S2["Span B: mobile-bff placeOrder<br/>3 to 409 ms"]
+  S2 --> S3["Span C: ordering CreateOrder<br/>6 to 405 ms"]
+  S3 --> S4["Span D: ordering SQL insert<br/>8 to 14 ms"]
+  S3 --> S5["Span E: payment Authorize<br/>16 to 398 ms"]
+  S5 --> S6["Span F: provider HTTPS call<br/>20 to 395 ms"]
+  S3 -.->|"link, async"| S7["Span G: outbox relay publish<br/>420 to 425 ms"]
 ```
 
-**Reading the diagram.** Application pods contain no proxy. Traffic from the Ordering pod is redirected to the ztunnel on its node, which encrypts it with mutual TLS inside an HTTP-based tunnel (HBONE) and, because the Payment service has L7 policy configured, sends it to Payment's waypoint proxy; the waypoint applies HTTP routing, retries and L7 authorization and forwards it through Node 2's ztunnel to the Payment pod. Without L7 policy the waypoint is skipped and traffic goes ztunnel to ztunnel. The control plane configures all three asynchronously (dotted). Failure points: a ztunnel failure affects every pod on its node, a larger blast radius than one sidecar; the waypoint is a shared hop that must be scaled and made redundant. Scaling: proxy count grows with nodes rather than pods, and L7 cost is paid only by services that need it.
+**Reading the diagram.** Pods contain no proxy. Ordering's traffic is redirected to its node's ztunnel, which wraps it in an mTLS tunnel (HBONE) and, because Payment has L7 policy, sends it to Payment's waypoint, which applies HTTP routing, retries and authorization before forwarding through Node 2's ztunnel. Without L7 policy, traffic goes ztunnel to ztunnel. The control plane configures all three asynchronously. Failure points: a ztunnel failure affects every pod on its node, a larger blast radius than one sidecar; the waypoint is a shared hop to scale and replicate. Scaling: proxy count grows with nodes, not pods, and only services needing L7 pay for it.
 
 #### Mathematical foundations: what does the mesh cost?
 
@@ -1128,24 +1060,20 @@ $$\Delta L_{\text{chain}} \approx h \cdot \delta_{\text{hop}} \qquad C_{\text{CP
 :::
 
 ::: example
-**Worked example — Meshing QuickBite.** QuickBite runs 400 pods on 40 nodes; internal traffic is $\Lambda = 20{,}000$ requests/s; the longest synchronous path has $h = 4$ hops. Istio's published measurements (1 KB HTTP requests, specific hardware, mutual TLS on; as of 2026, check current values) report that the two sidecars on a hop add about 0.18 ms at p90 and 0.25 ms at p99; in ambient mode the two ztunnels add about 0.17 ms at p90 and 0.20 ms at p99; one sidecar with two worker threads uses about 0.20 vCPU and 60 MB per 1,000 requests/s, and a ztunnel about 0.06 vCPU and 12 MB [Istio Docs: Performance and Scalability].
+**Worked example — Meshing QuickBite.** QuickBite runs 400 pods on 40 nodes, with $\Lambda = 20{,}000$ internal requests/s and a longest synchronous path of $h = 4$ hops. Istio's published measurements (1 KB HTTP requests, mutual TLS, specific hardware; as of 2026) report: two sidecars per hop add about 0.18 ms at p90 and 0.25 ms at p99; two ztunnels add about 0.17 ms and 0.20 ms; a two-worker sidecar uses about 0.20 vCPU and 60 MB per 1,000 requests/s; a ztunnel about 0.06 vCPU and 12 MB [Istio Docs: Performance and Scalability].
 
-1. Sidecar latency along the longest path: $\Delta L \approx 4 \times 0.25 = 1.0$ ms at p99.
-2. Sidecar CPU: $C = (20{,}000 \times 2 / 1{,}000) \times 0.20 = 40 \times 0.20 = 8$ vCPU.
-3. Sidecar memory: $M = 400 \times 60 = 24{,}000$ MB = 24 GB (the measured 60 MB is under load; idle sidecars use less, and memory grows with configuration size).
-4. Ambient L4 only: CPU $= 40 \times 0.06 = 2.4$ vCPU; memory $= 40$ ztunnels $\times 12$ MB $= 480$ MB; latency $\approx 4 \times 0.20 = 0.8$ ms at p99. Add waypoints only for services that need L7 policy.
+1. Sidecar latency on the longest path: $\Delta L \approx 4 \times 0.25 = 1.0$ ms at p99.
+2. Sidecar CPU: $C = (20{,}000 \times 2 / 1{,}000) \times 0.20 = 8$ vCPU.
+3. Sidecar memory: $M = 400 \times 60 = 24{,}000$ MB = 24 GB (an under-load figure; it grows with configuration size).
+4. Ambient, L4 only: CPU $= 40 \times 0.06 = 2.4$ vCPU; memory $= 40 \times 12 = 480$ MB; latency $\approx 4 \times 0.20 = 0.8$ ms at p99, plus waypoints where L7 is needed.
 
-**Interpretation.** For a request whose budget is 300 ms, about 1 ms of added p99 is negligible; for an in-memory cache path with a 2 ms budget it is half the budget. The resource cost of sidecars, 8 vCPU and 24 GB here, is roughly two or three extra nodes. **Engineering implication.** The mesh is affordable for typical request/response services and expensive for very high-rate, low-latency internal paths; ambient mode reduces the fixed per-pod memory cost most. Measure on your own hardware and payloads before deciding; vendor numbers are best cases.
+**Interpretation.** About 1 ms of p99 is negligible in a 300 ms budget but half of a 2 ms cache-path budget; 8 vCPU and 24 GB is two or three extra nodes. **Engineering implication.** The mesh suits typical request/response services; for very high-rate, low-latency paths, measure first. Ambient mode cuts the per-pod memory cost most. Vendor numbers are best cases; benchmark on your hardware and payloads.
 :::
 
-#### Advantages and disadvantages
-
-**Advantages.** Uniform mTLS and identity-based policy without code changes; consistent retries, timeouts and telemetry across languages; traffic shifting for safe releases; one place to change communication policy.
-
-**Disadvantages.** A complex distributed system of its own to operate, upgrade and debug; latency and resource overhead; configuration errors with fleet-wide blast radius; a learning curve; and duplication with library features (retries, balancing) that must be reconciled.
+**Advantages and disadvantages.** A mesh gives uniform mTLS and policy without code changes, consistent retries and telemetry across languages, and traffic shifting. It costs a complex system to operate and upgrade, latency and resources, fleet-wide blast radius for configuration errors, and overlap with library features that must be reconciled.
 
 ::: recommendation
-**Recommendation — Adopt a mesh for a specific problem.** Good reasons: you must encrypt and authenticate all service-to-service traffic, you run many languages and need uniform telemetry and traffic policy, or you need fine-grained traffic shifting. Weak reasons: "we have microservices, so we need a mesh." With ten services in one language, a well-configured RPC library is simpler.
+**Recommendation — Adopt a mesh for a specific problem**: mandatory service-to-service encryption and authentication, a polyglot fleet needing uniform telemetry and traffic policy, or fine-grained traffic shifting. With ten services in one language, a well-configured RPC library is simpler.
 :::
 
 ## 34.11 Data ownership and database-per-service

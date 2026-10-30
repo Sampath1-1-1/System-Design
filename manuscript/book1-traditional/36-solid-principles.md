@@ -4,6 +4,8 @@
 
 Chapter 35 gave you the raw materials of object-oriented design: classes, encapsulation, inheritance, polymorphism, interfaces, cohesion and coupling. Those tools say what you *can* build. They do not say which of the many possible arrangements will still be pleasant to change in two years, when the tax rules have changed three times, marketing has rewritten every email, and the payment provider has been replaced. **SOLID** is a set of five design principles that answer that question at the level of classes and modules. Robert C. Martin collected and named them in the late 1990s and early 2000s [Martin 2002]; the acronym itself came later.
 
+**Table 36.1 — The five SOLID principles at a glance.**
+
 | Letter | Principle | One-line test |
 |---|---|---|
 | S | Single Responsibility | Does this module answer to exactly one group of people? |
@@ -14,7 +16,7 @@ Chapter 35 gave you the raw materials of object-oriented design: classes, encaps
 
 All five serve one goal: to **limit how far a change spreads**. A design in which one business decision touches one module, which is recompiled, retested and redeployed alone, is cheap to change. A design in which every change ripples through ten files owned by four teams is expensive, slow and fragile. SOLID gives you five specific ways to stop the ripple.
 
-The chapter uses one running example throughout: the **order billing and notification module** of an online shop. When a customer places an order, the module computes an invoice (merchandise, gift-wrap fees, sales tax), stores the order, charges the customer's card and tells the customer, by email, SMS, push notification or webhook. You will see a version of this module that violates each principle, the specific pain that violation causes, the refactor, and the result in Python and Java. The final section lifts the principles from classes to components and services, and shows when applying them does more harm than good.
+The chapter uses one running example throughout: the **order billing and notification module** of an online shop. When a customer places an order, the module computes an invoice (merchandise, gift-wrap fees, sales tax), stores the order, charges the customer's card and tells the customer, by email, SMS, push notification or webhook. For each principle you will see a violating version, the pain it causes, and the refactor in Python and Java. The final section lifts the principles to components and services, and shows when they do more harm than good.
 
 ## 36.1 Learning objectives
 
@@ -34,7 +36,8 @@ After this chapter you should be able to:
 - Classes, encapsulation and interfaces — §35.3, §35.4, §35.9 (every principle is about how classes and interfaces are arranged).
 - Inheritance and polymorphism — §35.5, §35.6 (open/closed and Liskov substitution are rules for using them safely).
 - Composition over inheritance — §35.8 (most refactors in this chapter replace inheritance with composition).
-- Cohesion and coupling — §35.10 (single responsibility is a sharpened definition of cohesion; dependency inversion manages coupling).
+- Design by contract — §35.9.1 (preconditions and postconditions are the language of Liskov substitution).
+- Cohesion and coupling — §35.10 (single responsibility sharpens cohesion; dependency inversion manages coupling).
 - Optional: layered and hexagonal architecture — §33.3, §33.10 (needed only for §36.8).
 
 **Figure 36.1 — The running example and where each principle acts.**
@@ -50,7 +53,7 @@ flowchart LR
   NS -.-> CA[Customer roles<br/>I: Contactable]
 ```
 
-**Reading the diagram.** The customer (stadium) places an order through `OrderService`, the coordinating class. Solid arrows are synchronous calls made while the customer waits: computing the invoice, storing the order (cylinder, the storage boundary) and charging the card through an external payment provider (hexagon, the main failure point outside your control). Dotted arrows are asynchronous: notification happens after the order is committed, so a slow SMS provider cannot block checkout. Each box is labeled with the principle that shapes it: the **S**ingle-responsibility split isolates finance rules; the **O**pen/closed notification service gains channels without edits; the channel implementations must be **L**iskov-substitutable; customers are seen through narrow **I**nterface-segregated roles; and storage and payments sit behind **D**ependency-inverted ports, which is also what lets each part scale or be replaced independently.
+**Reading the diagram.** The customer (stadium) places an order through `OrderService`, the coordinating class. Solid arrows are synchronous calls made while the customer waits: computing the invoice, storing the order (cylinder, the storage boundary) and charging the card through an external payment provider (hexagon, the main failure point outside your control). Dotted arrows are asynchronous: notification happens after the order is committed, so a slow SMS provider cannot block checkout. Each box is labeled with the principle that shapes it (S, O, L, I or D); the dependency-inverted ports are also what let storage and payments be scaled or replaced independently.
 
 ## 36.3 Single Responsibility Principle
 
@@ -205,7 +208,7 @@ flowchart LR
   SV --> CT
 ```
 
-**Reading the diagram.** Stadium shapes are the three actors; rectangles are methods of the single class. The arrows from actors are change requests, not runtime calls; the arrows between methods are synchronous in-process calls. Follow the arrows into `_subtotal`: a change requested by finance reaches the receipt (via `_subtotal` and `calculate_total`) and the stored total (via `calculate_total`). This is the failure point SRP targets. The diagram also shows why "split it into smaller methods" does not help: the methods are already small; what matters is that their *change paths* converge. There is no storage boundary shown because the problem is entirely in code ownership.
+**Reading the diagram.** Stadium shapes are the three actors; rectangles are methods of the single class. Arrows from actors are change requests; arrows between methods are synchronous in-process calls. Follow them into `_subtotal`: a finance change reaches the receipt and the stored total. That convergence is the failure point SRP targets. Splitting into smaller methods does not help; the methods are already small, and what matters is that their *change paths* converge. No storage boundary is shown because the problem is code ownership.
 
 ### 36.3.3 The refactor: split by actor
 
@@ -246,7 +249,7 @@ classDiagram
   OrderRepository ..> Invoice : reads
 ```
 
-**Reading the diagram.** `OrderService` is a facade: it holds references (solid arrows) to three collaborators and calls them synchronously in sequence. Each collaborator answers to one actor: `InvoiceCalculator` to finance, `ReceiptFormatter` to communications, `OrderRepository` to operations. The immutable `Invoice` value object (dashed arrows, usage) is created only by the calculator and read by the others, so the arithmetic exists in exactly one place. The storage boundary is now confined to `OrderRepository`; a schema migration touches only that class. Failure points are isolated too: a formatting bug cannot change a stored total. Each class can be tested, reviewed and, in a larger system, deployed by the team that owns it.
+**Reading the diagram.** `OrderService` is a facade: it holds references (solid arrows) to three collaborators and calls them synchronously in sequence. Each collaborator answers to one actor: `InvoiceCalculator` to finance, `ReceiptFormatter` to communications, `OrderRepository` to operations. The immutable `Invoice` value object (dashed arrows, usage) is created only by the calculator and read by the others, so the arithmetic exists in exactly one place. The storage boundary is now confined to `OrderRepository`; a schema migration touches only that class. Failure points are isolated too: a formatting bug cannot change a stored total.
 
 #### Code example
 
@@ -463,9 +466,9 @@ What to notice:
 
 #### Advantages and disadvantages
 
-The benefits are fewer merge conflicts between teams, defects that stay inside one actor's code, smaller test surfaces and the freedom to deploy one part without the others. The costs are more classes, more names to learn and a coordination layer (the facade) that newcomers must find. Splitting too early is also a cost: if you guess the actors wrong, you create seams in the wrong places and must move code across them later.
+The benefits are fewer merge conflicts between teams, defects that stay inside one actor's code, smaller test surfaces and the freedom to deploy one part without the others. The costs are more classes, more names to learn and a coordination layer (the facade) that newcomers must find. Guessing the actors wrong creates seams in the wrong places.
 
-**Table 36.1 — SRP failure scenarios.**
+**Table 36.2 — SRP failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
@@ -499,7 +502,7 @@ The two halves sound contradictory until you see what each refers to. "Closed" r
 
 Meyer and Martin used different tricks, and interviewers sometimes ask about the difference.
 
-**Table 36.2 — Meyer's and Martin's open–closed principles.**
+**Table 36.3 — Meyer's and Martin's open–closed principles.**
 
 | Aspect | Meyer (1988, 1997) | Martin (1996, 2002) |
 |---|---|---|
@@ -509,7 +512,7 @@ Meyer and Martin used different tricks, and interviewers sometimes ask about the
 | Mechanism | Implementation inheritance: a subclass reuses and extends the frozen original | Abstract interfaces and polymorphism: clients depend on an interface; variants implement it |
 | Typical risk | Deep, fragile inheritance trees | Speculative interfaces nobody extends |
 
-Meyer's setting was library engineering: once a class is compiled, documented and used by others, you do not edit it; you inherit from it and add to the subclass [Meyer 1997]. Martin kept the goal but moved the mechanism to abstraction: the client depends on an interface, and new implementations plug in behind it. Martin's version dominates current practice, partly because implementation inheritance creates the substitution problems of §36.5. Larman later restated the same idea as **protected variations**: identify points of predicted variation and wrap a stable interface around them [Larman 2001].
+Meyer's setting was library engineering: once a class is compiled, documented and used by others, you do not edit it; you inherit from it and add to the subclass [Meyer 1997]. Martin kept the goal but moved the mechanism to abstraction: the client depends on an interface, and new implementations plug in behind it. Martin's version dominates, partly because implementation inheritance invites the substitution problems of §36.5. Larman later restated the same idea as **protected variations**: identify points of predicted variation and wrap a stable interface around them [Larman 2001].
 
 #### First-principles explanation
 
@@ -550,7 +553,7 @@ classDiagram
   note for NotificationService "adding whatsapp edits notify"
 ```
 
-**Reading the diagram.** A single class holds direct, synchronous references to three transports and chooses among them with a conditional; the edge labels show the branch that selects each one. Every transport is a failure point the service must know about, and every new transport adds an edge *and* an edit to `notify`. The class's tests must cover all branches, so a change for WhatsApp re-runs and re-reviews email and SMS logic. In a compiled language, the service and everything that depends on it are rebuilt for each new channel.
+**Reading the diagram.** A single class holds direct, synchronous references to three transports and chooses among them with a conditional; the edge labels show the branch that selects each one. Every transport is a failure point the service must know about, and every new transport adds an edge *and* an edit to `notify`. A change for WhatsApp re-runs and re-reviews email and SMS logic, and in a compiled language rebuilds every dependent.
 
 ```python
 class NotificationService:
@@ -610,7 +613,7 @@ classDiagram
   Notifier <|.. WebhookNotifier
 ```
 
-**Reading the diagram.** `NotificationService` holds a map from channel name to `Notifier` (solid arrow) and calls `send` synchronously through the interface. Three classes implement the interface (dashed arrows with hollow triangles, realization). `WebhookNotifier` was added months later in a new module; no arrow into or out of the service changed. Failure handling is now per implementation: a webhook timeout lives in `WebhookNotifier`. The service never imports a transport, so adding channels does not rebuild or retest it, and channels can be deployed or disabled independently through configuration. In production, `notify` would usually run asynchronously from a queue (Chapter 30), which Figure 36.1 shows as the dotted path.
+**Reading the diagram.** `NotificationService` holds a map from channel name to `Notifier` (solid arrow) and calls `send` synchronously through the interface. Three classes implement the interface (dashed arrows with hollow triangles, realization). `WebhookNotifier` was added months later in a new module; no arrow into or out of the service changed. Failure handling is now per implementation: a webhook timeout lives in `WebhookNotifier`. The service never imports a transport, so new channels do not rebuild or retest it. In production, `notify` would usually run asynchronously from a queue (Chapter 30), which Figure 36.1 shows as the dotted path.
 
 #### Code example
 
@@ -683,7 +686,7 @@ What to notice:
 
 - `typing.Protocol` gives **structural** typing: `WebhookNotifier` never names `Notifier`, yet a type checker accepts it because it has the right members [PEP 544].
 - The docstring on `Notifier` states a **contract**, not just a signature. OCP only works if every implementation honors it, which is exactly the subject of §36.5.
-- The list passed to the constructor is the single point where variants are chosen. Moving it to configuration makes the system extensible without a code change at all.
+- The constructor list is the single point where variants are chosen; moving it to configuration removes even that edit.
 
 ```java
 // File: OcpAfter.java  (Java 17+)
@@ -769,7 +772,7 @@ What to notice: in Java the abstraction is nominal (`implements Notifier`), so t
 
 OCP cuts the cost of the *expected* change to "write one class and register it", keeps existing tests valid and allows separate teams to own variants. It costs indirection (a reader must find which implementation runs) and an up-front guess about the axis of change. A wrong guess is worse than no guess: the abstraction resists the change that actually arrives. Note too that polymorphism makes adding *types* cheap but adding *operations* expensive: a new method on `Notifier` must be implemented by every channel. If your system mostly gains operations over a fixed set of types, a `match` statement or the Visitor pattern can be the more open design. This tension is known as the expression problem.
 
-**Table 36.3 — OCP failure scenarios.**
+**Table 36.4 — OCP failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
@@ -1016,7 +1019,7 @@ sequenceDiagram
   SN-->>NS: "m-2"
 ```
 
-**Reading the diagram.** All calls are synchronous. The service sends the same valid 320-character receipt through two implementations of the same interface. The email notifier returns an id; the strict SMS notifier raises before contacting the external gateway, so the failure point is the subtype, not the network. The service did nothing wrong: it satisfied the base precondition. The only way the service could avoid this is to check the concrete type or the text length per channel, which reintroduces the switch that OCP removed. A short message works, which is why such bugs often pass casual testing and surface only with long receipts in production.
+**Reading the diagram.** All calls are synchronous. The service sends the same valid 320-character receipt through two implementations of the same interface. The email notifier returns an id; the strict SMS notifier raises before contacting the external gateway, so the failure point is the subtype, not the network. The service did nothing wrong: it satisfied the base precondition. The only way the service could avoid this is to check the concrete type or the text length per channel, which reintroduces the switch that OCP removed. Short messages work, so such bugs pass casual testing and surface only with long receipts.
 
 The defense is a **contract test**: one test function, written against the base type, run against every implementation. It turns LSP from a design-review opinion into a failing build.
 
@@ -1047,7 +1050,7 @@ classDiagram
   NotifierContractTest ..> FakeGateway : inspects
 ```
 
-**Reading the diagram.** Both notifiers realize `Notifier` and send through a gateway; in tests the gateway is a `FakeGateway` that records the parts submitted under each message id (the in-memory stand-in for the external SMS or SMTP provider). The contract test depends only on the interface and the fake (dashed arrows): it constructs each implementation through a factory, sends texts at the boundary lengths, and checks the postcondition by reassembling the parts. Adding a new channel means adding one line to the list of implementations under test. The fake removes the network failure point from unit tests, so the test is fast and deterministic.
+**Reading the diagram.** Both notifiers realize `Notifier` and send through a gateway; in tests the gateway is a `FakeGateway` that records the parts submitted under each message id (the in-memory stand-in for the external SMS or SMTP provider). The contract test depends only on the interface and the fake (dashed arrows): it constructs each implementation through a factory, sends texts at the boundary lengths, and checks the postcondition by reassembling the parts. A new channel adds one line to the list under test, and the fake keeps the test fast and deterministic.
 
 ```python
 import itertools
@@ -1133,7 +1136,7 @@ What to notice:
 
 - The test probes the **boundaries** of the precondition (1, 160, 161 and 1,600 characters), where subtypes usually diverge.
 - The postcondition is checked through the fake gateway, not by trusting the return value.
-- In Python, a contract test is often written as a test base class or a parametrized test; in Java, as an abstract JUnit class that each implementation's test extends.
+- In practice, write it as a parametrized pytest or an abstract JUnit class extended per implementation.
 
 ```java
 // File: LspNotifiers.java  (Java 17+)
@@ -1220,7 +1223,7 @@ public class LspNotifiers {
 
 LSP lets clients be written once against an abstraction, keeps OCP's promise of "add a class, edit nothing", and makes contract tests reusable. Its cost is discipline: base types need written contracts (docstrings, Javadoc, types), and some intuitive "is-a" hierarchies must be abandoned for composition (§35.8). Over-strict contracts can also make legitimate implementations impossible; a contract must describe what clients need, not every detail of the first implementation.
 
-**Table 36.4 — LSP failure scenarios.**
+**Table 36.5 — LSP failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
@@ -1297,7 +1300,7 @@ classDiagram
   PrivacyExporter --> CustomerAccount : uses 1 of 6
 ```
 
-**Reading the diagram.** Three clients hold synchronous references to the same six-method interface, though each uses one or two methods (edge labels). Two classes implement it; `GuestCustomer` cannot charge (guests pay once at checkout and have no stored card), so it implements `charge` and `refund` by raising. That stub is the failure point: `SubscriptionBilling` accepts any `CustomerAccount`, so the type system lets a guest reach the code that charges. Any change to billing signatures also ripples to `ReceiptSender` and `PrivacyExporter`, which never call them; in Java, all three are recompiled.
+**Reading the diagram.** Three clients hold synchronous references to the same six-method interface, though each uses one or two methods (edge labels). Two classes implement it; `GuestCustomer` cannot charge (guests pay once at checkout and have no stored card), so it implements `charge` and `refund` by raising. That stub is the failure point: `SubscriptionBilling` accepts any `CustomerAccount`, so the type system lets a guest reach the code that charges. A billing signature change also recompiles `ReceiptSender` and `PrivacyExporter`, which never call those methods.
 
 ```python
 from abc import ABC, abstractmethod
@@ -1377,7 +1380,7 @@ classDiagram
   PrivacyExporter --> PersonalDataSubject
 ```
 
-**Reading the diagram.** The fat interface is replaced by three role interfaces, each named for what a client needs. `RegisteredCustomer` realizes all three; `GuestCustomer` realizes only the two it can honor, so it has no stubs. Each client's synchronous dependency now points at one small interface: a change to `Billable` cannot affect `ReceiptSender`. The failure point of Figure 36.10 disappears at compile or type-check time, because a guest is not a `Billable` and cannot be passed to `SubscriptionBilling`. Implementations are free to be large; segregation is about what clients *see*.
+**Reading the diagram.** The fat interface is replaced by three role interfaces, each named for what a client needs. `RegisteredCustomer` realizes all three; `GuestCustomer` realizes only the two it can honor, so it has no stubs. Each client's synchronous dependency now points at one small interface: a change to `Billable` cannot affect `ReceiptSender`. The failure point of Figure 36.10 disappears at compile or type-check time, because a guest is not a `Billable` and cannot be passed to `SubscriptionBilling`.
 
 ```python
 from typing import Protocol, runtime_checkable
@@ -1441,7 +1444,6 @@ What to notice:
 
 - Neither customer class names a protocol; conformance is structural. A static checker such as mypy reports `bill_monthly_subscriptions([guest])` as an error.
 - `@runtime_checkable` lets `isinstance` test conformance, but it checks only that the methods *exist*, not their signatures or behavior.
-- The implementation of `RegisteredCustomer` is unchanged in size. ISP is about the *client side* of the dependency.
 
 ```java
 // File: IspAfter.java  (Java 17+)
@@ -1512,7 +1514,7 @@ What to notice: the commented-out line is the payoff. The defect from the "befor
 
 ISP's benefits are narrower blast radius for interface changes, no stub methods, clearer function signatures and errors moved from run time to type-check time. Its cost is more interface names, and the Java collections case shows the limit: if every client needs a slightly different subset, segregating perfectly produces a combinatorial explosion. Segregate along *roles that real clients play*, not along every possible subset.
 
-**Table 36.5 — ISP failure scenarios.**
+**Table 36.6 — ISP failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
@@ -1525,7 +1527,7 @@ ISP's benefits are narrower blast radius for interface changes, no stub methods,
 :::
 
 ::: tip
-**ISP in LLD interviews.** In a vending machine or parking lot, a single `Machine` or `ParkingLot` interface with admin, payment and display methods is a red flag. Split it into roles such as `PaymentAcceptor`, `InventoryAdmin` and `Display`, and say which client uses which. Interviewers often follow up with "where do the interfaces live?", which leads to dependency inversion.
+**ISP in LLD interviews.** In a vending machine or parking lot, a single `Machine` or `ParkingLot` interface with admin, payment and display methods is a red flag. Split it into roles such as `PaymentAcceptor`, `InventoryAdmin` and `Display`, and say which client uses which.
 :::
 
 ## 36.7 Dependency Inversion Principle
@@ -1576,7 +1578,7 @@ classDiagram
   CheckoutService --> SmtpMailer : constructs, SMTP
 ```
 
-**Reading the diagram.** The high-level `CheckoutService` creates and holds its two low-level collaborators (solid arrows): a vendor SDK that charges cards over HTTPS and an SMTP mailer. Both calls are synchronous. Both collaborators are external failure points, and the service cannot run, even in a unit test, without reaching them. The vendor's response shape (a dictionary with a `status` field) is visible inside the business rule, so switching to a second payment provider means editing checkout itself. Every arrow points from policy to detail.
+**Reading the diagram.** The high-level `CheckoutService` creates and holds its two low-level collaborators (solid arrows): a vendor SDK that charges cards over HTTPS and an SMTP mailer. Both calls are synchronous. Both collaborators are external failure points, and the service cannot run, even in a unit test, without reaching them. The vendor's response shape leaks into the business rule, so a second provider means editing checkout. Every arrow points from policy to detail.
 
 ```python
 class AcmePayClient:                       # low-level detail: a vendor SDK
@@ -1638,7 +1640,7 @@ flowchart LR
   SC -->|SMTP| M{{Mail server}}
 ```
 
-**Reading the diagram.** Arrows are source-code dependencies, which is what DIP is about. Inside the `checkout` package, the service depends only on two interfaces that the package itself defines. Both the production adapters and the test fakes depend *inward* on those interfaces; nothing in `checkout` names an adapter. Only adapters cross the system boundary to the external vendor and mail server (hexagons, the failure points), over HTTPS and SMTP. At run time, calls still flow synchronously from the service through an interface to an adapter; only the compile-time direction is inverted. The `checkout` package can be built and tested with no network, and a second payment vendor is a new adapter, deployable without touching policy.
+**Reading the diagram.** Arrows are source-code dependencies, which is what DIP is about. Inside the `checkout` package, the service depends only on two interfaces that the package itself defines. Both the production adapters and the test fakes depend *inward* on those interfaces; nothing in `checkout` names an adapter. Only adapters cross the system boundary to the external vendor and mail server (hexagons, the failure points), over HTTPS and SMTP. At run time, calls still flow synchronously from the service through an interface to an adapter; only the compile-time direction is inverted. A second payment vendor is a new adapter; policy is untouched.
 
 #### Code example
 
@@ -1821,13 +1823,13 @@ public class DipAfter {
 }
 ```
 
-What to notice: in a real project the interfaces and `CheckoutService` sit in one Java package or module, the adapters in another that `requires` it, and the fakes under `src/test`. In production code you would write these checks as JUnit tests; a plain `main` keeps the example self-contained.
+What to notice: in a real project the ports and `CheckoutService` sit in one package or module, adapters in another that depends on it, and fakes under `src/test`, with JUnit instead of `main`.
 
 ### 36.7.4 DI, DIP and IoC are three different things
 
 The three terms are often used interchangeably. They are related but distinct.
 
-**Table 36.6 — Dependency inversion, dependency injection and inversion of control.**
+**Table 36.7 — Dependency inversion, dependency injection and inversion of control.**
 
 | Term | What it is | Question it answers | Example |
 |---|---|---|---|
@@ -1852,7 +1854,7 @@ flowchart TB
   SL -.->|also supplies| DIP
 ```
 
-**Reading the diagram.** Read solid arrows as "is a kind of" or "is done by", and dotted arrows as "can support". Inversion of control is the broadest idea; dependency injection is one form of it, in which a composition root (hand-written, as in `build_checkout`, or a container such as Spring or Guice) creates objects and passes them in. DI makes DIP convenient, but you can inject a concrete class (DI without DIP), and you can satisfy DIP with a service locator (DIP without DI). The failure point in practice is a DI container used without DIP: every class is injected, yet the injected types are concrete vendor classes, so policy is still coupled to detail.
+**Reading the diagram.** Read solid arrows as "is a kind of" or "is done by", and dotted arrows as "can support". Inversion of control is the broadest idea; dependency injection is one form of it, in which a composition root (hand-written, as in `build_checkout`, or a container such as Spring or Guice) creates objects and passes them in. DI makes DIP convenient, but you can inject a concrete class (DI without DIP), and you can satisfy DIP with a service locator (DIP without DI). A common failure is a DI container used without DIP: everything is injected, but the injected types are concrete vendor classes.
 
 #### Real-world industry applications
 
@@ -1865,7 +1867,7 @@ flowchart TB
 
 DIP makes policy testable in milliseconds, lets you replace vendors and databases by writing adapters, and keeps business rules readable in business terms. It costs an interface and an adapter per external dependency, plus a composition root to maintain. Interfaces that merely mirror one vendor's SDK method for method give the cost without the benefit, because a second vendor will not fit them.
 
-**Table 36.7 — DIP failure scenarios.**
+**Table 36.8 — DIP failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
@@ -1887,7 +1889,7 @@ DIP makes policy testable in milliseconds, lets you replace vendors and database
 
 The same forces that act on classes act on packages, deployable components and services, only with higher costs: a change that crosses a service boundary needs coordinated releases, API versioning and sometimes a data migration. Martin restated the principles for components in his component cohesion and coupling principles [Martin 2002; Martin 2017].
 
-**Table 36.8 — Each SOLID principle at the component and service level.**
+**Table 36.9 — Each SOLID principle at the component and service level.**
 
 | Principle | Class level | Component and service level |
 |---|---|---|
@@ -1922,7 +1924,7 @@ flowchart LR
   A3 --> MS{{SMS and mail providers}}
 ```
 
-**Reading the diagram.** The domain core contains the policy classes and the ports they own; it imports nothing outside itself. Driving adapters (the HTTP adapter receiving HTTPS requests from clients) call into the core; driven adapters (payment, persistence, messaging) implement the core's ports and are the only components that talk to external systems (hexagons) and the database (cylinder, the storage boundary). Solid arrows are synchronous calls or source dependencies; the dotted arrow is the asynchronous order-placed event that triggers notification. Failure points are concentrated in adapters, where timeouts, retries and circuit breakers belong (Chapter 39). Adapters scale and deploy independently: the SMS adapter can become a separate service consuming events without the core changing.
+**Reading the diagram.** The domain core contains the policy classes and the ports they own; it imports nothing outside itself. Driving adapters (the HTTP adapter receiving HTTPS requests from clients) call into the core; driven adapters (payment, persistence, messaging) implement the core's ports and are the only components that talk to external systems (hexagons) and the database (cylinder, the storage boundary). Solid arrows are synchronous calls or source dependencies; the dotted arrow is the asynchronous order-placed event that triggers notification. Failure points are concentrated in adapters, where timeouts, retries and circuit breakers belong (Chapter 39). Adapters scale and deploy independently.
 
 ### 36.8.2 Measuring dependency direction: stability and abstractness
 
@@ -1998,7 +2000,7 @@ for name, (ca, ce, i, a, d) in sorted(metrics(DEPENDS_ON, CLASSES).items(),
 # web-api             0  2   1.0   0.0   0.0   (adapters likewise: I=1, A=0, D=0)
 ```
 
-What to notice: an isolated component ($C_a = C_e = 0$) is given $I = 0$ by convention here to avoid division by zero. In practice the dependency map comes from a build tool or import analysis.
+What to notice: an isolated component ($C_a = C_e = 0$) gets $I = 0$ here to avoid division by zero; real dependency maps come from import analysis.
 
 **Figure 36.16 — Component dependencies point toward stability.**
 
@@ -2020,13 +2022,13 @@ flowchart BT
   CC --> NC
 ```
 
-**Reading the diagram.** Each node is a component (a package or deployable module) labeled with its computed metrics; arrows are compile-time dependencies, drawn upward toward stability. Every arrow goes from a higher $I$ to a lower $I$, which is the Stable Dependencies Principle in picture form. A dependency arrow pointing downward, for example `notification-core` importing `sms-adapter`, would be a DIP violation and would raise the core's instability. The most stable component, `notification-core`, is the riskiest place for volatile code, since a change there forces rebuilding and retesting four dependents.
+**Reading the diagram.** Each node is a component (a package or deployable module) labeled with its computed metrics; arrows are compile-time dependencies, drawn upward toward stability. Every arrow goes from a higher $I$ to a lower $I$, which is the Stable Dependencies Principle in picture form. A dependency arrow pointing downward, for example `notification-core` importing `sms-adapter`, would be a DIP violation and would raise the core's instability.
 
 ### 36.8.3 When SOLID is over-applied
 
 Every principle in this chapter adds structure: more classes, more interfaces, more indirection. Structure pays for itself only when the change it anticipates actually happens. Martin himself lists **needless complexity** among the symptoms of poor design, alongside rigidity and fragility [Martin 2002]. Extreme Programming's **YAGNI** ("you aren't gonna need it") rule says not to build capability for features you only presume you will need, because the presumed need often never arrives and the unused structure still costs effort to carry [Fowler 2015]. Fowler's catalog of code smells calls the result **speculative generality** [Fowler 2018].
 
-**Table 36.9 — Signs that SOLID has been over-applied.**
+**Table 36.10 — Signs that SOLID has been over-applied.**
 
 | Symptom | Example | Better default |
 |---|---|---|
@@ -2057,7 +2059,7 @@ flowchart TD
   Q4 -->|no| N
 ```
 
-**Reading the diagram.** Diamonds are decisions, evaluated top to bottom; rectangles are outcomes. The first two questions capture the cheap, almost always justified uses of DIP: external boundaries (databases, vendors, networks, clocks), which are failure points and slow in tests, and policy that needs a fake. The third applies OCP only when variation is real. The fourth applies SRP when more than one actor edits the code. The default, at the bottom, is concrete code, because extracting an interface later in a statically typed language is a mechanical, IDE-assisted refactor, while removing a wrong abstraction is usually a manual one.
+**Reading the diagram.** Diamonds are decisions, evaluated top to bottom; rectangles are outcomes. The first two questions capture the cheap, almost always justified uses of DIP: external boundaries (databases, vendors, networks, clocks), which are failure points and slow in tests, and policy that needs a fake. The third applies OCP only when variation is real. The fourth applies SRP when more than one actor edits the code. The default is concrete code: extracting an interface later is a mechanical refactor, while removing a wrong abstraction is manual work.
 
 ::: recommendation
 **A practical rule.** Apply DIP at every boundary to I/O and to other teams' systems from day one; apply SRP when you can name two actors; apply OCP and ISP when you see the second variant or the second kind of client. Revisit when change history (which files change together, which teams edit them) tells you where the real axes are.

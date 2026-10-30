@@ -2,31 +2,30 @@
 
 > **Level:** 1–2 · **Track:** A (Traditional) · **Estimated reading time:** 5 h
 
-Every system in this book is, at the bottom, code written by people who will not be there when it next has to change. The high-level design decides which services exist and how they talk (Ch 1, §1.5); the low-level design decides what happens *inside* one of those services. Object-oriented design is the most common vocabulary for that inside view. It answers a practical question: how do you arrange thousands of lines of code so that a rule lives in one place, a change touches few files, and a mistake is caught where it happens rather than three calls later?
+The high-level design decides which services exist and how they talk (§1.5); the low-level design decides what happens *inside* one service. Object-oriented design is the most common vocabulary for that inside view. It answers a practical question: how do you arrange thousands of lines of code so that a rule lives in one place, a change touches few files, and a mistake is caught where it happens?
 
-This chapter builds that vocabulary from nothing but variables, functions and loops. One running example carries you through: the checkout of a small online shop. You start with a product and a cart, protect the cart's rules, add kinds of products, add discount rules, add payment methods, untangle a class hierarchy that grows out of control, write down the promises each class makes, and finally measure how well the pieces fit together. Every idea is shown in Python and Java side by side; all programs were run (Python 3.13, Java 21).
+This chapter builds that vocabulary from variables, functions and loops alone, using one running example: the checkout of a small online shop. You start with a product and a cart, protect the cart's rules, add kinds of products, discount rules and payment methods, untangle a hierarchy that grows out of control, write down each class's promises, and measure how well the pieces fit. Every idea is shown in Python and Java side by side; all programs were run (Python 3.13, Java 21).
 
 ## 35.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Explain what a class and an object are, write constructors that reject invalid state, and distinguish object identity from object equality in Python and Java.
-- Use encapsulation to protect class invariants, recognize when getters and setters leak design decisions, and apply "tell, don't ask".
-- Use inheritance and method overriding correctly, and explain the fragile base class problem with a concrete failure.
-- Explain subtype polymorphism and dynamic dispatch, contrast them with duck typing, and write a simple generic function.
-- Choose between an abstract class and an interface for a given abstraction.
-- Refactor an inheritance hierarchy into composition and delegation, and quantify the reduction in classes.
-- Write preconditions, postconditions and class invariants (design by contract) and explain why a subclass may not strengthen a precondition.
-- Classify coupling and cohesion, compute the LCOM1 cohesion metric for a class, and apply the Law of Demeter.
-- Recognize the anemic domain model, the god class and deep hierarchies, and answer typical object-oriented design interview questions.
+- Write classes whose constructors reject invalid state, and distinguish identity from equality.
+- Protect invariants with encapsulation, avoid setter-driven designs, and apply "tell, don't ask".
+- Use inheritance and overriding, and demonstrate the fragile base class problem.
+- Explain dynamic dispatch, duck typing and simple generics.
+- Choose between an abstract class and an interface.
+- Refactor an inheritance hierarchy into composition and quantify the saving.
+- Write preconditions, postconditions and invariants, and explain why a subclass may not strengthen a precondition.
+- Classify coupling and cohesion, compute LCOM1, and apply the Law of Demeter.
+- Recognize the anemic domain model, the god class and deep hierarchies.
 
 ## 35.2 Prerequisites
 
-- Basic programming: variables, functions, `if`, loops, lists and dictionaries. Nothing else is assumed; every object-oriented term is defined when first used.
+- Basic programming: variables, functions, `if`, loops, lists and dictionaries.
 - High-level vs low-level design — §1.5 (this chapter is the toolbox for low-level design).
-- Optional: memory addresses — §6.6 (helps with "identity", but the chapter explains what you need).
 
-Where this chapter stops: the five SOLID principles are Ch 36, named design patterns are Ch 37, and UML notation and full low-level design exercises (parking lot, elevator, library system) are Ch 38. The class diagrams here use only a few Mermaid symbols, explained as they appear.
+SOLID is Ch 36, design patterns Ch 37, and UML notation and full low-level design exercises Ch 38. The class diagrams here use a few Mermaid symbols, explained as they appear.
 
 ## 35.3 Classes and objects
 
@@ -42,21 +41,21 @@ Where this chapter stops: the five SOLID principles are Ch 36, named design patt
 
 #### First-principles explanation
 
-Think of a paper order form in a shop. The blank form is printed once: it has boxes for product code, name and price. Every filled-in form is separate; writing on one does not change another. A class is the blank form. An object is a filled-in copy. The difference from paper is that a software object also carries the instructions for working with its contents: a cart object knows how to add an item and how to total itself.
+A blank paper order form is printed once; every filled-in copy is separate. A class is the blank form; an object is a filled-in copy that also carries the instructions for working with its contents: a cart object knows how to add an item and total itself.
 
-Before objects, you would keep the data in a dictionary and write free-standing functions that take the dictionary as an argument: `cart_add(cart_dict, product, 2)`, `cart_total(cart_dict)`. That works until a second team writes `cart_dict["items"].append(...)` directly, skipping the rules in `cart_add`. Objects put the data and the only sanctioned ways of changing it in the same place.
+Without objects, you keep data in a dictionary and write free-standing functions such as `cart_add(cart_dict, product, 2)`. That works until another team writes `cart_dict["items"].append(...)` directly, skipping the rules. Objects put the data and the sanctioned ways of changing it in one place.
 
 #### Why does this exist?
 
-Programs model things that have both data and rules: an account has a balance and the rule that it cannot be overdrawn; a cart has lines and the rule that quantities are positive. When data and rules live in different files, someone eventually changes the data without the rules. Classes were introduced (Simula 67, then Smalltalk, C++, Java and Python) to keep them together, so that the structure of the code mirrors the structure of the problem.
+Programs model things that have data and rules: a cart has lines, and quantities must be positive. When data and rules live in different files, someone eventually changes the data without the rules. Classes (Simula 67, then Smalltalk, C++, Java, Python) keep them together.
 
 #### How it works internally
 
-1. The class definition is loaded once. It holds the method code, shared by all instances.
-2. Calling the class (`Product(...)` in Python, `new Product(...)` in Java) allocates memory for a new object's attributes.
-3. The **constructor** (`__init__` in Python, a method named after the class in Java) runs on the fresh object. Its job is to put the object into a valid starting state, or to refuse by raising an exception.
-4. Calling `obj.method(args)` runs the class's method code with `obj` passed in as an implicit first argument (`self` in Python, `this` in Java), so the method reads and writes *that* object's state.
-5. The object lives in memory until nothing refers to it; then the garbage collector reclaims it.
+1. The class definition is loaded once and holds the method code shared by all instances.
+2. Calling the class (`Product(...)`, Java `new Product(...)`) allocates memory for a new object.
+3. The **constructor** (`__init__`, or Java's method named after the class) puts the object into a valid starting state, or refuses by raising an exception.
+4. `obj.method(args)` runs the method with `obj` passed implicitly (`self` in Python, `this` in Java), so it works on *that* object's state.
+5. When nothing refers to the object any more, the garbage collector reclaims it.
 
 #### Architecture diagram
 
@@ -82,11 +81,11 @@ classDiagram
 
 **Reading the diagram.**
 
-- **Components.** Each box is a class. The top compartment is its name, the middle lists attributes (state), the bottom lists methods (behavior). `+` means "public": any code may use it.
-- **Relationships and direction.** The arrow from `Cart` to `Product` means a cart refers to products; `0..*` means zero or more. A product knows nothing about carts.
-- **Sync/async and storage.** All interactions are synchronous, in-process method calls; nothing here touches a database or network. Objects live in memory only.
-- **Failure points.** Every attribute is public, so any code can set `price_cents` to −5 after construction or put a quantity of zero into `quantities`. The constructor's checks protect only the moment of creation. §35.4 fixes this.
-- **Scaling.** Adding a field means editing one class; every instance gets it. This is the first payoff of a template.
+- **Components.** Each box is a class: name, then attributes (state), then methods (behavior). `+` means public.
+- **Direction.** `Cart` refers to zero or more (`0..*`) products; a product knows nothing about carts.
+- **Sync/async and storage.** Synchronous in-process calls; objects live in memory only.
+- **Failure points.** Every attribute is public, so any code can set `price_cents` to −5 after construction. The constructor protects only the moment of creation; §35.4 fixes this.
+- **Scaling.** A new field is added in one class and every instance gets it.
 
 #### Code example
 
@@ -211,8 +210,8 @@ class Main {
 
 What to notice:
 
-- The constructor is the gatekeeper: an invalid `Product` is never created. A half-built object that callers must remember to check is the alternative, and it is worse.
-- Python's `self.sku = sku` creates the attribute on first assignment; Java declares fields up front with types. Java's `final` means "assigned once, in the constructor".
+- The constructor is the gatekeeper: an invalid `Product` is never created.
+- Python creates attributes on first assignment; Java declares typed fields up front, and `final` means "assigned once".
 - `mug_a == mug_b` is `True` because `Product` defines equality by SKU. `cart1 == cart2` is `False` even though both carts hold the same items, because `Cart` does not define equality and falls back to identity.
 
 ### 35.3.2 Identity versus equality
@@ -221,7 +220,7 @@ What to notice:
 **Definition — Identity and equality.** **Identity** asks "are these the same object in memory?" (Python `is`, Java `==` on references). **Equality** asks "do these objects represent the same value by a rule the class defines?" (Python `==` via `__eq__`, Java `equals`). Unless a class overrides equality, both languages default to identity.
 :::
 
-Two copies of the same banknote are interchangeable; two customers named "Ada Lopez" are not. Domain modeling uses this distinction constantly. A **value object** (a price, an amount of money, an address) is defined entirely by its attributes, so equality compares attributes and the object is usually immutable. An **entity** (a customer, an order, a cart) has a lifetime and an identity that persists while its attributes change; two carts with the same contents are still two carts.
+Two copies of the same banknote are interchangeable; two customers named "Ada Lopez" are not. A **value object** (a price, an address) is defined by its attributes, so equality compares attributes and the object is usually immutable. An **entity** (a customer, an order, a cart) has an identity that persists while its attributes change; two carts with the same contents are still two carts.
 
 **Table 35.1 — Identity and equality in Python and Java.**
 
@@ -232,7 +231,7 @@ Two copies of the same banknote are interchangeable; two customers named "Ada Lo
 | Hash consistent with equality | `__hash__` | `hashCode()` | Identity-based |
 | Typical value object | `@dataclass(frozen=True)` | `record` | — |
 
-The rule that trips people up in both languages: **if two objects are equal, their hashes must be equal**. Hash tables (`dict`, `set`, `HashMap`, `HashSet`) first find a bucket by hash, then compare with equality. Override `equals` without `hashCode` in Java and two equal products land in different buckets, so a `HashSet` can contain "duplicates" [Bloch 2018, Items 10–11]. Python protects you partly: defining `__eq__` without `__hash__` makes instances unhashable, so the bug becomes a loud `TypeError` instead of a silent duplicate.
+The rule that trips people up: **equal objects must have equal hashes**. Hash tables find a bucket by hash, then compare with equality. Override `equals` without `hashCode` in Java and a `HashSet` can hold "duplicates" [Bloch 2018, Items 10–11]. Python defining `__eq__` without `__hash__` makes instances unhashable, a loud `TypeError` instead of a silent duplicate.
 
 #### Failure scenarios
 
@@ -243,7 +242,6 @@ The rule that trips people up in both languages: **if two objects are equal, the
 | Duplicate products in a set | `equals` overridden, `hashCode` not | Set size larger than expected | Add `hashCode` from the same fields | Records/dataclasses generate both |
 | Object found then "lost" in a map | Mutable field used in the hash changed after insertion | Lookups return `None` for present keys | Remove and reinsert | Hash only immutable fields |
 | Invalid object deep in the system | Constructor accepted bad input | Errors far from the cause | Fix the creating code | Validate in the constructor |
-| Two carts treated as one | Equality defined by contents on an entity | Wrong cart updated | Use identity or an ID | Value equality only for value objects |
 
 ::: mistake
 **Misconception — "Objects are just dictionaries with functions attached."** Mechanically, a Python object nearly is one. The design point is different: a class decides *which* changes to its state are allowed. A dictionary allows every change, which is why the rules end up scattered across the code that uses it.
@@ -2336,3 +2334,160 @@ What to notice:
 ::: mistake
 **Misconception — "Low coupling means fewer classes."** Merging classes reduces the number of dependencies *between classes* by hiding them inside one class, where they become low cohesion instead. The goal is the right boundaries: each class cohesive, each dependency narrow.
 :::
+
+## 35.11 Common mistakes
+
+The previous sections each ended with a misconception about one idea. Three mistakes combine several ideas and are the ones reviewers and interviewers look for first.
+
+::: mistake
+**Anemic domain model.** Classes such as `Order`, `Cart` and `Customer` hold only fields with getters and setters, and all the rules live in "service" classes (`OrderService.calculateTotal(order)`, `CartService.applyCoupon(cart, coupon)`). It looks object-oriented but is procedural code with data structures: every invariant is enforced, or not, by whichever service touches the data, and the same rule is reimplemented in several services. Fowler named it an anti-pattern because it pays the cost of a domain model without the benefit [Fowler 2003]. **Fix:** move each rule next to the data it governs (tell, don't ask, §35.4.3); keep services for coordinating several objects and for infrastructure such as transactions. **Caveat:** for simple create-read-update-delete screens with almost no rules, plain data records and a thin service are a reasonable, honest choice.
+:::
+
+::: mistake
+**God class.** One class, often named `Manager`, `Processor`, `Helper` or after the whole application, accumulates most of the system's behavior and data: thousands of lines, dozens of fields, and imports from every package. Riel's design heuristics warn against such classes and recommend distributing system intelligence evenly across top-level classes [Riel 1996]. Symptoms: high LCOM with several connected components (§35.10.1), most commits touch it, and its tests are slow and brittle. **Fix:** split along the components that LCOM reveals, starting with the least coupled group; move behavior to the classes whose data it uses.
+:::
+
+::: mistake
+**Deep inheritance hierarchies.** `Product → ShippableProduct → FragileShippableProduct → FragileShippableImportedProduct → ...`. Each level adds coupling to every level above it (§35.5.2), a reader must open five files to know what one method does, and new requirements that cut across the hierarchy ("imported but not fragile") cause the class explosion of §35.8. Chidamber and Kemerer's depth-of-inheritance-tree metric was proposed partly because deeper classes are harder to predict [Chidamber & Kemerer 1994]. **Fix:** keep hierarchies shallow (one or two levels below an interface or abstract class is typical), turn independent axes into composed parts, and use interfaces for capabilities.
+:::
+
+**Table 35.13 — Common mistakes at a glance.**
+
+| Mistake | Quick test | First fix |
+|---|---|---|
+| Anemic domain model | Do the entity classes have any methods besides getters and setters? | Move one rule into its entity |
+| God class | Can you describe the class in one sentence without "and"? | Split along LCOM components |
+| Deep hierarchy | More than two or three levels of concrete classes? | Extract an axis into a composed part |
+| Setter for every field | Can a caller break an invariant with one call? | Replace setters with business operations |
+| Inheritance for reuse only | Would callers ever use the child *as* the parent? | Delegate to a helper object |
+
+## 35.12 Summary and revision notes
+
+::: summary
+- **Objects** bundle state and behavior; a **class** is their template. Constructors must leave objects valid or refuse to create them. **Identity** (`is`, Java `==`) differs from **equality** (`==`/`__eq__`, `equals`); override equality and hashing together, value equality for value objects, identity for entities.
+- **Encapsulation** protects **invariants** and hides decisions likely to change [Parnas 1972]. Expose business operations, not setters; return copies or immutable views; derive values instead of storing them; **tell, don't ask**.
+- **Inheritance** models behavioral is-a and enables substitutability, but is white-box reuse: the **fragile base class problem** means subclasses depend on parent internals (`CountingCart` counted 6 instead of 3). Design and document for inheritance, or prohibit it.
+- **Polymorphism**: one call, many behaviors. Subtype polymorphism uses **dynamic dispatch**; Python also allows **duck typing**, checkable with `Protocol`; **generics** abstract over element types.
+- **Abstraction**: abstract classes share state and steps and force subclasses to fill gaps; interfaces declare roles and allow many per class. Program to an interface.
+- **Composition over inheritance**: one composed part per axis of variation turns $\prod k_i$ subclasses into $1 + \sum k_i$ classes (27 vs 10 for three axes of three) and allows run-time change. Wrappers with forwarding fix fragile subclasses.
+- **Design by contract**: preconditions (caller's duty), postconditions (supplier's promise), invariants. Subclasses may weaken preconditions and strengthen postconditions, never the reverse (preview of §36.5).
+- **High cohesion, low coupling**. Prefer data and message coupling; LCOM1 $= \max(|P|-|Q|, 0)$ and connected components point at classes to split. **Law of Demeter**: talk only to your immediate friends.
+- Watch for the **anemic domain model**, the **god class** and **deep hierarchies**.
+:::
+
+## 35.13 Knowledge checkpoint
+
+1. What is the difference between a class and an object?
+2. Two `Product` objects have the same SKU. Under the design of §35.3, what do `a == b` and `a is b` return, and why?
+3. Why must `hashCode` change whenever you override `equals` in Java?
+4. Name two ways a getter can break encapsulation.
+5. In §35.4, why does the cart not store a `total` field?
+6. What exactly goes wrong in the `CountingCart` subclass, and why is removing its `add_all` override not a real fix?
+7. What is dynamic dispatch? What decides which method runs?
+8. How does duck typing differ from Java's interfaces, and what does `typing.Protocol` add?
+9. Give one thing an abstract class can do that a Java interface cannot, and one thing an interface can do that an abstract class cannot.
+10. A design has 4 shipping options, 3 packagings and 2 payment timings. How many classes does inheritance-per-combination need, and how many does composition need?
+11. State Meyer's rule for preconditions and postconditions in a subclass.
+12. Why should user-input validation not be written with `assert`?
+13. Rank data, control and content coupling from best to worst.
+14. Compute LCOM1 for a class with 4 methods in which exactly one pair shares a field.
+15. Rewrite `order.get_customer().get_address().get_city()` used to compute shipping so that it obeys the Law of Demeter.
+
+<details>
+<summary>Answers</summary>
+
+1. A class is the template (fields and methods); an object is one instance with its own state, created from the class.
+2. `a == b` is `True` because `Product.__eq__` compares SKUs; `a is b` is `False` because they are two distinct objects in memory.
+3. Hash-based collections find a bucket by hash first; equal objects with different hashes land in different buckets, so lookups fail and sets hold duplicates.
+4. Returning an internal mutable collection (callers can modify it), and exposing data that lets callers make decisions the object should make (logic leaks out).
+5. The total is derived from lines and coupon; storing it would let it disagree with them, for example keeping a discount after an item removal drops the subtotal below the minimum.
+6. `add_all` counts 3, then the base `add_all` calls the overridden `add` 3 times, counting 3 more: 6. Removing the override relies on the base still calling `add`; if the base changes, the count becomes wrong again.
+7. Choosing the method implementation at run time from the object's actual class, not the variable's declared type.
+8. Duck typing accepts any object that has the methods used, checked when called; Java requires an explicit `implements`. `Protocol` lets a static checker verify the shape before running, without inheritance.
+9. Abstract class: hold instance state (or a `final` template method using it). Interface: be implemented by a class that already extends another class (many interfaces per class).
+10. Inheritance: $4 \times 3 \times 2 = 24$. Composition: $1 + 4 + 3 + 2 = 10$.
+11. A redefinition may only weaken the precondition and only strengthen the postcondition, and must keep the class invariant.
+12. Assertions can be disabled (`python -O`, Java without `-ea`), so the check would silently disappear in production.
+13. Data (best), control, content (worst).
+14. 6 pairs; $|Q| = 1$, $|P| = 5$; LCOM $= 5 - 1 = 4$.
+15. Add `order.shipping_city()` (which asks `customer.shipping_city()`, which asks its address), or better, tell: `order.shipping_cost(rate_table)`.
+
+</details>
+
+## 35.14 Interview questions
+
+### Basic
+
+**Q1. What are the four pillars of object-oriented programming, and how do they relate?**
+**Answer.** Encapsulation (an object guards its state and invariants), abstraction (callers see what an object does, not how), inheritance (a class extends another, sharing code and type), and polymorphism (one call, behavior chosen by the object). Encapsulation and abstraction create boundaries; polymorphism lets you vary what is behind a boundary; inheritance is one way, and often not the best way, to get polymorphism. Mention that composition and interfaces deliver polymorphism with less coupling.
+
+**Q2. When would you use an abstract class rather than an interface?**
+**Answer.** An abstract class when closely related variants share real state and an algorithm whose order must be fixed, such as `PaymentMethod.pay` validating, charging and recording. An interface for a role or capability that unrelated classes can play (`Refundable`), for module boundaries, and whenever a class may need several roles. A common combination is an interface for the type plus an optional skeletal abstract class.
+
+**Q3. Why are public setters for every field considered poor design?**
+**Answer.** They let any caller put the object in a state the business rules forbid and spread the rules across callers. Replace them with operations named after business actions that check invariants (`apply_coupon`, `remove`), keep immutable values immutable, and derive computed values.
+
+### Intermediate
+
+**Q4. "Favor composition over inheritance." When is inheritance still the right choice?**
+**Answer.** When the child is a behavioral subtype (keeps every promise of the parent), there is a single axis of variation, the parent was designed and documented for extension, and both are maintained together. Implementing an interface is always fine. Otherwise, compose: separate axes into parts, delegate, and swap parts at run time. Quantify: $\prod k_i$ versus $1 + \sum k_i$ classes.
+
+**Q5. Explain the fragile base class problem with an example and two remedies.**
+**Answer.** A subclass overrides `add` and `add_all` to count items; the base `add_all` internally calls `add`, so items are counted twice. Change the base and the subclass breaks the other way. Remedies: wrap instead of extend (forwarding wrapper implementing the same interface), or have the base class document its self-use or be declared `final`.
+
+**Q6. Implement `equals` for a `Money(amount_cents, currency)` value object. What must you remember?**
+**Answer.** Compare both fields; handle `null` and other types; override `hashCode` with the same fields; make the class immutable so the hash cannot change while it is in a set; keep equality reflexive, symmetric and transitive (be careful with subclasses adding fields, which is why value classes are usually `final` or records).
+
+### Advanced
+
+**Q7. Design the classes for a shop checkout that supports multiple discount rules, payment methods and shipping options.**
+**Answer.** `Cart` (entity) owns immutable `Line`s and enforces quantity invariants; `Product` and `Money` are value objects. `DiscountRule` interface with one class per rule; a pricing component picks or stacks rules with a cap at the subtotal. `ShippingPolicy` and `Packaging` as composed parts of `Order`. `PaymentMethod` abstract class with a fixed `pay` template and a `Refundable` capability interface. `Inventory` with a written contract for `reserve`, implemented atomically in storage. Walk through one checkout with a sequence of calls, then discuss extension (new rule = new class), testing (fakes for payment) and failure handling (payment timeouts need idempotency, §22.15).
+
+**Q8. Is a `Square` a `Rectangle`?**
+**Answer.** Mathematically yes; behaviorally only if rectangles are immutable. If `Rectangle` has `set_width` with the postcondition "width changes, height unchanged", a `Square` must change both, which weakens the postcondition, so code written for rectangles breaks. Options: make shapes immutable, give them a common `Shape` interface without setters, or do not relate them. This is the behavioral subtyping idea of Liskov and Wing, developed in §36.5.
+
+**Q9. You inherit a 6,000-line `OrderManager`. How do you approach it?**
+**Answer.** Add characterization tests around current behavior first. Map which methods use which fields (LCOM components) and which callers use which methods. Extract the most independent component first behind an interface, delegate from the old class so callers keep working, and repeat. Move rules into the entities they govern. Track size, coupling and change frequency to show progress, and avoid a big-bang rewrite.
+
+## 35.15 Practical exercises
+
+1. **Money value object.** Write `Money(amount_cents, currency)` in Python (frozen dataclass) and Java (record) with addition that refuses mixed currencies. Show that equal values hash equally and work as set elements.
+2. **Break and fix encapsulation.** Change §35.4's `lines()` to return the internal dictionary, write a caller that breaks invariant 1, then restore the snapshot and show the caller now fails.
+3. **Fragile base, other direction.** Remove `add_all` from `CountingCart` (§35.5.2), confirm the count is 3, then rewrite the base `add_all` to update the dictionary directly and show the count becomes 0 for `add_all`. Then switch to the wrapper of §35.8 and repeat.
+4. **A fourth discount.** Add `CategoryPercentOff` to §35.6 without editing `best_discount`. Then add a rule that stacks discounts but caps the total at the subtotal.
+5. **Contract tests.** Write one test function that takes any `Inventory` and checks the `reserve` contract; run it against both classes of §35.9.
+6. **Measure cohesion.** Run the LCOM script on a class from a codebase you know, by listing methods and the fields each uses. Do the components suggest a split?
+
+## 35.16 Design challenges
+
+1. **Library loans.** Design classes for a library that lends books, e-books and DVDs with different loan periods and late fees, and members with different borrowing limits. Identify axes of variation, decide inheritance versus composition, write the contract of `lend(item, member)`, and draw a class diagram.
+2. **Notification system.** Orders must notify customers by email, SMS or push, in several languages, with immediate or daily-digest timing. Show the class explosion an inheritance design would cause, compute it, and give a composed design.
+3. **Refactor a god class.** Given a `CheckoutManager` with pricing, stock reservation, payment, receipts and analytics, propose the target classes, the order of extraction, how callers keep working during the change, and how you would measure that cohesion improved.
+
+## 35.17 References
+
+1. Bloch, J. *Effective Java*, 3rd ed. Addison-Wesley, 2018.
+2. Cardelli, L., Wegner, P. "On Understanding Types, Data Abstraction, and Polymorphism." *ACM Computing Surveys* 17(4):471–522, 1985.
+3. Chidamber, S. R., Kemerer, C. F. "A Metrics Suite for Object Oriented Design." *IEEE Transactions on Software Engineering* 20(6):476–493, 1994.
+4. Fowler, M. "AnemicDomainModel." martinfowler.com (bliki), 2003. https://martinfowler.com/bliki/AnemicDomainModel.html
+5. Fowler, M. "TellDontAsk." martinfowler.com (bliki), 2013. https://martinfowler.com/bliki/TellDontAsk.html
+6. Gamma, E., Helm, R., Johnson, R., Vlissides, J. *Design Patterns: Elements of Reusable Object-Oriented Software*, ch. 1 "Introduction". Addison-Wesley, 1994.
+7. Hitz, M., Montazeri, B. "Measuring Coupling and Cohesion in Object-Oriented Systems." *Proceedings of the International Symposium on Applied Corporate Computing*, 1995.
+8. Levkivskyi, I., Lehtosalo, J., Langa, Ł. *PEP 544 — Protocols: Structural Subtyping (Static Duck Typing)*. Python Software Foundation, 2017. https://peps.python.org/pep-0544/
+9. Lieberherr, K. J., Holland, I. M. "Assuring Good Style for Object-Oriented Programs." *IEEE Software* 6(5):38–48, 1989.
+10. Liskov, B. H., Wing, J. M. "A Behavioral Notion of Subtyping." *ACM Transactions on Programming Languages and Systems* 16(6):1811–1841, 1994.
+11. Martin, R. C. *Clean Code: A Handbook of Agile Software Craftsmanship*. Prentice Hall, 2008.
+12. Meyer, B. *Object-Oriented Software Construction*, 2nd ed. Prentice Hall, 1997.
+13. Oracle. *Java SE 21 API documentation*: `java.util.Stack`, `java.util.Collections`, `java.time` package. https://docs.oracle.com/en/java/javase/21/docs/api/
+14. Parnas, D. L. "On the Criteria To Be Used in Decomposing Systems into Modules." *Communications of the ACM* 15(12):1053–1058, 1972.
+15. Python Software Foundation. *Python 3 documentation*: `abc` and `collections.abc` modules. https://docs.python.org/3/library/collections.abc.html
+16. Riel, A. J. *Object-Oriented Design Heuristics*. Addison-Wesley, 1996.
+17. Stevens, W. P., Myers, G. J., Constantine, L. L. "Structured Design." *IBM Systems Journal* 13(2):115–139, 1974.
+18. Yourdon, E., Constantine, L. L. *Structured Design: Fundamentals of a Discipline of Computer Program and Systems Design*. Prentice Hall, 1979.
+
+## 35.18 Open verification items
+
+- Exact list and ordering of coupling kinds in Stevens, Myers & Constantine (1974) versus later refinements (Myers 1975; Yourdon & Constantine 1979); Table 35.10 uses the commonly taught seven-level ordering, with message coupling as a later addition.
+- Publication venue of Hitz & Montazeri (1995) for LCOM4.
+- Publication years of Fowler's "TellDontAsk" (believed 2013) and "AnemicDomainModel" (believed 2003) bliki entries.
+- Item numbers cited from *Effective Java*, 3rd ed. (10–11, 17–20, 49–50): confirm against the printed edition.

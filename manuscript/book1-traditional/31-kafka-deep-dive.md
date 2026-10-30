@@ -1105,11 +1105,13 @@ Kafka's throughput comes from a few hardware facts (Chapter 5) applied consisten
 **Figure 31.15 — Read path with and without zero-copy.**
 
 ```mermaid
-flowchart LR
+flowchart TB
   subgraph Classic["read + write: 4 copies"]
+    direction LR
     D1[(Disk)] -->|DMA| PC1[Page cache] -->|copy| UB[User buffer] -->|copy| SB1[Socket buffer] -->|DMA| N1{{NIC}}
   end
   subgraph Zero["sendfile: no user-space copy"]
+    direction LR
     D2[(Disk or warm cache)] -->|DMA| PC2[Page cache] -->|descriptors| N2{{NIC}}
   end
 ```
