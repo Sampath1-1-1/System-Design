@@ -2,31 +2,31 @@
 
 > **Level:** 3 · **Track:** Shared (A Traditional and B ML/AI) · **Estimated reading time:** 3 h
 
-Chapters 11–15 stored data; Chapters 24–28 kept copies of it consistent. This chapter is about *computing over* data that is too large for one machine: counting a month of click logs, joining two billion orders with their customers, building a search index, or keeping a live per-minute fraud score for every card. The same few ideas recur across every engine you will meet: split the input, run the same function on each piece, move records with the same key to the same place (the **shuffle**), and recover from failures by recomputing rather than by replicating everything. You will learn them first through MapReduce, where every step is visible, then through Apache Spark, which keeps data in memory and plans whole jobs as graphs, and finally through stream processing and Apache Flink, where the input never ends and "when is a result complete?" becomes the central question. Chapter 61 (ML data pipelines) builds directly on this chapter, so the examples lean toward the log and event data that feed machine-learning systems.
+Chapters 11–15 stored data; Chapters 24–28 kept copies of it consistent. This chapter is about *computing over* data that is too large for one machine: counting a month of click logs, joining two billion orders with their customers, building a search index, or keeping a live per-minute fraud score for every card. The same few ideas recur across every engine you will meet: split the input, run the same function on each piece, move records with the same key to the same place (the **shuffle**), and recover from failures by recomputing rather than by replicating everything. You will meet them in MapReduce, where every step is visible; in Apache Spark, which keeps data in memory and plans jobs as graphs; and in stream processing and Apache Flink, where the input never ends and "when is a result complete?" becomes the central question. Chapter 61 (ML data pipelines) builds directly on this chapter.
 
 ## 29.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Explain why batch systems treat inputs as immutable and optimize throughput over latency, and estimate the scan time of a job from data size and cluster bandwidth.
-- Trace a MapReduce job through splits, map, partition, sort and spill, shuffle, merge and reduce; estimate its run time; and quantify what a combiner saves.
-- Explain how MapReduce and Spark survive failures by re-execution and lineage, and how backup tasks cut straggler delay.
-- Choose between a sort-merge (shuffle) join and a broadcast join with a cost calculation.
-- Describe RDDs, narrow and wide dependencies, stages and tasks, caching, DataFrames, the Catalyst optimizer and Adaptive Query Execution, and write a correct PySpark job.
-- Calculate shuffle volume and time on a rack-structured cluster, the slowdown caused by key skew, and the effect of salting.
-- Explain data locality and why disaggregated object storage changed its importance.
-- Define event time, processing time, windows, watermarks, triggers and allowed lateness, and compute the fraction of late events for a watermark delay.
-- Explain Flink's architecture, keyed state, the RocksDB state backend, asynchronous barrier snapshotting and savepoints, and size a checkpoint interval.
-- Compare Lambda and Kappa architectures, batch and stream processing, and Spark and Flink, and say where Apache Beam fits.
+- Explain immutable inputs and throughput-first design, and estimate a job's scan time.
+- Trace a MapReduce job from splits to reduce, estimate its run time, and quantify what a combiner saves.
+- Explain recovery by re-execution and lineage, and how backup tasks cut straggler delay.
+- Choose between a sort-merge join and a broadcast join by cost.
+- Describe RDDs, narrow and wide dependencies, stages, caching, DataFrames, Catalyst and Adaptive Query Execution, and write a correct PySpark job.
+- Calculate shuffle time on a rack-structured cluster, the slowdown from key skew, and the effect of salting.
+- Explain data locality and why disaggregated storage changed its importance.
+- Define event time, windows, watermarks, triggers and allowed lateness, and compute the late fraction for a watermark delay.
+- Explain Flink's state, barrier snapshots and savepoints, and size a checkpoint interval.
+- Compare Lambda and Kappa, batch and stream, and Spark and Flink, and place Apache Beam.
 
 ## 29.2 Prerequisites
 
-- Distributed file systems and object storage — §15.4–§15.5 (GFS/HDFS chunks and S3-style stores are where batch inputs live).
-- Columnar storage and Parquet — §13.13 (why analytical jobs read a few columns fast).
+- Object storage and GFS/HDFS — §15.4–§15.5 (where batch inputs live).
+- Columnar storage and Parquet — §13.13.
 - Partitioning, hash and range — §14.6 and hot partitions §14.10 (the shuffle is partitioning on the fly).
 - Datacenter networking and oversubscription — §7.17 (shuffle time is a network problem).
 - Probability and Amdahl's Law — §4.6 and §4.12 (stragglers and the serial parts of a job).
-- Clocks and logical time — §24.9–§24.10 (event time versus processing time; Chandy–Lamport builds on Lamport's ideas).
+- Clocks and logical time — §24.9–§24.10 (event time; Chandy–Lamport snapshots).
 - Backpressure and idempotency — §22.10 and §22.15 (streaming operators slow their sources; sinks must tolerate replays).
 - Units: **MB/GB/TB** are powers of ten; network speeds are in bits per second (Gb/s), so 25 Gb/s = 3.125 GB/s.
 
@@ -40,7 +40,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Imagine counting every word in a library. You could ask one person to read every book: correct, but it takes years. Or you could give each of 1,000 volunteers a shelf, have each write a tally sheet, then have a second group add the tally sheets together letter by letter: one person totals words beginning with "a", another "b", and so on. Nobody edits a book; the books are only read. If a volunteer goes home sick, you hand the same shelf to someone else and nothing is corrupted, because the shelf never changed. That is batch processing: **split, process in parallel, regroup by key, combine**, over inputs that do not change.
+Imagine counting every word in a library. You could ask one person to read every book: correct, but it takes years. Or you could give each of 1,000 volunteers a shelf, have each write a tally sheet, then have a second group add the tally sheets together letter by letter: one person totals words beginning with "a", another "b", and so on. Nobody edits a book; the books are only read. If a volunteer goes home sick, someone else redoes the same shelf. That is batch processing: **split, process in parallel, regroup by key, combine**, over inputs that do not change.
 
 The Unix shell already works this way on one machine. To find the five most common URLs in a web server log you can write:
 
@@ -54,9 +54,9 @@ Each program reads a stream, does one job, and writes a stream; the input file i
 
 Three properties make large computations tractable:
 
-1. **Immutable inputs.** If inputs are never modified, any piece of work can be rerun and will produce the same output. Fault tolerance becomes "do it again" rather than distributed transactions (Chapter 28). A buggy job can be fixed and rerun over the same input, which Kleppmann calls *human fault tolerance*.
+1. **Immutable inputs.** If inputs are never modified, any piece of work can be rerun and will produce the same output. Fault tolerance becomes "do it again" rather than distributed transactions (Chapter 28). A buggy job can simply be fixed and rerun.
 2. **Bounded datasets.** Knowing the whole input exists lets the system sort it, count it, plan the work in waves, and decide when the job is finished.
-3. **Throughput over latency.** Nobody waits on one record, so the system can batch I/O into large sequential reads and writes (100+ MB at a time), keep every disk and core busy, and accept tens of seconds of scheduling overhead. The figure of merit is cluster-hours per terabyte.
+3. **Throughput over latency.** Nobody waits on one record, so the system can use large sequential I/O, keep every disk and core busy, and accept tens of seconds of scheduling overhead.
 
 #### How it works internally
 
@@ -107,7 +107,7 @@ $$T_{\text{scan}} = \frac{D}{N \cdot b}$$
 2. 100 nodes: $10^{13} / (100 \times 5 \times 10^{8}) = 200$ s $\approx 3.3$ minutes.
 3. Reading only 3 of 30 columns from Parquet (§13.13) cuts effective $D$ to about 1 TB: 20 s on 100 nodes.
 
-**Interpretation.** Parallelism converts hours into minutes, but only for the part that parallelizes; job start-up, the slowest task and any single-node step do not shrink (Amdahl's Law, §4.12). **Engineering implication.** Before tuning anything, reduce $D$ (columnar formats, partition pruning by date) and then raise $N$; later sections add the shuffle and straggler terms that this formula ignores.
+**Interpretation.** Parallelism turns hours into minutes, but start-up, the slowest task and serial steps do not shrink (Amdahl's Law, §4.12). **Engineering implication.** Reduce $D$ first (columnar formats, date pruning), then raise $N$; later sections add shuffle and straggler terms.
 :::
 
 ::: mistake
@@ -141,15 +141,15 @@ Google in the early 2000s ran hundreds of special-purpose programs over crawled 
 
 #### How it works internally
 
-1. **Split.** The input is divided into $M$ splits, typically one per 64–128 MB block. A single **coordinator** (Google's paper calls it the master; Hadoop 1 the JobTracker; on YARN an ApplicationMaster) assigns map tasks to idle workers, preferring a worker that stores the split locally (§29.7).
+1. **Split.** The input is divided into $M$ splits, typically one per 64–128 MB block. A single **coordinator** (Google's "master"; on YARN an ApplicationMaster) assigns map tasks to idle workers, preferring a worker that stores the split locally (§29.7).
 2. **Map.** The worker parses records from its split and calls `map` on each one.
 3. **Partition.** Each intermediate pair is assigned to one of $R$ reduce partitions, by default $\text{hash}(k) \bmod R$, so every pair with the same key goes to the same reducer no matter which mapper emitted it.
-4. **Buffer, sort and spill.** Pairs accumulate in an in-memory buffer (100 MB by default in Hadoop). When it fills past a threshold, the worker sorts the buffer by (partition, key), optionally runs the **combiner**, and **spills** a sorted run to local disk. At the end of the task, the spill files are merge-sorted into one file per task, laid out partition by partition with an index.
+4. **Buffer, sort and spill.** Pairs accumulate in a memory buffer (100 MB by default in Hadoop). When it fills, the worker sorts the buffer by (partition, key), optionally runs the **combiner**, and **spills** a sorted run to local disk. At task end, spills are merged into one partitioned, indexed file.
 5. **Shuffle.** Each reduce task fetches its partition from *every* map task's output over the network, usually starting while maps are still finishing. This all-to-all copy is the shuffle.
 6. **Merge.** The reducer merge-sorts the $M$ sorted runs it fetched, spilling to disk if they do not fit in memory, so that all values for a key are adjacent.
-7. **Reduce.** The reducer calls `reduce` once per key, streaming the sorted values, and writes output to the distributed file system as one file per reduce task (`part-00000`, `part-00001`, …). Output becomes visible by an atomic rename when the task commits.
+7. **Reduce.** The reducer calls `reduce` once per key, streaming the sorted values, and writes one output file per reduce task (`part-00000`, …), made visible by an atomic rename on commit.
 
-A **combiner** is a reduce function run on the map side, on one mapper's output, before the shuffle. It is legal only when the reduce operation is associative and commutative (sum, count, max), because the reducer will combine partial results in an arbitrary grouping.
+A **combiner** is a reduce function run on the map side, on one mapper's output, before the shuffle. It is legal only for associative and commutative operations (sum, count, max).
 
 **Figure 29.2 — MapReduce job execution.**
 
@@ -173,7 +173,7 @@ flowchart LR
   R2 --> OUT2[("Output<br/>part-0000R")]
 ```
 
-**Reading the diagram.** The *coordinator* (dotted arrows) assigns tasks and receives heartbeats; it never touches data. Each *map task* reads one split from the replicated *input file*, partitions and sorts its output, and writes it to its node's *local disk* as R sorted partitions. Each *reduce task* fetches its own partition from every map output (the HTTP-based shuffle; solid arrows are synchronous fetches), merges, reduces, and writes one *output* file back to the distributed file system. Storage boundaries: input and output are durable and replicated; intermediate data is local and unreplicated, which is cheap but means a lost node forces its map tasks to rerun. Scaling: map parallelism follows input size; reduce parallelism is chosen by the user (R), and the shuffle is $M \times R$ transfers.
+**Reading the diagram.** The *coordinator* (dotted arrows) assigns tasks and receives heartbeats; it never touches data. Each *map task* reads one split from the replicated *input file*, partitions and sorts its output, and writes it to its node's *local disk* as R sorted partitions. Each *reduce task* fetches its own partition from every map output (the HTTP-based shuffle; solid arrows are synchronous fetches), merges, reduces, and writes one *output* file back to the distributed file system. Storage boundaries: input and output are replicated; intermediate data is local and unreplicated, so a lost node forces its map tasks to rerun. Scaling: M follows input size, R is chosen by the user, and the shuffle is $M \times R$ transfers.
 
 **Figure 29.3 — Inside a map task and a reduce task.**
 
@@ -193,7 +193,7 @@ flowchart LR
   MG -->|HTTP fetch of one partition| FE
 ```
 
-**Reading the diagram.** Within a map task, records flow from the *record reader* through the user's *map function* and the *partitioner* into a memory *buffer*. Each time the buffer fills, it is sorted by (partition, key), the *combiner* runs, and a *spill file* is written; at the end all spills are merged into one partitioned file with an index giving each partition's byte range. The reduce task's *fetchers* pull its partition from every map output, the *merge* step produces one sorted stream, and the *reduce function* writes a part file to HDFS. Failure points: a full disk during spill fails the task; a fetch failure from a dead node makes the coordinator rerun that map. Scaling: larger buffers mean fewer spills and merge passes.
+**Reading the diagram.** Within a map task, records flow from the *record reader* through the user's *map function* and the *partitioner* into a memory *buffer*. Each time the buffer fills, it is sorted by (partition, key), the *combiner* runs, and a *spill file* is written; at the end all spills are merged into one partitioned file with an index giving each partition's byte range. The reduce task's *fetchers* pull its partition from every map output, the *merge* step produces one sorted stream, and the *reduce function* writes a part file to HDFS. Failure points: a full disk fails the task; a fetch failure reruns the map. Scaling: larger buffers mean fewer spills.
 
 #### Code example
 
@@ -371,7 +371,7 @@ $$T_{\text{job}} \approx T_0 + \left\lceil \frac{M}{N s_m} \right\rceil \frac{C}
 4. Reduce: $50 \times 8 = 400$ slots, so one wave. Each reducer gets $300 \text{ GB} / 400 = 750$ MB, taking $750 / 20 = 37.5$ s.
 5. Total: $20 + 128 + 6 + 37.5 \approx 192$ s, about 3.2 minutes.
 
-**Interpretation.** The map phase dominates; and because $7{,}813 / 800 = 9.77$, the tenth wave runs only 77% full, so 23% of the cluster idles for 12.8 s. **Engineering implication.** Choose split sizes so that tasks number either well below the slot count or many times above it, keep tasks to tens of seconds so the last wave is short, and remember this is a *lower bound*: one slow task in the last wave adds its whole delay (§29.4.3).
+**Interpretation.** The map phase dominates, and since $7{,}813 / 800 = 9.77$, the last wave runs 77% full. **Engineering implication.** Keep tasks to tens of seconds so the last wave is short, and treat the estimate as a *lower bound*: one slow last-wave task adds its whole delay (§29.4.3).
 :::
 
 ::: formula
@@ -395,7 +395,7 @@ $$V_{\text{no comb}} = n_{\text{pairs}} \cdot b_{\text{pair}}, \qquad V_{\text{c
 2. With a combiner: $V = 7{,}813 \times 2 \times 10^{5} \times 12 = 1.9 \times 10^{10}$ B $\approx 19$ GB.
 3. Reduction: $2{,}000 / 19 \approx 105\times$.
 
-**Interpretation.** Emitting `(word, 1)` inflates the data because a 12-byte pair replaces a 6-byte word; local aggregation removes almost all of it because word frequencies are heavily repeated within a split. **Engineering implication.** Always pre-aggregate before a shuffle when the operation allows it; Spark's `reduceByKey` and DataFrame `groupBy().agg()` do this automatically (the `partial_count` step in the Spark plan of §29.5.4), while `groupByKey` does not.
+**Interpretation.** A 12-byte pair replaces a 6-byte word, so naive map output doubles the data; words repeat heavily within a split, so local aggregation removes almost all of it. **Engineering implication.** Always pre-aggregate before a shuffle when the operation allows it; Spark's `reduceByKey` and DataFrame `groupBy().agg()` do this automatically (the `partial_count` step in the Spark plan of §29.5.4), while `groupByKey` does not.
 :::
 
 ### 29.4.3 Fault tolerance: re-execution, stragglers and backup tasks
@@ -403,10 +403,9 @@ $$V_{\text{no comb}} = n_{\text{pairs}} \cdot b_{\text{pair}}, \qquad V_{\text{c
 #### How it works internally
 
 1. **Worker failure.** The coordinator pings workers. If one stops responding, every map task it *completed* is reset to idle and rescheduled, because its output lived on that worker's local disk and is now unreachable; its in-progress map and reduce tasks are rescheduled too. Completed reduce tasks are not rerun, because their output is already in the replicated file system. Reducers that had not yet fetched from the dead worker are told to fetch from the new attempt.
-2. **Deterministic re-execution.** Because map and reduce are functions of immutable inputs, a rerun produces the same output. Atomic commit (rename of the task's temporary output file) ensures that if two attempts of the same task both finish, only one output is kept.
-3. **Coordinator failure.** The original design simply aborted the job and let the client retry; later systems (YARN ApplicationMaster restart, Spark driver recovery in cluster mode) checkpoint progress.
-4. **Stragglers and backup tasks.** A **straggler** is a task that runs far slower than its peers because of a bad disk, a noisy neighbor, or a misconfigured machine. Near the end of a phase the coordinator launches **backup** (speculative) copies of the remaining in-progress tasks on other workers and takes whichever finishes first. Google reported that a sort of 1 TB took 44% longer with backup tasks disabled [Dean and Ghemawat 2004].
-5. **Bad records.** A record that deterministically crashes user code would fail every attempt. MapReduce can skip records that caused repeated failures instead of failing the job.
+2. **Deterministic re-execution.** Because tasks are functions of immutable inputs, a rerun produces the same output; atomic commit keeps only one attempt's output.
+3. **Stragglers and backup tasks.** A **straggler** is a task that runs far slower than its peers because of a bad disk, a noisy neighbor, or a misconfigured machine. Near the end of a phase the coordinator launches **backup** (speculative) copies of the remaining in-progress tasks on other workers and takes whichever finishes first. Google reported that a sort of 1 TB took 44% longer with backup tasks disabled [Dean and Ghemawat 2004].
+4. **Bad records** that crash user code deterministically can be skipped after repeated failures.
 
 **Figure 29.4 — Lifecycle of a task under re-execution and speculation.**
 
@@ -512,17 +511,6 @@ Broadcast is cheaper when $|S| \cdot N < |L| + |S|$, roughly $|S| < |L| / (N - 1
 **Interpretation.** Broadcasting trades a copy per executor for avoiding a shuffle of the big side, which pays only while the small side is really small. **Engineering implication.** Spark broadcasts automatically below `spark.sql.autoBroadcastJoinThreshold` (10 MB by default, deliberately conservative), and Adaptive Query Execution can switch to a broadcast at run time when the actual size after filtering turns out small (§29.5.4). Raise the threshold cautiously and only with memory headroom.
 :::
 
-**Table 29.1 — Join strategies in distributed batch engines.**
-
-| Aspect | Sort-merge (reduce-side) join | Broadcast hash join | Bucketed map-side join |
-|---|---|---|---|
-| What it is | Shuffle both sides by key, sort, merge | Copy small side to every task, hash lookup | Merge co-partitioned, pre-sorted inputs |
-| Network cost | Both inputs once | Small input × tasks | None at query time |
-| Memory need | Low (streams sorted runs) | Small side must fit per task | Low |
-| Handles any size | Yes | No | Yes, if data was written bucketed |
-| Skew sensitivity | High: a hot key overloads one reducer | Low | High |
-| Choose when | Both sides large | One side ≲ tens of MB to a few GB | Repeated joins on the same key |
-
 #### Failure scenarios
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
@@ -550,7 +538,7 @@ A recipe card is cheaper to keep than a fridge full of prepared dishes. If someo
 
 #### Why does this exist?
 
-MapReduce writes every job's output to the replicated distributed file system, and multi-step pipelines are chains of jobs. That is fine for one pass but wasteful for **iterative** algorithms (logistic regression, k-means, PageRank) that read the same data ten or a hundred times, and for **interactive** analysis where an analyst asks one question after another of the same dataset. Each iteration paid for a full disk read, deserialization and a triple-replicated write. Replicating in-memory data across machines for fault tolerance would cost network bandwidth comparable to the writes it saved. Lineage gives fault tolerance by logging the *coarse-grained* transformation once per dataset rather than every record [Zaharia et al. 2012].
+MapReduce writes every job's output to the replicated distributed file system, and multi-step pipelines are chains of jobs. That is fine for one pass but wasteful for **iterative** algorithms (logistic regression, k-means, PageRank) that read the same data ten or a hundred times, and for **interactive** analysis where an analyst asks one question after another of the same dataset. Replicating in-memory data instead would cost network bandwidth comparable to the writes it saved. Lineage gives fault tolerance by logging the *coarse-grained* transformation once per dataset rather than every record [Zaharia et al. 2012].
 
 #### How it works internally
 
@@ -558,7 +546,7 @@ MapReduce writes every job's output to the replicated distributed file system, a
 2. **Actions trigger jobs.** `count()`, `collect()` or `saveAsTextFile()` submit a **job** for the final RDD's lineage graph.
 3. **The driver plans, executors run.** The **driver** program holds the `SparkContext`, the **DAG scheduler** and the **task scheduler**. A **cluster manager** (YARN, Kubernetes or Spark's standalone manager) grants **executors**, long-lived JVM processes on worker nodes, each with a number of cores and a memory region for cached partitions and shuffle buffers.
 4. **Recovery.** When an executor dies, the driver identifies which partitions it held, walks the lineage back to the nearest available ancestors (cached partitions, surviving shuffle files, or the input), and reruns only the needed tasks.
-5. **Checkpointing** (`rdd.checkpoint()`) writes an RDD to reliable storage and truncates its lineage, which matters for very long lineages such as hundreds of iterations.
+5. **Checkpointing** (`rdd.checkpoint()`) writes an RDD to reliable storage and truncates very long lineages.
 
 **Figure 29.6 — Spark runtime: driver, cluster manager and executors.**
 
@@ -611,7 +599,7 @@ flowchart LR
 
 ### 29.5.3 Caching and persistence
 
-`rdd.persist(level)` or `df.cache()` asks Spark to keep the computed partitions after the first action so later actions reuse them. **Storage levels** choose the trade-off: `MEMORY_ONLY` keeps deserialized objects and recomputes partitions that do not fit; `MEMORY_AND_DISK` spills them to local disk instead (the default for DataFrame `cache()`); serialized and `_2` (replicated) variants trade CPU for memory or for faster recovery; `DISK_ONLY` avoids memory altogether. Cached blocks are evicted least-recently-used under memory pressure. Caching is a hint for reuse, not a durability mechanism: a lost cached partition is recomputed from lineage.
+`rdd.persist(level)` or `df.cache()` asks Spark to keep the computed partitions after the first action so later actions reuse them. **Storage levels** choose the trade-off: `MEMORY_ONLY` recomputes partitions that do not fit; `MEMORY_AND_DISK` (the DataFrame `cache()` default) spills them to local disk; serialized and replicated (`_2`) variants trade CPU for memory or faster recovery. `cache()` is lazy (the first action fills it), and it is a hint for reuse, not durability: lost cached partitions are recomputed from lineage.
 
 ::: formula
 **Speedup from caching an iterative job**
@@ -633,7 +621,7 @@ $$S = \frac{k \,(T_{\text{load}} + T_{\text{iter}})}{T_{\text{load}} + k \, T_{\
 2. With caching: $60 + 10 \times 6 = 120$ s.
 3. Speedup: $660 / 120 = 5.5\times$; the asymptotic limit is $1 + 60/6 = 11\times$.
 
-**Interpretation.** Caching helps exactly when loading dominates per-iteration compute and the data is reused; for a single pass it only costs memory. **Engineering implication.** Cache the dataset that is reused, after the expensive parsing and filtering, check in the Spark UI that the cached fraction is near 100% (deserialized objects can be several times larger than compressed Parquet), and `unpersist()` it when done.
+**Interpretation.** Caching helps when loading dominates and data is reused; for one pass it only costs memory. **Engineering implication.** Cache the reused dataset after expensive parsing and filtering, check in the Spark UI that it fits (deserialized objects are often several times larger than Parquet), and `unpersist()` it when done.
 :::
 
 ::: industry
@@ -751,14 +739,10 @@ What to notice:
 
 - Read the plan bottom-up. The users side goes through a `BroadcastExchange`; the events side is joined in place by `BroadcastHashJoin`, so the large input is never shuffled for the join.
 - There is exactly one `Exchange` (shuffle), for the `groupBy`. Before it, `partial_count` is the map-side combiner of §29.4.2; after it, the final `count` merges partial counts.
-- Catalyst inserted `Filter isnotnull(user_id)` on both sides on its own: an inner join can never match a null key, so filtering early is free.
-- `StorageLevel(disk, memory, deserialized, 1 replicas)` is `MEMORY_AND_DISK`, the DataFrame `cache()` default.
-- `AdaptiveSparkPlan isFinalPlan=false` means AQE may still rewrite the plan once the shuffle statistics exist.
-- The RDD version gives the same answer, but Catalyst cannot see inside its lambdas, and in PySpark every record crosses the JVM–Python boundary. Prefer DataFrames and built-in functions; fall back to RDDs or Python user-defined functions only for logic that SQL cannot express.
+- Catalyst added `Filter isnotnull(user_id)` itself: an inner join never matches a null key.
+- `AdaptiveSparkPlan isFinalPlan=false`: AQE may still rewrite the plan after the shuffle.
+- The RDD version gives the same answer, but Catalyst cannot see inside its lambdas and every record crosses the JVM–Python boundary. Prefer DataFrames and built-in functions.
 
-::: mistake
-**"`cache()` makes the next line faster."** `cache()` is lazy: it marks the DataFrame, and the first *action* both computes and stores it. Caching something used once only adds memory pressure, and calling `count()` just to "warm" a cache doubles the work if the data is not reused.
-:::
 
 ## 29.6 Partitioning and shuffle
 
@@ -803,7 +787,7 @@ flowchart LR
   TA --> RA
 ```
 
-**Reading the diagram.** Map tasks in each rack write partitioned *shuffle files* to local disk. Reduce tasks fetch their partition from every file: fetches within a rack go through the top-of-rack switch only, while cross-rack fetches climb through the *ToR switch*, an *oversubscribed uplink* and the *spine*. All fetches are pull-based TCP transfers that start as soon as producers finish. Storage boundary: shuffle files are on unreplicated local disks. Failure points: a congested uplink slows every reducer at once; a lost node invalidates its shuffle files. Scaling: more partitions spread the work but create $M \times R$ ever-smaller blocks, which turn sequential I/O into random I/O.
+**Reading the diagram.** Map tasks in each rack write partitioned *shuffle files* to local disk. Reduce tasks fetch their partition from every file: fetches within a rack go through the top-of-rack switch only, while cross-rack fetches climb through the *ToR switch*, an *oversubscribed uplink* and the *spine*. All fetches are pull-based TCP transfers that start as soon as producers finish. Shuffle files are on unreplicated local disks. Failure points: a congested uplink slows every reducer; a lost node invalidates its files. Scaling: more partitions create $M \times R$ ever-smaller blocks and random I/O.
 
 ::: formula
 **Shuffle time lower bound on a rack-structured cluster**
@@ -833,7 +817,7 @@ $$T_{\text{shuffle}} \approx \max\!\left( \frac{V (N-1)/N}{N \, \eta B_{\text{NI
 :::
 
 ::: industry
-**LinkedIn Magnet: push-based shuffle.** LinkedIn found that pull-based shuffle on hard disks produced huge numbers of small random reads and frequent fetch failures. Magnet has map tasks *push* their blocks to remote shuffle services, which merge blocks for the same reduce partition into larger files, turning small random reads into large sequential ones and keeping a second copy of shuffle data. It was contributed to Apache Spark as push-based shuffle for YARN in Spark 3.2.
+**LinkedIn Magnet: push-based shuffle.** LinkedIn found that pull-based shuffle on hard disks produced huge numbers of small random reads and frequent fetch failures. In Magnet, map tasks *push* blocks to remote shuffle services that merge each reduce partition into larger files, turning random reads into sequential ones and keeping a second copy. It became Spark's push-based shuffle for YARN in Spark 3.2.
 *Evidence: Primary* — [Shen et al. 2020; Apache Spark Docs: Configuration]
 :::
 
@@ -958,7 +942,7 @@ flowchart LR
 
 In 2004 the network was the scarcest resource: 1 Gb/s NICs (125 MB/s) shared with the shuffle, behind rack uplinks oversubscribed several times, while each node's local disks together delivered a few hundred MB/s. Moving computation to data, "compute-to-data", was therefore essential. GFS and HDFS expose block locations (§15.5), and the MapReduce coordinator tried node-local first, then rack-local; the paper reports that most input in large jobs was read locally and consumed no network bandwidth [Dean and Ghemawat 2004]. Spark's task scheduler waits a short time for a better locality level before accepting a worse one (`spark.locality.wait`, 3 s by default), an idea called **delay scheduling** that achieved near-perfect locality at small cost in fairness [Zaharia et al. 2010].
 
-Two changes reduced locality's importance. Datacenter networks moved to 25–100 Gb/s NICs and Clos fabrics with much lower oversubscription (§7.17), so a node can read remotely at several GB/s, comparable to its local NVMe drives. And cloud deployments **disaggregated storage from compute**: data lives in object stores (§15.4) or a shared file system such as Colossus or Tectonic (§15.5.3), and stateless compute clusters scale up and down independently, even to zero. With columnar formats, a scan that reads 3 of 30 columns over a 3 GB/s remote path often beats a full local scan, and CPU spent decoding Parquet frequently becomes the bottleneck before the network does.
+Two changes reduced locality's importance. Networks moved to 25–100 Gb/s NICs and fabrics with low oversubscription (§7.17), so remote reads approach local NVMe speed. And cloud deployments **disaggregated storage from compute**: data lives in object stores (§15.4) or shared file systems such as Colossus or Tectonic (§15.5.3), while stateless compute clusters scale independently, even to zero. Parquet decoding often becomes the bottleneck before the network does.
 
 ::: example
 **Worked example — How much locality is worth, then and now.** Each node must read 100 GB of input.
@@ -966,10 +950,10 @@ Two changes reduced locality's importance. Datacenter networks moved to 25–100
 1. 2004-style node: local disks 200 MB/s, effective remote rate about 25 MB/s (125 MB/s NIC behind 5:1 rack oversubscription). Fully local: $100{,}000/200 = 500$ s. Fully remote: $100{,}000/25 = 4{,}000$ s, 8× slower.
 2. 2026-style node: local NVMe 6 GB/s; 100 Gb/s NIC delivering about 3 GB/s from an object store with parallel range reads. Local: $100/6 = 17$ s; remote: $100/3 = 33$ s, 2× slower, before columnar pruning, which applies equally to both.
 
-**Interpretation.** Locality turned from an 8× factor into a 2× factor, which the elasticity and independent scaling of disaggregated storage usually outweigh. **Engineering implication.** In the cloud, put tables in object storage in a columnar format, cache hot data on executor-local SSDs, and spend tuning effort on shuffle and skew rather than on co-locating compute with storage. Locality still matters for the *shuffle*, which remains node-to-node.
+**Interpretation.** Locality shrank from an 8× factor to 2×, which elasticity usually outweighs. **Engineering implication.** Keep columnar tables in object storage, cache hot data on local SSDs, and tune shuffle and skew instead; the shuffle remains node-to-node.
 :::
 
-Object stores bring their own limits. Amazon S3 documents request-rate guidance per key prefix (at least 3,500 writes and 5,500 reads per second per prefix, as of 2026), listing millions of objects is slow, and renaming a directory is a copy. These are among the reasons table formats such as Apache Iceberg, Delta Lake and Apache Hudi track data files in metadata rather than by listing directories, and commit by atomically swapping a metadata pointer. Lakehouse table formats are treated in depth in Chapters 61–62.
+Object stores bring their own limits: per-prefix request rates (Amazon S3 documents at least 3,500 writes and 5,500 reads per second per prefix, as of 2026), slow listing, and rename-as-copy. Table formats such as Apache Iceberg, Delta Lake and Apache Hudi therefore track files in metadata and commit by swapping a metadata pointer (Chapters 61–62).
 
 ## 29.8 Stream processing concepts
 
@@ -1389,7 +1373,7 @@ Replay speed decides whether Kappa is practical. Reprocessing 30 days of events 
 *Evidence: Primary* — [Boykin et al. 2014; Kreps 2014]
 :::
 
-**Table 29.2 — Lambda and Kappa compared.**
+**Table 29.1 — Lambda and Kappa compared.**
 
 | Aspect | Lambda | Kappa |
 |---|---|---|
@@ -1407,7 +1391,7 @@ In practice many teams now run a hybrid: one engine (Spark or Flink, or Beam ove
 
 Batch and streaming are two points on one spectrum: a batch job is a stream job over a bounded input whose watermark jumps to infinity at the end. The Dataflow Model and Flink both treat them this way; Spark Structured Streaming does the reverse, running a stream as a series of small incremental batch queries [Armbrust et al. 2018].
 
-**Table 29.3 — Batch versus stream processing.**
+**Table 29.2 — Batch versus stream processing.**
 
 | Aspect | Batch | Stream |
 |---|---|---|
@@ -1421,7 +1405,7 @@ Batch and streaming are two points on one spectrum: a batch job is a stream job 
 | Use cases | Reports, model training sets, backfills, index builds | Fraud, alerting, live features, dashboards |
 | Choose when | Freshness of an hour or more is acceptable | Value decays within minutes |
 
-**Table 29.4 — Apache Spark versus Apache Flink (as of 2026).**
+**Table 29.3 — Apache Spark versus Apache Flink (as of 2026).**
 
 | Aspect | Spark (incl. Structured Streaming) | Flink |
 |---|---|---|
@@ -1508,4 +1492,53 @@ The micro-batch and continuous-mode figures are from the Spark documentation [Ap
 
 **Q5. How does Flink provide exactly-once results end to end with Kafka?** **Answer.** Sources store Kafka offsets in checkpoints; barriers create consistent snapshots of all operator state; on failure, state and offsets roll back together. The Kafka sink writes inside a transaction per checkpoint, pre-commits on the barrier, and commits when the checkpoint completes; consumers read with `read_committed`. External side effects outside this protocol still need idempotency keys.
 
-**Q6. Estimate the shuffle time of a 20 TB join on 200 nodes with 25 Gb/s NICs, 10 racks and 4:1 oversubscription.** **Answer.** NIC: 100 GB per node at 2.19 GB/s ≈ 46 s. Uplinks: 20 racks × … no, 10 racks; cross-rack $20 \times 0.9 = 18$ TB, 1.8 TB per rack through $20 \times 3.125/4 = 15.6$ GB/s ≈ 115 s. Disk (2 GB/s): 200 GB per node ≈ 100 s. Bound ≈ 2 minutes; expect 4–6 minutes. Then question the shuffle: can one side be broadcast or pre-bucketed?
+**Q6. Estimate the shuffle time of a 20 TB join on 200 nodes with 25 Gb/s NICs, 10 racks and 4:1 oversubscription.** **Answer.** NIC: about 100 GB per node at 2.19 GB/s ≈ 46 s. Uplinks (10 racks of 20): cross-rack $20 \times 0.9 = 18$ TB, 1.8 TB per rack through $20 \times 3.125/4 = 15.6$ GB/s ≈ 115 s. Disk (2 GB/s): 200 GB per node ≈ 100 s. Bound ≈ 2 minutes; expect 4–6 minutes. Then question the shuffle: can one side be broadcast or pre-bucketed?
+
+## 29.15 Practical exercises
+
+1. Extend the mini MapReduce engine with a range partitioner built from a sample, and verify that concatenating reducer outputs gives globally sorted keys.
+2. Add speculative execution to the engine: give each map task a random duration with 1% stragglers at 5×, and measure job time with and without backup tasks.
+3. Run the PySpark program with `spark.sql.autoBroadcastJoinThreshold=-1` and without the broadcast hint; compare the physical plans and count the `Exchange` operators.
+4. Add session windows (gap $g$) to the windowing simulator, including merging two sessions when a late event bridges them.
+5. Measure the late fraction in the simulator with lognormal delays of the same mean, and explain why the exponential model underestimates it.
+
+## 29.16 Design challenges
+
+1. **Daily training-set build.** 50 TB of events must be joined with a 200 GB user table and a 2 GB product table and aggregated into per-user features by 06:00 each day. Choose join strategies, partition counts and cluster size, and estimate run time and shuffle volume.
+2. **Real-time fraud features.** Compute per-card counts and amounts over 1-minute, 1-hour and 24-hour sliding windows for 300,000 events/s with p99 freshness under 5 s. Choose the engine, state backend, watermark, checkpoint interval and sink, and size the state.
+
+## 29.17 References
+
+1. Akidau, T., Balikov, A., Bekiroğlu, K., Chernyak, S., Haberman, J., Lax, R., McVeety, S., Mills, D., Nordstrom, P., Whittle, S. "MillWheel: Fault-Tolerant Stream Processing at Internet Scale." *Proceedings of the VLDB Endowment* 6(11), 2013.
+2. Akidau, T., Bradshaw, R., Chambers, C., Chernyak, S., Fernández-Moctezuma, R. J., Lax, R., McVeety, S., Mills, D., Perry, F., Schmidt, E., Whittle, S. "The Dataflow Model: A Practical Approach to Balancing Correctness, Latency, and Cost in Massive-Scale, Unbounded, Out-of-Order Data Processing." *Proceedings of the VLDB Endowment* 8(12), 2015.
+3. Akidau, T., Chernyak, S., Lax, R. *Streaming Systems*. O'Reilly Media, 2018.
+4. Apache Flink. *Documentation: Flink Architecture; State Backends; Checkpointing; Savepoints*. https://nightlies.apache.org/flink/
+5. Apache Spark. *Documentation: Performance Tuning (Adaptive Query Execution); Configuration; RDD Programming Guide; Structured Streaming Programming Guide*. https://spark.apache.org/docs/latest/
+6. Armbrust, M., Xin, R. S., Lian, C., Huai, Y., Liu, D., Bradley, J. K., Meng, X., Kaftan, T., Franklin, M. J., Ghodsi, A., Zaharia, M. "Spark SQL: Relational Data Processing in Spark." *ACM SIGMOD*, 2015.
+7. Armbrust, M., Das, T., Torres, J., Yavuz, B., Zhu, S., Xin, R., Ghodsi, A., Stoica, I., Zaharia, M. "Structured Streaming: A Declarative API for Real-Time Applications in Apache Spark." *ACM SIGMOD*, 2018.
+8. Boykin, O., Ritchie, S., O'Connell, I., Lin, J. "Summingbird: A Framework for Integrating Batch and Online MapReduce Computations." *Proceedings of the VLDB Endowment* 7(13), 2014.
+9. Carbone, P., Katsifodimos, A., Ewen, S., Markl, V., Haridi, S., Tzoumas, K. "Apache Flink: Stream and Batch Processing in a Single Engine." *Bulletin of the IEEE Computer Society Technical Committee on Data Engineering* 38(4), 2015. (Carbone et al. 2015a)
+10. Carbone, P., Fóra, G., Ewen, S., Haridi, S., Tzoumas, K. "Lightweight Asynchronous Snapshots for Distributed Dataflows." arXiv:1506.08603, 2015. (Carbone et al. 2015b)
+11. Carbone, P., Ewen, S., Fóra, G., Haridi, S., Richter, S., Tzoumas, K. "State Management in Apache Flink: Consistent Stateful Distributed Stream Processing." *Proceedings of the VLDB Endowment* 10(12), 2017.
+12. Chandy, K. M., Lamport, L. "Distributed Snapshots: Determining Global States of Distributed Systems." *ACM Transactions on Computer Systems* 3(1):63–75, 1985.
+13. Dean, J., Ghemawat, S. "MapReduce: Simplified Data Processing on Large Clusters." *USENIX OSDI*, 2004.
+14. Kleppmann, M. *Designing Data-Intensive Applications*, ch. 10–11. O'Reilly Media, 2017.
+15. Kreps, J. "Questioning the Lambda Architecture." O'Reilly Radar, 2014. https://www.oreilly.com/radar/questioning-the-lambda-architecture/
+16. Marz, N., Warren, J. *Big Data: Principles and Best Practices of Scalable Realtime Data Systems*. Manning, 2015.
+17. Shen, M., Zhou, Y., Singh, C. "Magnet: Push-based Shuffle Service for Large-scale Data Processing." *Proceedings of the VLDB Endowment* 13(12), 2020.
+18. Xin, R. "Apache Spark Officially Sets a New Record in Large-Scale Sorting." Databricks Blog, 2014.
+19. Young, J. W. "A First Order Approximation to the Optimum Checkpoint Interval." *Communications of the ACM* 17(9):530–531, 1974.
+20. Zaharia, M., Konwinski, A., Joseph, A. D., Katz, R., Stoica, I. "Improving MapReduce Performance in Heterogeneous Environments." *USENIX OSDI*, 2008.
+21. Zaharia, M., Borthakur, D., Sen Sarma, J., Elmeleegy, K., Shenker, S., Stoica, I. "Delay Scheduling: A Simple Technique for Achieving Locality and Fairness in Cluster Scheduling." *EuroSys*, 2010.
+22. Zaharia, M., Chowdhury, M., Das, T., Dave, A., Ma, J., McCauley, M., Franklin, M. J., Shenker, S., Stoica, I. "Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing." *USENIX NSDI*, 2012.
+23. Amazon Web Services. *Amazon S3 User Guide: Best practices design patterns — optimizing Amazon S3 performance*. https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance.html
+
+## 29.18 Open verification items
+
+- Dean and Ghemawat (2004) sort benchmark figures (891 s; 1,283 s without backup tasks; about 5% slower with 200 workers killed; ~1,800 machines).
+- Xin (2014): 100 TB in 23 minutes on 206 machines versus 72 minutes on 2,100 machines; exact blog title and URL.
+- Zaharia et al. (2012): "up to 20×" and "5–7 s" interactive figures.
+- Magnet: Spark 3.2 as the release adding push-based shuffle; author list.
+- Flink 2.0 ForSt disaggregated state backend status and naming (as of 2026); unaligned checkpoints introduced in 1.11.
+- Spark Structured Streaming latency figures (~100 ms micro-batch, ~1 ms continuous) as stated in current docs.
+- S3 per-prefix request-rate figures (as of 2026).

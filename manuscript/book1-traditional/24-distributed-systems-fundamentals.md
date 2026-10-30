@@ -2,26 +2,23 @@
 
 > **Level:** 2–3 · **Track:** A (Traditional) · **Estimated reading time:** 3.5 h
 
-Up to now, most of this book has let you pretend that a "system" is one computer plus some helpers. Replication (Chapter 14), caching (Chapter 20) and load balancing (Chapter 19) already broke that illusion in places: replicas lag, caches go stale, and a failover can leave two primaries. This chapter names the underlying reasons. Once work is spread across machines that talk only by sending messages over a network, three things you took for granted disappear: **a single, consistent view of whether something has failed**, **a shared clock**, and **guaranteed message delivery**. Every technique in Part V (consistency models in Chapter 25, consensus in Chapter 26, replication and failure detection in Chapter 27, distributed transactions in Chapter 28) responds to those three losses.
+Replication (Chapter 14), caching (Chapter 20) and load balancing (Chapter 19) already showed that work spread across machines behaves differently from work on one computer: replicas lag, caches go stale, failovers can leave two primaries. This chapter names the reasons. Once machines talk only by messages over a network, you lose **a consistent view of what has failed**, **a shared clock** and **guaranteed delivery**. Consistency models (Chapter 25), consensus (Chapter 26), replication and failure detection (Chapter 27) and distributed transactions (Chapter 28) all respond to those losses. This chapter supplies the vocabulary: system models, partitions and partial failures, physical and logical clocks, the FLP result and the end-to-end argument.
 
-The chapter builds a vocabulary and a set of models. You will learn what a distributed system is and why we build them anyway; the eight fallacies that catch engineers out; the formal **system models** that state what a protocol may assume; network partitions, partial failures and gray failures; how physical clocks drift and how NTP and PTP correct them; and the **logical clocks** (Lamport, vector, hybrid) that order events without trusting physical time. It closes with two results every designer should know: the FLP impossibility and the end-to-end argument.
-
-The running example is PhotoShare (Chapter 1), now deployed in two regions, `us-east` and `eu-west`. Its examples are *illustrative*: they show mechanisms, not a description of any real company's system.
+The running example is PhotoShare (Chapter 1), now deployed in two regions, `us-east` and `eu-west`. Its examples are *illustrative*, not a description of any real company's system.
 
 ## 24.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Define a distributed system by its three essential properties (independent failure, no global clock, unreliable message passing) and explain the two generals problem.
-- Justify a decision to distribute with one of four concrete reasons (scale, fault tolerance, latency, data residency) and quantify the availability gain from replication.
-- Name the eight fallacies of distributed computing and give a concrete failure caused by each.
-- State a protocol's **system model**: synchronous, partially synchronous or asynchronous timing, and crash-stop, crash-recovery, omission, timing or Byzantine faults, and compute the replica count each fault model needs.
-- Distinguish complete, partial and asymmetric network partitions, and cite measured evidence of how often networks fail.
+- Define a distributed system by its three essential properties and explain the two generals problem.
+- Justify distribution by scale, fault tolerance, latency or data residency, and quantify replication's availability gain.
+- Give a concrete failure caused by each of the eight fallacies of distributed computing.
+- State a protocol's timing and failure model and compute the replicas each fault model needs.
+- Distinguish complete, partial and asymmetric partitions, citing measured failure evidence.
 - Explain partial and gray failures, and set a timeout from latency data.
-- Calculate clock drift, NTP offset and round-trip delay and their error bounds; explain PTP, leap seconds and smearing; and show with numbers why last-writer-wins loses data under clock skew.
-- Implement Lamport clocks, vector clocks, version vectors and hybrid logical clocks, and choose among them.
-- Explain what the FLP impossibility result forbids and how practical systems escape it.
-- Apply the end-to-end argument to decide where checks such as integrity and deduplication belong.
+- Calculate clock drift and NTP offset, delay and error bound; explain PTP and leap smearing; show why wall-clock last-writer-wins loses data.
+- Implement and choose among Lamport clocks, vector clocks, version vectors and hybrid logical clocks.
+- Explain what FLP forbids and how systems escape it, and apply the end-to-end argument.
 
 ## 24.2 Prerequisites
 
@@ -40,17 +37,15 @@ After this chapter you should be able to:
 **Definition — Distributed system.** A set of independent computers (**nodes**) that have no shared memory and no shared clock, communicate only by exchanging messages over a network, and cooperate to provide a service. Van Steen and Tanenbaum describe it from the user's side as "a collection of autonomous computing elements that appears to its users as a single coherent system" [van Steen and Tanenbaum 2017].
 :::
 
-Leslie Lamport gave the definition engineers remember. In an email of 28 May 1987 he wrote: "A distributed system is one in which the failure of a computer you didn't even know existed can render your own computer unusable" [Lamport 1987]. The joke is a precise observation: in a distributed system, your work depends on machines you cannot see, and their failures reach you in forms you did not expect.
+Leslie Lamport's definition is the one engineers remember. In an email of 28 May 1987 he wrote: "A distributed system is one in which the failure of a computer you didn't even know existed can render your own computer unusable" [Lamport 1987]. The joke is a precise observation: in a distributed system, your work depends on machines you cannot see, and their failures reach you in forms you did not expect.
 
 #### First-principles explanation
 
-Imagine running a restaurant chain whose branch managers can communicate only by post. Letters take an unpredictable time to arrive and sometimes get lost. No two branches' wall clocks agree exactly. A manager may quit without notice, and the other branches find out only when letters stop arriving, and even then cannot tell whether the manager has gone or the post is slow. Coordinating a menu change in this chain is hard for exactly the reasons distributed computing is hard.
+Imagine a restaurant chain whose managers communicate only by post: letters arrive late or never, no two branch clocks agree, and a manager who quits is noticed only when letters stop, which looks exactly like slow post. That chain has the three defining properties:
 
-The restaurant chain has the three properties that define every distributed system:
-
-1. **Independent (partial) failure.** Each node can fail while others keep running. On one machine, a crash usually takes everything down together, which is simple to reason about. In a distributed system some parts work and some do not, and the working parts must decide what to do without knowing exactly which parts failed.
-2. **No global clock.** Each node has its own clock, and the clocks disagree. There is no authoritative "now" that all nodes can read, so the order of events on different nodes is not directly observable.
-3. **Unreliable, asynchronous communication.** Messages can be delayed by an unknown amount, lost, duplicated or reordered. A node learns about another node's state only through messages that are already out of date when they arrive.
+1. **Independent (partial) failure.** Some nodes fail while others run, and the survivors do not know exactly which failed.
+2. **No global clock.** Clocks disagree, so the order of events on different nodes is not directly observable.
+3. **Unreliable, asynchronous communication.** Messages may be delayed without bound, lost, duplicated or reordered, and are out of date when they arrive.
 
 **Figure 24.1 — One computer versus a distributed system.**
 
@@ -108,11 +103,7 @@ The proof is a short argument by contradiction. Suppose some protocol guarantees
 
 #### What engineers do instead
 
-You cannot achieve *certainty* of agreement over an unreliable channel, so practical systems settle for something weaker:
-
-- **Make actions safe to repeat and keep trying.** TCP retransmits until acknowledged; an idempotency key (§22.15) makes a duplicated request harmless. Agreement is reached *eventually* rather than at a known moment.
-- **Accept high probability.** Sending five independent messengers, each captured with probability 0.1, leaves a $0.1^5 = 10^{-5}$ chance that all are lost.
-- **Use durable state and a protocol that may block.** Two-phase commit (§28.4) never lets participants disagree, but a participant that voted "yes" may have to wait indefinitely for the coordinator's decision.
+Practical systems settle for less than certainty: **retry idempotent actions** until acknowledged (TCP, idempotency keys in §22.15); **accept high probability** (five messengers each captured with probability 0.1 all fail with probability $10^{-5}$); or **persist state and allow blocking**, as two-phase commit does (§28.4).
 
 ::: mistake
 **Mistake — "TCP solves the two generals problem."** TCP makes delivery *reliable while the connection works*, by retransmitting. It cannot tell the sender whether its final bytes were processed by the application before the peer crashed or the connection broke (§7.7). The connection-close handshake itself has the two generals shape, which is one reason for the `TIME_WAIT` state.
@@ -122,7 +113,7 @@ You cannot achieve *certainty* of agreement over an unreliable channel, so pract
 
 ### 24.4.1 Four reasons to pay the price
 
-If distribution is this hard, why do it? Because a single computer cannot meet some requirements at all. **Table 24.1** lists the four main reasons; nearly every distributed design can be traced to at least one of them.
+If distribution is this hard, why do it? Because a single computer cannot meet some requirements at all. Table 24.1 lists the four main reasons.
 
 **Table 24.1 — Why systems are distributed.**
 
@@ -133,9 +124,7 @@ If distribution is this hard, why do it? Because a single computer cannot meet s
 | Latency and geography | The speed of light: New York–London RTT is at least about 56 ms over fiber (§7.15.1) | Place replicas and computation near users (Ch 21, Ch 44) | Cross-region consistency and conflicts |
 | Data residency | Law may require that personal data stay within a jurisdiction | Region-pinned partitions and processing | Fragmented operations; per-region capacity |
 
-Two further reasons appear in practice. Some problems are **inherently distributed**: a payment network connects banks that will never share a computer, and a mobile app's offline edits live on the phone. And **organizations** distribute systems so that teams can deploy independently (Chapter 33 on microservices), which is a social reason with technical consequences.
-
-**Data residency** deserves a precise statement because it is often overstated. The EU General Data Protection Regulation (GDPR) does not, in general, require data to be stored inside the EU; its Chapter V restricts *transfers* of personal data to countries outside it unless safeguards apply [EU 2016]. Other jurisdictions impose stricter localization rules for some data categories. Either way, a company serving those users needs data partitions pinned to regions, which is a distributed-systems requirement imposed by law.
+Some problems are also **inherently distributed** (banks in a payment network, offline edits on phones), and organizations split systems so teams deploy independently (Chapter 33). On residency, be precise: the EU GDPR does not generally require storage inside the EU, but its Chapter V restricts *transfers* of personal data outside it without safeguards [EU 2016]; some other jurisdictions mandate localization. Either way, partitions get pinned to regions.
 
 #### Mathematical foundations: why replicate, and why failure is normal
 
@@ -165,16 +154,14 @@ Interpretation: replication makes the *service* far more available than any node
 :::
 
 ::: recommendation
-**Recommendation — Distribute only for a stated reason.** Write down which of the four reasons applies before splitting a system across machines. A single well-provisioned database server with a hot standby serves a surprising number of products, and it avoids most of the problems in this chapter. When you do distribute, the reason tells you what to optimize: scale favors partitioning, fault tolerance favors replication, latency favors locality, and residency favors region pinning.
+**Recommendation — Distribute only for a stated reason.** A single well-provisioned database with a hot standby serves many products and avoids most of this chapter's problems. When you do distribute, the reason tells you what to optimize: partitioning for scale, replication for fault tolerance, locality for latency, region pinning for residency.
 :::
 
 ## 24.5 The eight fallacies of distributed computing
 
 ### 24.5.1 Origin and the list
 
-Around 1994, L. Peter Deutsch, then at Sun Microsystems, wrote down seven false assumptions that programmers new to distributed applications invariably make; James Gosling later added an eighth. Bill Joy and Tom Lyon are credited with an earlier list of the first four. The list was never formally published; it circulated as a memo and was later explained in detail by Arnon Rotem-Gal-Oz [Rotem-Gal-Oz 2006].
-
-The fallacies matter because each one is the hidden assumption behind a class of outages. Code written as if a remote call were a local function call (§8.8) silently assumes several of them at once.
+Around 1994, L. Peter Deutsch at Sun Microsystems listed seven false assumptions that newcomers to distributed applications make; James Gosling later added an eighth (Bill Joy and Tom Lyon are credited with the first four). The list circulated informally and was explained in detail by Rotem-Gal-Oz [Rotem-Gal-Oz 2006]. Each fallacy is the hidden assumption behind a class of outages; code that treats a remote call as a local one (§8.8) assumes several at once.
 
 **Table 24.2 — The eight fallacies and what each one breaks.**
 
@@ -189,21 +176,15 @@ The fallacies matter because each one is the hidden assumption behind a class of
 | 7 | Transport cost is zero | Serialization costs CPU; providers charge for data transfer | Cross-zone chatter appears as a large line item on the cloud bill | Measure bytes per request, keep traffic zone-local where safe |
 | 8 | The network is homogeneous | Mixed hardware, OS, protocol and software versions | During a rolling upgrade, v1 nodes cannot parse v2 messages and requests fail | Versioned, backward- and forward-compatible encodings |
 
-### 24.5.2 The consequences in numbers
-
-Three of the consequences in Table 24.2 are arithmetic worth checking yourself.
-
-- **Fallacy 2.** A product page that issues 100 dependent calls, each a 0.5 ms round trip in one datacenter, spends $100 \times 0.5 = 50$ ms waiting on the network. Move the callee to another continent at 70 ms per round trip and the same code spends $100 \times 70 = 7{,}000$ ms. Nothing in the source code changed.
-- **Fallacy 3.** Re-replicating a failed node's 10 TB onto a replacement over a 1 Gbps link takes $10 \times 10^{12} \times 8 / 10^9 = 80{,}000$ s, about 22 hours, during which the data has one fewer copy and the link is busy. This is why systems spread a failed node's data across many peers so that recovery runs in parallel (§27.12).
-- **Fallacy 7.** At an *illustrative* transfer price of \$0.01 per GB, a service that moves 100 MB/s across zones pays for $100 \times 10^6 \times 86{,}400 = 8.64 \times 10^{12}$ bytes per day, about 8,640 GB, or roughly \$86 per day and \$31,500 per year, before any redundancy. Check your provider's current price list; the point is that bytes have a recurring cost.
+The arithmetic behind three rows: 100 calls × 0.5 ms = 50 ms, but × 70 ms = 7 s; $10 \times 10^{12} \times 8 / 10^9 = 80{,}000$ s ≈ 22 h to copy 10 TB at 1 Gbps (which is why recovery spreads a node's data over many peers, §27.12); and at an *illustrative* \$0.01/GB, 100 MB/s of cross-zone traffic is 8,640 GB/day, about \$86 per day.
 
 ::: industry
-**AWS US-East, April 2011 — a topology change becomes an outage.** During a routine network capacity upgrade in one Availability Zone, traffic was shifted onto a lower-capacity network that could not carry it. Storage nodes of Elastic Block Store (EBS) lost contact with their replicas, concluded the replicas had failed, and all began searching for new space to re-mirror their data at once. The re-mirroring storm exhausted capacity and degraded EBS and dependent services for days. Fallacies 1, 3 and 5 combined: a topology change made the network unreliable, the recovery traffic assumed plentiful bandwidth, and a recovery mechanism designed for a few failed nodes misfired when many nodes saw failures simultaneously.
+**AWS US-East, April 2011 — a topology change becomes an outage.** During a network upgrade in one Availability Zone, traffic was shifted onto a lower-capacity network. Elastic Block Store (EBS) nodes lost contact with their replicas and all began re-mirroring at once; the storm exhausted capacity and degraded EBS and dependent services for days. Fallacies 1, 3 and 5 combined: a topology change made the network unreliable, and recovery traffic assumed plentiful bandwidth.
 *Evidence: Primary* — [AWS 2011]
 :::
 
 ::: mistake
-**Mistake — "A remote procedure call is just a function call."** A local call either returns or throws, in nanoseconds. A remote call can also time out with an *unknown* outcome, take a million times longer, and run twice. RPC frameworks that hide this make the fallacies easy to commit; good ones expose deadlines and status codes (§8.8, §22.11).
+**Mistake — "A remote procedure call is just a function call."** A remote call can time out with an *unknown* outcome, take a million times longer, and run twice. Good RPC frameworks expose deadlines and status codes (§8.8, §22.11).
 :::
 
 ## 24.6 System models: timing and failures
@@ -1389,3 +1370,153 @@ Interpretation: a probability that looks negligible per transfer becomes a near-
 ::: mistake
 **Mistake — "The network (or storage system) is reliable, so the application needn't check."** Each layer's guarantee covers only that layer. If the requirement is "the user's photo is stored intact and saved once", only the application can verify it.
 :::
+
+## 24.15 Summary and revision notes
+
+::: summary
+- A distributed system has **independent failures, no global clock and unreliable messages**; a node can never be certain of another's current state. The **two generals problem** shows that certainty of agreement over a lossy channel is impossible.
+- Distribute for **scale, fault tolerance, latency or data residency**. Replication gives $A_k = 1-(1-a)^k$ under independence, but fleets fail daily: $P_{\text{any}} = 1-(1-p)^n$.
+- The **eight fallacies** (reliable network, zero latency, infinite bandwidth, secure network, fixed topology, one administrator, free transport, homogeneous network) each map to a class of outages.
+- State a **system model**: timing (synchronous, partially synchronous, asynchronous) and faults (crash-stop, crash-recovery, omission, timing, Byzantine). Consensus needs $2f+1$ nodes for crashes, $3f+1$ for Byzantine faults.
+- **Network partitions** may be complete, partial or asymmetric; measured studies show many network faults per day in large datacenters, and partial partitions cause many catastrophic bugs.
+- A timeout means **unknown outcome**. **Gray failures** are differentially observable; detect them with what clients experience. Set timeouts from measured p99.9 plus pause margin.
+- Quartz drifts (1 ppm = 86.4 ms/day); NTP estimates $\theta = [(T_2-T_1)+(T_3-T_4)]/2$ with error up to $\delta/2$; PTP with hardware timestamps reaches sub-microsecond. Use monotonic clocks for durations; smear leap seconds consistently.
+- **Wall-clock LWW** silently discards causally later writes that fall within the skew window.
+- **Lamport clocks**: $a \to b \Rightarrow C(a) < C(b)$, total order with tie-breaking, no concurrency detection. **Vector clocks** characterize causality exactly at $O(n)$ size; **version vectors** detect concurrent writes as siblings; **dotted version vectors** fix same-replica lost updates.
+- **HLC** $(l, c)$ is causal, within skew of real time, and 64 bits; real-time guarantees still need bounded skew (uncertainty intervals, TrueTime in §28.8).
+- **FLP**: no deterministic asynchronous consensus guarantees termination with one crash; systems stay safe always and live under partial synchrony, randomization or failure detectors.
+- **End-to-end argument**: correctness checks (integrity, deduplication, acknowledgment of processing) belong at the endpoints; lower layers only optimize.
+:::
+
+## 24.16 Knowledge checkpoint
+
+1. Name the three properties that make a system distributed.
+2. Why can no finite protocol solve the two generals problem?
+3. One server is 99.9% available. What is the availability of 3 independent replicas, and why is that number optimistic?
+4. Give a concrete consequence of the fallacy "latency is zero".
+5. How many nodes does consensus need to tolerate 2 crash faults? 2 Byzantine faults?
+6. What is the difference between a partial and an asymmetric partition?
+7. Define gray failure and give one example.
+8. A clock drifts at 20 ppm. How far off can it be after one hour?
+9. NTP timestamps: $T_1 = 0$, $T_2 = 50$, $T_3 = 52$, $T_4 = 22$ ms. Compute offset, delay and error bound.
+10. Why should a rate limiter or timeout use a monotonic clock?
+11. Under LWW, node A's clock is 80 ms fast. Which writes through node B can A's earlier writes override?
+12. Lamport timestamps $C(a) = 3$, $C(b) = 5$. What can you conclude?
+13. Compare [2,1,0] and [1,2,0]; then [1,1,0] and [2,1,3].
+14. What problem do dotted version vectors solve?
+15. Why can an HLC's $l$ never exceed real time by more than the clock skew?
+16. Does FLP mean Raft can lose data? Explain.
+17. State the end-to-end argument and give one application.
+
+<details><summary>Answers</summary>
+
+1. Independent (partial) failure, no shared clock, communication only by unreliable messages with unbounded delay.
+2. The sender of the last message cannot know whether it arrived, so both must decide the same way without it; the message is then unnecessary, contradicting the assumption of a shortest protocol.
+3. $1 - 0.001^3 = 1 - 10^{-9}$. Failures are correlated (shared power, network, software) and failover is not instant.
+4. A chatty page with 100 sequential calls takes 50 ms at 0.5 ms per call in one region but about 7 s at 70 ms per call across regions.
+5. $2f+1 = 5$; $3f+1 = 7$.
+6. Partial: some pairs cannot communicate while others can (A and B both reach C but not each other). Asymmetric: one direction works and the other does not.
+7. A failure seen by some observers but not others, e.g., a disk 100× slower that passes the heartbeat health check while application requests time out.
+8. $20 \times 10^{-6} \times 3{,}600 = 0.072$ s = 72 ms.
+9. $\delta = (22 - 0) - (52 - 50) = 20$ ms; $\theta = [(50 - 0) + (52 - 22)]/2 = 40$ ms (client behind by 40 ms); bound $\pm 10$ ms.
+10. Wall clocks can be stepped backwards or forwards by NTP, producing negative or huge durations.
+11. Any B write within 80 ms after an A write to the same key.
+12. Only that $b \not\to a$; $a$ may have happened before $b$ or they may be concurrent.
+13. [2,1,0] and [1,2,0] are concurrent; [1,1,0] < [2,1,3], so the first happened before the second.
+14. Concurrent writes through the same replica, which per-replica version vectors misorder as one dominating the other, losing a write.
+15. $l$ is always some node's physical clock reading, and no node's clock is ahead of real time by more than the skew bound.
+16. No. Raft is always safe; FLP only means that in bad asynchronous periods it may fail to make progress (elect a leader or commit).
+17. A function that needs endpoint knowledge must be implemented at the endpoints; lower layers can only optimize. Example: checksum the stored file end to end, or deduplicate by idempotency key.
+</details>
+
+## 24.17 Interview questions
+
+### Basic
+
+**Q1. Why is building a distributed system harder than a single-machine one?** **Answer.** Three losses: partial failure (some parts fail, others continue, and nobody knows exactly which), no global clock (events on different machines cannot be ordered by time) and unreliable messaging (loss, delay, duplication). A timeout cannot distinguish a slow node from a dead one or tell whether a write happened, so designs need idempotency, quorums and logical ordering.
+
+**Q2. Can you use server timestamps to order events across machines?** **Answer.** Only coarsely. NTP skew is milliseconds and occasionally seconds; clocks can step backwards. Events closer together than the skew may be misordered, which makes LWW lose writes. Use Lamport or hybrid logical clocks for causal order, vector clocks to detect concurrency, or a single sequencer; use bounded-uncertainty clocks when real-time order matters.
+
+### Intermediate
+
+**Q3. Design conflict handling for a shopping cart replicated across two regions.** **Answer.** Avoid LWW, which drops items. Track versions with version vectors keyed by replica (or dotted version vectors), keep concurrent versions as siblings, and merge on read (union of adds); represent removals with tombstones or use an observed-remove set CRDT (§27.14) so deletions are not resurrected. Discuss metadata size, sibling limits and the user experience of merges.
+
+**Q4. A node passes health checks, yet its clients see 30% errors. What is happening and what would you change?** **Answer.** A gray failure: the probe does not exercise the failing path (disk, dependency, thread pool). Make health checks exercise real dependencies, add client-side outlier detection that ejects nodes with abnormal error rates or latency, and alert on client-observed rather than self-reported health.
+
+### Advanced
+
+**Q5. Explain FLP and how Raft copes with it.** **Answer.** In an asynchronous system no deterministic consensus protocol can guarantee termination if one process may crash, because a slow process is indistinguishable from a crashed one and an adversarial schedule can keep the system undecided. Raft keeps safety unconditionally (majority quorums, term checks, persisted votes) and gets liveness from partial synchrony: timeouts detect leader failure, and randomized election timeouts break split votes. During a bad network period it may stall, but never diverges.
+
+**Q6. Your database uses HLC timestamps and a 500 ms maximum offset. Why do some reads restart, and how would you reduce restarts?** **Answer.** A read at $t_r$ that finds a value committed in $(t_r, t_r + 500\text{ ms}]$ cannot tell whether it committed before the read in real time, so it moves its timestamp forward and retries. Reduce restarts by improving clock synchronization (PTP or a precise cloud time service) and lowering the configured maximum offset, by monitoring offsets so nodes with bad clocks are removed, and by reducing contention on hot keys.
+
+## 24.18 Practical exercises
+
+1. Extend the Lamport listing with Lamport's mutual-exclusion algorithm (request, reply, release) for three processes and check that the lock is granted in timestamp order.
+2. Modify the version-vector store to use dotted version vectors and show that the "same-replica" case keeps both writes as siblings.
+3. Simulate 10 nodes with random drift between −50 and +50 ppm and NTP corrections every 64 s with ±2 ms error. Plot the maximum pairwise skew and count LWW inversions for writes 10 ms apart.
+4. Run `chronyc tracking` (or `ntpq -p`) on a Linux machine; identify the stratum, offset, root delay and root dispersion, and explain each in terms of §24.9.3.
+5. Using `tc netem` on two containers, create a one-way partition and observe how an etcd or Redis Sentinel cluster behaves.
+
+## 24.19 Design challenges
+
+1. **Global event log.** PhotoShare wants a per-user activity feed assembled from events produced in three regions, ordered so that a reply never appears before the comment it answers. Choose clocks (Lamport, HLC, vector), state the system model, quantify metadata overhead per event, and describe behavior during an inter-region partition.
+2. **Clock-safe leases.** Design a leader lease for a job scheduler whose nodes use NTP with up to 50 ms skew and may pause for 2 s during garbage collection. Size lease duration and renewal interval, and explain why fencing tokens (§26.13) are still needed.
+
+## 24.20 References
+
+1. Akkoyunlu, E. A., Ekanadham, K., Huber, R. V. *Some Constraints and Tradeoffs in the Design of Network Communications*. Proc. 5th ACM Symposium on Operating Systems Principles (SOSP), 1975.
+2. Alquraan, A., Takruri, H., Alfatafta, M., Al-Kiswany, S. *An Analysis of Network-Partitioning Failures in Cloud Systems*. 13th USENIX OSDI, 2018. https://www.usenix.org/conference/osdi18/presentation/alquraan
+3. Amazon Web Services. *Amazon S3 Availability Event: July 20, 2008*. AWS Service Health Dashboard post-mortem, 2008. (Cited as AWS 2008.)
+4. Amazon Web Services. *Summary of the Amazon EC2 and Amazon RDS Service Disruption in the US East Region*. AWS, April 2011. (Cited as AWS 2011.)
+5. Amazon Web Services. *Amazon Time Sync Service now supports microsecond-accurate time*. AWS What's New, November 2023; and *ClockBound*. https://github.com/aws/clock-bound (Cited as AWS 2023.)
+6. Bailis, P., Kingsbury, K. *The Network is Reliable: An informal survey of real-world communications failures*. ACM Queue 12(7), 2014; also Communications of the ACM 57(9), 2014.
+7. Ben-Or, M. *Another Advantage of Free Choice: Completely Asynchronous Agreement Protocols*. Proc. ACM PODC, 1983.
+8. BIPM. *Resolution 4 of the 27th CGPM: On the use and future development of UTC*. 2022.
+9. Cachin, C., Guerraoui, R., Rodrigues, L. *Introduction to Reliable and Secure Distributed Programming*, 2nd ed. Springer, 2011.
+10. Chandra, T. D., Toueg, S. *Unreliable Failure Detectors for Reliable Distributed Systems*. Journal of the ACM 43(2), 1996.
+11. Charron-Bost, B. *Concerning the Size of Logical Clocks in Distributed Systems*. Information Processing Letters 39(1), 1991.
+12. Cockroach Labs. *Operational FAQs* and *cockroach start* (`--max-offset`). CockroachDB documentation, accessed 2026. https://www.cockroachlabs.com/docs/
+13. Corbett, J. C., et al. *Spanner: Google's Globally-Distributed Database*. 10th USENIX OSDI, 2012.
+14. Dean, J. *Designs, Lessons and Advice from Building Large Distributed Systems*. Keynote, LADIS workshop, 2009.
+15. DeCandia, G., et al. *Dynamo: Amazon's Highly Available Key-value Store*. Proc. ACM SOSP, 2007.
+16. Dwork, C., Lynch, N., Stockmeyer, L. *Consensus in the Presence of Partial Synchrony*. Journal of the ACM 35(2):288–323, 1988.
+17. European Union. *Regulation (EU) 2016/679 (General Data Protection Regulation)*, Chapter V. Official Journal of the EU, 2016. (Cited as EU 2016.)
+18. Fidge, C. J. *Timestamps in Message-Passing Systems That Preserve the Partial Ordering*. Proc. 11th Australian Computer Science Conference, 1988, pp. 56–66.
+19. Fischer, M. J., Lynch, N. A., Paterson, M. S. *Impossibility of Distributed Consensus with One Faulty Process*. Journal of the ACM 32(2):374–382, 1985.
+20. Gill, P., Jain, N., Nagappan, N. *Understanding Network Failures in Data Centers: Measurement, Analysis, and Implications*. Proc. ACM SIGCOMM, 2011.
+21. Google. *Leap Smear*. Google Public NTP documentation, accessed 2026. https://developers.google.com/time/smear
+22. Graham-Cumming, J. *How and why the leap second affected Cloudflare DNS*. Cloudflare Blog, January 2017.
+23. Gray, J. *Notes on Data Base Operating Systems*. In *Operating Systems: An Advanced Course*, LNCS 60, Springer, 1978.
+24. Gunawi, H. S., et al. *Fail-Slow at Scale: Evidence of Hardware Performance Faults in Large Production Systems*. 16th USENIX FAST, 2018.
+25. Huang, P., Guo, C., Zhou, L., Lorch, J. R., Dang, Y., Chintalapati, M., Yao, R. *Gray Failure: The Achilles' Heel of Cloud-Scale Systems*. Proc. HotOS XVI, ACM, 2017.
+26. IEEE. *IEEE Std 1588-2008: Standard for a Precision Clock Synchronization Protocol for Networked Measurement and Control Systems*. 2008; revised as IEEE Std 1588-2019. (Cited as IEEE 2008; IEEE 2019.)
+27. Kimball, S. *Living Without Atomic Clocks*. Cockroach Labs Blog, 2016.
+28. Kleppmann, M. *Designing Data-Intensive Applications*, ch. 8 "The Trouble with Distributed Systems". O'Reilly, 2017.
+29. Kulkarni, S. S., Demirbas, M., Madappa, D., Avva, B., Leone, M. *Logical Physical Clocks*. Proc. OPODIS 2014, LNCS 8878, Springer, 2014.
+30. Lamport, L. *Time, Clocks, and the Ordering of Events in a Distributed System*. Communications of the ACM 21(7):558–565, 1978.
+31. Lamport, L. Email message of 28 May 1987 defining a distributed system. Reproduced on Lamport's writings pages. https://lamport.azurewebsites.net/pubs/distributed-system.txt (Cited as Lamport 1987.)
+32. Lamport, L., Shostak, R., Pease, M. *The Byzantine Generals Problem*. ACM TOPLAS 4(3):382–401, 1982.
+33. Lianza, T., Snook, C. *A Byzantine failure in the real world*. Cloudflare Blog, 27 November 2020. https://blog.cloudflare.com/a-byzantine-failure-in-the-real-world/
+34. Mattern, F. *Virtual Time and Global States of Distributed Systems*. In Cosnard, M., et al. (eds.), *Parallel and Distributed Algorithms*, North-Holland, 1989, pp. 215–226.
+35. Mills, D., Martin, J., Burbank, J., Kasch, W. *Network Time Protocol Version 4: Protocol and Algorithms Specification*. RFC 5905, IETF, 2010.
+36. Obleukhov, O., Byagowi, A. *How Precision Time Protocol is being deployed at Meta*. Engineering at Meta blog, 2022.
+37. Ongaro, D., Ousterhout, J. *In Search of an Understandable Consensus Algorithm*. USENIX ATC, 2014.
+38. Parker, D. S., et al. *Detection of Mutual Inconsistency in Distributed Systems*. IEEE Transactions on Software Engineering SE-9(3), 1983.
+39. Preguiça, N., Baquero, C., Almeida, P. S., Fonte, V., Gonçalves, R. *Dotted Version Vectors: Logical Clocks for Optimistic Replication*. arXiv preprint, 2010.
+40. Riak. *Dotted Version Vectors*. Riak KV documentation, accessed 2026. (Cited as Riak Docs: Dotted Version Vectors.)
+41. Rotem-Gal-Oz, A. *Fallacies of Distributed Computing Explained*. White paper, 2006.
+42. Saltzer, J. H., Reed, D. P., Clark, D. D. *End-to-End Arguments in System Design*. ACM Transactions on Computer Systems 2(4):277–288, 1984.
+43. Schlichting, R. D., Schneider, F. B. *Fail-Stop Processors: An Approach to Designing Fault-Tolerant Computing Systems*. ACM Transactions on Computer Systems 1(3), 1983.
+44. Stone, J., Partridge, C. *When the CRC and TCP Checksum Disagree*. Proc. ACM SIGCOMM, 2000.
+45. Tyulenev, M., et al. *Implementation of Cluster-wide Logical Clock and Causal Consistency in MongoDB*. Proc. ACM SIGMOD, 2019.
+46. van Steen, M., Tanenbaum, A. S. *Distributed Systems*, 3rd ed. distributed-systems.net, 2017.
+
+## 24.21 Open verification items
+
+- Lamport's 1987 email: exact URL on Lamport's site (the `distributed-system.txt` path was not confirmed).
+- Gill et al. 2011 figures (5.2 device and 40.8 link failures per day; ~5-minute median repair; ~43% redundancy effectiveness) and Dean 2009 "first year of a cluster" counts, quoted from secondary summaries.
+- Alquraan et al. 2018: exact share of catastrophic failures and of partial-partition failures.
+- Attribution of the first four fallacies to Joy and Lyon, and the year Gosling added the eighth.
+- CockroachDB default maximum offset (500 ms) and self-termination rule as of the current release.
+- Meta PTP blog authors/date; AWS microsecond time announcement date; Riak 2.0 DVV adoption; Gunawi et al. case count.
+- URLs for the AWS 2008 and 2011 post-mortems.

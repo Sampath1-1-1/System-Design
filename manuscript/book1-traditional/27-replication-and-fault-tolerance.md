@@ -10,15 +10,11 @@ This chapter surveys the five families of replication strategy, works through pr
 
 After this chapter you should be able to:
 
-- Choose among primary–backup, chain, multi-leader, leaderless and consensus-based replication for a stated workload, and justify the choice in terms of latency, availability, consistency and operational cost.
-- Explain state transfer versus operation shipping, and compute the data lost in an asynchronous failover.
-- Describe chain replication and CRAQ, and compute their write latency and read throughput.
-- Compare circular, star and all-to-all multi-leader topologies, and estimate conflict rates.
-- State precisely what $R + W > N$ guarantees and what it does not, and compute quorum latency from the $k$-th fastest replica.
-- Explain sloppy quorums and hinted handoff, and size hint storage.
-- Tune heartbeat timeouts, compute a phi-accrual suspicion level, and derive SWIM detection time and gossip dissemination rounds.
-- Build a failover time budget and a recovery time estimate.
-- Use read repair and Merkle-tree anti-entropy, and choose among last-writer-wins, version vectors with siblings and CRDTs; implement G-Counter, PN-Counter, LWW-Register and OR-Set and test their merge laws.
+- Choose among primary–backup, chain, multi-leader, leaderless and consensus-based replication for a workload, and justify the choice.
+- Compute asynchronous failover loss, chain write latency and CRAQ read capacity, and estimate multi-leader conflict rates.
+- State what $R + W > N$ does and does not guarantee, and compute quorum latency from the $k$-th fastest replica.
+- Size hinted handoff, compute phi-accrual suspicion, SWIM detection time and gossip rounds, and build failover and recovery time budgets.
+- Use read repair and Merkle anti-entropy, choose among last-writer-wins, version vectors and CRDTs, and implement and test four CRDTs.
 
 ## 27.2 Prerequisites
 
@@ -39,7 +35,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Imagine a family keeping one shared shopping list on several phones. They can appoint one person as the list keeper who forwards every change (primary–backup). They can pass every change along a line of phones, and only the last phone answers "what is on the list?" (chain). Everyone can edit their own phone and sync later, sorting out clashes (multi-leader). Or anyone can write to any two of the three phones and read from any two, trusting that the pairs overlap (leaderless quorums). Finally, they can vote on each change, so that a majority must agree before it counts (consensus). Each rule is a different answer to the same trade-off among latency, availability during failures, and how surprising the list looks to someone reading it.
+A family shares a shopping list on several phones. One person can forward every change (primary–backup); changes can pass along a line of phones, with the last one answering questions (chain); everyone can edit locally and sync later (multi-leader); anyone can write to any two of three phones and read any two (leaderless quorums); or the family can vote on each change (consensus). Each rule trades latency, availability during failures and how surprising the list looks to a reader.
 
 #### Why does this exist?
 
@@ -92,7 +88,7 @@ flowchart TD
 
 #### First-principles explanation
 
-A head chef cooks every dish while an apprentice watches and keeps an identical notebook. There are two ways to keep the notebook current. The chef can photograph the finished plate after each dish (**state transfer**: send the resulting state), or the chef can read out each instruction, "add 5 g salt", and the apprentice performs it on a copy of the dish (**operation shipping**: send the operation, also called log shipping or **active** replication when every replica executes it). Photographs are bigger but always exact. Instructions are small, but the apprentice's dish matches only if every instruction gives the same result on both stoves.
+A head chef cooks while an apprentice keeps an identical copy of each dish. The chef can photograph each finished plate (**state transfer**: send the resulting state) or read out each instruction, "add 5 g salt", for the apprentice to perform (**operation shipping**, also called log shipping, or **active** replication when every replica executes it). Photographs are bigger but exact; instructions are small but work only if every step gives the same result on both stoves.
 
 #### Why does this exist?
 
@@ -200,11 +196,11 @@ There is also a bandwidth cost. With $n$ replicas the primary sends every update
 
 #### First-principles explanation
 
-Think of a bucket brigade. The first person takes a bucket from the well and passes it along the line, and only when the last person pours it on the fire is the job done. Anyone asking "how much water has reached the fire?" asks the last person, who has seen every bucket that counts. Each person passes each bucket exactly once, so no one is overloaded; the price is that a bucket must travel the whole line.
+Think of a bucket brigade. Buckets pass along the line, and only when the last person pours one on the fire does it count, so anyone asking "how much water has reached the fire?" asks the last person. Each person passes each bucket once, so no one is overloaded; the price is that every bucket travels the whole line.
 
 #### Why does this exist?
 
-Primary–backup makes the primary send every update to every backup, and its reads are strong only at the primary. Van Renesse and Schneider designed chain replication for storage services that need both high throughput and strong consistency: each node forwards each update once, and because the tail only holds updates that every other node already has, reads at the tail are linearizable without extra coordination.
+In primary–backup the primary sends every update to every backup. Van Renesse and Schneider designed chain replication for storage needing both high throughput and strong consistency: each node forwards each update once, and because the tail holds only updates every other node already has, tail reads are linearizable without extra coordination.
 
 #### How it works internally
 
@@ -307,7 +303,7 @@ $$T_{\text{write}} \approx (n + 1)\,d + n\,s \qquad X_{\text{read}}^{\text{CR}} 
 
 #### Advantages and disadvantages
 
-Chain replication gives linearizable reads and writes, balanced network load and simple recovery rules. Its costs are write latency proportional to chain length, a single slow node slowing every write (there is no "fastest $k$ of $n$"), and dependence on an external master for every reconfiguration.
+Chain replication gives linearizable reads and writes, balanced network load and simple recovery. Its costs are write latency proportional to chain length, every write waiting for the slowest node, and dependence on an external master for reconfiguration.
 
 ## 27.6 Multi-leader replication
 
@@ -412,7 +408,6 @@ $$\kappa \approx 2\,\lambda_A\,\lambda_B\,\Delta \qquad (\lambda_A \Delta \ll 1,
 | Replication stops for a subset of leaders | Ring or hub node failed | Replication lag grows on downstream leaders | Reconfigure ring or hub | All-to-all, or redundant hubs |
 | Update applied before its insert | Messages overtook on different links | Apply errors, missing parents | Buffer and retry | Version vectors; causal delivery |
 | Uniqueness violated | Two leaders accept same username | Duplicate detected after sync | Rename or merge manually | Route uniqueness checks to one home leader |
-| Writes echo forever | Origin tag lost in transformation | Replication volume climbs | Drop duplicates by origin and version | Preserve origin IDs end to end |
 
 
 ## 27.7 Leaderless replication
@@ -425,7 +420,7 @@ $$\kappa \approx 2\,\lambda_A\,\lambda_B\,\Delta \qquad (\lambda_A \Delta \ll 1,
 
 #### First-principles explanation
 
-A club keeps its membership list on three noticeboards. To add a member, the secretary pins the notice on at least two boards. To check membership, a member looks at any two boards and believes the newer notice. Because two out of three and two out of three must share a board, the reader always sees at least one board with the latest notice, provided the notices carry dates that can be compared. No board is in charge, so losing one board stops nothing.
+A club keeps its membership list on three noticeboards. The secretary pins each notice on at least two boards; a reader checks any two and believes the newer notice. Any two boards share one with the secretary's two, so the reader always sees the latest notice, and losing one board stops nothing.
 
 #### Why does this exist?
 
@@ -654,7 +649,7 @@ What to notice:
 
 #### First-principles explanation
 
-A neighbor is away, so the courier leaves the parcel with the house next door, together with a note: "for number 12". When number 12 returns, the neighbor hands it over. Nothing is lost and the courier did not have to bring the parcel back, but if you go to number 12 asking for the parcel while it is still next door, you will not find it.
+A courier leaves a parcel next door with a note, "for number 12", and the neighbor hands it over when number 12 returns. Nothing is lost, but anyone asking at number 12 in the meantime will not find it.
 
 #### How it works internally
 
@@ -742,7 +737,7 @@ You phone a friend every evening. One evening there is no call. Did the friend's
 2. The monitor records the arrival time of the last heartbeat.
 3. If nothing arrives within a **timeout** $T_{\text{out}}$, the node is suspected.
 
-A crash happens at a random point in the heartbeat cycle, so the crash-to-suspicion time is between $T_{\text{out}} - h$ and $T_{\text{out}}$, about $T_{\text{out}} - h/2$ on average. A fixed timeout must be set above the worst normal gap: network jitter, garbage-collection pauses (often hundreds of milliseconds, sometimes seconds) and CPU starvation. A common rule of thumb is $T_{\text{out}}$ of three to five heartbeat intervals. The flaw is that one number cannot suit both a quiet LAN and a congested cross-region link.
+A crash happens at a random point in the heartbeat cycle, so the crash-to-suspicion time is between $T_{\text{out}} - h$ and $T_{\text{out}}$, about $T_{\text{out}} - h/2$ on average. A fixed timeout must exceed the worst normal gap from jitter, garbage-collection pauses and CPU starvation; three to five heartbeat intervals is a common rule. But one number cannot suit both a quiet LAN and a congested cross-region link.
 
 ### 27.10.2 The phi-accrual detector
 
@@ -870,7 +865,6 @@ $$T_{\text{rounds}} \approx \log_{1+f} n + \frac{\ln n}{f} \qquad \text{(for } f
 1. Push, $f = 1$: $\log_2 1{,}000 + \ln 1{,}000 = 9.97 + 6.91 = 16.9$ rounds.
 2. Push, $f = 3$: $\log_4 1{,}000 + 6.91/3 = 4.98 + 2.30 = 7.3$ rounds.
 3. Growth with size, $f = 1$: going to 10,000 nodes adds $\log_2 10 + \ln 10 = 3.32 + 2.30 = 5.6$ rounds.
-4. With one round per second, a change reaches all 1,000 nodes in roughly 17–18 s by push alone.
 
 **Interpretation.** Dissemination time grows with $\log n$, and each node's message load is constant ($f$ per round) regardless of cluster size. **Engineering implication.** Gossip scales membership and failure news to thousands of nodes, but a full spread takes tens of rounds; anything that must take effect everywhere *at once* belongs in a consensus-backed store (Chapter 26).
 :::
@@ -1150,7 +1144,7 @@ The second term is the catch-up time of §14.4.2 applied to the backlog accumula
 **Definition — Read repair and anti-entropy.** **Read repair** fixes stale replicas discovered while serving a read: the coordinator writes the newest version back to replicas that returned older ones. **Anti-entropy** is a background process that compares whole replicas, typically with Merkle trees, and copies the differences [DeCandia et al. 2007; Demers et al. 1987].
 :::
 
-Hinted handoff repairs short outages, but hints can be lost and only cover writes made while the stand-in knew of the failure. Two further mechanisms close the gaps:
+Hints can be lost and cover only short outages. Two further mechanisms close the gaps:
 
 1. **Read repair.** On a read the coordinator compares versions, usually by requesting full data from one replica and digests (hashes) from the others. On a mismatch it fetches full data, computes the newest version, returns it and writes it back to the stale replicas. **Blocking** read repair finishes the write-back before replying, which is what prevents the anomaly of Figure 27.7; **asynchronous** read repair replies first. Read repair only fixes keys that are read, so rarely read keys can stay divergent indefinitely.
 2. **Merkle-tree anti-entropy.** Each replica builds a hash tree over each key range (§17.8). Two replicas compare roots, descend only into differing subtrees and stream only the divergent leaf ranges. For two replicas of a million-leaf tree that differ in two leaves, this compares about 80 hashes instead of the whole data set (§17.8).
@@ -1261,7 +1255,7 @@ In production Dynamo, siblings were rare: the paper reports that 99.94% of reque
 
 #### First-principles explanation
 
-Two scorekeepers at a basketball game each tally points on their own sheet. If each keeps a separate column per team scorer and only ever writes larger numbers in its own columns, then whenever they compare sheets, they can take the larger number in each column and agree, no matter how often or in what order they compare. A CRDT is a data structure designed so that "compare and combine" can never go wrong.
+Two scorekeepers each keep a sheet with one column per scorekeeper, and each only ever increases its own column. Whenever they compare sheets, they take the larger number in each column and agree, however often and in whatever order they compare. A CRDT is a data structure designed so that "compare and combine" cannot go wrong.
 
 #### How it works internally
 
@@ -1469,10 +1463,10 @@ What to notice:
 ## 27.15 Summary and revision notes
 
 ::: summary
-- A replication strategy decides who orders writes and how many copies must hold a write before it is acknowledged. Primary–backup, chain and consensus fix one order; multi-leader and leaderless let replicas diverge and repair afterwards.
+- Replication decides who orders writes and how many copies hold a write before acknowledgment; multi-leader and leaderless designs diverge and repair afterwards.
 - Primary–backup ships state or operations; asynchronous failover loses $r_w \ell$ writes, and safe promotion needs fencing.
 - Chain replication: writes at the head, strong reads at the tail, $T_{\text{write}} \approx (n+1)d + ns$; CRAQ serves clean reads from any node.
-- Multi-leader serves multi-region, offline and collaborative writers; ring and star topologies have single points of failure, all-to-all reorders messages; conflicts per item $\approx 2\lambda_A\lambda_B\Delta$.
+- Multi-leader serves multi-region, offline and collaborative writers; ring and star have single points of failure, all-to-all reorders messages; conflicts per item $\approx 2\lambda_A\lambda_B\Delta$.
 - $R + W > N$ guarantees overlap with completed writes, not linearizability. Quorum latency is the $k$-th order statistic: 2-of-3 hides the slowest replica.
 - Sloppy quorums and hinted handoff trade overlap for write availability; hints grow linearly with downtime.
 - Phi-accrual turns silence into an error probability; SWIM detects in about $1.58\,T'$ with constant load per member; gossip spreads in $\approx \log_{1+f} n + \ln n / f$ rounds.
@@ -1486,36 +1480,26 @@ What to notice:
 1. What is the difference between state transfer and operation shipping, and which needs determinism?
 2. An asynchronous backup lags by 300 ms when the primary, taking 4,000 writes/s, crashes. How many acknowledged writes are lost?
 3. Why are reads at the tail of a chain linearizable?
-4. In CRAQ, what does a node do when asked to read an object whose newest local version is dirty?
-5. Why can a circular multi-leader topology stop replicating when one node fails?
-6. For $N = 5$, what is the smallest $R$ that overlaps $W = 3$, and how many failures can each tolerate?
-7. Give two reasons why $R + W > N$ does not give linearizability.
-8. With $N = 3$ and each replica independently slow with probability 0.02, what fraction of $W = 2$ writes are slow?
-9. Why does a sloppy quorum weaken the overlap guarantee?
-10. Heartbeats have $\mu = 500$ ms and $\sigma = 50$ ms. What is $\varphi$ after 600 ms of silence?
-11. Why does SWIM use indirect probes?
-12. Estimate push-gossip rounds with fanout 1 for 4,096 nodes.
-13. Detection 4 s, election 2 s, reconfiguration 2 s, DNS TTL 60 s: what is the failover time, and what is the biggest lever?
-14. Why can a node that was down for two weeks resurrect deleted rows?
-15. Why must a state-based CRDT merge be idempotent?
+4. For $N = 5$, what is the smallest $R$ that overlaps $W = 3$, and how many failures can each tolerate?
+5. Give two reasons why $R + W > N$ does not give linearizability.
+6. With $N = 3$ and each replica independently slow with probability 0.02, what fraction of $W = 2$ writes are slow?
+7. Heartbeats have $\mu = 500$ ms and $\sigma = 50$ ms. What is $\varphi$ after 600 ms of silence?
+8. Estimate push-gossip rounds with fanout 1 for 4,096 nodes.
+9. Detection 4 s, election 2 s, reconfiguration 2 s, DNS TTL 60 s: what is the failover time, and what is the biggest lever?
+10. Why must a state-based CRDT merge be idempotent?
 
 <details><summary>Answers</summary>
 
 1. State transfer sends resulting state; operation shipping sends the operation, which every replica must execute deterministically.
 2. $4{,}000 \times 0.3 = 1{,}200$ writes.
 3. The tail holds only updates every other chain node already has, and it is the only node that replies to writes and reads.
-4. It asks the tail for the latest committed version number and returns that version.
-5. Each write passes through every node in turn, so a failed node breaks the path until the ring is reconfigured.
-6. $R = 3$ ($3 + 3 > 5$); reads and writes each tolerate 2 unavailable replicas.
-7. Any two of: concurrent writes resolved by timestamp; writes concurrent with reads; failed writes not rolled back; sloppy quorums; replicas restored from stale copies.
-8. $p^3 + 3p^2(1-p) = 8 \times 10^{-6} + 3 \times 0.0004 \times 0.98 = 0.001184$, about 0.12%.
-9. Writes may be acknowledged by stand-ins outside the key's $N$ home replicas, so a read from home replicas may share no node with them.
-10. $z = 2$, $1 - \Phi(2) = 0.0228$, $\varphi = 1.64$.
-11. So that a lossy path between two particular members does not cause a false suspicion; other members probe on its behalf.
-12. $\log_2 4{,}096 + \ln 4{,}096 = 12 + 8.3 \approx 20$ rounds, plus about one.
-13. $4 + 2 + 2 + 60 = 68$ s; replace DNS redirection with a proxy, virtual IP or topology-aware client.
-14. Its copies predate the deletes, and other replicas have purged their tombstones after the grace period, so repair copies the old rows back.
-15. Gossip may deliver the same state many times; a non-idempotent merge (such as summing) would count it repeatedly.
+4. $R = 3$ ($3 + 3 > 5$); reads and writes each tolerate 2 unavailable replicas.
+5. Any two of: concurrent writes resolved by timestamp; writes concurrent with reads; failed writes not rolled back; sloppy quorums; replicas restored from stale copies.
+6. $p^3 + 3p^2(1-p) = 8 \times 10^{-6} + 3 \times 0.0004 \times 0.98 = 0.001184$, about 0.12%.
+7. $z = 2$, $1 - \Phi(2) = 0.0228$, $\varphi = 1.64$.
+8. $\log_2 4{,}096 + \ln 4{,}096 = 12 + 8.3 \approx 20$ rounds, plus about one.
+9. $4 + 2 + 2 + 60 = 68$ s; replace DNS redirection with a proxy, virtual IP or topology-aware client.
+10. Gossip may deliver the same state many times; a non-idempotent merge (such as summing) would count it repeatedly.
 
 </details>
 
@@ -1529,37 +1513,30 @@ What to notice:
 **Q2. How do you detect a failed node?**
 **Answer.** Heartbeats or pings with a timeout, ideally adaptive (phi-accrual) and, in large clusters, SWIM-style probing with indirect pings, suspicion and gossip. A detector only suspects; actions taken on suspicion must fence.
 
-**Q3. What is last-writer-wins and when is it acceptable?**
-**Answer.** Keep the value with the greatest timestamp. It silently drops concurrent writes and depends on clocks, so use it for immutable or single-writer data.
-
 ### Intermediate
 
-**Q4. Walk through a database failover and its time budget.**
-**Answer.** Detection (timeout), election (pick the most advanced replica or run consensus), reconfiguration (fence old primary, apply remaining log, promote), redirection (proxy, VIP or DNS). Quantify each term; redirection and detection usually dominate; add fencing against split brain and accept $r_w \ell$ loss if replication is asynchronous.
+**Q3. Walk through a database failover and its time budget.**
+**Answer.** Detection (timeout), election (most advanced replica or consensus), reconfiguration (fence, apply remaining log, promote), redirection (proxy, VIP or DNS). Quantify each term; fence against split brain; expect $r_w \ell$ loss if replication is asynchronous.
 
-**Q5. Chain replication or primary–backup?**
-**Answer.** Chain spreads network load evenly and gives strong reads at the tail, but write latency grows with chain length and one slow node slows every write. Primary–backup has constant-hop latency but the primary sends $n-1$ copies. Choose chain (or CRAQ) for high-throughput storage with a reliable master service.
-
-**Q6. Why contact all N replicas if you need only R?**
-**Answer.** Latency is the $R$-th order statistic of the replies; contacting all $N$ lets the fastest $R$ answer and keeps a slow replica off the tail.
+**Q4. Chain replication or primary–backup?**
+**Answer.** Chain spreads network load and gives strong tail reads, but write latency grows with length and one slow node slows every write. Primary–backup has constant hops but the primary sends $n-1$ copies. Choose chain or CRAQ for high-throughput storage with a reliable master.
 
 ### Advanced
 
-**Q7. Design an inventory counter replicated in three regions with local writes.**
+**Q5. Design an inventory counter replicated in three regions with local writes.**
 **Answer.** A PN-Counter converges but cannot enforce "stock ≥ 0". Partition the stock into per-region allowances (escrow), sell locally within the allowance, and rebalance allowances with a coordinated transfer when one runs low; strong checks only at the boundary.
 
-**Q8. A Cassandra cluster shows deleted rows reappearing after a node replacement. Explain and fix.**
-**Answer.** A replica missed deletes and was not repaired within `gc_grace_seconds`; the others purged their tombstones, so repair copied the old rows back. Run repair on every node within the grace period, never return long-dead nodes without full repair, and alert on repair age.
+**Q6. A Cassandra cluster shows deleted rows reappearing after a node replacement. Explain and fix.**
+**Answer.** A replica missed deletes and was not repaired within `gc_grace_seconds`; others purged their tombstones, so repair copied the old rows back. Repair every node within the grace period and alert on repair age.
 
-**Q9. Compare gossip dissemination and a consensus-backed store for cluster membership.**
-**Answer.** Gossip spreads changes in $O(\log n)$ rounds with constant per-node load and no single point of failure, but views differ briefly. A consensus store gives one agreed view and fencing at the cost of a quorum round trip and limited write throughput. Many systems use gossip for liveness and consensus for authoritative ownership.
+**Q7. Compare gossip dissemination and a consensus-backed store for cluster membership.**
+**Answer.** Gossip spreads changes in $O(\log n)$ rounds with constant per-node load, but views differ briefly. Consensus gives one agreed view and fencing at the cost of quorum round trips. Many systems use gossip for liveness and consensus for authoritative ownership.
 
 ## 27.18 Practical exercises
 
 1. Extend the quorum program to estimate p99 read and write latency for $N = 5$ from a measured latency sample, for every $(R, W)$ with $R + W > N$.
 2. Add a suspicion timeout and incarnation numbers to the SWIM simulation and measure false positives with 5% packet loss.
 3. Implement a delta-state G-Counter that ships only changed slots and measure bytes sent against the full-state version.
-4. Implement an OR-Set that removes tombstones once every replica has acknowledged them, and test convergence with the law checker.
 
 ## 27.19 Design challenges
 

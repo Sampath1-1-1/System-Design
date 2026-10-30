@@ -177,7 +177,7 @@ $$A_{\text{cluster}} = \sum_{k=q}^{N} \binom{N}{k}\, a^{k} (1-a)^{N-k}$$
 3. $N = 7$, $q = 4$: $A \approx 0.99999966$, about 0.18 minutes (11 seconds) per year.
 4. $N = 4$, $q = 3$: $A = 0.99^4 + 4 \times 0.99^3 \times 0.01 = 0.960596 + 0.038812 = 0.999408$, worse than $N = 3$.
 
-**Interpretation.** Each step from 3 to 5 to 7 multiplies unavailability by roughly 0.03. **Engineering implication.** These numbers assume independent failures, which real systems violate: a shared rack switch, zone outage or bad configuration push takes out several nodes together. Place voters in distinct failure domains (one per zone in a 3-zone region), or the arithmetic above is fiction.
+**Interpretation.** Each step from 3 to 5 to 7 multiplies unavailability by roughly 0.03. **Engineering implication.** These numbers assume independent failures; a shared switch, zone outage or bad configuration push breaks that. Place voters in distinct failure domains, or the arithmetic is fiction.
 :::
 
 **Table 26.1 — Majority quorums at a glance.**
@@ -214,7 +214,7 @@ $$L_{\text{commit}} \approx t_{\text{fsync}} + \mathrm{RTT}_{(q-1)}$$
 2. $N = 5$ (add Oregon, Frankfurt): $q - 1 = 2$; second-fastest is 25 ms; $L \approx 26$ ms.
 3. $N = 7$ (add London, Tokyo): $q - 1 = 3$; third-fastest is 70 ms; $L \approx 71$ ms.
 
-**Interpretation.** Going from 3 to 7 replicas multiplies commit latency by about 5.5 here, because the quorum must now include a node on the far side of the continent. **Engineering implication.** Choose voter placement as carefully as voter count. A common pattern is 5 voters in three nearby regions (2 + 2 + 1), which survives a whole-region outage while the quorum stays within roughly 25 ms. Leader placement also matters: a leader in the "middle" region minimizes $\mathrm{RTT}_{(q-1)}$.
+**Interpretation.** Going from 3 to 7 replicas multiplies commit latency by about 5.5, because the quorum must now reach across the continent. **Engineering implication.** Choose voter placement as carefully as voter count, for example 5 voters in three nearby regions (2 + 2 + 1), and place the leader where $\mathrm{RTT}_{(q-1)}$ is smallest.
 :::
 
 ### 26.4.3 Flexible quorums
@@ -241,7 +241,7 @@ $$|Q_1| + |Q_2| > N$$
 3. With a stable leader, each write now waits for only 2 followers (the second-fastest RTT instead of the third), and replication continues while the leader and any 2 other nodes are up, tolerating 4 failures among the followers.
 4. A leader change needs 5 of 7 nodes, so it tolerates only 2 failures.
 
-**Interpretation.** Flexible quorums move fault tolerance from the rare path (elections) to the common path (writes). **Engineering implication.** This suits deployments where leader changes are rare and write latency dominates. It is risky if failures and leader changes are correlated (a zone loss both kills the leader and removes 3 nodes), so most production systems still use majorities.
+**Interpretation.** Flexible quorums move fault tolerance from the rare path (elections) to the common path (writes). **Engineering implication.** Useful when leader changes are rare and write latency dominates; risky when failures are correlated (a zone loss kills the leader *and* several nodes), so most production systems keep majorities.
 :::
 
 ## 26.5 Leader election
@@ -258,8 +258,8 @@ Most replicated systems are far simpler with one coordinator. A single leader ca
 
 #### How it works internally: three classic approaches
 
-1. **Bully algorithm** [Garcia-Molina 1982]. Every node has a unique, totally ordered ID. A node that suspects the leader has failed sends `ELECTION` to all nodes with higher IDs. If none answers within a timeout, it declares itself leader with a `COORDINATOR` message to everyone. If a higher node answers, that node takes over the election. The highest-ID live node always wins. Worst case $O(n^2)$ messages; it assumes reliable failure detection, which real networks do not provide.
-2. **Ring algorithm** [Chang and Roberts 1979]. Nodes are arranged in a logical ring. An initiator sends its ID clockwise; each node forwards the larger of the incoming ID and its own, discarding smaller ones. When a node receives its own ID back, it is the maximum and announces itself. Average $O(n \log n)$ messages, worst case $O(n^2)$; a single broken link stalls it.
+1. **Bully algorithm** [Garcia-Molina 1982]. A node that suspects the leader has failed sends `ELECTION` to all higher-ID nodes. If none answers within a timeout, it announces itself with `COORDINATOR`; otherwise a higher node takes over. The highest-ID live node wins. Worst case $O(n^2)$ messages; it assumes reliable failure detection, which real networks do not provide.
+2. **Ring algorithm** [Chang and Roberts 1979]. IDs travel clockwise around a logical ring; each node forwards only IDs larger than its own. A node that receives its own ID back is the maximum and announces itself. Average $O(n \log n)$ messages, worst case $O(n^2)$; a single broken link stalls it.
 3. **Lease-based election on a consensus store.** Candidates race to create or acquire a key (say `/services/scheduler/leader`) in ZooKeeper, etcd or Consul. The store, itself replicated by consensus, lets exactly one candidate succeed and attaches a **lease** (a time-limited grant, §26.11). The winner renews the lease periodically; if it stops, the lease expires and another candidate wins. This is how almost every production system elects leaders today, including Kubernetes controllers (§26.9).
 
 **Figure 26.3 — Lease-based leader election through a coordination service.**
@@ -430,7 +430,7 @@ Google's **Paxos Made Live** is the best antidote to the idea that knowing the a
 
 ## 26.7 Raft
 
-Raft was designed by Diego Ongaro and John Ousterhout with **understandability** as its primary goal [Ongaro and Ousterhout 2014]. It solves the same problem as Multi-Paxos with equivalent fault tolerance and performance, but it decomposes consensus into three nearly independent problems (leader election, log replication and safety) and removes freedoms Paxos allows, such as gaps in the log or a leader with a stale log. Raft is now the most widely implemented consensus algorithm: etcd, Consul, CockroachDB, TiKV, HashiCorp Vault's integrated storage and Kafka's KRaft (Chapter 31) all use it or close variants. Ongaro's PhD thesis extends the paper with membership changes, log compaction, client interaction and read optimizations [Ongaro 2014].
+Raft was designed by Diego Ongaro and John Ousterhout with **understandability** as its primary goal [Ongaro and Ousterhout 2014]. It matches Multi-Paxos in fault tolerance and performance, but splits consensus into leader election, log replication and safety, and removes freedoms Paxos allows, such as log gaps or a leader with a stale log. etcd, Consul, CockroachDB, TiKV, Vault's integrated storage and Kafka's KRaft (Chapter 31) all use Raft or close variants. Ongaro's thesis adds membership changes, compaction, client interaction and read optimizations [Ongaro 2014].
 
 ### 26.7.1 Terms, roles and state
 
@@ -922,7 +922,7 @@ Before ZooKeeper (built at Yahoo!, now an Apache project), each distributed syst
 - **Ephemeral znodes** exist only while the client **session** that created them is alive. A session is kept alive by heartbeats; if the server ensemble hears nothing for the session timeout, it expires the session and deletes its ephemeral nodes. This is ZooKeeper's failure detector.
 - **Sequential znodes** get a monotonically increasing 10-digit suffix from their parent, for example `lock-0000000007`, giving a total order among competing clients.
 - **Watches** are one-time triggers set by a read (`getData`, `exists`, `getChildren`); the server sends one notification when the node changes, and the client must re-read and re-arm. Version 3.6 added persistent and recursive watches.
-- **Ordering guarantees.** All writes are linearizable and go through the leader. Reads are served by whichever server the client is connected to, from its local replica, so they are fast but may be stale; a client that needs the latest value calls `sync()` before reading. Each client's operations execute in the order it issued them, and a client sees a watch notification before it sees the data that triggered it.
+- **Ordering guarantees.** Writes are linearizable and go through the leader. Reads come from the connected server's local replica, fast but possibly stale; call `sync()` first to read the latest. Each client's operations execute in issue order, and a client sees a watch notification before the data that triggered it.
 - **Observers** are non-voting servers that receive committed updates and serve reads, adding read capacity without slowing writes.
 
 ### 26.8.2 ZAB: ZooKeeper Atomic Broadcast
@@ -973,10 +973,10 @@ The `concurrency` package of the Go client implements election and mutexes from 
 
 ### 26.9.2 etcd in Kubernetes
 
-The Kubernetes API server is etcd's only client. Every object is stored under a key such as `/registry/pods/<namespace>/<name>`, an object's `resourceVersion` is derived from etcd's revision, and the **watch** that drives every controller ("tell me about changes to pods since version $r$") is an etcd watch multiplexed by the API server. etcd's health defines the control plane's; Kubernetes documentation recommends running an odd number of members (typically 3 or 5) on dedicated, low-latency disks [Kubernetes Docs: etcd]. etcd's default storage quota is 2 GB, and keeping the dataset small (compaction, defragmentation, not storing large blobs) is a standing operational task.
+The Kubernetes API server is etcd's only client. Objects live under keys such as `/registry/pods/<namespace>/<name>`, `resourceVersion` derives from etcd's revision, and every controller's **watch** is an etcd watch multiplexed by the API server. etcd's health defines the control plane's; Kubernetes documentation recommends running an odd number of members (typically 3 or 5) on dedicated, low-latency disks [Kubernetes Docs: etcd]. The default storage quota is 2 GB; keeping the dataset small (compaction, defragmentation, no large blobs) is a standing task.
 
 ::: industry
-**Kubernetes controller leader election.** `kube-controller-manager` and `kube-scheduler` run several replicas but only one acts at a time. They do not use etcd leases directly; they compete to update a `Lease` object in the `coordination.k8s.io` API group through the API server, using optimistic concurrency on `resourceVersion`. The defaults are a 15 s lease duration, a 10 s renew deadline and a 2 s retry period, so a crashed leader is replaced in roughly 15–17 s. Trade-off: this is coarse failover, chosen to avoid churn, and it relies on clocks running at similar rates.
+**Kubernetes controller leader election.** Only one replica of `kube-controller-manager` or `kube-scheduler` acts at a time. Rather than etcd leases, they compete to update a `coordination.k8s.io` `Lease` object through the API server, with optimistic concurrency on `resourceVersion`. The defaults are a 15 s lease duration, a 10 s renew deadline and a 2 s retry period, so a crashed leader is replaced in roughly 15–17 s. Trade-off: this is coarse failover, chosen to avoid churn, and it relies on clocks running at similar rates.
 *Evidence: Primary* — [Kubernetes Docs: Leases]; [Kubernetes Docs: kube-controller-manager]
 :::
 
@@ -1157,7 +1157,7 @@ Good token sources are values the consensus system already increments: a Raft or
 Burrows chose a *lock service* over a consensus library deliberately: taking a lock and writing a file was far easier to add to existing programs than embedding Paxos. Key design points:
 
 - **Coarse-grained locks**, held for hours or days, not milliseconds, so load is low and brief outages do not disturb current holders.
-- **Sessions and KeepAlives.** Each client has a session with a lease. The client sends a KeepAlive RPC; the master holds it until the lease is near expiry and then replies with a new lease (12 s by default), piggybacking cache invalidations and events. If the lease lapses, the client enters **jeopardy**, disables its cache, and waits a **grace period** (45 s by default) for a new master before declaring the session lost.
+- **Sessions and KeepAlives.** Each client session has a lease; the master holds each KeepAlive RPC until the lease nears expiry, then replies with a new lease (12 s by default) plus cache invalidations and events. If the lease lapses, the client enters **jeopardy**, disables its cache, and waits a **grace period** (45 s by default) for a new master before declaring the session lost.
 - **Master election and master leases.** Replicas elect a master through Paxos; the master holds a lease of a few seconds during which no other master can be elected, letting it serve reads locally.
 - **Consistent client caching** with invalidation: the master blocks a write until every caching client has invalidated, so reads are almost always local.
 - **Sequencers and lock-delay.** A lock holder can obtain a **sequencer** (lock name, mode and generation number) and pass it to servers, which check it with Chubby: fencing tokens under another name. For servers that cannot check sequencers, Chubby imposes a **lock-delay** (up to one minute) before a lock released by a failed holder can be re-acquired.
@@ -1206,15 +1206,15 @@ Many systems now **embed** a Raft library (etcd's `raft`, HashiCorp's `raft`) in
 ## 26.15 Summary and revision notes
 
 ::: summary
-- **Consensus** means agreement, validity and termination. FLP forbids guaranteed termination in an asynchronous system, so practical algorithms keep safety always and achieve liveness under partial synchrony: *safety from quorums, liveness from timeouts*.
+- **Consensus**: agreement, validity, termination. FLP forbids guaranteed termination under asynchrony, so algorithms keep safety always and liveness under partial synchrony: *safety from quorums, liveness from timeouts*.
 - A **replicated state machine** runs one consensus decision per log slot; deterministic replicas applying the same log stay identical.
 - **Majority quorums** intersect. $N = 2f + 1$ tolerates $f$ crashes; use 3 or 5 voters, never an even number. Commit latency is the $(q-1)$-th fastest follower RTT, so placement matters as much as count. Flexible Paxos needs only $|Q_1| + |Q_2| > N$.
-- **Leader election** (bully, ring, lease-based) yields a node that *believes* it leads. Safety needs quorum-checked actions or fencing.
+- **Leader election** yields a node that *believes* it leads; safety needs quorum-checked actions or fencing.
 - **Paxos**: prepare/promise discovers and locks out the past; accept/accepted decides; a proposer must adopt the highest-numbered accepted value it hears. Dueling proposers can livelock; Multi-Paxos uses a stable leader and skips phase 1.
 - **Raft**: terms, randomized election timeouts, RequestVote with an up-to-date check, AppendEntries with a consistency check (log matching), commit only current-term entries (Figure 8), no-op on election, snapshots, joint or single-server membership changes, ReadIndex or lease reads.
 - **ZooKeeper** (ZAB) offers znodes, ephemeral and sequential nodes and watches for recipes; **etcd** offers revisions, history-preserving watches, leases and transactions and backs Kubernetes; **Chubby** pioneered coarse-grained locks, sessions, KeepAlives, sequencers and lock-delay.
-- **Distributed locks** with expiry cannot stop a paused holder. Redlock's debate centers on timing assumptions and missing fencing. **Leases** need a margin for drift and, more importantly, pauses.
-- **Split brain** is prevented by quorums, witnesses, STONITH and resource fencing. **Fencing tokens** let the resource reject stale holders and are the final line of defense.
+- **Expiring locks** cannot stop a paused holder; the Redlock debate centers on timing assumptions and missing fencing. **Leases** need margins for drift and, above all, pauses.
+- **Split brain** is prevented by quorums, witnesses, STONITH and **fencing tokens**, which let the resource reject stale holders.
 :::
 
 ## 26.16 Knowledge checkpoint
