@@ -15,8 +15,7 @@ After this chapter you should be able to:
 - Distinguish statement-based, row-based, physical and logical replication, and say when multi-primary replication is worth its conflicts.
 - Compare range, hash, list and directory partitioning, choose a shard key, and compute the number of shards from data size, write rate and per-node limits.
 - Build a consistent-hash ring with virtual nodes, derive how load imbalance shrinks with the number of virtual nodes $V$, and compare it with jump and rendezvous hashing.
-- Plan an online resharding with change capture, backfill, verification and cutover.
-- Mitigate hot partitions and choose between local and global secondary indexes.
+- Plan an online resharding, mitigate hot partitions and choose local or global secondary indexes.
 - Explain the cost of cross-shard queries and transactions, and place PgBouncer, ProxySQL and Vitess in an architecture.
 
 ## 14.2 Prerequisites
@@ -70,7 +69,7 @@ flowchart LR
   MON -.->|poll positions| R2
 ```
 
-**Reading the diagram.** The app service sends SQL through a proxy or driver that sends writes and must-be-fresh reads to the primary and spreads other reads over replicas. These calls are synchronous. The dotted replication streams are asynchronous by default, so replicas can lag. Replica 3 is fed by Replica 2 (**cascading replication**), which reduces the primary's fan-out to distant regions. Every node is a storage boundary holding a full copy. The lag monitor tells the proxy to stop using replicas that fall too far behind. Failure points: the primary for writes until a replica is promoted (§27.11), lagging replicas for reads, and the intermediate replica for everything below it. Scaling: replicas add read capacity only.
+**Reading the diagram.** A proxy or driver sends writes and must-be-fresh reads to the primary and other reads to replicas, synchronously. Replication (dotted) is asynchronous by default, so replicas lag. Replica 3 is fed by Replica 2 (**cascading replication**), sparing the primary's fan-out to distant regions. Each node stores a full copy. The lag monitor removes lagging replicas from rotation. Failure points: the primary, until a replica is promoted (§27.11), and the intermediate replica for everything below it.
 
 #### Mathematical foundations
 
@@ -119,7 +118,6 @@ Replicas are simple to add, give a warm standby and can isolate heavy analytical
 |---|---|---|---|---|
 | Users see stale data | Replica applies changes seconds behind | Lag metric; user reports "my edit vanished" | Route that user's reads to primary | Read-your-writes routing (§14.4.4) |
 | Replica falls ever further behind | Single-threaded apply, or a long query blocks apply | Lag grows steadily | Kill blocking queries; enable parallel apply | Parallel apply; cap query time on replicas |
-| Query cancelled on replica | Replayed change removes rows a long query still needs (PostgreSQL) | "canceling statement due to conflict with recovery" errors | Retry | Tune `max_standby_streaming_delay` or `hot_standby_feedback` |
 | Data lost on failover | Async replica promoted before receiving last commits | Gap in GTIDs or LSNs after promotion | Reconcile from old primary if it is reachable | Semi-sync or sync replica as failover target |
 
 #### Common misconceptions
@@ -133,7 +131,7 @@ Replicas are simple to add, give a warm standby and can isolate heavy analytical
 ### 14.4.1 Three modes of acknowledgment
 
 ::: definition
-**Definition — Replication modes.** In **synchronous replication**, the primary does not report a commit as successful until at least one designated replica has durably received it (or, in stricter settings, applied it). In **asynchronous replication**, the primary reports success after its own local commit and ships the change afterwards. **Semi-synchronous replication** is MySQL's name for a middle ground: the primary waits until at least one replica has *received and logged* the change, but not until it has applied it, and it falls back to asynchronous mode if no replica answers within a timeout.
+**Definition — Replication modes.** In **synchronous replication**, the primary reports a commit only after at least one designated replica has durably received (or applied) it. In **asynchronous replication**, it reports success after its local commit and ships the change afterwards. **Semi-synchronous replication**, MySQL's middle ground, waits until a replica has *received and logged* the change and falls back to asynchronous mode after a timeout.
 :::
 
 #### First-principles explanation
@@ -171,7 +169,7 @@ sequenceDiagram
   P-->>C: OK
 ```
 
-**Reading the diagram.** Solid arrows are synchronous steps the client waits for. The open-headed arrow means asynchronous shipping happens after the client has its answer, so a primary crash at that moment loses the transaction. In MySQL's lossless semi-synchronous mode (`AFTER_SYNC`), the primary waits for one replica to write the events to its **relay log** before committing in the storage engine, so no client can see a transaction that no replica has. With PostgreSQL's `synchronous_commit = remote_apply`, the standby has flushed *and applied* the change, so a read there sees it immediately. The storage boundaries are the two nodes' logs. The failure point is the replica: in synchronous mode, a slow or dead synchronous replica stalls every commit. To scale and to tolerate that failure, wait for any $k$ of several replicas (quorum commit).
+**Reading the diagram.** Solid arrows are steps the client waits for. In the asynchronous path, shipping (open arrowhead) happens after the reply, so a primary crash then loses the transaction. MySQL's lossless semi-sync (`AFTER_SYNC`) waits for a replica to write its **relay log** before the engine commit, so no client sees a transaction no replica has. PostgreSQL's `remote_apply` waits until the standby has *applied* the change. Storage boundaries are the two logs. The failure point is the replica: a slow synchronous replica stalls every commit, which quorum commit over several replicas mitigates.
 
 The two products expose different knobs:
 
@@ -226,7 +224,7 @@ $$T_{\text{commit}} \approx T_{\text{local}} + \text{RTT}_{(k)} + T_{\text{remot
 ### 14.4.2 Replication lag
 
 ::: definition
-**Definition — Replication lag.** The delay between a change committing on the primary and the same change becoming visible on a replica. It can be measured as time (seconds), as log volume (bytes of WAL not yet replayed) or as transactions.
+**Definition — Replication lag.** The delay between a change committing on the primary and becoming visible on a replica, measured in seconds, bytes of log or transactions.
 :::
 
 Within one region, asynchronous lag is typically well under a second, but it is unbounded. It grows whenever the replica applies changes more slowly than the primary produces them: a single-threaded applier, a bulk `UPDATE` of millions of rows, a replica returning from maintenance, a network partition, or replica queries that block replay. Catching up is draining a queue.
@@ -250,7 +248,7 @@ $$T_{\text{catch-up}} = \frac{B}{r_{\text{apply}} - r_{\text{in}}} \qquad (r_{\t
 1. Backlog: $B = 5{,}000 \times 600\,\text{s} = 3{,}000{,}000$ transactions.
 2. Net drain rate: $8{,}000 - 5{,}000 = 3{,}000$ transactions/s.
 3. Catch-up time: $3{,}000{,}000 / 3{,}000 = 1{,}000$ s, about 17 minutes.
-4. If apply were single-threaded at 5,500 transactions/s, the net drain would be 500/s and catch-up would take $3 \times 10^6 / 500 = 6{,}000$ s, about 100 minutes. At 5,000/s it would never catch up.
+4. At 5,500 transactions/s the net drain is 500/s and catch-up takes 6,000 s (100 minutes); at 5,000/s it never ends.
 
 **Interpretation.** Catch-up time depends on the *margin* between apply and arrival rates. A replica with 10 % spare apply capacity takes ten times as long to recover as the outage lasted. **Engineering implication.** Keep replicas out of the read pool until lag is within your staleness budget, and track apply headroom $r_{\text{apply}} / r_{\text{in}}$ as a capacity metric.
 :::
@@ -260,11 +258,11 @@ $$T_{\text{catch-up}} = \frac{B}{r_{\text{apply}} - r_{\text{in}}} \qquad (r_{\t
 Lag is invisible until it violates a user's expectations. Two violations are common. Chapter 25 (§25.6) treats these **session guarantees** formally.
 
 ::: definition
-**Definition — Read-your-writes consistency.** A guarantee that after a client writes a value, its subsequent reads return that value or a newer one. It says nothing about other clients' reads. It is also called **read-after-write consistency**.
+**Definition — Read-your-writes consistency.** After a client writes a value, its own later reads return that value or a newer one. Other clients get no such promise.
 :::
 
 ::: definition
-**Definition — Monotonic reads.** A guarantee that a client never sees data move backwards in time: once it has read a value at some version, later reads return that version or newer.
+**Definition — Monotonic reads.** A client never sees data move backwards: after reading some version, its later reads return that version or newer.
 :::
 
 **Figure 14.3 — Two lag anomalies: lost own write and time going backwards.**
@@ -287,7 +285,7 @@ sequenceDiagram
   Note over U,R2: violates monotonic reads
 ```
 
-**Reading the diagram.** All calls are synchronous. Replication to the replicas is asynchronous and not drawn. The user's write commits on the primary, but the next read is balanced to Replica 2, five seconds behind, so the edit seems lost. Then two successive reads hit different replicas: the first sees 12 comments and the refresh, on the more lagged replica, sees 9. The failure point is the router's freedom to pick any replica. The more replicas you add and the more freely you balance, the more often this happens.
+**Reading the diagram.** Calls are synchronous; replication (not drawn) is asynchronous. The read after the write lands on Replica 2, five seconds behind, so the edit seems lost. Then successive reads hit different replicas, and the comment count falls from 12 to 9. The failure point is the router's freedom to pick any replica, and it bites more often as replicas are added.
 
 ### 14.4.4 Designing around lag
 
@@ -353,10 +351,8 @@ What to notice:
 
 ### 14.4.5 What travels on the wire: statement, row, physical and logical replication
 
-The replication log can describe changes at four levels of abstraction, which decide what can go wrong and what else can consume the stream.
-
 ::: definition
-**Definition — Replication log formats.** **Statement-based replication** ships the SQL statements the primary executed. **Row-based replication** ships the before and after images of each changed row. **Physical replication** (WAL shipping) ships the storage engine's low-level log of byte changes to data pages. **Logical replication** ships a decoded, engine-independent description of row changes per table, which subscribers can filter and apply to a different schema or version.
+**Definition — Replication log formats.** What the log describes: the SQL statements executed (**statement-based**), the changed rows (**row-based**), the storage engine's page-level byte changes (**physical**, or WAL shipping), or decoded, engine-independent row changes per table (**logical**).
 :::
 
 #### How each works
@@ -376,7 +372,6 @@ The replication log can describe changes at four levels of abstraction, which de
 | Version coupling | Loose | Loose | Same major version | Cross-version |
 | Replica can differ (extra indexes, subset) | Partly | Partly | No | Yes |
 | Feeds CDC and other systems | No | Yes (binlog readers) | No | Yes |
-| Example | MySQL `STATEMENT` | MySQL `ROW` (default) | PostgreSQL streaming | PostgreSQL publications; MySQL row binlog via CDC tools |
 
 ::: recommendation
 **Recommendation — Default choices.** Use row-based binlogs in MySQL and physical streaming for PostgreSQL high-availability replicas. Add logical replication for upgrades, partial copies or CDC.
@@ -390,13 +385,14 @@ The replication log can describe changes at four levels of abstraction, which de
 |---|---|---|---|---|
 | All commits hang | Sole synchronous standby is down | Commit latency spikes to timeout | Remove it from `synchronous_standby_names` | Quorum `ANY k` over ≥ $k+1$ standbys |
 | Silent loss of the durability guarantee | Semi-sync timed out and fell back to async | Semi-sync status counters | Restore replica health | Alert on fallback, not just on lag |
-| Replica data diverges | Non-deterministic statement replicated | Checksum comparison tools | Rebuild replica from snapshot | Row-based format |
 | Split brain after failover | Old primary still accepts writes | Two nodes report primary role | Fence old primary; reconcile | Fencing tokens and leases (§26.11–§26.13) |
 
 ## 14.5 Multi-primary replication
 
+### 14.5.1 Writes in more than one place
+
 ::: definition
-**Definition — Multi-primary replication.** A topology in which more than one node accepts writes for the same data and each primary replicates its changes to the others. It is also called **multi-leader** or **active–active** replication. Because two primaries can change the same row concurrently without coordination, the system must detect and resolve **write conflicts**.
+**Definition — Multi-primary replication.** More than one node accepts writes for the same data and replicates to the others (also **multi-leader** or **active–active**). Concurrent uncoordinated changes to the same row create **write conflicts** that must be detected and resolved.
 :::
 
 #### First-principles explanation
@@ -432,7 +428,7 @@ flowchart LR
   CR -->|yes| RS["Resolve: LWW,<br/>merge or CRDT"]
 ```
 
-**Reading the diagram.** Users write synchronously to their local primary, so writes take about 1 ms instead of a cross-region round trip. The primaries exchange changes asynchronously (dotted arrows), so each is its own storage boundary and the copies differ until replication catches up. The conflict detector runs on every incoming change. The failure point is the resolver: LWW depends on clocks (§24.9) and silently drops a write, and uniqueness constraints cannot be enforced because both regions can accept the same username in the same second. Scaling: more regions means more pairs of primaries that can conflict.
+**Reading the diagram.** Each region writes synchronously to its local primary (about 1 ms), and the primaries exchange changes asynchronously, so the two storage boundaries differ until replication catches up. Every incoming change passes the conflict detector. The resolver is the failure point: LWW depends on clocks (§24.9) and silently drops a write, and uniqueness cannot be enforced across regions. Each added region adds pairs of primaries that can conflict.
 
 #### Advantages, disadvantages and when to choose it
 
@@ -452,7 +448,7 @@ Multi-primary buys local write latency and partition tolerance at the cost of gl
 ### 14.6.1 What partitioning is
 
 ::: definition
-**Definition — Partition (shard).** A subset of a dataset's rows, stored and served together, such that every row belongs to exactly one partition. **Partitioning** is dividing a dataset this way and spreading the partitions over nodes. **Sharding** is a synonym used mostly for partitioning across separate database servers. This book uses *partition* and *shard* interchangeably for the data subset and reserves **network partition** for a network split (§24.7). The column or columns that decide a row's partition form the **partition key** (or **shard key**).
+**Definition — Partition (shard).** A subset of a dataset's rows, stored and served together, such that every row belongs to exactly one partition. **Partitioning** spreads partitions over nodes; **sharding** is a synonym used mostly for separate database servers. This book uses *partition* and *shard* interchangeably and reserves **network partition** for network splits (§24.7). The columns that choose a row's partition form the **partition key** (or **shard key**).
 :::
 
 #### First-principles explanation
@@ -495,7 +491,7 @@ flowchart TB
   PM -->|SQL or KV request| N3[(Node C)]
 ```
 
-**Reading the diagram.** The decision node is a design-time choice, not a runtime branch. Range, hash and list schemes are pure functions of the key plus a small cached table, evaluated in microseconds. Directory lookups add a synchronous dependency on a replicated store unless cached. All four yield a partition ID, and a separate map turns it into a node. Keeping the two steps separate is what makes rebalancing cheap (§14.9): moving a partition edits one map entry. Failure points: a stale map sends requests to the wrong node, which must reject them, and a directory outage stops uncached routing. Scaling: add nodes and move partitions while the key-to-partition function stays fixed.
+**Reading the diagram.** The scheme is a design-time choice, not a runtime branch. Range, hash and list are pure functions plus a small cached table; a directory adds a synchronous lookup unless cached. All yield a partition ID that a separate map turns into a node, so rebalancing edits only that map (§14.9). Failure points: a stale map (nodes must reject misrouted requests) and a directory outage. Scaling: add nodes and move partitions; the key-to-partition function never changes.
 
 **Table 14.5 — Partitioning schemes compared.**
 
@@ -568,7 +564,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** The API service takes the tenant ID from the authenticated token, never from user input. The router holds a cached map from logical shard to cluster plus a short override list, updated asynchronously from the directory (dotted arrow). Because the router can lag, each database must reject writes for logical shards it does not own. The router hashes to one of 4,096 logical shards, checks overrides and sends synchronous SQL to that cluster's primary. Each cluster is a storage boundary with its own replica, so §14.3–§14.4 apply inside it. Failure points: the directory (cached and replicated) and each cluster's primary, whose failure affects only its tenants, a smaller **blast radius** than one big database. Scaling: add clusters and move logical shards, or promote a growing tenant to a dedicated cluster.
+**Reading the diagram.** The API takes the tenant ID from the authenticated token, never from user input. The router caches the shard-to-cluster map and override list, updated asynchronously from the directory, so databases must reject writes for logical shards they do not own. SQL to the chosen primary is synchronous, and each cluster is a replicated storage boundary (§14.3–§14.4). A cluster failure affects only its tenants, a smaller **blast radius** than one big database. Scaling: add clusters and move logical shards, or give a growing tenant its own cluster.
 
 ::: industry
 **Notion.** Notion sharded its PostgreSQL block data by workspace ID, because each block belongs to one workspace. It created 480 logical shards (PostgreSQL schemas) spread over 32 physical databases, 15 each, with routing in application code. It chose 480 because its many divisors let the fleet grow to 40 or 48 hosts with equal shard counts, whereas 512 would force doubling.
@@ -687,7 +683,6 @@ What to notice:
 |---|---|---|---|---|
 | One shard runs out of disk | Key with large, uneven entities (a giant tenant) | Per-shard disk and growth dashboards | Move logical shards; split the tenant | Directory overrides; size by largest entity |
 | All new writes hit one shard | Monotonic key under range partitioning | Per-shard write rate, one hot | Switch to hash or prefix the key | Avoid timestamps or sequences as the leading key |
-| Queries get slower as shards are added | Frequent query lacks the key and scatters | Fan-out count per query | Add a global index or denormalized copy | Check top queries against the key at design time |
 | Cross-shard transactions everywhere | Related rows have different keys | 2PC or saga volume | Re-key so related rows co-locate | Transaction locality as a key criterion |
 
 ## 14.8 Consistent hashing and virtual nodes
@@ -699,11 +694,11 @@ This is the book's full treatment of consistent hashing. Section 3.3.2 used it a
 The obvious rule, `node = h(key) mod N`, balances perfectly and needs no state, but a key keeps its node only if $h \bmod N = h \bmod (N+1)$, which holds for about $1/(N+1)$ of keys. Growing from 4 to 5 nodes moves about 80 % of keys, and from 100 to 101 about 99 %: a miss storm for a cache (§3.3.2) and a near-total copy for a database. We want a rule under which adding a node moves only the keys it should own.
 
 ::: definition
-**Definition — Consistent hashing.** A key-to-node assignment in which keys and nodes are hashed onto the same circular space (the **ring**) and each key is owned by the first node position found by moving clockwise from the key's hash. Adding or removing a node changes the owner of only the keys in the arcs next to that node's positions, an expected $K/N$ of $K$ keys for $N$ nodes [Karger et al. 1997].
+**Definition — Consistent hashing.** Keys and nodes are hashed onto the same circular space (the **ring**), and each key belongs to the first node position clockwise from its hash. Adding or removing a node changes the owner of an expected $K/N$ of $K$ keys for $N$ nodes [Karger et al. 1997].
 :::
 
 ::: definition
-**Definition — Virtual node (vnode).** One of $V$ positions on the ring assigned to the same physical node, typically by hashing labels such as `"db-3#vn17"`. A physical node owns the union of the arcs that end at its vnodes. A vnode is sometimes called a **token**.
+**Definition — Virtual node (vnode).** One of $V$ ring positions belonging to the same physical node, typically obtained by hashing labels such as `db-3#vn17`; also called a **token**.
 :::
 
 ### 14.8.2 Ring construction and lookup
@@ -737,7 +732,7 @@ flowchart LR
   K3(["key z<br/>h = 0.70"]) -.->|walk clockwise| B2
 ```
 
-**Reading the diagram.** The rectangles are vnode positions normalized to $[0, 1)$, linked clockwise, with the last arrow wrapping from 0.86 to 0.05. Each vnode owns the arc *ending* at it: A vn1 owns $(0.31, 0.48]$ and A vn0 owns $(0.86, 1) \cup [0, 0.05]$. Dotted arrows are lookups: key $x$ at 0.40 goes to A vn1, $y$ at 0.95 wraps to A vn0, $z$ at 0.70 goes to B vn1. Lookup is an in-memory computation in each router, with no network hop; the data lives on nodes A, B and C. Shares are A 0.36, B 0.40 and C 0.24, uneven with only two vnodes each (§14.8.4). Failure point: routers with different membership disagree about owners. Scaling: a new node's vnodes cut arcs, and only those keys move.
+**Reading the diagram.** Rectangles are vnode positions normalized to $[0, 1)$, linked clockwise and wrapping from 0.86 to 0.05. Each vnode owns the arc *ending* at it, for example A vn1 owns $(0.31, 0.48]$. Dotted lookups: $x$ at 0.40 goes to A vn1, $y$ at 0.95 wraps to A vn0, $z$ at 0.70 goes to B vn1. Lookup happens in router memory; data lives on A, B and C, whose shares (0.36, 0.40, 0.24) are uneven with two vnodes each. Failure point: routers with different membership disagree about owners.
 
 ### 14.8.3 How many keys move?
 
@@ -1149,6 +1144,8 @@ Table 3.3 (§3.3.2) lists generic ring failures. Three more matter for databases
 
 ## 14.9 Rebalancing
 
+### 14.9.1 What rebalancing must achieve
+
 ::: definition
 **Definition — Rebalancing.** Moving partitions, or parts of them, between nodes so that data and load stay even as nodes join, leave or fail and as data grows, while staying available and moving no more data than necessary.
 :::
@@ -1159,17 +1156,17 @@ When a third library room opens, you could renumber every shelf and carry two-th
 
 #### Why does this exist?
 
-### 14.9.1 Fixed number of partitions
+### 14.9.2 Fixed number of partitions
 
 Create many more partitions than nodes up front, say 1,024 for 16 nodes, and never change the number. A key's partition is fixed forever; only the **partition-to-node map** changes, and a joining node takes whole partitions from the others. Elasticsearch fixes primary shards at index creation, Riak and Couchbase (vBuckets) use fixed partition sets, and the logical shards of Notion and Instagram (§14.7) and Dynamo's final strategy are the same idea.
 
 The difficulty is choosing $P$. Each partition has fixed overhead, so $P$ cannot be huge, yet $P$ caps the node count and sets the granularity of balance. Choose $P$ at least 10× the largest plausible node count and divisible by likely fleet sizes (§14.7.4). If data grows 100×, each partition does too and may become slow to move.
 
-### 14.9.2 Dynamic splitting
+### 14.9.3 Dynamic splitting
 
 Start with one partition, or a few, and **split** any partition that passes a size threshold, merging ones that shrink. This adapts to data volume and suits range partitioning, where the key distribution is unknown. Bigtable splits tablets at roughly 100–200 MB [Chang et al. 2006]; HBase regions, MongoDB chunks and distributed SQL ranges split the same way. An empty database starts on one node, so bulk loads should **pre-split** on known boundaries.
 
-### 14.9.3 Partitions proportional to nodes
+### 14.9.4 Partitions proportional to nodes
 
 Give each node a fixed number of partitions, such as Cassandra's `num_tokens`. A joining node picks that many split points and takes over half of each range it cuts, so the partition count grows with the cluster. This is consistent hashing with vnodes viewed as a rebalancing strategy.
 
@@ -1189,7 +1186,7 @@ Give each node a fixed number of partitions, such as Cassandra's `num_tokens`. A
 **Warning — Fully automatic rebalancing can turn a slow node into an outage.** If the failure detector mistakes an overloaded node for a dead one, streaming its partitions away adds load to it and its peers, more nodes look dead, and the cascade grows. Many operators let the system *propose* plans but require a human or rate-limited controller to execute them [Kleppmann 2017].
 :::
 
-### 14.9.4 Online migration: dual writes, backfill and cutover
+### 14.9.5 Online migration: dual writes, backfill and cutover
 
 Changing the shard key, splitting a shard or moving a tenant means copying data while the application keeps writing. The safe procedure is the same whether done by Vitess VReplication, a CDC pipeline or by hand:
 
@@ -1221,7 +1218,7 @@ stateDiagram-v2
   CleanedUp --> [*]
 ```
 
-**Reading the diagram.** States are migration phases and arrows are controller actions. Capture starts *before* the snapshot so no write falls between them. Until reads switch, the source alone serves users and the target is updated asynchronously over the change stream between the two storage boundaries. Backward arrows are the safety net: verification failures return to catch-up, read errors return to verification, and the reverse stream allows undoing the write switch. The riskiest transition is the write switch, because two writable copies would be split brain, hence fencing. Scaling: shards migrate in parallel, each with its own state machine and throttle.
+**Reading the diagram.** Capture starts *before* the snapshot so no write is missed. Until reads switch, the source alone serves users while the change stream updates the target asynchronously. Backward arrows are the safety net, including the reverse stream after the write switch. The write switch is the riskiest step, since two writable copies would be split brain, hence fencing. Shards migrate in parallel, each throttled.
 
 ::: example
 **Worked example — How long does a shard split take?** A 3 TB shard is split in two, so 1.5 TB moves to a new shard (SI units). The backfill is throttled to 150 MB/s. During the copy, the moving half of the shard receives 2,000 writes/s, and the target can apply 6,000 writes/s.
@@ -1248,13 +1245,14 @@ stateDiagram-v2
 | Rows missing on target | Capture started after the snapshot | Count or checksum mismatch | Re-copy affected ranges | Start capture first; snapshot at a known position |
 | Lost or duplicated writes on cutover | Writes accepted on both sides | Divergent checksums after switch | Reconcile from logs | Freeze and fence the source; idempotent apply |
 | Production latency rises | Backfill saturates disk or network | p99 latency during copy | Lower the throttle | Throttle by measured headroom |
-| Dual-write divergence | App wrote one side, then crashed | Shadow-read mismatches | Re-sync from the source of truth | Prefer CDC over application dual writes |
 
 ::: mistake
 **Mistake — "Dual writes are simple: just write to both."** Two independent writes are not atomic. A crash between them, or concurrent writers applying in different orders, makes the stores diverge silently. Prefer deriving the copy from the source's ordered change log (CDC), or reconcile continuously.
 :::
 
 ## 14.10 Hot partitions and skew
+
+### 14.10.1 Causes, detection and mitigation
 
 ::: definition
 **Definition — Hot partition and hot key.** A **hot partition** receives enough excess requests or data to saturate its node while peers idle. A **hot key** is a single key causing that excess. **Skew** is uneven distribution of data or load in general.
@@ -1295,7 +1293,7 @@ flowchart LR
   AG -->|parallel reads| PS
 ```
 
-**Reading the diagram.** The write path appends a random suffix to each increment, so each of the $s$ partitions, separate storage boundaries, receives $1/s$ of the hot key's synchronous writes. Viewers read a cached total with a one-second TTL; only on a miss does the aggregator read all $s$ sub-keys in parallel. Failure points: one slow sub-key partition delays the aggregate (the fan-out tail of §14.11), and a cache failure turns every view into $s$ reads. Scaling: raise $s$ only for keys detected as hot.
+**Reading the diagram.** Each increment gets a random suffix, so each of the $s$ partitions receives $1/s$ of the hot key's writes. Viewers read a cached total (TTL 1 s); only a miss makes the aggregator read all $s$ sub-keys in parallel. Failure points: one slow sub-key partition delays the aggregate, and a cache failure turns every view into $s$ reads. Raise $s$ only for keys detected as hot.
 
 ::: formula
 **Salt factor for a hot key**
@@ -1339,15 +1337,16 @@ $$s = \left\lceil \frac{\lambda_{\text{key}}}{u \cdot c_{\text{part}}} \right\rc
 |---|---|---|---|---|
 | One shard throttles while others idle | Celebrity or viral key | Busiest-to-median partition ratio | Cache or salt the key | Hot-key detection; per-key special handling |
 | Newest partition saturated | Timestamp as leading range key | All writes on last range | Re-key with hash prefix | Hash or bucket the leading key |
-| Partition grows without bound | Unbounded entity (channel, sensor) | Partition size histogram | Re-bucket data | Time buckets in the key |
 | Salted reads become slow | Read fan-out over $s$ partitions | Read p99 grows with $s$ | Cache aggregate | Pre-aggregate; salt only hot keys |
 
 ## 14.11 Secondary indexes in partitioned databases
 
+### 14.11.1 Local and global indexes
+
 Queries by anything other than the partition key, such as orders by `status` in a table partitioned by `customer_id`, need a **secondary index**, and its key differs from the data's key. There are two designs.
 
 ::: definition
-**Definition — Local and global secondary indexes.** A **local index** (also **document-partitioned** index) is stored inside each partition and covers only that partition's rows. A **global index** (also **term-partitioned** index) is a separate structure covering all rows, partitioned by the *indexed value* rather than by the row's key, so all entries for one value live together [Kleppmann 2017].
+**Definition — Local and global secondary indexes.** A **local** (document-partitioned) index lives in each partition and covers only its rows. A **global** (term-partitioned) index covers all rows and is partitioned by the *indexed value*, so all entries for one value live together [Kleppmann 2017].
 :::
 
 #### First-principles explanation
@@ -1379,23 +1378,11 @@ flowchart TB
   end
 ```
 
-**Reading the diagram.** Top: the coordinator queries all three partitions synchronously, each a storage boundary indexing only its own rows, and waits for the slowest. Bottom: the query reads the one index partition owning `open`, then fetches rows from only the partitions that hold them; dotted arrows show asynchronous index maintenance, so a new row may briefly be missing. Failure points: one slow partition slows every local-index query; global indexes return stale results under lag, and a hot value such as `open` concentrates load on one index partition. Scaling: local indexes favor writes, global indexes favor reads.
+**Reading the diagram.** Top: the coordinator queries every partition synchronously and waits for the slowest. Bottom: the query reads the one index partition owning `open`, then fetches only the needed rows; dotted arrows show asynchronous index maintenance, so new rows may briefly be missing. Local indexes suffer from slow partitions; global ones from lag and from hot values concentrating on one index partition.
 
 #### Mathematical foundations
 
-Scatter-gather pays the fan-out tail cost of §4.8.4.
-
-::: formula
-**Probability that a scatter-gather query hits at least one slow partition**
-
-$$P_{\text{slow}} = 1 - (1 - q)^{n}$$
-
-| Symbol | Meaning | Units |
-|---|---|---|
-| $P_{\text{slow}}$ | Probability that the gathered query waits for at least one slow response | dimensionless (0–1) |
-| $q$ | Probability that one partition's response is slow, e.g. $0.01$ beyond its p99 | dimensionless (0–1) |
-| $n$ | Number of partitions queried | partitions |
-:::
+Scatter-gather pays the fan-out tail cost of §4.8.4: if each partition is slow with probability $q$, a query over $n$ partitions waits for at least one slow response with probability $P_{\text{slow}} = 1 - (1 - q)^{n}$.
 
 ::: example
 **Worked example — A local-index query across 32 shards.** Each shard answers within 10 ms at p99, so $q = 0.01$.
@@ -1465,7 +1452,7 @@ sequenceDiagram
   Note over T,S2: if the coordinator dies after PREPARE, shards wait holding locks
 ```
 
-**Reading the diagram.** Every arrow is a synchronous call: two round trips per participant plus a durable decision log at the coordinator, the third storage boundary. After voting YES, each shard holds locks and *cannot* decide alone, so a coordinator crash then blocks those rows until it recovers, the failure point in the note. Scaling: latency is at least two RTTs plus several fsyncs, and lock hold times track the slowest participant, so throughput falls as participants increase.
+**Reading the diagram.** Every call is synchronous: two round trips per participant plus a durable decision log at the coordinator. After voting YES, a shard holds locks and *cannot* decide alone, so a coordinator crash blocks those rows (the note). Latency is at least two RTTs plus several fsyncs, and throughput falls as participants increase.
 
 Teams avoid distributed transactions in roughly this order: (1) choose the shard key so transactions stay on one shard (§14.7.2); (2) use a saga of local transactions with compensations (Chapter 32); (3) use a database that implements distributed transactions internally (Chapter 28); (4) use explicit 2PC with careful recovery of in-doubt transactions.
 
@@ -1479,7 +1466,7 @@ Teams avoid distributed transactions in roughly this order: (1) choose the shard
 ### 14.13.1 Why connections become a scaling problem
 
 ::: definition
-**Definition — Connection pooler.** A component that keeps a small number of open database connections and lends them to a much larger number of clients for the duration of a session, a transaction or a statement. It may live inside the application (a client-side pool) or run as a separate proxy shared by many application instances.
+**Definition — Connection pooler.** A component that keeps a few open database connections and lends them to many clients per session, transaction or statement, either inside the application or as a shared proxy.
 :::
 
 #### First-principles explanation
@@ -1514,7 +1501,7 @@ flowchart LR
   PB -.->|"queue when pool busy"| WQ[[Waiting clients]]
 ```
 
-**Reading the diagram.** PgBouncer accepts 6,000 cheap client connections over the PostgreSQL protocol in one event loop and forwards each transaction synchronously over one of about 60 server connections. When all are busy, transactions wait in PgBouncer's queue (dotted) instead of spawning server processes. Only PostgreSQL stores data. Failure points: PgBouncer itself (run several, or one per host), long transactions starving the pool, and session-state features breaking silently. Scaling: PgBouncer is single-threaded, so add instances for very high connection counts.
+**Reading the diagram.** PgBouncer holds 6,000 cheap client connections in one event loop and forwards each transaction synchronously over one of about 60 server connections, queuing the rest (dotted). It stores no data. Failure points: PgBouncer itself (run several), long transactions starving the pool, and session features breaking silently. It is single-threaded, so very high connection counts need several instances.
 
 ::: formula
 **Server connections needed behind a transaction pooler (Little's Law)**
@@ -1539,16 +1526,6 @@ $$C_{\text{server}} = \lambda_{\text{tx}} \cdot W_{\text{tx}} \cdot (1 + h)$$
 
 **Interpretation.** The pooler turns unbounded concurrency at the database into a bounded queue in front of it. **Engineering implication.** Size the server pool by Little's Law, `max_client_conn` by client count, and add transaction timeouts so incidents fail fast.
 :::
-
-**Table 14.14 — PgBouncer pool modes compared.**
-
-| | Session | Transaction | Statement |
-|---|---|---|---|
-| Server connection held for | Whole client session | One transaction | One statement |
-| Multiplexing gain | Low | High | Highest |
-| Session state (`SET`, `LISTEN`, temp tables) | Works | Breaks | Breaks |
-| Multi-statement transactions | Yes | Yes | No |
-| Choose when | Legacy apps relying on session state | Default for web services | Autocommit-only workloads |
 
 ### 14.13.2 ProxySQL: protocol-aware routing for MySQL
 
@@ -1583,14 +1560,14 @@ flowchart LR
   CTL -.-> VT2
 ```
 
-**Reading the diagram.** Applications speak ordinary MySQL protocol to **VTGate**, a stateless router that uses the **VSchema** and its **vindexes** (sharding functions) to compute each row's **keyspace ID** and route to the right shard, scattering and merging queries that lack the key. Shards are named by keyspace-ID range: `-80` covers IDs whose first byte is below hex 80, `80-` the rest (hash-range partitioning, §14.6). A **VTTablet** beside each MySQL instance pools connections, enforces limits and reports health. The topology service, a strongly consistent store, holds the authoritative shard map, which VTGate watches asynchronously. Within a shard, binlog replication is asynchronous or semi-synchronous. vtctld and **VTOrc** handle administration and automatic failover. Failure points: a stale VTGate view is caught by tablets rejecting queries for shards they do not serve; primary failures are repaired by VTOrc. Scaling: add VTGates behind a load balancer and split shards with `Reshard` (§14.9).
+**Reading the diagram.** Applications speak MySQL protocol to **VTGate**, a stateless router that uses the **VSchema** and its **vindexes** (sharding functions) to compute each row's **keyspace ID** and route the query, scattering queries that lack the key. Shard `-80` holds keyspace IDs whose first byte is below hex 80 and `80-` the rest (§14.6). A **VTTablet** beside each MySQL instance pools connections and reports health. The strongly consistent topology service holds the shard map, which VTGate watches asynchronously; tablets reject queries for shards they do not serve, catching stale views. Inside a shard, binlog replication is asynchronous or semi-synchronous, and **VTOrc** promotes a replica when a primary fails. Scaling: more VTGates, and `Reshard` to split shards (§14.9).
 
 ::: industry
 **Slack.** Slack described migrating its MySQL datastores to Vitess to shard by keys other than workspace, including channel for its largest customers, while keeping MySQL tooling; it moved table by table, comparing results with shadow traffic first.
 *Evidence: Primary* — [Slack Engineering 2020]
 :::
 
-**Table 14.15 — Connection poolers and sharding proxies compared.**
+**Table 14.14 — Connection poolers and sharding proxies compared.**
 
 | | PgBouncer | ProxySQL | Vitess |
 |---|---|---|---|
@@ -1609,11 +1586,10 @@ flowchart LR
 
 #### Failure scenarios
 
-**Table 14.16 — Failure scenarios for poolers and proxies.**
+**Table 14.15 — Failure scenarios for poolers and proxies.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Wrong data from session settings | `SET search_path` leaks between clients in transaction mode | Intermittent wrong-schema errors | Move setting into each transaction | Use `SET LOCAL`; ban session state |
 | All requests stall | Long transactions hold every server connection | Pool wait time; `cl_waiting` grows | Kill long transactions | Transaction timeouts; separate pools |
 | Proxy becomes a single point of failure | One pooler instance | Health checks fail; total outage | Restart or fail over | Multiple instances; one per host |
-| Reads hit a lagging replica | Proxy unaware of lag | Stale-read reports | Shun the replica | Lag-based shunning (ProxySQL) or LSN routing |

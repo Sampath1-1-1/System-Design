@@ -1596,7 +1596,7 @@ VALUES (1, '1 Main St', 0, '7f1c9a52-key')
 ON CONFLICT (idempotency_key) DO NOTHING
 RETURNING order_id;                       -- no row returned: a retry; fetch and return the existing order
 UPDATE inventory SET on_hand = on_hand - 2 WHERE product_id = 1 AND on_hand >= 2;  -- expect 1 row
-UPDATE inventory SET on_hand = on_hand - 1 WHERE product_id = 2 AND on_hand >= 1;  -- 0 rows: ROLLBACK
+UPDATE inventory SET on_hand = on_hand - 1 WHERE product_id = 2 AND on_hand >= 1;  -- 0 rows: out of stock, ROLLBACK
 INSERT INTO order_items (order_id, line_no, product_id, quantity, unit_price_cents)
 SELECT 1, row_number() OVER (ORDER BY v.product_id), v.product_id, v.qty, p.price_cents
 FROM (VALUES (1, 2), (2, 1)) AS v(product_id, qty) JOIN products p USING (product_id);
@@ -1726,7 +1726,7 @@ o1 = place_order(db, 1, "1 Main St", [(2, 1), (1, 2)], "key-001")
 o1_retry = place_order(db, 1, "1 Main St", [(2, 1), (1, 2)], "key-001")
 print("order", o1, "retry returns", o1_retry)
 try:
-    place_order(db, 1, "1 Main St", [(3, 1), (1, 99)], "key-002")
+    place_order(db, 1, "1 Main St", [(3, 99), (1, 1)], "key-002")
 except OutOfStock as e:
     print("out of stock: product", e.args[0])
 print("inventory:", db.execute("SELECT product_id, on_hand FROM inventory").fetchall())
@@ -1744,7 +1744,7 @@ except sqlite3.IntegrityError as e:
 
 What to notice:
 
-- Output: the retry returns the same order (1); the oversell attempt raises `OutOfStock` and leaves inventory at `[(1, 3), (2, 4), (3, 5)]`. Product 3 had been decremented before product 1 failed, and the rollback restored it. Only one order exists, with total 4,900 cents.
+- Output: the retry returns the same order (1); the oversell attempt raises `OutOfStock` for product 3 and leaves inventory at `[(1, 3), (2, 4), (3, 5)]`. Product 1 had already been decremented (lines are processed in `product_id` order) when product 3 failed, and the rollback restored it. Only one order exists, with total 4,900 cents.
 - The history query uses a keyset cursor (§8.6.5); the first page passes a cursor greater than any real value. Its plan is `SEARCH orders USING INDEX orders_customer_created (customer_id=? AND created_at<?)`: the composite index serves both the filter and the sort.
 - Best sellers: `TEE-1` (2,500 cents) then `MUG-1` (2,400 cents); the anti-join finds `bo@example.com`, who never ordered.
 
@@ -1758,3 +1758,142 @@ What to notice:
 | Checkout stalls during a sale | Payment call inside the transaction holds a hot row lock | Lock waits in `pg_stat_activity`; p99 latency | Kill long transactions | Pay outside the transaction; short transactions; split hot counters |
 | Order history slows over time | Missing or wrong composite index; offset pagination | `EXPLAIN` shows sort or scan | Add index | Index `(customer_id, created_at DESC, order_id DESC)`; keyset pagination |
 
+## 11.18 Summary and revision notes
+
+::: summary
+- The relational model stores data as typed relations and expresses relationships by values; physical data independence lets the database choose access paths, so indexes can be added without changing queries [Codd 1970].
+- Use surrogate primary keys (`bigint` identity or time-ordered IDs), enforce natural keys with `UNIQUE`, declare foreign keys and index the child columns you join or delete through.
+- Normalize the source of truth to 3NF/BCNF by splitting on functional dependencies; check that splits are lossless. Denormalize only for measured read needs, with a named mechanism that keeps copies consistent. Prices and addresses at purchase time are history, not redundancy.
+- Join algorithms: index nested loop for small outer inputs (OLTP), hash join for large unsorted equality joins, sort-merge when inputs are sorted. The right choice depends on row counts, so cardinality estimation drives performance.
+- Composite indexes follow the leftmost-prefix rule (equality columns first, then range/sort). Covering indexes avoid table reads; partial indexes index only hot subsets. A secondary index pays off only below a break-even selectivity, about 0.4% of rows in our example.
+- A B+ tree with 16 KiB pages indexes $10^9$ rows in 4 levels; with internal pages cached, a lookup costs about one random I/O (two for an InnoDB secondary index). The leaf working set, not height, limits scale.
+- Plans are trees of Volcano iterators; blocking operators (sort, hash build, aggregation) need memory and can spill. Read `EXPLAIN ANALYZE` by comparing estimated and actual rows at each node.
+- ACID: atomicity (undo), consistency (constraints), isolation (concurrency control), durability (WAL + fsync, §13.5). ACID consistency is unrelated to linearizability or CAP consistency.
+- Isolation-level names differ by database. PostgreSQL: READ COMMITTED default, REPEATABLE READ = snapshot isolation (prevents lost update by aborting, allows write skew), SERIALIZABLE = SSI. MySQL: REPEATABLE READ default, allows lost updates and write skew for read-modify-write cycles.
+- MVCC keeps old versions so readers never block writers: PostgreSQL in the heap (VACUUM, freezing, wraparound), InnoDB in undo logs (purge). Long-running transactions hurt both.
+- Writers still lock rows (strict 2PL for writes); InnoDB adds gap/next-key locks. Avoid deadlocks with a canonical lock order; a hot row's throughput is at most $1/t_{\text{hold}}$, so keep slow work out of transactions.
+:::
+
+## 11.19 Knowledge checkpoint
+
+1. Why does `WHERE coupon_code <> 'SPRING'` not return rows where `coupon_code` is NULL?
+2. A table `enrollment(student_id, course_id, course_title, grade)` has key `(student_id, course_id)`. Which normal form does it violate, and how do you fix it?
+3. Why is storing `unit_price_cents` in `order_items` not a normalization violation?
+4. Estimate the I/O cost of a block nested-loop join with $M = 1{,}000$, $N = 5{,}000$ and $B = 102$ buffer pages.
+5. Which of these queries can use an index on `(customer_id, created_at)`: (a) `customer_id = 5`, (b) `created_at > X`, (c) `customer_id = 5 ORDER BY created_at`?
+6. What does an InnoDB secondary index leaf store, and what does a PostgreSQL index leaf store?
+7. How many levels does a B+ tree need for $10^8$ rows with $f = 500$ and $L = 100$?
+8. What makes an operator "blocking" in the Volcano model? Name three.
+9. In `EXPLAIN ANALYZE`, an inner index scan shows `actual time=0.020..0.021 rows=4 loops=10`. How many rows did it return in total?
+10. Distinguish the C in ACID from the C in CAP.
+11. Which anomaly does PostgreSQL REPEATABLE READ allow that SERIALIZABLE prevents? Give an example.
+12. Does MySQL InnoDB REPEATABLE READ prevent lost updates from `SELECT` then `UPDATE ... SET x = <computed value>`?
+13. Why does a long-running idle transaction cause table bloat in PostgreSQL?
+14. Two transactions update rows 42 and 43 in opposite orders. What happens, and how do you prevent it?
+15. A transaction holds a hot row's lock for 10 ms. What is the maximum update rate on that row?
+
+<details><summary>Answers</summary>
+
+1. Comparisons with NULL evaluate to UNKNOWN, and `WHERE` keeps only TRUE rows. Use `IS DISTINCT FROM` or add `OR coupon_code IS NULL`.
+2. 2NF: `course_title` depends only on `course_id`, part of the key. Move it to `courses(course_id, course_title)`.
+3. It records the price charged at purchase time, a different fact from the product's current price; it is determined by the order line, not by `product_id`.
+4. $1{,}000 + \lceil 1{,}000/100 \rceil \times 5{,}000 = 1{,}000 + 50{,}000 = 51{,}000$ I/Os.
+5. (a) and (c). (b) cannot seek because `created_at` is not a leftmost prefix (only a full index scan or skip scan is possible).
+6. InnoDB: the indexed columns plus the primary-key value. PostgreSQL: the indexed columns plus a TID (heap page and slot).
+7. Leaves: $10^8/100 = 10^6$. $\lceil \log_{500} 10^6 \rceil = \lceil 2.22 \rceil = 3$. Height $= 1 + 3 = 4$.
+8. It must consume all input before producing its first output row: sort, hash aggregate, hash-join build side (also materialize).
+9. $4 \times 10 = 40$ rows; per-loop values must be multiplied by `loops`.
+10. ACID consistency: transactions preserve declared invariants in one database. CAP consistency: linearizability, i.e., every read of replicated data sees the latest completed write.
+11. Write skew. Two doctors each check that two are on call and each sets themselves off call; both commit under REPEATABLE READ.
+12. No. The `UPDATE` reads the latest committed row without checking it against the snapshot. Use `SELECT ... FOR UPDATE`, an atomic `SET x = x - 1`, or a version check.
+13. Its snapshot may still need old row versions, so VACUUM cannot remove any version that became dead after the snapshot was taken, in any table.
+14. A deadlock; the database detects the cycle and aborts one transaction. Prevent it by updating rows in a canonical order (sorted by key).
+15. $1/0.010 = 100$ updates per second.
+
+</details>
+
+## 11.20 Interview questions
+
+### Basic
+
+**Q1. What is a database index, and what does it cost?**
+**Answer.** A separate sorted structure, usually a B+ tree, mapping key values to row locations so selective lookups take a few page reads instead of a full scan; at $10^9$ rows a B+ tree is about 4 levels, and about 1 I/O per lookup with internal pages cached. Costs: every insert, delete and update of indexed columns must also update the index (write amplification), extra storage and buffer-pool memory, and no benefit for low-selectivity predicates, where a sequential scan wins. Choose indexes from the actual query workload; use composite indexes with the leftmost-prefix rule, covering indexes for hot read paths, and drop unused indexes.
+
+**Q2. Explain ACID with an example.**
+**Answer.** For a transfer of \$70 from A to B: atomicity means both the debit and credit happen or neither does; consistency means declared invariants (no negative balance, valid account references) hold after commit; isolation means a concurrent report never sees money in flight, and concurrent transfers do not corrupt each other; durability means once the client sees "committed", a crash does not lose it, because the WAL was flushed. Mention that ACID consistency differs from distributed "strong consistency".
+
+### Intermediate
+
+**Q3. Two users buy the last unit of a product at the same moment. How do you guarantee you do not oversell?**
+**Answer.** Make the check and the decrement one atomic statement: `UPDATE inventory SET on_hand = on_hand - 1 WHERE product_id = ? AND on_hand >= 1` and treat "0 rows updated" as out of stock, backed by `CHECK (on_hand >= 0)`. The row lock serializes the two updates; the second sees 0 and fails. Alternatives: `SELECT ... FOR UPDATE` then update, or SERIALIZABLE with retries. Avoid application read-modify-write at READ COMMITTED (lost update), and note MySQL's REPEATABLE READ does not prevent it. For a flash sale, discuss hot-row throughput ($1/t_{\text{hold}}$), keeping payment outside the transaction, and splitting stock into buckets or reserving through a queue.
+
+**Q4. A query that took 5 ms now takes 4 s after a large data import. How do you investigate?**
+**Answer.** Capture the plan with `EXPLAIN (ANALYZE, BUFFERS)` and compare with the old plan if available. Look for nodes where estimated rows differ from actual by an order of magnitude; likely stale statistics after the import, so run `ANALYZE`. If estimates stay wrong because of correlated predicates, add extended statistics. Check whether an index is missing or unusable (function on column, type mismatch), whether sorts or hashes spill (`external merge`, `Batches > 1`), and whether `Buffers read` shows a cold cache. Fix, then guard with autovacuum/analyze settings and `pg_stat_statements` monitoring.
+
+### Advanced
+
+**Q5. Compare PostgreSQL's and InnoDB's MVCC, and explain how each fails under a long-running analytics query on the primary.**
+**Answer.** PostgreSQL writes a complete new tuple per update in the heap, with `xmin`/`xmax`, and relies on VACUUM to remove dead versions and freeze XIDs; non-HOT updates also add entries to every index. InnoDB updates in place in the clustered index, keeps prior versions in undo logs linked by roll pointers, and purges them in the background. A multi-hour query holds an old snapshot: in PostgreSQL VACUUM cannot remove versions newer than it, so hot tables and indexes bloat, index-only scans degrade (visibility map not set) and the XID freeze horizon stalls; in InnoDB purge stalls, the history list grows and reads of hot rows walk ever-longer undo chains. Mitigations: run analytics on a replica or warehouse, set statement and idle-in-transaction timeouts, monitor `age(datfrozenxid)` and history list length.
+
+**Q6. Design the concurrency control for an "at least one admin per organization" rule.**
+**Answer.** This is write skew: each demotion checks a count and then writes a different row. Options: (1) SERIALIZABLE (PostgreSQL SSI) on the demotion transaction with a retry loop; simplest and correct, at the cost of occasional aborts. (2) Materialize the conflict: `SELECT ... FROM organizations WHERE org_id = ? FOR UPDATE` before counting, so all admin changes in one organization serialize on the organization row; works at READ COMMITTED and in MySQL. (3) A denormalized `admin_count` column with `CHECK (admin_count >= 1)` updated atomically in the same transaction. Discuss that REPEATABLE READ alone is insufficient in both PostgreSQL and MySQL, and that across services or shards the rule needs a single owner of the invariant (Chapter 28).
+
+## 11.21 Practical exercises
+
+1. Load the §11.17 schema into PostgreSQL with one million orders (use `generate_series`). Run the order-history query before and after creating `orders_customer_created_idx` with `EXPLAIN (ANALYZE, BUFFERS)`; record pages read and time.
+2. Reproduce the correlated-columns misestimate of §11.10 and fix it with `CREATE STATISTICS`. Then build a three-table join where the misestimate changes the join algorithm.
+3. Run the isolation program of §11.13 at all four PostgreSQL levels and, if you have MySQL, adapt it to MySQL 8; fill in Table 11.9 from your own results.
+4. Install `pageinspect`, update one row 10 times with and without an index on the updated column, and observe HOT chains, `n_tup_hot_upd` and the effect of `VACUUM`.
+5. Write a load test with 50 concurrent clients buying from 5 products in random cart order. Count deadlocks, then sort cart lines by `product_id` and count again.
+
+## 11.22 Design challenges
+
+1. **Seat reservation.** Model a cinema with seats, showings and bookings so that a seat can never be double-booked, even under concurrent requests and client retries. Choose constraints, isolation level and indexes, and justify each.
+2. **Ledger.** Design a double-entry ledger (accounts, journal entries, postings) in which every entry balances to zero and balances can be read in O(1). Decide what is normalized, what is a stored aggregate, and how the aggregate stays correct.
+3. **Multi-tenant SaaS schema.** One PostgreSQL cluster hosts 5,000 tenants of very different sizes. Compare a shared schema with a `tenant_id` column, schema-per-tenant and database-per-tenant on index design, isolation, migrations and noisy neighbors; prepare the move of large tenants to shards (Chapter 14).
+
+## 11.23 References
+
+1. Codd, E. F. "A Relational Model of Data for Large Shared Data Banks." *Communications of the ACM* 13(6), 1970.
+2. Ramakrishnan, R., Gehrke, J. *Database Management Systems*, 3rd ed. McGraw-Hill, 2003.
+3. Bayer, R., McCreight, E. "Organization and Maintenance of Large Ordered Indexes." *Acta Informatica* 1(3), 1972.
+4. Comer, D. "The Ubiquitous B-Tree." *ACM Computing Surveys* 11(2), 1979.
+5. Lehman, P. L., Yao, S. B. "Efficient Locking for Concurrent Operations on B-Trees." *ACM Transactions on Database Systems* 6(4), 1981.
+6. Kent, W. "A Simple Guide to Five Normal Forms in Relational Database Theory." *Communications of the ACM* 26(2), 1983.
+7. Selinger, P. G., Astrahan, M. M., Chamberlin, D. D., Lorie, R. A., Price, T. G. "Access Path Selection in a Relational Database Management System." *Proceedings of ACM SIGMOD*, 1979.
+8. Graefe, G. "Volcano — An Extensible and Parallel Query Evaluation System." *IEEE Transactions on Knowledge and Data Engineering* 6(1), 1994.
+9. Graefe, G. "Query Evaluation Techniques for Large Databases." *ACM Computing Surveys* 25(2), 1993.
+10. Boncz, P., Zukowski, M., Nes, N. "MonetDB/X100: Hyper-Pipelining Query Execution." *CIDR*, 2005.
+11. Neumann, T. "Efficiently Compiling Efficient Query Plans for Modern Hardware." *Proceedings of the VLDB Endowment* 4(9), 2011.
+12. Leis, V., Gubichev, A., Mirchev, A., Boncz, P., Kemper, A., Neumann, T. "How Good Are Query Optimizers, Really?" *Proceedings of the VLDB Endowment* 9(3), 2015.
+13. Eswaran, K. P., Gray, J. N., Lorie, R. A., Traiger, I. L. "The Notions of Consistency and Predicate Locks in a Database System." *Communications of the ACM* 19(11), 1976.
+14. Härder, T., Reuter, A. "Principles of Transaction-Oriented Database Recovery." *ACM Computing Surveys* 15(4), 1983.
+15. Gray, J., Reuter, A. *Transaction Processing: Concepts and Techniques*. Morgan Kaufmann, 1993.
+16. Berenson, H., Bernstein, P., Gray, J., Melton, J., O'Neil, E., O'Neil, P. "A Critique of ANSI SQL Isolation Levels." *Proceedings of ACM SIGMOD*, 1995.
+17. Cahill, M. J., Röhm, U., Fekete, A. D. "Serializable Isolation for Snapshot Databases." *Proceedings of ACM SIGMOD*, 2008.
+18. Ports, D. R. K., Grittner, K. "Serializable Snapshot Isolation in PostgreSQL." *Proceedings of the VLDB Endowment* 5(12), 2012.
+19. Kleppmann, M. *Designing Data-Intensive Applications*. O'Reilly, 2017 (chapters 3 and 7).
+20. Kleppmann, M. *Hermitage: Testing Transaction Isolation Levels*. 2014. https://github.com/ept/hermitage
+21. Petrov, A. *Database Internals*. O'Reilly, 2019.
+22. PostgreSQL Global Development Group. *PostgreSQL 16 Documentation: Concurrency Control*. https://www.postgresql.org/docs/16/mvcc.html
+23. PostgreSQL Global Development Group. *PostgreSQL 16 Documentation: Using EXPLAIN*. https://www.postgresql.org/docs/16/using-explain.html
+24. PostgreSQL Global Development Group. *PostgreSQL 16 Documentation: Routine Vacuuming*. https://www.postgresql.org/docs/16/routine-vacuuming.html
+25. PostgreSQL Global Development Group. *PostgreSQL 16 Documentation: Explicit Locking*. https://www.postgresql.org/docs/16/explicit-locking.html
+26. Oracle. *MySQL 8.0 Reference Manual: Transaction Isolation Levels*. https://dev.mysql.com/doc/refman/8.0/en/innodb-transaction-isolation-levels.html
+27. Oracle. *MySQL 8.0 Reference Manual: InnoDB Locking*. https://dev.mysql.com/doc/refman/8.0/en/innodb-locking.html
+28. Oracle. *MySQL 8.0 Reference Manual: InnoDB Multi-Versioning*. https://dev.mysql.com/doc/refman/8.0/en/innodb-multi-versioning.html
+29. Oracle. *MySQL 8.0 Reference Manual: Clustered and Secondary Indexes*. https://dev.mysql.com/doc/refman/8.0/en/innodb-index-types.html
+30. Oracle. *MySQL 8.0 Reference Manual: Deadlock Detection*. https://dev.mysql.com/doc/refman/8.0/en/innodb-deadlock-detection.html
+31. Oracle. *MySQL 8.0 Reference Manual: Hash Join Optimization*. https://dev.mysql.com/doc/refman/8.0/en/hash-joins.html
+32. Instagram Engineering. "Sharding & IDs at Instagram." Instagram Engineering Blog, 2012.
+33. Klitzke, E. "Why Uber Engineering Switched from Postgres to MySQL." Uber Engineering Blog, 2016.
+34. Sentry. "Transaction ID Wraparound in Postgres." Sentry Blog, 2015.
+35. GitHub. *gh-ost: GitHub's Online Schema-migration Tool for MySQL*. https://github.com/github/gh-ost
+
+## 11.24 Open verification items
+
+- PostgreSQL 18 B-tree skip scan (stated as available from version 18, released 2025) and MySQL 8.4 still lacking partial indexes: confirm against current release notes.
+- Sentry 2015 wraparound postmortem: title, date and details are from memory; confirm URL and wording.
+- Uber 2016 blog post URL (moved from eng.uber.com); Instagram 2012 post URL.
+- Exact PostgreSQL 16 thresholds for wraparound warnings and write refusal (stated qualitatively here).
+- Claim that MySQL 8.0/8.4 has no sort-merge join.

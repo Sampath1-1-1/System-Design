@@ -1771,3 +1771,235 @@ flowchart LR
 ::: mistake
 **"Searching the 3 × 3 block of geohash cells finds everything within the radius."** Only if the cell's smaller side is at least the radius, and cell width shrinks with latitude. The measurement above lost 5.8% of results at 1 km with 6-character cells. Derive precision from the radius and latitude, or use a region coverer.
 :::
+
+## 17.10 Unique ID generation
+
+### 17.10.1 What an ID scheme must provide
+
+Every row, message, order and event needs an identifier. On one database, an auto-increment column does the job. Across hundreds of services and partitioned databases, you need IDs that are:
+
+1. **Unique** across all generators, forever.
+2. **Generated without coordination** on the hot path, so that ID creation adds no network round trip and survives the loss of any central service.
+3. **Roughly time-ordered** (often called **k-sortable**): IDs created later sort later. This keeps B-tree inserts near the right-hand edge of the index (§11.8, §13.6), lets you paginate by ID, and lets you find recent items with a range scan.
+4. **Compact**: 64 bits fits a `BIGINT` and halves index size compared with 128 bits.
+5. **Not leaking** information you would rather hide, such as exact creation time, order volume or which machine created the record.
+
+No scheme maximizes all five. The rest of this section compares the main families.
+
+### 17.10.2 UUIDv4 and UUIDv7
+
+RFC 9562 (May 2024) defines the current **UUID** (universally unique identifier) versions, all 128 bits, and replaces RFC 4122 [RFC 9562]. **UUIDv4** is 122 random bits plus 6 fixed version and variant bits. **UUIDv7** puts a 48-bit Unix timestamp in milliseconds in the most significant bits, followed by the version, 12 bits that may be random or a sub-millisecond counter, the variant, and 62 more random bits. UUIDv7 therefore sorts by creation time, which UUIDv4 cannot. Inserting random UUIDv4 keys into a large B-tree touches a random leaf page each time, so once the index exceeds memory nearly every insert reads a page from disk and splits pages all over the tree. UUIDv7 inserts land on the rightmost pages, which stay hot in the buffer pool.
+
+Collisions between random IDs are governed by the birthday bound (§10.4.1).
+
+::: formula
+**Birthday bound for random identifiers**
+
+$$P_{\text{collision}} \approx 1 - e^{-n^2 / (2N)} \approx \frac{n^2}{2N} \ \ (\text{when small}), \qquad n_{50\%} \approx \sqrt{2N \ln 2} \approx 1.18\sqrt{N}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of IDs generated within one collision domain | IDs |
+| $N$ | Number of possible values, $2^{\text{random bits}}$ | values |
+| $P_{\text{collision}}$ | Probability that at least two IDs are equal | probability |
+| $n_{50\%}$ | Number of IDs at which a collision becomes a coin flip | IDs |
+:::
+
+::: example
+**Worked example — how safe are UUIDv4 and UUIDv7?**
+
+1. UUIDv4: $N = 2^{122} = 5.3 \times 10^{36}$. For one trillion IDs, $n^2/(2N) = 10^{24}/(1.06 \times 10^{37}) = 9.4 \times 10^{-14}$. A coin-flip collision needs $n_{50\%} = 1.18 \times \sqrt{5.3 \times 10^{36}} = 2.7 \times 10^{18}$ IDs.
+2. UUIDv7 with all 74 non-timestamp bits random: only IDs created in the same millisecond can collide, so $N = 2^{74} = 1.9 \times 10^{22}$ per millisecond. At 1 million IDs per second (1,000 per ms): $10^6/(3.8 \times 10^{22}) = 2.6 \times 10^{-17}$ per millisecond; over a year of $3.16 \times 10^{10}$ ms, $8.3 \times 10^{-7}$.
+
+*Interpretation.* Both are safe for any realistic system, though UUIDv7 gives up some margin for its ordering. *Engineering implication.* The practical risk is not mathematics but bad randomness: a VM image cloned with the same random-number-generator state, or a non-cryptographic generator seeded with the time, produces real duplicates. Use the operating system's cryptographic random source, and keep a unique constraint on the column.
+:::
+
+### 17.10.3 Twitter Snowflake
+
+In 2010 Twitter moved tweets off a single MySQL database and needed 64-bit IDs that were roughly time-ordered and could be produced at high rate on many machines without coordination. Its answer, **Snowflake**, was a small Thrift service that composed IDs from a timestamp, a machine number and a counter. Its README listed the requirements as at least 10,000 IDs per second per process with a response time of 2 ms plus network latency [Twitter: Snowflake 2010].
+
+**Figure 17.14 — The Snowflake 64-bit ID layout.**
+
+```mermaid
+flowchart LR
+  S["bit 63<br/>sign: always 0"] --- T["bits 62 to 22<br/>41-bit timestamp<br/>ms since custom epoch"]
+  T --- M["bits 21 to 12<br/>10-bit machine ID<br/>5 datacenter + 5 worker"]
+  M --- Q["bits 11 to 0<br/>12-bit sequence<br/>per ms, per machine"]
+```
+
+**Reading the diagram.** The fields are concatenated from the most significant bit (left) to the least (right). The sign bit is always 0 so that IDs are positive in languages with signed 64-bit integers. The 41-bit timestamp counts milliseconds since a custom epoch (Twitter's is 1288834974657, 4 November 2010 at 01:42:54.657 UTC [Twitter: Snowflake IdWorker]); because it occupies the high bits, IDs sort by time across all machines, to within clock skew. The 10-bit machine ID (Twitter split it into 5 datacenter and 5 worker bits) makes IDs from different generators distinct, so no generator ever talks to another; the only coordination is assigning machine IDs once, by configuration or a coordination service (§26.8). The 12-bit sequence counts IDs within one millisecond on one machine. Failure points: two generators accidentally given the same machine ID produce duplicates; a clock that moves backward could reissue old timestamps; and a machine that exhausts 4,096 IDs in one millisecond must wait for the next.
+
+::: formula
+**Snowflake capacity and lifetime**
+
+$$\text{rate}_{\text{machine}} = 2^{S} \times 1000 \ \text{IDs/s}, \qquad \text{rate}_{\text{cluster}} = 2^{M} \times \text{rate}_{\text{machine}}, \qquad \text{lifetime} = \frac{2^{T}}{1000 \times 3600 \times 24 \times 365.25} \ \text{years}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T$ | Timestamp bits (millisecond resolution) | bits |
+| $M$ | Machine-ID bits | bits |
+| $S$ | Sequence bits | bits |
+| $\text{rate}$ | Maximum sustained ID generation rate | IDs/s |
+| lifetime | Time from the epoch until the timestamp field overflows | years |
+:::
+
+::: example
+**Worked example — the 41/10/12 layout.**
+
+1. Per machine: $2^{12} = 4{,}096$ IDs per millisecond, or $4{,}096{,}000$ IDs/s.
+2. Cluster: $2^{10} = 1{,}024$ machines × 4,096,000 = $4.19 \times 10^9$ IDs/s.
+3. Lifetime: $2^{41} = 2{,}199{,}023{,}255{,}552$ ms $= 2.199 \times 10^{12} / 3.156 \times 10^{10} = 69.7$ years. From Twitter's 2010 epoch, IDs run out in July 2080.
+4. Re-budgeting for a sharded database: Instagram described a variant with 41 timestamp bits, 13 bits of logical shard ID and 10 sequence bits, generated inside PostgreSQL [Instagram Engineering 2012]: $2^{13} = 8{,}192$ shards, each producing up to $2^{10} = 1{,}024$ IDs per millisecond.
+
+*Interpretation.* Every bit moved from one field to another doubles one limit and halves another. *Engineering implication.* Choose the epoch as late as possible (the year you launch), size machine bits for the largest fleet you can imagine including restarts and short-lived containers, and write the layout down: the ID format is a public contract once clients store IDs.
+:::
+
+#### Code example
+
+```python
+import datetime as dt
+import os
+import threading
+import time
+import uuid
+
+TWITTER_EPOCH_MS = 1288834974657           # 2010-11-04 01:42:54.657 UTC, from Twitter's IdWorker
+TIMESTAMP_BITS, MACHINE_BITS, SEQUENCE_BITS = 41, 10, 12
+MAX_MACHINE = (1 << MACHINE_BITS) - 1      # 1023
+MAX_SEQUENCE = (1 << SEQUENCE_BITS) - 1    # 4095
+
+class ClockMovedBackwards(Exception):
+    pass
+
+class Snowflake:
+    """64-bit IDs: 1 unused sign bit | 41-bit ms timestamp | 10-bit machine id | 12-bit sequence."""
+
+    def __init__(self, machine_id: int, epoch_ms: int = TWITTER_EPOCH_MS, clock=lambda: time.time_ns() // 1_000_000):
+        if not 0 <= machine_id <= MAX_MACHINE:
+            raise ValueError("machine id must fit in 10 bits")
+        self.machine_id, self.epoch_ms, self.clock = machine_id, epoch_ms, clock
+        self.last_ms, self.sequence = -1, 0
+        self.lock = threading.Lock()
+
+    def next_id(self) -> int:
+        with self.lock:
+            now = self.clock()
+            if now < self.last_ms:                      # NTP stepped the clock back
+                raise ClockMovedBackwards(f"refusing to issue IDs for {self.last_ms - now} ms")
+            if now == self.last_ms:
+                self.sequence = (self.sequence + 1) & MAX_SEQUENCE
+                if self.sequence == 0:                  # 4,096 IDs used this ms: wait for the next
+                    while now <= self.last_ms:
+                        now = self.clock()
+            else:
+                self.sequence = 0
+            self.last_ms = now
+            return ((now - self.epoch_ms) << (MACHINE_BITS + SEQUENCE_BITS)) \
+                | (self.machine_id << SEQUENCE_BITS) | self.sequence
+
+def decode(snowflake_id: int, epoch_ms: int = TWITTER_EPOCH_MS):
+    ms = (snowflake_id >> (MACHINE_BITS + SEQUENCE_BITS)) + epoch_ms
+    machine = (snowflake_id >> SEQUENCE_BITS) & MAX_MACHINE
+    seq = snowflake_id & MAX_SEQUENCE
+    return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc), machine, seq
+
+def uuid7() -> uuid.UUID:
+    """RFC 9562 UUIDv7: 48-bit Unix ms | ver=7 | 12 random bits | var=10 | 62 random bits."""
+    ms = time.time_ns() // 1_000_000
+    rand = int.from_bytes(os.urandom(10), "big")      # 80 random bits, 74 of them used
+    value = (ms & ((1 << 48) - 1)) << 80
+    value |= 0x7 << 76                                 # version
+    value |= ((rand >> 62) & 0xFFF) << 64              # rand_a (12 bits)
+    value |= 0b10 << 62                                # variant
+    value |= rand & ((1 << 62) - 1)                    # rand_b (62 bits)
+    return uuid.UUID(int=value)
+
+gen = Snowflake(machine_id=37)
+ids = [gen.next_id() for _ in range(200_000)]
+assert len(set(ids)) == len(ids) and ids == sorted(ids)   # unique and strictly increasing
+print("sample id:", ids[-1], "->", decode(ids[-1]))
+start = time.perf_counter()
+for _ in range(200_000):
+    gen.next_id()
+print(f"this Python generator: {200_000 / (time.perf_counter() - start):,.0f} IDs/s")
+
+per_machine = (MAX_SEQUENCE + 1) * 1000
+print(f"capacity: {per_machine:,} IDs/s per machine, {per_machine * (MAX_MACHINE + 1):,} IDs/s cluster")
+lifetime_ms = 1 << TIMESTAMP_BITS
+years = lifetime_ms / (1000 * 3600 * 24 * 365.25)
+end = dt.datetime.fromtimestamp((TWITTER_EPOCH_MS + lifetime_ms) / 1000, dt.timezone.utc)
+print(f"lifetime: 2^41 ms = {lifetime_ms:,} ms = {years:.1f} years; Twitter-epoch IDs run out {end:%Y-%m-%d}")
+
+# A clock that jumps back 5 ms
+fake = iter([1000, 1001, 996, 1002])
+g = Snowflake(1, epoch_ms=0, clock=lambda: next(fake))
+g.next_id(); g.next_id()
+try:
+    g.next_id()
+except ClockMovedBackwards as e:
+    print("clock step:", e)
+
+u = [uuid7() for _ in range(3)]
+print("uuid7:", u[0], "version", u[0].version, "| uuid4:", uuid.uuid4())
+```
+
+Output (IDs, dates and the rate vary by run and machine):
+
+```text
+sample id: 2116059594966061194 -> (datetime.datetime(2026, 10, 30, 6, 48, 16, 583000, tzinfo=datetime.timezone.utc), 37, 138)
+this Python generator: 1,671,382 IDs/s
+capacity: 4,096,000 IDs/s per machine, 4,194,304,000 IDs/s cluster
+lifetime: 2^41 ms = 2,199,023,255,552 ms = 69.7 years; Twitter-epoch IDs run out 2080-07-10
+clock step: refusing to issue IDs for 5 ms
+uuid7: 01a18b90-fa5a-78bc-a410-f69281e34317 version 7 | uuid4: 07ac5358-bdb5-42c6-bed7-46d2df7a34d6
+```
+
+What to notice:
+
+- 200,000 IDs from one generator are unique and strictly increasing, and decoding recovers the creation time, machine 37 and the sequence number.
+- Even an interpreted Python generator produces about 1.7 million IDs per second, well above Twitter's 10,000 per second requirement; the 4,096-per-millisecond sequence limit (4.1 million per second) is the real ceiling.
+- When the clock steps backward by 5 ms, the generator refuses to issue IDs instead of risking duplicates, which is what Twitter's original `IdWorker` does [Twitter: Snowflake IdWorker]. Alternatives are to wait out small steps, or to keep using the last timestamp and borrow sequence numbers. Configure NTP to slew rather than step the clock (§24.9).
+- This `uuid7()` does not guarantee ordering among IDs created in the same millisecond. RFC 9562 §6.2 describes counter-based methods that do.
+
+### 17.10.4 ULID
+
+A **ULID** (universally unique lexicographically sortable identifier) is 128 bits: a 48-bit millisecond timestamp followed by 80 random bits, written as 26 characters of Crockford's base-32 [ULID Spec]. Its string form sorts in time order, which suits systems whose keys are strings (object-store paths, DynamoDB sort keys, log file names). The 48-bit timestamp lasts until the year 10889. In its "monotonic" mode, a generator increments the random part instead of drawing a new one when several IDs share a millisecond. UUIDv7 now provides the same properties in a standard UUID layout, so new systems that need a 128-bit sortable ID usually choose UUIDv7.
+
+### 17.10.5 Database sequences and ticket servers
+
+The simplest unique ID is a database sequence. Flickr scaled it with **ticket servers**: dedicated MySQL instances whose only job is to hand out numbers [Flickr: Ticket Servers 2010]. Each request runs `REPLACE INTO Tickets64 (stub) VALUES ('a'); SELECT LAST_INSERT_ID();` against a one-row table with an auto-increment column. Two ticket servers run side by side, one configured to produce odd numbers and the other even numbers (`auto_increment_increment = 2` with offsets 1 and 2), so either can fail without stopping ID generation.
+
+**Figure 17.15 — Flickr-style ticket servers.**
+
+```mermaid
+flowchart LR
+  A1[App server 1] -->|SQL: REPLACE INTO, LAST_INSERT_ID| T1[("Ticket DB odd<br/>1, 3, 5, ...")]
+  A2[App server 2] -->|SQL| T2[("Ticket DB even<br/>2, 4, 6, ...")]
+  A1 -->|on failure| T2
+  A2 -->|on failure| T1
+  A1 -->|insert row with ID| S[(Sharded databases)]
+  A2 -->|insert row with ID| S
+```
+
+**Reading the diagram.** Application servers fetch an ID from either ticket database with one synchronous SQL round trip, then use it as the primary key when inserting into the sharded databases. The two ticket databases never communicate: odd and even numbers cannot collide, which removes coordination between them. If one fails, clients switch to the other (the cross arrows), at the cost of IDs that are no longer issued in global order. Failure points: every ID costs a network round trip, and the ticket tier is a dependency on the write path; its capacity is that of a single-row update on MySQL. A common scaling trick is to fetch **blocks** of IDs (for example 1,000 at a time) and hand them out locally, which divides ticket-server load by the block size but makes IDs only roughly ordered.
+
+**Table 17.9 — Unique ID schemes compared.**
+
+| | UUIDv4 | UUIDv7 | Snowflake-style | ULID | Sequence / ticket server |
+|---|---|---|---|---|---|
+| Size | 128 bits | 128 bits | 64 bits | 128 bits (26 chars) | 64 bits |
+| Time-ordered | No | Yes (ms) | Yes (ms, within clock skew) | Yes (ms) | Yes per server; roughly with blocks |
+| Coordination | None | None | Assign machine IDs once | None | Round trip per ID or block |
+| Uniqueness | Probabilistic (122 bits) | Probabilistic per ms (74 bits) | Guaranteed if machine IDs unique and clock monotonic | Probabilistic per ms (80 bits) | Guaranteed |
+| Leaks | Nothing | Creation time | Creation time, machine, volume | Creation time | Volume (sequential) |
+| Index locality | Poor (random inserts) | Good | Good | Good | Best |
+| Main failure mode | Bad randomness | Bad randomness | Duplicate machine ID; clock steps | Bad randomness | Ticket tier outage |
+| Choose when | Unguessable public IDs; low insert rates | Default 128-bit key | Compact keys at very high rates | String keys that must sort | Small systems; strict ordering needed |
+
+::: mistake
+**"Time-ordered IDs give a total order of events."** Snowflake and UUIDv7 IDs from different machines are ordered only to within the clock skew between those machines, typically milliseconds (§24.9). Two events a millisecond apart on different servers may receive IDs in the opposite order. If you need causal order, use logical clocks or a single sequencer (§24.10).
+:::
+
+::: mistake
+**"Sequential IDs in URLs are harmless."** They reveal your growth rate and invite enumeration: anyone can try `/orders/1001`, `/orders/1002`. Authorization must stop enumeration either way (§10.7.1), but a random or opaque public ID mapped to the internal sequential key removes the information leak.
+:::
