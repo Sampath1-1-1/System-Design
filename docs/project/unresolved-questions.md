@@ -180,3 +180,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-173 | 30 | Google Pub/Sub limits: ack deadline 10–600 s; retention 7/31 days; 5–100 delivery attempts | Open | Time-sensitive |
 | UQ-174 | 30 | Slack 2020 incident details/URL; Uber (Xia 2018) post URL | Open | |
 | UQ-175 | 30 / 31 | KIP-932 share groups status in Kafka 4.x; Pulsar metadata-store alternatives by release | Open | Time-sensitive |
+| UQ-176 | 33 | AWS Lambda prices, 15-min limit and INIT-phase billing (as of 2026); API Gateway ~$1 per million requests | Open | Time-sensitive |
+| UQ-177 | 33 | Source book for Richards' 80–20 architecture-sinkhole heuristic | Open | |
+| UQ-178 | 33 | Kolny (2023) Prime Video post: title, "90%" cost figure, URL; Noonan (2018) Segment post: title and service count | Open | |
+| UQ-179 | 33 | Westeinde (2019) Shopify modular-monolith post title; current status of Packwerk | Open | Time-sensitive |
+| UQ-180 | 18 / 33 | Route 53 use of shuffle sharding; title/year of AWS cell-based architecture whitepaper; Cockburn and Palermo URLs | Open | Merge with UQ-110 |
