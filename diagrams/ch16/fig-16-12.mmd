@@ -1,0 +1,11 @@
+%% Figure 16.12 — Near-real-time indexing pipeline with CDC and Kafka
+flowchart LR
+  APP[Catalog service] -->|SQL transaction| DB[(PostgreSQL)]
+  DB -.->|WAL via logical decoding| CDC[Debezium CDC]
+  CDC -.->|keyed by product ID| K[[Kafka topic<br/>product changes]]
+  K -.->|consume in order<br/>per partition| IDXR[Indexer service]
+  IDXR -->|lookup prices, stock| ENR[(Enrichment stores)]
+  IDXR -->|bulk API,<br/>external version| ALIAS{{Alias products}}
+  ALIAS --> V2[(Index products_v2)]
+  K -.->|replay from offset 0| REB[Rebuild job]
+  REB -.->|bulk load| V3[(Index products_v3)]

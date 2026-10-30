@@ -1,0 +1,9 @@
+%% Figure 16.5 — Lifecycle of a Lucene segment
+stateDiagram-v2
+  [*] --> Buffered: index document
+  Buffered --> Searchable: refresh writes segment
+  Searchable --> Committed: commit fsyncs files
+  Searchable --> Merging: selected by merge policy
+  Committed --> Merging: selected by merge policy
+  Merging --> Deleted: merged segment replaces it
+  Deleted --> [*]: files removed when unreferenced

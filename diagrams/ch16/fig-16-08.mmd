@@ -1,0 +1,22 @@
+%% Figure 16.8 — A three-zone Elasticsearch cluster with two primaries and one replica each
+flowchart TB
+  C([Search API service]) -->|HTTPS REST| CO[Coordinating nodes]
+  subgraph Zone A
+    M1[Master-eligible 1]
+    D1[(Data node 1<br/>P0, R1)]
+  end
+  subgraph Zone B
+    M2[Master-eligible 2<br/>elected master]
+    D2[(Data node 2<br/>P1)]
+  end
+  subgraph Zone C
+    M3[Master-eligible 3]
+    D3[(Data node 3<br/>R0)]
+  end
+  CO -->|transport RPC| D1
+  CO -->|transport RPC| D2
+  CO -->|transport RPC| D3
+  M2 -.->|publish cluster state| D1
+  M2 -.->|publish cluster state| D3
+  M2 -.->|publish cluster state| M1
+  M2 -.->|publish cluster state| M3

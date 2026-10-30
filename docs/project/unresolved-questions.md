@@ -77,3 +77,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-070 | 15 | Primary source for ~150 bytes per HDFS NameNode object rule of thumb | Open | |
 | UQ-071 | 15 | Recovery-traffic figure from Rashmi et al. (2013) | Open | |
 | UQ-072 | 15 | Typical object-store first-byte latency range (Table 15.1) | Open | Coordinate with Appendix F |
+| UQ-073 | 16 | Lucene postings block layout (128-value blocks in Lucene 5–9) — check against Lucene 10 | Open | Version-dependent |
+| UQ-074 | 16 | TieredMergePolicy defaults (segmentsPerTier 10, max merged segment 5 GB) | Open | |
+| UQ-075 | 16 | Lucene 8 removal of the (k1+1) factor in BM25; Elasticsearch boost 2.2 claim; BM25 default since Elasticsearch 5.0 | Open | |
+| UQ-076 | 16 | Manning et al. Table 5.6 RCV1 figures (400 MB raw, 116 MB compressed), quoted from memory | Open | |
+| UQ-077 | 16 | Twitter Earlybird latency figures (10 s indexing, 50 ms query); GitHub code search 25 TB / 115 TB index figures (search snippets only) | Open | |
+| UQ-078 | 16 | Elastic Serverless "stateless" architecture claim | Open | Time-sensitive |

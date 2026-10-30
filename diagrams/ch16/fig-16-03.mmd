@@ -1,0 +1,10 @@
+%% Figure 16.3 — An analysis chain applied at index time and at query time
+flowchart LR
+  D(["Doc: Noise-Cancelling<br/>Headphones and Earbuds"]) --> CF[Char filters<br/>strip HTML, map chars]
+  Q(["Query: noise cancelling<br/>headphone"]) --> CF2[Same char filters]
+  CF --> TK[Tokenizer<br/>Unicode word boundaries]
+  CF2 --> TK2[Same tokenizer]
+  TK --> TF[Token filters<br/>lowercase, stop, stem]
+  TK2 --> TF2[Same token filters<br/>+ query synonyms]
+  TF -->|terms + positions| IDX[(Inverted index)]
+  TF2 -->|term lookups| IDX

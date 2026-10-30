@@ -1,0 +1,14 @@
+%% Figure 16.6 — Document partitioning versus term partitioning
+flowchart TB
+  subgraph DP[Document partitioning]
+    C1([Query: noise headphones]) -->|fan out to all| S1[Shard A<br/>docs 1 to 4M<br/>all terms]
+    C1 -->|fan out to all| S2[Shard B<br/>docs 4M to 8M<br/>all terms]
+    S1 -->|local top-k| M1[Merge top-k]
+    S2 -->|local top-k| M1
+  end
+  subgraph TP[Term partitioning]
+    C2([Query: noise headphones]) -->|terms a to m| T1[Shard X<br/>headphone postings<br/>all docs]
+    C2 -->|terms n to z| T2[Shard Y<br/>noise postings<br/>all docs]
+    T1 -->|full postings list| J[Intersect and score]
+    T2 -->|full postings list| J
+  end

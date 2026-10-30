@@ -1,0 +1,9 @@
+%% Figure 16.13 — Hybrid retrieval (preview of Chapters 74–75)
+flowchart LR
+  Q([Query]) --> BM[BM25 over<br/>inverted index]
+  Q --> EMB[Embedding model]
+  EMB --> ANN[ANN search over<br/>vector index]
+  BM -->|top 100 by score| RRF[Reciprocal rank fusion]
+  ANN -->|top 100 by similarity| RRF
+  RRF -->|top 50| RER[Cross-encoder reranker]
+  RER --> OUT([Top 10 results])

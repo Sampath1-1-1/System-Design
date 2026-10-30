@@ -2,7 +2,7 @@
 
 > **Level:** 3 · **Track:** A (Traditional) · **Estimated reading time:** 5 h
 
-Type "wireless noise cancelling headphones" into an online store and, within about a tenth of a second, a ranked list of products comes back from a catalog of tens of millions of items. None of the database machinery from Chapters 11–14 can do this directly. A B-tree index (§11.8) finds rows whose key *equals* or *starts with* a value. A `WHERE description LIKE '%noise%'` clause cannot use that index at all, so the database reads every row. Even if it could find the matching rows quickly, it would have no notion of which match is *best*.
+Type "wireless noise cancelling headphones" into an online store and, within about a tenth of a second, a ranked list comes back from tens of millions of products. A B-tree index (§11.8) cannot do this: it finds rows whose key *equals* or *starts with* a value, so `WHERE description LIKE '%noise%'` reads every row, and even then the database has no notion of which match is *best*.
 
 Search systems solve three problems that ordinary databases do not:
 
@@ -10,11 +10,9 @@ Search systems solve three problems that ordinary databases do not:
 2. **Ordering matches by relevance**, so the most useful result comes first. The answer is a scoring function, today usually **BM25** (§16.5).
 3. **Doing both at scale and in near real time**, while documents are being added, changed and deleted. The answer is immutable index segments that are merged in the background (§16.6), partitioned and replicated across nodes (§16.7). Elasticsearch and OpenSearch package all of this (§16.8), and an indexing pipeline keeps the index in step with the source of truth (§16.10).
 
-Autocomplete (§16.9) is a special case with a latency budget so tight that it gets its own data structures. The chapter ends with a short bridge to semantic and hybrid retrieval (§16.11), treated in depth in Chapters 74 and 75.
+Autocomplete (§16.9) has a latency budget so tight that it gets its own data structures, and §16.11 bridges to semantic and hybrid retrieval (Chapters 74–75). These ideas are stable: Brin and Page's 1998 Google prototype already had an inverted index, position "hit lists" and a ranking function combining text scores with PageRank [Brin and Page 1998].
 
-A brief historical note shows how stable these ideas are. Brin and Page's 1998 description of the Google prototype already had a forward index, an inverted index stored as "barrels" partitioned by word ID, hit lists recording word positions and formatting, and a ranking function that combined text-match scores with PageRank [Brin and Page 1998]. A modern Elasticsearch cluster contains recognizable descendants of every one of those parts.
-
-The running example is a product search service for an online electronics store. Figure 16.1 shows its two halves: an indexing path that turns documents into an index, and a query path that turns a query into a ranked list.
+The running example is product search for an online electronics store. Figure 16.1 shows its two halves.
 
 **Figure 16.1 — The two paths of a search system.**
 
@@ -71,7 +69,7 @@ After this chapter you should be able to:
 
 Open a textbook at the back. The index lists "Bloom filter … 211, 340, 512". Nobody reads the whole book to find Bloom filters; you look up the word and jump to the pages. The book's body maps *page → words*. The index at the back is that mapping turned inside out: *word → pages*. That is all an inverted index is. The "forward" direction (document → terms) is how documents are written; the "inverted" direction (term → documents) is how they are searched.
 
-Three refinements turn the book index into a search engine index. First, each page number becomes a **document identifier (docID)**, a small integer. Second, the list for each word is kept **sorted** by docID, which makes combining lists cheap. Third, each entry can carry extra data: how often the word occurs in the document (**term frequency**, tf) and where (**positions**), so the engine can rank documents and match phrases.
+Three refinements make it a search index: page numbers become small-integer **document identifiers (docIDs)**; each list is kept **sorted** by docID so lists combine cheaply; and each entry can carry the **term frequency** (tf) and **positions** of the word, for ranking and phrase matching.
 
 #### Why does this exist?
 
@@ -79,11 +77,11 @@ Consider answering "documents containing *noise* and *headphones*" by scanning. 
 
 #### How it works internally
 
-1. **Analyze** each document into a stream of terms with positions (§16.4).
-2. **Assign** the document a docID. Lucene assigns docIDs in insertion order within each segment, so postings lists are naturally sorted (§16.6).
-3. **Append** the docID (with tf and positions) to the postings list of each distinct term in the document.
-4. **Store** the dictionary in a structure that supports fast exact lookup and prefix ranges: a sorted array with binary search, a B-tree, a hash table, or in Lucene a block tree whose index is a finite-state transducer (FST) (§16.9.3).
-5. **Compress** postings lists (§16.3.4) and write them sequentially to disk.
+1. **Analyze** each document into terms with positions (§16.4).
+2. **Assign** a docID; Lucene assigns them in insertion order within each segment, so postings are naturally sorted (§16.6).
+3. **Append** the docID (with tf and positions) to the postings list of each distinct term.
+4. **Store** the dictionary in a structure supporting exact and prefix lookup; Lucene uses a block tree indexed by a finite-state transducer (§16.9.3).
+5. **Compress** postings (§16.3.4) and write them sequentially.
 
 #### Architecture diagram
 
@@ -118,11 +116,10 @@ flowchart LR
 Because postings are sorted, Boolean operators become list operations:
 
 - **AND** (*noise* AND *wireless*) is an **intersection**: walk both lists in step, advancing whichever pointer holds the smaller docID, and output docIDs found in both. Cost is $O(L_1 + L_2)$ for lists of lengths $L_1$ and $L_2$.
-- **OR** is a **union**, also a linear merge. Ranked retrieval is usually OR-like: any document containing any query term is a candidate and scoring sorts them out.
-- **NOT** is a difference: output docIDs in the first list that are not in the second.
+- **OR** is a **union**, also a linear merge; ranked retrieval is usually OR-like, with scoring sorting candidates. **NOT** is a list difference.
 - A **phrase query** ("noise cancelling") first intersects the lists, then checks positions: a document matches only if *cancelling* occurs at position $p+1$ for some position $p$ of *noise*. Positional data typically makes the index two to four times larger, which is why some fields are indexed without positions (in Elasticsearch, `index_options: docs` or `freqs`).
 
-An evaluation trick that pays off everywhere: process the **rarest term first**. The intersection can never be larger than the shortest list, so starting there keeps intermediate results small.
+Process the **rarest term first**: an intersection is never larger than its shortest list.
 
 ### 16.3.3 Skip pointers
 
@@ -210,7 +207,7 @@ What to notice:
 
 - The intersection is **driven by the rare list**: 1,000 calls to `advance`, not 200,000 steps.
 - The $\sqrt{L} = 447$ heuristic helps only 2× here because each `advance` then scans about 224 entries inside a block. Spacing tuned to the list-length ratio, $\sqrt{2 \times 200{,}000 / 1{,}000} = 20$, gives 10×. Multi-level skip lists, as in Lucene, get coarse and fine jumps without choosing one spacing.
-- In a real engine the bigger win is not comparisons but **decoding**: a skipped block of compressed postings is never decompressed at all.
+- In a real engine the bigger win is **decoding**: a skipped compressed block is never decompressed.
 
 ### 16.3.4 Compression: delta encoding and variable-byte codes
 
@@ -250,7 +247,7 @@ $$\text{bytes}(g) = \max\!\left(1, \left\lceil \frac{\lfloor \log_2 g \rfloor + 
 4. 214577 has 18 bits ($2^{17} = 131072 \leq 214577 < 262144$), so 3 bytes. $214577 = 13 \times 16384 + 12 \times 128 + 49$, giving `10110001` (49 + 128), `10001100` (12 + 128), `00001101` (13).
 5. Total: 6 bytes instead of 12.
 
-**Interpretation.** Half the space is saved even on this tiny list, and the saving grows for frequent terms, whose gaps fit in one byte. **Engineering implication.** Postings for common terms (the ones that make queries slow) are also the ones that compress best, so compression reduces both disk and I/O on the hot path.
+**Interpretation.** Half the space is saved even here; frequent terms, whose gaps fit in one byte, save 75%. **Engineering implication.** The postings that make queries slow (common terms) compress best, so compression cuts I/O on the hot path, not just disk.
 :::
 
 The listing below implements delta + VByte, checks the worked example, and measures the average bytes per posting on a synthetic collection of 200,000 documents whose term document frequencies follow Zipf's law (a few very common terms, a long tail of rare ones).
@@ -325,10 +322,10 @@ postings=8,946,910  raw=35.8 MB  vbyte=12.5 MB  bytes/posting=1.39  ratio=0.35
 
 What to notice:
 
-- Decoding is a loop of shifts and masks with a data-dependent branch per byte. That branch is why production engines moved to **block** codes.
+- Decoding has a data-dependent branch per byte, which is why production engines moved to **block** codes.
 - On the Zipfian collection, docID postings shrink to **1.39 bytes each**, 35% of their raw size. Manning et al. report the same order for the Reuters RCV1 collection: about 100 million postings take 400 MB as 32-bit integers and 116 MB with variable-byte gaps [Manning et al. 2008, Table 5.6].
 
-Production engines go further. Lucene's postings formats (from Lucene 5 through at least Lucene 9) group docID deltas and frequencies into blocks of 128 values and store each block with **frame-of-reference bit packing**: find the largest value in the block, use exactly that many bits for every value, and decode the block with branch-free code; leftover values at the end of a list use VInt [Lucene Docs: postings format]. Bit-packed blocks decode several times faster than VByte, especially with SIMD instructions [Lemire and Boytsov 2015]. Zobel and Moffat survey the family of codes (Elias gamma and delta, Golomb, VByte) and the trade-off between compression ratio and decoding speed [Zobel and Moffat 2006].
+Lucene's postings formats (Lucene 5 through at least 9) group docID deltas and frequencies into blocks of 128 and store each block with **frame-of-reference bit packing**: every value uses the bit width of the block's largest value, decoded without branches; list tails use VInt [Lucene Docs: postings format]. Bit packing decodes several times faster than VByte, especially with SIMD [Lemire and Boytsov 2015]. Zobel and Moffat survey the wider family (Elias, Golomb, VByte) and its ratio-versus-speed trade-off [Zobel and Moffat 2006].
 
 ### 16.3.5 Estimating index size
 
@@ -359,13 +356,13 @@ $$S_{\text{index}} \approx \underbrace{N \cdot u \cdot (b_d + b_f)}_{\text{docID
 6. Uncompressed for comparison (4-byte docID, tf and position): $2 \times 10^{10} \times 8 + 4 \times 10^{10} \times 4 = 160 + 160 = 320$ GB, about 3× larger.
 7. The raw text is $4 \times 10^{10}$ tokens × about 6 bytes = 240 GB, so the positional index is about 45% of the text and the non-positional part about 20%.
 
-**Interpretation.** Positions cost more than docIDs and frequencies combined. **Engineering implication.** The index is only part of the footprint. Elasticsearch also keeps the original JSON (`_source`, compressed), **doc values** (a column store for sorting and aggregations), and **norms** (per-field length factors). Budget roughly the index again for these, then multiply by $1 + r$ for $r$ replicas. With one replica this catalog needs on the order of $2 \times (109 + 110) \approx 440$ GB of disk before headroom for merges (§16.6). Dropping positions on fields never used in phrase queries is the single largest saving available.
+**Interpretation.** Positions cost more than docIDs and frequencies combined. **Engineering implication.** Elasticsearch also stores the original JSON (`_source`), **doc values** (a column store for sorting and aggregations) and **norms** (per-field length factors); budget roughly the index again for these, then multiply by $1 + r$ for $r$ replicas: about $2 \times (109 + 110) \approx 440$ GB with one replica, before merge headroom (§16.6). Dropping positions from fields never used in phrases is the largest single saving.
 :::
 
 #### Real-world industry applications
 
 ::: industry
-**Early Google: barrels and hit lists.** Brin and Page's prototype stored a forward index partitioned into 64 "barrels" by word ID, then sorted each barrel by word ID to produce the inverted index. Each posting carried a "hit list" of positions encoded compactly, with font size and capitalization squeezed into two bytes per hit, and "fancy" hits for anchor text and titles kept separately so that a query could first consult the short, high-value lists [Brin and Page 1998]. The design choice of storing a small, high-signal subset of postings separately reappears today as field-specific indexes and tiered indexes.
+**Early Google: barrels and hit lists.** Brin and Page's prototype partitioned its forward index into 64 "barrels" by word ID and sorted each barrel to produce the inverted index. Each posting carried a compact "hit list" (two bytes per hit, including capitalization and font size), and "fancy" hits from titles and anchor text were kept separately so queries could consult short, high-value lists first [Brin and Page 1998]. That idea survives as field-specific and tiered indexes.
 *Evidence: Primary* — [Brin and Page 1998]
 :::
 
@@ -382,7 +379,7 @@ $$S_{\text{index}} \approx \underbrace{N \cdot u \cdot (b_d + b_f)}_{\text{docID
 #### Common misconceptions
 
 ::: mistake
-**Mistake — "An inverted index is just a secondary index on a text column."** A B-tree secondary index maps one value per row to rows; an inverted index maps *many* terms per document to documents, keeps term statistics for ranking, stores positions for phrases, and is built and compressed in bulk. The data structures, update patterns and costs are different, which is why relational databases ship separate full-text index types (PostgreSQL's GIN, for example) rather than reusing B-trees.
+**Mistake — "An inverted index is just a secondary index on a text column."** A B-tree maps one value per row; an inverted index maps *many* terms per document, keeps term statistics for ranking and positions for phrases, and is built and compressed in bulk. That is why relational databases ship separate full-text index types (PostgreSQL's GIN, for example).
 :::
 
 ## 16.4 Tokenization and analysis
@@ -395,9 +392,7 @@ $$S_{\text{index}} \approx \underbrace{N \cdot u \cdot (b_d + b_f)}_{\text{docID
 
 #### First-principles explanation
 
-An inverted index matches terms *exactly*: the bytes `Headphones` and `headphone` are different keys. A shopper does not care. Analysis is the set of decisions about which strings should be treated as "the same word". A librarian who files "Colour", "color" and "COLORS" under one card is doing analysis by hand.
-
-Every decision moves the balance between two quality measures. **Recall** is the fraction of relevant documents that are returned; **precision** is the fraction of returned documents that are relevant. Aggressive normalization (stemming, synonyms, folding accents) raises recall and risks precision: "university" and "universe" both stem to "univers" under the Porter stemmer. Conservative analysis does the opposite.
+An inverted index matches terms *exactly*: `Headphones` and `headphone` are different keys, though a shopper does not care. Analysis decides which strings count as "the same word", as a librarian filing "Colour", "color" and "COLORS" under one card does by hand. Every decision moves the balance between two quality measures. **Recall** is the fraction of relevant documents that are returned; **precision** is the fraction of returned documents that are relevant. Aggressive normalization (stemming, synonyms, folding accents) raises recall and risks precision: "university" and "universe" both stem to "univers" under the Porter stemmer. Conservative analysis does the opposite.
 
 #### How it works internally
 
@@ -417,8 +412,6 @@ flowchart LR
 
 **Reading the diagram.** Two inputs enter the same pipeline: a document at index time (top) and a query at search time (bottom). Character filters run first on raw text (stripping HTML, mapping "&" to "and"); the tokenizer then splits text into tokens with positions; token filters normalize them. The index stores terms with positions; the query side only looks terms up. All steps are synchronous, in-process transformations; the only storage boundary is the index. The critical failure point is **asymmetry**: if the two pipelines diverge, for example because the index was built with stemming and the query analyzer was changed later, queries look up terms that were never stored and silently return nothing. Changing index-time analysis therefore requires a full reindex (§16.10.4); query-time-only filters such as synonyms can change without one. Analysis is CPU-bound and scales with indexer nodes.
 
-Running the chapter's analyzer (listing in §16.5.4) on "Noise-Cancelling Headphones" yields `noise@0`, `cancelling@1`, `headphone@2`: the hyphen splits tokens, lowercasing normalizes case, and a minimal stemmer strips the plural.
-
 **Table 16.3 — Analysis chain components and their trade-offs.**
 
 | Component | Example | Raises | Risks |
@@ -434,9 +427,7 @@ Running the chapter's analyzer (listing in §16.5.4) on "Noise-Cancelling Headph
 
 ### 16.4.2 Tokenizers and normalization
 
-A **whitespace tokenizer** splits on spaces and keeps punctuation attached ("headphones," with a comma). Lucene's **standard tokenizer** implements the Unicode word-break rules of UAX #29, which handle most European scripts sensibly. Specialized tokenizers exist for email addresses and URLs, for paths, and for keyword fields that must not be split at all (SKUs, user IDs, tags), where the whole value is one token.
-
-Normalization also includes **Unicode normalization** (the character "é" can be one code point or "e" plus a combining accent; NFC/NFKC normalization makes them identical) and case folding. Normalization bugs are a classic source of "the product is in the index but search cannot find it".
+A **whitespace tokenizer** splits on spaces and keeps punctuation attached ("headphones,"). Lucene's **standard tokenizer** implements the Unicode word-break rules of UAX #29. Specialized tokenizers handle emails, URLs and paths, and `keyword` fields (SKUs, IDs, tags) keep the whole value as one token. **Unicode normalization** (NFC/NFKC) makes "é" as one code point equal to "e" plus a combining accent; normalization bugs are a classic cause of "the product is indexed but search cannot find it".
 
 ### 16.4.3 Stemming versus lemmatization
 
@@ -458,7 +449,7 @@ Manning et al. observe that stemming helps recall but hurts precision, and its n
 
 ### 16.4.4 Stop words
 
-**Stop words** are very frequent words such as "the", "a" and "of". Dropping them once saved significant space, because their postings lists are the longest in the index. Modern engines usually *keep* them: compression makes their lists cheap (gaps of 1–2 fit in a byte), BM25's IDF already gives them near-zero weight (§16.5.3), and dropping them breaks phrase queries and queries made mostly of stop words ("The Who", "To Be or Not to Be"). Elasticsearch's default standard analyzer does not remove stop words. If you do remove them, keep the position gaps (as this chapter's analyzer does) so phrase matching remains correct.
+**Stop words** ("the", "a", "of") have the longest postings lists, so dropping them once saved much space. Modern engines usually *keep* them: their small gaps compress to a byte, BM25's IDF already gives them near-zero weight (§16.5.3), and dropping them breaks phrases and queries such as "The Who". Elasticsearch's standard analyzer keeps them by default. If you remove them, keep the position gaps (as this chapter's analyzer does) so phrase matching stays correct.
 
 ### 16.4.5 n-grams and edge n-grams
 
@@ -466,14 +457,14 @@ A **character n-gram** is a substring of length $n$. Indexing all trigrams of "h
 
 ### 16.4.6 Synonyms
 
-Synonyms map equivalent terms ("tv" ⇔ "television", "laptop" ⇔ "notebook"). Applying them at **index time** expands every document, which makes the index bigger and means a synonym change requires a reindex. Applying them at **query time** keeps the index unchanged and allows synonym lists to be updated without reindexing, at the cost of slightly more expensive queries. Multi-word synonyms ("ny" ⇔ "new york") need care: the expansion has different lengths, so Lucene represents it as a token *graph* and its synonym-graph filter is intended for query-time use. Most teams apply synonyms at query time.
+Synonyms map equivalent terms ("tv" ⇔ "television"). At **index time** they enlarge the index and every change needs a reindex; at **query time** they cost slightly more per query but can be updated freely, so most teams apply them there. Multi-word synonyms ("ny" ⇔ "new york") produce expansions of different lengths, which Lucene represents as a token *graph*; its synonym-graph filter is meant for query time.
 
 ### 16.4.7 Language issues
 
-- **No word separators.** Chinese, Japanese and Thai text has no spaces. Options are dictionary-based segmenters (for example Lucene's Kuromoji for Japanese, or ICU's dictionary-based word breaking) or overlapping character bigrams, which need no dictionary but index more terms.
-- **Compounds.** German writes "Kopfhörer" (headphones) and "Kopfhörerverstärker" (headphone amplifier) as single words; a decompounding filter splits them so that a query for "Kopfhörer" finds both.
-- **Script and direction.** Arabic and Hebrew need normalization of letter variants and diacritics; Turkish has a dotted and dotless "i", so naive lowercasing is wrong.
-- **Mixed-language catalogs.** Index each language into its own field with its own analyzer (`title.en`, `title.de`) and choose fields by detected or declared language, rather than forcing one analyzer onto all text.
+- **No word separators.** Chinese, Japanese and Thai need dictionary-based segmenters (such as Lucene's Kuromoji for Japanese) or overlapping character bigrams, which need no dictionary but index more terms.
+- **Compounds.** German "Kopfhörerverstärker" (headphone amplifier) needs decompounding so that "Kopfhörer" finds it.
+- **Script rules.** Arabic needs letter-variant and diacritic normalization; Turkish has dotted and dotless "i", so naive lowercasing is wrong.
+- **Mixed-language catalogs.** Give each language its own field and analyzer (`title.en`, `title.de`) rather than forcing one analyzer onto all text.
 
 An Elasticsearch analyzer is declared in the index settings and attached to fields in the mapping:
 
@@ -534,7 +525,7 @@ What to notice: the index and search analyzers share tokenizer and normalization
 
 #### First-principles explanation
 
-Imagine asking a librarian for books about "noise cancelling headphones". A sensible librarian reasons in three steps. A book that mentions *noise cancelling* ten times is probably more on topic than one that mentions it once, but not ten times more (**term frequency, with diminishing returns**). The word *headphones* appears in half the catalog, so matching it says little, while *cancelling* is rare and therefore informative (**inverse document frequency**). And a one-page leaflet that mentions *noise* once is more focused than a 900-page encyclopedia that mentions it once (**length normalization**). BM25 is these three intuitions written as one formula.
+A sensible librarian asked for "noise cancelling headphones" reasons three ways. A book mentioning *noise cancelling* ten times is more on topic than one mentioning it once, but not ten times more (**term frequency, with diminishing returns**). *Headphones* appears in half the catalog, so matching it says little, while rare *cancelling* is informative (**inverse document frequency**). And a leaflet mentioning *noise* once is more focused than an encyclopedia mentioning it once (**length normalization**). BM25 writes these three intuitions as one formula.
 
 The theoretical justification is the **probability ranking principle**: if documents are ranked by their probability of relevance to the query, the ranking is optimal for any measure that rewards putting relevant documents first [Robertson 1977]. BM25 approximates that probability from term statistics alone [Robertson and Zaragoza 2009].
 
@@ -562,7 +553,7 @@ $$w_{t,d} = \text{tf}_{t,d} \times \log_{10}\frac{N}{\text{df}_t} \qquad \text{s
 2. $\text{idf}(\textit{headphone}) = \log_{10}(8/6) = 0.125$.
 3. A document containing *noise* once scores 0.426 for that term; one containing *noise* 10 times scores 4.26.
 
-**Interpretation.** IDF makes *noise* 3.4× more valuable than *headphone*, as intended. But raw tf grows without limit, so a spammy description repeating "noise" ten times beats an accurate one, and nothing corrects for document length. **Engineering implication.** Lucene used a TF-IDF variant (with $\sqrt{\text{tf}}$ and length factors) as its default until Elasticsearch 5.0 and Lucene 6 switched to BM25 [Elastic Docs: similarity].
+**Interpretation.** IDF makes *noise* 3.4× more valuable than *headphone*, as intended, but raw tf grows without limit (keyword stuffing wins) and nothing corrects for length. **Engineering implication.** Lucene's TF-IDF variant (with $\sqrt{\text{tf}}$ and length factors) was the default until Lucene 6 and Elasticsearch 5.0 switched to BM25 [Elastic Docs: similarity].
 :::
 
 ### 16.5.3 BM25
@@ -602,16 +593,15 @@ Two properties follow from the formula. As $f_{t,d} \to \infty$ the fraction app
 
 **Table 16.6 — BM25 term-frequency factor ($k_1 = 1.2$, $b = 0.75$) versus raw tf.**
 
-| tf | Raw TF-IDF factor | BM25 factor, $\lvert d \rvert = \text{avgdl}$ | BM25 factor at tf = 1 | Length |
+| tf | Raw TF-IDF factor | BM25, $\lvert d \rvert$ = 0.5 avgdl | BM25, $\lvert d \rvert$ = avgdl | BM25, $\lvert d \rvert$ = 2 avgdl |
 |---|---|---|---|---|
-| 1 | 1 | 1.000 | 1.257 | $\lvert d \rvert$ = 0.5 avgdl |
-| 2 | 2 | 1.375 | 1.000 | $\lvert d \rvert$ = avgdl |
-| 3 | 3 | 1.571 | 0.710 | $\lvert d \rvert$ = 2 avgdl |
-| 5 | 5 | 1.774 | | |
-| 10 | 10 | 1.964 | | |
-| ∞ | ∞ | 2.200 | | |
+| 1 | 1 | 1.257 | 1.000 | 0.710 |
+| 2 | 2 | 1.600 | 1.375 | 1.073 |
+| 5 | 5 | 1.913 | 1.774 | 1.549 |
+| 10 | 10 | 2.047 | 1.964 | 1.818 |
+| ∞ | ∞ | 2.200 | 2.200 | 2.200 |
 
-The first three columns show saturation: going from 1 to 10 occurrences raises the BM25 factor by less than 2×, against 10× for raw tf. The last two columns show length normalization for a single occurrence.
+Reading down a column shows saturation: 1 to 10 occurrences raises the BM25 factor by less than 2.6×, against 10× for raw tf. Reading across a row shows length normalization: the same tf is worth less in a longer document.
 
 ::: example
 **Worked example — BM25 for *noise* in two product descriptions.** From the catalog in §16.5.4: $N = 8$ body fields, $n_{\textit{noise}} = 3$, $\text{avgdl} = 68/8 = 8.5$ terms. Document 4 (earbuds) has $|d| = 7$; document 7 (kids' headphones) has $|d| = 12$. Each contains *noise* once. $k_1 = 1.2$, $b = 0.75$.
@@ -802,9 +792,7 @@ What to notice:
 
 ### 16.5.5 Field boosting and beyond
 
-Field boosting multiplies each field's score by a weight, as in Elasticsearch's `multi_match` query with `"fields": ["title^2", "body"]`. Summing per-field BM25 scores is simple but statistically awkward: each field has its own IDF and saturation, so a term that appears in both title and body is counted twice. **BM25F** instead combines weighted term frequencies across fields *before* saturation, treating the document as one weighted bag of words [Robertson et al. 2004]; Elasticsearch's `combined_fields` query follows this approach.
-
-Text relevance is rarely the whole ranking. Product search adds popularity, price, stock, margin and personalization; web search added link analysis such as PageRank [Brin and Page 1998]. Two common patterns are **function scoring** (multiply or add a numeric signal, for example $\log(1 + \text{sales})$) and **learning to rank**, where BM25 retrieves a few hundred candidates and a trained model reorders them using many features (Chapter 81 covers ranking models).
+Field boosting weights each field's score, as in Elasticsearch's `multi_match` with `"fields": ["title^2", "body"]`. Summing per-field scores double-counts a term that appears in both fields, each saturating separately; **BM25F** combines weighted term frequencies across fields *before* saturation [Robertson et al. 2004], as Elasticsearch's `combined_fields` query does. Text relevance is rarely the whole ranking: **function scoring** adds signals such as $\log(1 + \text{sales})$, and **learning to rank** reorders a few hundred BM25 candidates with a trained model (Chapter 81).
 
 ### 16.5.6 Retrieving the top *k* efficiently
 
@@ -839,7 +827,6 @@ flowchart LR
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Accessories outrank the product searched for | Text match ignores intent; short bodies win | Click-through and relevance judgments | Boost title; add category signals | Offline evaluation set (NDCG) |
-| Scores jump between identical requests | Different replicas have different deleted-doc counts, so different statistics | Compare `explain` across replicas | Use preference strings for session stickiness | Accept small variance; merge away deletes |
 | Keyword stuffing by sellers | Unbounded tf in a custom scorer | Manual review, anomaly scores | Switch to BM25; cap field length | BM25 saturation; quality signals |
 
 #### Common misconceptions
@@ -858,9 +845,7 @@ flowchart LR
 
 #### First-principles explanation
 
-Compressed, sorted postings lists are excellent to read and terrible to update: inserting docID 5,001 into the middle of a delta-encoded list means rewriting the list. So search engines do what log-structured databases do (§13.7–§13.8): never modify data in place. New documents accumulate in memory; periodically the buffer is written out as a new small segment; small segments are later **merged** into larger ones in the background. This is the LSM-tree pattern, with segments in the role of SSTables. Manning et al. describe the batch ancestors of this design, blocked sort-based indexing and single-pass in-memory indexing, which build partial indexes that fit in memory and merge them [Manning et al. 2008, ch. 4].
-
-Immutability buys a great deal. Segments can be cached by the operating system without invalidation, read without locks while new segments are written, copied for backup or replication as plain files, and compressed aggressively because they are written once.
+Compressed, sorted postings are excellent to read and terrible to update: inserting a docID mid-list means rewriting it. So search engines do what log-structured databases do (§13.7–§13.8): buffer new documents in memory, write the buffer out as a new small segment, and **merge** small segments into larger ones in the background, with segments playing the role of SSTables. Manning et al. describe the batch ancestors, blocked sort-based and single-pass in-memory indexing [Manning et al. 2008, ch. 4]. Immutable segments can be cached without invalidation, read without locks, copied as plain files for backup or replication, and compressed aggressively.
 
 #### How it works internally
 
@@ -888,7 +873,7 @@ stateDiagram-v2
 
 Immutable segments cannot remove a document. Instead Lucene records deletions in a per-segment **live-docs bitset** (one bit per document) written as a separate small file: a **tombstone**. Searches skip documents whose bit is cleared. An **update** is a delete of the old version plus an add of the new one, which lands in a new segment. The space and the CPU spent iterating past deleted postings are reclaimed only when the segment is merged.
 
-Two consequences matter in practice. First, deleted documents still count in term statistics until merged away, so an index with heavy updates can rank slightly differently from a freshly built one. Second, update-heavy workloads (prices and stock levels changing many times a day) generate many deletes, so they need either periodic merging or a design that keeps volatile fields out of the text index.
+Consequences: deleted documents still count in term statistics until merged away, so replicas with different merge histories can score slightly differently; and update-heavy fields (prices, stock) generate many deletes, so keep volatile fields out of the text index where possible.
 
 ### 16.6.3 Merge policy
 
@@ -1003,11 +988,11 @@ flowchart TB
 | Used by | Lucene-based engines, Google (as published), Earlybird | Research systems; rarely in production |
 | Choose when | Almost always | Very high query rate of single-term lookups |
 
-Document partitioning wins in practice because it is simple, balanced and fault-tolerant [Dean 2009].
+Document partitioning wins in practice because it is simple, balanced and fault-tolerant; Dean's retrospective describes Google's serving system as replicated document-partitioned shards behind fan-out servers [Dean 2009].
 
 ### 16.7.2 Replicas
 
-Each shard is copied to $r$ **replicas** on different nodes (and availability zones). Replicas serve two purposes: **availability** (a shard survives node loss) and **query throughput** (any copy can answer a query). They do not speed up indexing, since every copy must index every write. A rough sizing rule: if each query costs $c$ CPU-seconds on each of $S$ shards and the peak rate is $\lambda$ queries per second, the cluster needs $\lambda \cdot S \cdot c / U$ cores at target utilization $U$. For example, 2,000 queries/s × 10 shards × 4 ms ÷ 0.5 = 160 cores; with 16-core nodes that is 10 nodes, so each of the 10 shards needs enough copies to place work on all of them (for example 1 primary + 1 replica across 10 nodes gives 20 shard copies, two per node).
+Each shard has $r$ **replicas** on other nodes and zones, for **availability** and **query throughput** (any copy can answer). Replicas do not speed up indexing: every copy indexes every write. If each query costs $c$ CPU-seconds on each of $S$ shards at peak rate $\lambda$, the cluster needs about $\lambda S c / U$ cores at utilization $U$: 2,000 queries/s × 10 shards × 4 ms ÷ 0.5 = 160 cores, or 10 sixteen-core nodes holding, say, 20 shard copies.
 
 ### 16.7.3 Scatter–gather and tail latency
 
@@ -1157,11 +1142,6 @@ Each shard computes BM25 with its own $N$, $n_t$ and avgdl. When documents are s
 *Evidence: Primary* — [Busch et al. 2012]
 :::
 
-::: industry
-**Google web search serving.** Jeff Dean's 2009 retrospective describes Google's serving system as document-partitioned index shards, each replicated, behind root and intermediate servers that fan out queries and merge results, and recounts the move to serving the index from memory across many machines around 2001 [Dean 2009].
-*Evidence: Primary* — [Dean 2009]
-:::
-
 ## 16.8 Elasticsearch and OpenSearch architecture
 
 Elasticsearch wraps Lucene in a distributed system: a JSON-over-HTTP API, cluster membership, shard placement, replication and recovery. OpenSearch is a fork of Elasticsearch 7.10.2 created in 2021 after Elastic changed its license; the two share the architecture described here, though they have diverged in features since [OpenSearch Docs].
@@ -1248,7 +1228,7 @@ This split is what **near-real-time** means: a write is durable at acknowledgeme
 
 ### 16.8.4 Read path and memory
 
-Queries rely on three caches: the operating system **page cache** holding segment files (the most important; leave about half of RAM outside the JVM heap for it), the **shard request cache** for aggregation results, and the **node query cache** for filter bitsets. Elastic recommends a heap of at most half of RAM and below the roughly 31 GB compressed-object-pointer limit [Elastic Docs: heap size]. **Doc values**, column-oriented on-disk structures built at index time, serve sorting and aggregations without loading fields into the heap.
+Queries rely on the operating system **page cache** for segment files (leave about half of RAM outside the JVM heap for it), the **shard request cache** for aggregations and the **node query cache** for filter bitsets. Elastic recommends a heap of at most half of RAM and below the roughly 31 GB compressed-pointer limit [Elastic Docs: heap size]; **doc values** serve sorting and aggregations from disk-based columns rather than heap.
 
 **Table 16.10 — Elasticsearch, OpenSearch and Solr compared (as of 2025).**
 
@@ -1289,7 +1269,7 @@ OpenSearch's **segment replication** copies segment files from primary to replic
 
 #### First-principles explanation
 
-Autocomplete is a conversation with someone who finishes your sentences. It is only helpful if the suggestion arrives before you type the next letter: people type a character every 150–300 ms, and Nielsen's classic guideline is that about 0.1 s feels instantaneous [Nielsen 1993]. So the whole round trip, not just the server, must fit in roughly 100 ms. That rules out running a full search per keystroke and pushes design toward precomputation: the answer for every popular prefix is computed offline and looked up, not searched.
+Autocomplete is a friend finishing your sentences: useful only if the suggestion arrives before your next keystroke, 150–300 ms later. Nielsen's guideline is that about 0.1 s feels instantaneous [Nielsen 1993], so the whole round trip must fit in roughly 100 ms. That pushes design toward precomputation: answers for popular prefixes are computed offline and looked up, not searched.
 
 **Table 16.12 — End-to-end latency budget for one suggestion request.**
 
@@ -1480,7 +1460,7 @@ flowchart LR
 **Definition — Near-real-time (NRT) search.** A search system in which newly written documents become searchable after a short, bounded delay (typically one second to a minute) rather than immediately, because making them visible requires creating a new segment and reopening the searcher.
 :::
 
-Every refresh creates a segment and a new searcher, and invalidates per-segment caches for the new data. Refreshing more often gives fresher results but more tiny segments, more merging (§16.6.3) and lower indexing throughput.
+Each refresh creates a segment and a new searcher; refreshing more often gives fresher results but more tiny segments, more merging (§16.6.3) and lower indexing throughput.
 
 **Table 16.14 — Choosing a refresh interval.**
 
@@ -1567,3 +1547,138 @@ flowchart LR
 
 **Reading the diagram.** The query takes two synchronous paths in parallel: lexical retrieval over the inverted index of this chapter, and an embedding model followed by ANN search over a vector index. Each returns its top 100 candidates; rank fusion merges them without comparing raw scores, and an optional reranker spends expensive model inference on only the top 50. The two indexes are separate storage boundaries that must be kept in step by the same indexing pipeline (§16.10.2), with embeddings computed at indexing time. Failure points: the embedding model adds latency and a GPU or CPU dependency on the query path; if it fails, falling back to BM25 alone keeps search available. Chapter 74 covers vector indexes and Chapter 75 covers hybrid retrieval, fusion and reranking in depth.
 
+## 16.12 Summary and revision notes
+
+::: summary
+- An **inverted index** maps each term to a sorted postings list of docIDs (with tf and positions). AND is intersection, OR is union, phrases check positions; evaluate the rarest term first. **Skip pointers** (`advance(target)`) let a short list drive a long one; spacing near $\sqrt{2L/m}$ beats the $\sqrt{L}$ heuristic for unequal lists.
+- **Compression:** delta-encode docIDs, then VByte (7 bits per byte) or block bit-packing (Lucene: blocks of 128). Measured ≈ 1.4 bytes per docID posting. Index size $\approx N u (b_d + b_f) + N L b_p + M b_t$; positions often cost more than docIDs; budget again as much for `_source`, doc values and norms, then multiply by replicas.
+- **Analysis** (char filters → tokenizer → token filters) must match at index and query time. Stemming raises recall and risks precision; lemmatization is more precise and costlier; keep stop words but preserve positions; n-grams enable substring and prefix search at large size cost; apply synonyms at query time; analyze each language in its own field.
+- **BM25:** $\text{IDF} = \ln(1 + (N - n + 0.5)/(n + 0.5))$; tf saturates at $k_1 + 1$ ($k_1 = 1.2$); length normalization via $b = 0.75$. Scores are comparable only within one query. Field boosts or BM25F add structure; WAND and Block-Max WAND skip blocks that cannot reach the top *k*.
+- **Segments** are immutable; refresh makes them searchable, commit makes them durable; deletes are live-docs tombstones; updates are delete + add; tiered merging rewrites each byte about $1 + \log_m(S_{\max}/S_{\text{flush}})$ times.
+- **Distributed search** uses document partitioning, replicas for availability and throughput, scatter–gather ($P = p^S$, so use few shards and tail-tolerant techniques), query-then-fetch, bounded pagination ($S(\textit{from} + \textit{size})$), and local IDF unless `dfs_query_then_fetch` is used.
+- **Elasticsearch/OpenSearch:** master-eligible, data, ingest and coordinating roles; shard = hash(routing) mod primaries; shards of about 10–50 GB; primary–backup replication with a fsynced translog; refresh every 1 s gives near-real-time visibility.
+- **Autocomplete** must fit ≈ 100 ms end to end: precompute top-*k* per prefix in a trie or FST, serve from memory, cache short prefixes, rebuild offline from query logs with decay and blocklists.
+- **NRT pipeline:** CDC → Kafka (keyed by document ID) → indexer with external versions → alias; freshness ≈ CDC + lag + batch + index + refresh; reindex by replay into a new index and alias swap.
+:::
+
+## 16.13 Knowledge checkpoint
+
+1. Why can a B-tree index not answer `LIKE '%noise%'` efficiently, and what does an inverted index store instead?
+2. Encode the postings list 3, 130, 131 with delta + VByte. How many bytes?
+3. When does a skip pointer help an intersection, and what spacing suits a 1,000-entry list driving a 1,000,000-entry list?
+4. Give one risk each of stemming, stop-word removal and index-time synonyms.
+5. What happens if the query analyzer applies a stemmer that the index analyzer did not?
+6. Compute the BM25 IDF of a term in 1 of 8 documents.
+7. What value does the BM25 term-frequency factor approach as tf grows, and why does that matter?
+8. Why is an update in Lucene more expensive than an insert?
+9. A cluster refreshes every 1 s with 1 MB flushes and a 5 GB segment cap, merge factor 10. Estimate write amplification.
+10. A query fans out to 50 shards whose p99 is 30 ms. What fraction of queries wait longer than 30 ms?
+11. Why does Elasticsearch limit `from + size` to 10,000 by default?
+12. When does local IDF distort ranking, and what is the fix?
+13. Why is the number of primary shards fixed at index creation?
+14. Why is autocomplete precomputed rather than searched per keystroke?
+15. Name two ways the indexing pipeline stays correct under at-least-once delivery.
+
+<details><summary>Answers</summary>
+
+1. A B-tree orders whole keys, so it helps only with equality or prefix predicates; an infix pattern forces a full scan. An inverted index stores term → sorted docIDs, so each word is a direct lookup.
+2. Gaps 3, 127, 1 → each fits in 7 bits → 3 bytes (`00000011 01111111 00000001`), versus 12 bytes raw.
+3. When one list is much shorter, so many entries of the long list can be jumped. $\sqrt{2 \times 10^6 / 10^3} \approx 45$.
+4. Stemming: conflates unrelated words ("universe"/"university"). Stop words: breaks queries like "The Who". Index-time synonyms: changes need a full reindex and inflate the index.
+5. Query terms are stems that were never indexed in that form, so matches silently disappear.
+6. $\ln(1 + 7.5/1.5) = \ln 6 = 1.79$.
+7. $k_1 + 1$ (2.2 at default). It caps the benefit of repetition, defeating keyword stuffing.
+8. It is a delete (tombstone bit in the old segment) plus a full re-index of the new version into a new segment, and the dead copy occupies space until merged.
+9. $1 + \log_{10}(5{,}000/1) = 1 + 3.7 = 4.7$.
+10. $1 - 0.99^{50} = 1 - 0.605 = 39.5\%$.
+11. Every shard must return and the coordinator must merge $S \times (\textit{from} + \textit{size})$ entries; deep pages are expensive and can exhaust memory. Use `search_after` instead.
+12. When a term's documents are unevenly spread across shards (custom routing, small indexes); use `dfs_query_then_fetch` or random routing.
+13. Routing computes hash(routing) mod number of primaries; changing it would move most documents. Split/shrink by integer factors or reindex.
+14. The budget is ≈ 100 ms end to end, request rate exceeds search rate, and answers for a prefix change slowly, so a memory lookup of a precomputed list is cheaper and faster.
+15. Key events by document ID for per-document ordering, and write with external versions so stale or replayed events are rejected; additionally reconcile periodically.
+</details>
+
+## 16.14 Interview questions
+
+### Basic
+
+**Q1. Explain how a search engine finds documents containing two words.**
+
+**Answer.** Text is analyzed into terms, and an inverted index maps each term to a sorted postings list of docIDs. The query is analyzed the same way, both postings lists are fetched, and they are intersected by walking them in docID order, starting from the shorter list and using skip pointers to jump through the longer one. Matching docIDs are scored (BM25) and the top *k* are returned, with stored fields fetched only for those.
+
+**Q2. What is BM25 and how does it improve on TF-IDF?**
+
+**Answer.** BM25 sums, over query terms, IDF times a term-frequency factor $f(k_1 + 1)/(f + k_1(1 - b + b|d|/\text{avgdl}))$. Unlike raw TF-IDF, term frequency saturates (repetition has diminishing returns, bounded by $k_1 + 1$), and document length is normalized against the average with strength $b$. Defaults $k_1 = 1.2$, $b = 0.75$ work well and are tuned per field against a relevance set.
+
+### Intermediate
+
+**Q3. Search results take up to 30 seconds to reflect product edits. Where do you look?**
+
+**Answer.** Decompose freshness into CDC lag, Kafka consumer lag, bulk batching, indexing time and refresh interval. Check whether the index has `refresh_interval: 30s` (common copy-paste from logging setups) or is search-idle; check consumer lag and whether a hot partition or slow enrichment lookups throttle the indexer; check for bulk rejections and retries. Fix the dominant term, add an end-to-end canary freshness metric and alert on lag.
+
+**Q4. How many shards would you give a 300 GB product index serving 3,000 queries per second?**
+
+**Answer.** Size shards by data first: with 10–50 GB guidance, 6–10 primaries (say 8 of about 37 GB). Then size copies for throughput: measure per-shard query cost, e.g. 5 ms CPU; $3{,}000 \times 8 \times 5\ \text{ms} = 120$ core-seconds/s, so 240 cores at 50% utilization, about 15 sixteen-core nodes, so 8 primaries with enough replicas (for example 2 replicas, 24 copies) spread across three zones. Avoid many small shards: fan-out raises tail latency as $p^S$. Validate with a load test.
+
+### Advanced
+
+**Q5. Design search for a multi-tenant SaaS with 50,000 tenants of very different sizes.**
+
+**Answer.** Shared indexes with tenant ID filters are efficient for small tenants; route by tenant ID so a tenant's query hits one shard, using routing partitions (`routing_partition_size`) so large tenants spread over several shards. Give the largest tenants dedicated indexes to isolate load and allow custom analyzers. Watch the local-IDF problem: per-tenant statistics differ, so test relevance per tenant or accept local statistics. Enforce tenant filters in the search API, never in the client; cap per-tenant request rates; and use aliases with filters per tenant for migrations between shared and dedicated indexes.
+
+**Q6. Your 200-shard cluster's p99 latency is 400 ms while median shard latency is 10 ms. Diagnose and fix.**
+
+**Answer.** Scatter–gather means each query waits for the slowest of 200 shards: $0.99^{200} = 13\%$ of queries are fully fast at the shard p99. Look for correlated stalls (GC pauses, merges, hot nodes, uneven shard placement) using per-node latency. Fixes in order: reduce shard count by merging small indexes (shrink API, larger shards); enable or tune adaptive replica selection and add replicas so slow copies are avoided; hedge requests after the shard p95; set per-shard timeouts with partial results; and move heavy aggregations to separate coordinating nodes.
+
+## 16.15 Practical exercises
+
+1. **Extend the engine.** Add Boolean AND with skip-pointer intersection to the §16.5.4 listing, then add BM25F-style scoring (combine weighted tf across fields before saturation) and compare the ranking for "wireless noise cancelling headphones".
+2. **Measure compression.** Change the Zipf exponent in the §16.3.4 listing to 0.8 and 1.2 and report bytes per posting; then implement frame-of-reference bit packing for blocks of 128 gaps and compare size and decoding time with VByte.
+3. **Analyzer laboratory.** Run Elasticsearch or OpenSearch locally and use the `_analyze` API to compare the standard, English and a custom analyzer on ten product titles containing hyphens, accents, model numbers and plurals.
+4. **Refresh experiment.** Bulk-index one million synthetic documents with refresh intervals of 1 s, 30 s and disabled; record indexing throughput, segment counts over time and merge statistics, and compare with the write-amplification formula.
+5. **Autocomplete from logs.** Feed a real or synthetic query log into the §16.9.2 trie with exponential time decay on counts and a blocklist; measure memory per million queries and lookup latency.
+
+## 16.16 Design challenges
+
+1. **Marketplace product search.** 200 million listings, 20,000 searches/s peak, prices and stock updated 5,000 times/s, freshness SLO of 5 s for stock. Decide what goes in the text index versus a fast-changing side store, shard and replica counts, the CDC pipeline and how stock filters are applied without reindexing documents for every change.
+2. **Log search.** 2 TB/day of application logs, 30-day retention, most queries over the last hour. Design time-based indexes, rollover size, hot/warm tiers, refresh interval and force-merge policy, and compute the storage footprint with one replica.
+3. **Global autocomplete.** 300 million users in 40 languages, suggestions within 100 ms p99 worldwide, trending queries reflected within 15 minutes, unsafe suggestions filtered. Design the build pipeline, per-language tries or FSTs, edge caching and the rollback mechanism.
+
+## 16.17 References
+
+1. Manning, C. D., Raghavan, P., Schütze, H. *Introduction to Information Retrieval*. Cambridge University Press, 2008. https://nlp.stanford.edu/IR-book/
+2. Robertson, S., Zaragoza, H. *The Probabilistic Relevance Framework: BM25 and Beyond*. Foundations and Trends in Information Retrieval 3(4), 2009.
+3. Zobel, J., Moffat, A. *Inverted Files for Text Search Engines*. ACM Computing Surveys 38(2), 2006.
+4. Brin, S., Page, L. *The Anatomy of a Large-Scale Hypertextual Web Search Engine*. Computer Networks and ISDN Systems 30(1–7), 1998.
+5. Spärck Jones, K. *A Statistical Interpretation of Term Specificity and Its Application in Retrieval*. Journal of Documentation 28(1), 1972.
+6. Robertson, S. E. *The Probability Ranking Principle in IR*. Journal of Documentation 33(4), 1977.
+7. Robertson, S., Zaragoza, H., Taylor, M. *Simple BM25 Extension to Multiple Weighted Fields*. Proceedings of CIKM, 2004.
+8. Porter, M. F. *An Algorithm for Suffix Stripping*. Program 14(3), 1980.
+9. Harman, D. *How Effective Is Suffixing?* Journal of the American Society for Information Science 42(1), 1991.
+10. Ding, S., Suel, T. *Faster Top-k Document Retrieval Using Block-Max Indexes*. Proceedings of SIGIR, 2011.
+11. Lemire, D., Boytsov, L. *Decoding Billions of Integers per Second through Vectorization*. Software: Practice and Experience 45(1), 2015.
+12. Daciuk, J., Mihov, S., Watson, B. W., Watson, R. E. *Incremental Construction of Minimal Acyclic Finite-State Automata*. Computational Linguistics 26(1), 2000.
+13. Dean, J., Barroso, L. A. *The Tail at Scale*. Communications of the ACM 56(2), 2013.
+14. Dean, J. *Challenges in Building Large-Scale Information Retrieval Systems*. Keynote, ACM WSDM, 2009.
+15. Suresh, L., Canini, M., Schmid, S., Feldmann, A. *C3: Cutting Tail Latency in Cloud Data Stores via Adaptive Replica Selection*. USENIX NSDI, 2015.
+16. Busch, M., Gade, K., Larson, B., Lok, P., Luckenbill, S., Lin, J. *Earlybird: Real-Time Search at Twitter*. IEEE ICDE, 2012.
+17. Clem, T. *The Technology behind GitHub's New Code Search*. GitHub Blog, 2023. https://github.blog/engineering/architecture-optimization/the-technology-behind-githubs-new-code-search/
+18. Cormack, G. V., Clarke, C. L. A., Büttcher, S. *Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods*. Proceedings of SIGIR, 2009.
+19. Kleppmann, M. *Designing Data-Intensive Applications*. O'Reilly Media, 2017.
+20. Nielsen, J. *Usability Engineering*. Academic Press, 1993 (response-time limits; also "Response Times: The 3 Important Limits", Nielsen Norman Group).
+21. Apache Lucene. *Lucene documentation: postings format, DataOutput.writeVInt, TieredMergePolicy, BM25Similarity, MIGRATE notes for 8.0*. https://lucene.apache.org/core/
+22. Elastic. *Elasticsearch Reference: near real-time search; data replication model; search_type; track_total_hits; _routing; node roles; similarity; completion suggester; heap size*. https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html
+23. Elastic. *Size your shards*. Elastic documentation. https://www.elastic.co/docs/deploy-manage/production-guidance/optimize-performance/size-shards
+24. OpenSearch Project. *OpenSearch documentation, including segment replication*. https://opensearch.org/docs/latest/
+25. Wikimedia. *Extension:CirrusSearch*. MediaWiki. https://www.mediawiki.org/wiki/Extension:CirrusSearch
+
+## 16.18 Open verification items
+
+- Lucene postings layout (blocks of 128 with frame-of-reference packing, multi-level skip data) is stated for Lucene 5–9; confirm against Lucene 10's current postings format.
+- `TieredMergePolicy` defaults (about 10 segments per tier, merge 10 at once, 5 GB maximum merged segment) — confirm current Lucene values.
+- Lucene 8 removal of $(k_1+1)$ (LUCENE-8563) and Elasticsearch's compensating 2.2 boost in `explain` — confirmed via issue tracker and forum summaries only.
+- Manning et al. Table 5.6 figures (400 MB raw, 116 MB VByte for RCV1) quoted from memory.
+- Earlybird "within 10 seconds" and "50 ms average" confirmed via search snippets, not full text.
+- GitHub 25 TB / 115 TB figures from search summaries of the blog.
+- Elastic Cloud Serverless "stateless" description and Elasticsearch BM25 switch version (5.0) — check docs.
+- Workload numbers in worked examples (catalog size, query rates, $P = 6 \times 10^7$ trie nodes) are Illustrative.

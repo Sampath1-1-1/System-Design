@@ -1,0 +1,8 @@
+%% Figure 16.10 — A trie with top-2 completions stored at each node
+flowchart TB
+  R((root)) -->|h| H["h<br/>top: headphones 9200,<br/>hdmi cable 5300"]
+  H -->|e| HE["he<br/>top: headphones 9200,<br/>headphones wireless 4100"]
+  H -->|d| HD["hd<br/>top: hdmi cable 5300"]
+  H -->|a| HA["ha<br/>top: hair dryer 4800,<br/>hard drive 3900"]
+  HE -->|a| HEA["hea<br/>top: headphones 9200,<br/>headphones wireless 4100"]
+  HEA -->|t| HEAT["heat<br/>top: heated blanket 2100"]
