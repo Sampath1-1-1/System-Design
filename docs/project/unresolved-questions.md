@@ -137,3 +137,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-130 | 20 | Valkey 8.0 1.2M req/s figure (vendor benchmark on AWS r7g); Redis license timeline (dual license from 7.4, AGPLv3 option from 8.0) | Open | Time-sensitive |
 | UQ-131 | 20 | Whether Caffeine randomizes admission to resist hash flooding | Open | |
 | UQ-132 | 20 | URLs: MySQL query-cache removal post; Linux Foundation Valkey press release; Redis licensing blog posts | Open | Merge with UQ-082 |
+| UQ-133 | 22 | ITU-T I.371 edition year; ATM Forum TM 4.0 document number (GCRA) | Open | |
+| UQ-134 | 22 | IETF RateLimit header fields draft: current revision/syntax (draft-10 Sept 2025, draft-11 May 2026 per search) | Open | Time-sensitive |
+| UQ-135 | 22 | IETF Idempotency-Key header draft status after -07; 409/422 guidance | Open | Time-sensitive |
+| UQ-136 | 22 | Cloudflare rate-limiting post URL and "0.003% of 400M requests" figure | Open | |
+| UQ-137 | 22 | Stripe idempotency: key length limit, 24-hour pruning, replay of stored 500 responses (as of 2026) | Open | Time-sensitive |
+| UQ-138 | 22 | Hystrix defaults; AWS SDK retry quota; ACM Queue URLs for Nichols & Jacobson 2012 (CoDel) and Maurer 2015 (Fail at Scale) | Open | |

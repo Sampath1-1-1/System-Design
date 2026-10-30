@@ -17,9 +17,9 @@
 15: {research: done, draft: done, diagrams: done, review: done, final: todo}
 16: {research: done, draft: done, diagrams: done, review: done, final: todo}
 17: {research: done, draft: done, diagrams: done, review: done, final: todo}
-18: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-19: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-20: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-21: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-22: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-23: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+18: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+19: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+20: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+21: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+22: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+23: {research: done, draft: done, diagrams: done, review: wip, final: todo}
