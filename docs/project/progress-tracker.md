@@ -25,12 +25,12 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 15 | Object, Block and File Storage | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 11,997 | 10 | 4 | 0 |
 | 16 | Search Systems | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,448 | 13 | 14 | 0 |
 | 17 | Data Structures and Algorithms for Scale | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 17,639 | 16 | 10 | 0 |
-| 18 | Scalability | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 19 | Load Balancing | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 20 | Caching | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 21 | Content Delivery Networks | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 22 | API and Traffic Management | 2-3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 23 | Performance Engineering | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 18 | Scalability | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 19 | Load Balancing | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 20 | Caching | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 21 | Content Delivery Networks | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 22 | API and Traffic Management | 2-3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 23 | Performance Engineering | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 24 | Distributed Systems Fundamentals | 2-3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 25 | Consistency and Availability | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 26 | Consensus and Coordination | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
