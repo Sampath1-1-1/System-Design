@@ -99,3 +99,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-092 | 14 | Vitess two-phase-commit (atomic distributed transaction) mode and default | Open | |
 | UQ-093 | 14 | URLs/authors: Instagram ID/sharding post, Discord and Slack scaling posts; Lamping & Veach figures (arXiv blocked) | Open | |
 | UQ-094 | 14 | Bigtable tablet split size | Open | |
+| UQ-095 | 11 | PostgreSQL 18 B-tree skip scan; MySQL 8.4 still lacks partial indexes; MySQL 8.x has no sort-merge join | Open | Version-dependent |
+| UQ-096 | 11 | Sentry 2015 transaction-ID wraparound postmortem — details and URL | Open | |
+| UQ-097 | 11 / 13 | URLs for Uber 2016 (Postgres→MySQL) and Instagram 2012 (sharding & IDs) posts | Open | Merge with UQ-087, UQ-093 |
+| UQ-098 | 11 | PostgreSQL 16 xid wraparound warning / write-refusal thresholds (stated qualitatively) | Accepted | |
