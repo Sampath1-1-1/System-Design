@@ -1,4 +1,4 @@
-# Extracted from manuscript/book1-traditional/24-distributed-systems-fundamentals.md §24.11.4 (listing 3). Edit the manuscript, not this file.
+# Extracted from manuscript/book1-traditional/24-distributed-systems-fundamentals.md §24.11.3 (listing 3). Edit the manuscript, not this file.
 """Vector clocks: comparison, the Figure 24.11 trace, and sibling detection with version vectors."""
 
 

@@ -163,3 +163,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-156 | 27 | Cassandra exponential phi model and 3-hour default hint window | Open | Version-dependent |
 | UQ-157 | 27 | Dynamo (2007): 99.94% of requests see one version; ~10-entry vector-clock truncation threshold | Open | |
 | UQ-158 | 27 | DynamoDB global tables LWW wording and strong-consistency mode (as of 2026); Akka/CouchDB/Redis/Riak doc URLs | Open | Time-sensitive |
+| UQ-159 | 24 | URL of Lamport's 1987 "distributed system" email | Open | |
+| UQ-160 | 24 | Gill et al. (SIGCOMM 2011) figures (5.2 device / 40.8 link failures per day, ~5 min median repair, ~43% redundancy effectiveness); Dean 2009 cluster-year failure counts (secondary summaries) | Open | |
+| UQ-161 | 24 | Alquraan et al. (OSDI 2018): share of partition failures that were catastrophic / due to partial partitions; Gunawi et al. case count | Open | |
+| UQ-162 | 24 | Attribution of fallacies 1–4 to Joy & Lyon and the year Gosling added the eighth | Open | |
+| UQ-163 | 24 / 28 | CockroachDB 500 ms default max clock offset and node self-shutdown rule | Open | Merge with UQ-148 |
+| UQ-164 | 24 | Meta PTP post details; AWS 2023 microsecond-accurate time announcement; Riak 2.0 dotted version vectors; AWS 2008/2011 post-mortem URLs | Open | |

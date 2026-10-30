@@ -1,0 +1,8 @@
+%% Figure 24.14 — The adversary keeps the protocol undecided
+flowchart LR
+  B0["Bivalent state<br/>0 or 1 still possible"] -->|"deliver harmless message"| B1["Still bivalent"]
+  B1 -->|"critical message pending"| Q{"Slow or crashed?"}
+  Q -->|"wait for it"| W["No progress<br/>if sender crashed"]
+  Q -->|"decide without it"| U["Unsafe if it was<br/>only slow"]
+  B1 -->|"adversary delays it,<br/>delivers others"| B2["Still bivalent"]
+  B2 -->|repeat forever| B1

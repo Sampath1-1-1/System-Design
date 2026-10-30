@@ -1,0 +1,11 @@
+%% Figure 24.13 — HLC keeps causal order when node A's clock runs 100 ms fast
+sequenceDiagram
+  participant A as Node A, wall = true + 100
+  participant B as Node B, wall = true
+  Note over A: true 1000, wall 1100, hlc 1100,0
+  A->>B: m stamped 1100,0
+  Note over B: true 1001, wall 1001, hlc 1100,1
+  Note over B: local write, hlc 1100,2
+  B->>A: m2 stamped 1100,3
+  Note over A: wall 1104, hlc 1104,0
+  Note over B: true 1150, wall 1150, hlc 1150,0

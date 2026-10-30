@@ -70,7 +70,7 @@ flowchart LR
 
 ### 24.3.2 Why this is hard: uncertainty about other nodes
 
-The three properties combine into one practical problem: **a node can never be certain of another node's current state.** When node 1 sends a request to node 2 and hears nothing for 2 seconds, the possibilities include: the request was lost; node 2 is slow; node 2 crashed before processing; node 2 processed it and crashed; the reply was lost; or the reply is still on its way. Node 1 sees exactly the same thing (silence) in all six cases (§24.8.1 draws them). Every distributed algorithm is, at heart, a strategy for acting correctly despite this ambiguity.
+Together the properties mean **a node can never be certain of another node's current state.** Silence from node 2 could mean a lost request, a slow node, a crash before or after processing, a lost reply or a reply still in flight; §24.8.1 draws all six. Every distributed algorithm is a strategy for acting correctly despite this ambiguity.
 
 ### 24.3.3 The two generals problem
 
@@ -124,7 +124,7 @@ If distribution is this hard, why do it? Because a single computer cannot meet s
 | Latency and geography | The speed of light: New York–London RTT is at least about 56 ms over fiber (§7.15.1) | Place replicas and computation near users (Ch 21, Ch 44) | Cross-region consistency and conflicts |
 | Data residency | Law may require that personal data stay within a jurisdiction | Region-pinned partitions and processing | Fragmented operations; per-region capacity |
 
-Some problems are also **inherently distributed** (banks in a payment network, offline edits on phones), and organizations split systems so teams deploy independently (Chapter 33). On residency, be precise: the EU GDPR does not generally require storage inside the EU, but its Chapter V restricts *transfers* of personal data outside it without safeguards [EU 2016]; some other jurisdictions mandate localization. Either way, partitions get pinned to regions.
+Some problems are also **inherently distributed** (banks in a payment network, offline edits on phones), and organizations split systems so teams deploy independently (Chapter 34). On residency, be precise: the EU GDPR does not generally require storage inside the EU, but its Chapter V restricts *transfers* of personal data outside it without safeguards [EU 2016]; some other jurisdictions mandate localization. Either way, partitions get pinned to regions.
 
 #### Mathematical foundations: why replicate, and why failure is normal
 
@@ -262,11 +262,11 @@ The intuition for $2f+1$: any decision must be backed by a **majority quorum** o
 3. Survive two simultaneous zone losses ($f=2$): $n \ge 5$, so 5 replicas, which needs 5 failure domains.
 4. If the same service had to tolerate one *Byzantine* replica: $n \ge 3(1)+1 = 4$, and every decision needs $2f+1 = 3$ matching votes.
 
-Interpretation: tolerating arbitrary faults costs one third more replicas for $f = 1$ and many more messages per decision. Engineering implication: inside one organization's datacenters, use crash-recovery protocols plus checksums against corruption (§24.14); reserve Byzantine fault tolerance for mutually distrustful parties.
+Interpretation: Byzantine tolerance costs a third more replicas at $f = 1$ and many more messages per decision. Engineering implication: inside one organization, use crash-recovery protocols plus checksums (§24.14); reserve Byzantine tolerance for mutually distrustful parties.
 :::
 
 ::: industry
-**Raft-based coordination stores.** etcd and ZooKeeper deployments almost always run 3 or 5 members: 3 tolerates one failure, 5 tolerates two. Even sizes add cost without adding tolerance (4 members still tolerate only one failure, because a majority is 3). Both assume crash-recovery faults and partial synchrony.
+**Raft clusters such as etcd.** Raft clusters typically run 3 or 5 members: 3 tolerate one failure, 5 tolerate two, and 4 still tolerate only one (a majority is 3), so even sizes add cost without tolerance. Raft assumes crash-recovery faults and partial synchrony.
 *Evidence: Primary* — [Ongaro and Ousterhout 2014]
 :::
 
@@ -726,17 +726,17 @@ The last row matters most for Part V. Google's **TrueTime** returns an interval 
 
 ### 24.10.1 Happened-before
 
-Physical clocks cannot order events reliably across machines. Lamport's 1978 insight was that most systems do not need *real* time at all; they need to know which events could have *influenced* which [Lamport 1978].
+Lamport's 1978 insight was that most systems need to know not *when* events happened but which could have *influenced* which [Lamport 1978].
 
 ::: definition
 **Definition — Happened-before (→).** The smallest relation on events such that: (1) if $a$ and $b$ occur in the same process and $a$ comes first, $a \to b$; (2) if $a$ is the sending of a message and $b$ its receipt, $a \to b$; (3) if $a \to b$ and $b \to c$, then $a \to c$. Two distinct events are **concurrent** ($a \parallel b$) if neither $a \to b$ nor $b \to a$.
 :::
 
-Happened-before is **potential causality**: $a \to b$ means information from $a$ *could* have reached $b$. Concurrent events are those that could not have influenced each other, however their wall-clock times compare.
+Happened-before is **potential causality**: information from $a$ *could* have reached $b$.
 
 ### 24.10.2 The algorithm
 
-Think of each process keeping a page counter in its diary. It turns to a new page for every event, writes the page number on every letter it sends, and on receiving a letter, skips ahead past the letter's page number if that is higher.
+Think of a diary page counter: turn a page per event, write the page number on each letter sent, and on receiving a letter skip past its page number if higher.
 
 ::: definition
 **Definition — Lamport clock.** Each process $P_i$ keeps an integer counter $C_i$, initially 0. **Rule 1:** before each event (local, send or receive), $C_i \leftarrow C_i + 1$; a send attaches the new $C_i$ to the message. **Rule 2:** on receiving a message with timestamp $t_m$, set $C_i \leftarrow \max(C_i, t_m)$, then apply rule 1. The event's timestamp is the resulting $C_i$.
@@ -764,7 +764,7 @@ sequenceDiagram
   Note over P1: i = max(2, 6) + 1 = 7
 ```
 
-**Reading the diagram.** Each lifeline is a process; notes are events with their Lamport timestamps; arrows are asynchronous messages carrying the sender's timestamp. P1 does local event `a` and sends `m1` (event `b`); P2's receipt `d` jumps to $\max(1,2)+1=3$; the chain continues through P3 and back to P1. There is no storage or failure point here; the diagram shows only causality. Notice the limitation: `c` (1) has a smaller timestamp than `b` (2), yet they are concurrent, because nothing connects `c` to `b`. Lamport clocks scale to any number of processes at a cost of one integer per message.
+**Reading the diagram.** Lifelines are processes, notes are events with timestamps, and arrows are asynchronous messages carrying the sender's timestamp. P2's receipt `d` jumps to $\max(1,2)+1=3$, and the chain continues through P3 back to P1. There is no storage or failure point; only causality is shown. Note the limitation: `c` (1) < `b` (2), yet they are concurrent. The cost is one integer per message, at any scale.
 
 ### 24.10.4 Code example
 
@@ -830,9 +830,7 @@ What to notice:
 
 ### 24.10.5 Uses and limits
 
-Lamport used this total order to build a distributed mutual-exclusion algorithm in which every process applies requests in the same timestamp order [Lamport 1978]; the same idea underlies **state machine replication** (§26.3). Raft's **term** numbers behave like a Lamport clock: a node that sees a higher term adopts it, and messages from lower terms are rejected [Ongaro and Ousterhout 2014]. Fencing tokens (§26.13) are monotonically increasing numbers in the same spirit.
-
-The limit is that a Lamport timestamp cannot tell you whether two events were concurrent. For conflict *detection* you need vector clocks.
+Lamport used this total order for distributed mutual exclusion [Lamport 1978], the seed of **state machine replication** (§26.3). Raft's **terms** behave like a Lamport clock: a node adopts any higher term it sees and rejects lower ones [Ongaro and Ousterhout 2014]; fencing tokens (§26.13) are similar. What Lamport clocks cannot do is detect concurrency.
 
 ## 24.11 Vector clocks and version vectors
 
@@ -864,7 +862,7 @@ sequenceDiagram
   Note over P1: i [3,3,3]
 ```
 
-**Reading the diagram.** Entries are ordered [P1, P2, P3]. Each event increments its own process's entry; each receipt first takes the element-wise maximum with the message's vector. The messages are asynchronous, and each carries $n$ integers instead of one. Now concurrency is visible: `c` = [0,1,0] and `b` = [2,0,0] are incomparable (0 < 2 but 1 > 0), so they are concurrent; `b` = [2,0,0] ≤ `g` = [2,3,2] in every entry, so `b` → `g`. The cost, and the scaling limit, is that the vector grows with the number of processes.
+**Reading the diagram.** Entries are [P1, P2, P3]; each event increments its own entry, and each receipt first takes the element-wise maximum. Asynchronous messages now carry $n$ integers. Concurrency is visible: `c` = [0,1,0] and `b` = [2,0,0] are incomparable, while `b` ≤ `g` = [2,3,2] entry by entry, so `b` → `g`. The scaling limit is vector size, which grows with the number of processes.
 
 ### 24.11.2 Version vectors
 
@@ -889,7 +887,7 @@ sequenceDiagram
   Note over R1,R2: After sync, R1 = 2 vs R1 = 1 and R2 = 1 are incomparable, so both are siblings
 ```
 
-**Reading the diagram.** Both clients read the same version (context {R1: 1}) and write through different replicas, synchronously to that replica; replicas synchronize asynchronously afterwards. R1 issues {R1: 2}; R2 issues {R1: 1, R2: 1}. Neither vector dominates, so the store keeps both values as siblings, and the next reader receives both with a merged context and writes back a reconciled cart. The storage boundary is each replica's copy of the key. Compared with LWW (Figure 24.9), nothing is silently lost; the cost is that the application must merge.
+**Reading the diagram.** Both clients read context {R1: 1} and write synchronously through different replicas, which later synchronize asynchronously. Neither {R1: 2} nor {R1: 1, R2: 1} dominates, so both values are kept as siblings; the next reader gets both and writes back a merge. The storage boundary is each replica's copy. Unlike LWW (Figure 24.9), nothing is silently lost, at the cost of application merging.
 
 ### 24.11.3 Code example
 
@@ -1045,7 +1043,7 @@ $$S = n\,(b_{\text{id}} + b_{\text{ctr}}) \qquad\qquad M = K \cdot S$$
 2. Entries keyed by *client*, for a popular key written by 10,000 distinct users: $S = 10{,}000 \times 16 = 160{,}000$ bytes = 160 KB of metadata on one key, transferred on every read and write.
 3. Over a fleet of 1,000 processes tracking event causality: $S = 1{,}000 \times 16 = 16$ KB on *every message*.
 
-Interpretation: vector size grows with the number of writers, and Charron-Bost proved that no smaller timestamp can characterize causality in general [Charron-Bost 1991]. Engineering implication: key vectors by a small, stable set of replicas, not by clients or processes; when that is not possible, prune old entries, accepting that pruning can create false conflicts (siblings that were not really concurrent).
+Interpretation: size grows with the number of writers, and Charron-Bost proved no smaller timestamp can characterize causality in general [Charron-Bost 1991]. Engineering implication: key vectors by a small, stable set of replicas; if you must prune entries, accept occasional false conflicts.
 :::
 
 ::: industry
@@ -1055,7 +1053,7 @@ Interpretation: vector size grows with the number of writers, and Charron-Bost p
 
 ### 24.11.5 Dotted version vectors
 
-The same-replica flaw above led to **dotted version vectors** (DVVs) [Preguiça et al. 2010]. A DVV pairs the causal context (a version vector of what the writer had seen) with a single **dot**, the (replica, counter) pair that identifies *this* write. Two writes through R1 with the same context get dots (R1, 2) and (R1, 3), but because neither write's context contains the other's dot, the store correctly recognizes them as concurrent. DVVs keep vectors bounded by the number of replicas while avoiding both lost updates and the "sibling explosion" of client-keyed vectors. Riak adopted dotted version vectors in version 2.0 [Riak Docs: Dotted Version Vectors].
+**Dotted version vectors** (DVVs) fix the same-replica flaw [Preguiça et al. 2010]. A DVV pairs the writer's causal context with a **dot**, the (replica, counter) pair naming *this* write. Writes through R1 with dots (R1, 2) and (R1, 3) are recognized as concurrent because neither context contains the other's dot. DVVs stay bounded by the replica count while avoiding lost updates and client-keyed "sibling explosion"; Riak adopted them in version 2.0 [Riak Docs: Dotted Version Vectors].
 
 **Table 24.10 — Logical clocks compared.**
 
@@ -1071,7 +1069,7 @@ The same-replica flaw above led to **dotted version vectors** (DVVs) [Preguiça 
 
 ### 24.12.1 Why combine physical and logical time
 
-Databases with multi-version concurrency control (§11.7) need timestamps that (1) respect causality, so that a read never misses a write it depends on, (2) are close to real time, so that "read as of 10:00" means something, and (3) fit in a fixed 64-bit field. Lamport clocks give (1) and (3) but drift arbitrarily far from real time; physical clocks give (2) and (3) but not (1). Kulkarni et al.'s **hybrid logical clock** (HLC) provides all three [Kulkarni et al. 2014].
+Multi-version databases need timestamps that (1) respect causality, (2) stay close to real time so "read as of 10:00" means something, and (3) fit in 64 bits. Lamport clocks miss (2); physical clocks miss (1). Kulkarni et al.'s **hybrid logical clock** (HLC) provides all three [Kulkarni et al. 2014].
 
 ::: definition
 **Definition — Hybrid logical clock.** A timestamp $(l, c)$ where $l$ is the largest physical clock value the node has seen (from its own clock or from any message) and $c$ is a logical counter that orders events sharing the same $l$. Timestamps compare lexicographically: first by $l$, then by $c$.
@@ -1083,7 +1081,7 @@ For a local or send event at a node with physical clock $pt$: set $l' \leftarrow
 
 For a receive of a message stamped $(l_m, c_m)$: set $l \leftarrow \max(l', l_m, pt)$; then $c \leftarrow \max(c, c_m)+1$ if $l$ equals both $l'$ and $l_m$; $c \leftarrow c+1$ if $l = l'$ only; $c \leftarrow c_m + 1$ if $l = l_m$ only; otherwise $c \leftarrow 0$.
 
-The paper proves that if $e \to f$ then $\text{hlc}(e) < \text{hlc}(f)$; that $l$ never exceeds the largest clock in the system, so $l - pt \le \varepsilon$ where $\varepsilon$ is the clock skew; and that $c$ stays small. Packing $l$ into 48 bits and $c$ into 16 bits gives a 64-bit timestamp that can sit in a field designed for physical time.
+The paper proves that $e \to f$ implies $\text{hlc}(e) < \text{hlc}(f)$, that $l - pt \le \varepsilon$ (the clock skew) because $l$ is always some node's clock reading, and that $c$ stays small, so 48 bits of $l$ plus 16 bits of $c$ fit a 64-bit time field.
 
 **Figure 24.13 — HLC keeps causal order when node A's clock runs 100 ms fast.**
 
@@ -1100,7 +1098,7 @@ sequenceDiagram
   Note over B: true 1150, wall 1150, hlc 1150,0
 ```
 
-**Reading the diagram.** Times are in milliseconds. A's message reaches B when B's wall clock reads 1001, *earlier* than the send time 1100; a physical timestamp would order the receipt before the send. B's HLC instead adopts $l = 1100$ and counts with $c$, so the receipt and B's next write are ordered after the send. Messages are asynchronous; there is no storage boundary in the clock itself. When B's wall clock passes 1100 (at 1150), $l$ returns to physical time and $c$ resets. The failure point is unbounded skew: a node with a wildly fast clock drags every HLC in the cluster forward with it, which is why production systems bound and monitor the offset.
+**Reading the diagram.** Times are in milliseconds. A's message reaches B when B's wall clock reads 1001, *before* the send stamp 1100; physical timestamps would invert the order. B's HLC adopts $l = 1100$ and counts with $c$, ordering the receipt and B's next write after the send. Messages are asynchronous; the clock has no storage boundary. At 1150, $l$ returns to physical time. The failure point is unbounded skew: one wildly fast clock drags every HLC forward, so production systems bound and monitor offsets.
 
 ### 24.12.3 Code example
 
@@ -1205,7 +1203,7 @@ $$t_r < t_w \le t_r + \varepsilon_{\max} \;\Rightarrow\; \text{restart the read 
 | $\varepsilon_{\max}$ | Configured maximum clock offset between any two nodes | s |
 :::
 
-A value with $t_w$ in that window *might* have committed before the read started in real time, because the writer's clock may have been ahead. The read cannot tell, so it moves its timestamp up to $t_w$ and retries; values beyond the window certainly happened later and are ignored.
+Such a value *might* have committed before the read began in real time (the writer's clock may have been ahead), so the read moves up to $t_w$ and retries.
 
 ::: example
 **Worked example — A read meets uncertain writes.**
@@ -1214,7 +1212,7 @@ A value with $t_w$ in that window *might* have committed before the read started
 2. It finds a value at 10:00:00.300: inside $(t_r, t_r + 0.5]$, so it restarts at $t_r' = $ 10:00:00.300 and returns that value.
 3. A value at 10:00:00.700 lies beyond the window: it definitely happened after the read began, and is ignored.
 
-Interpretation: correctness now depends on the *configured* bound actually holding, so CockroachDB nodes monitor their offset against peers and shut themselves down rather than serve with an offset close to the maximum. Engineering implication: better clock synchronization buys performance directly; halving $\varepsilon_{\max}$ halves the window in which contended reads restart. Spanner pushes this further with TrueTime's millisecond-scale bounds and commit wait (§28.8).
+Interpretation: correctness depends on the configured bound holding, so CockroachDB nodes monitor their offset against peers and shut down rather than serve near the maximum. Engineering implication: better synchronization buys performance; halving $\varepsilon_{\max}$ halves the restart window. Spanner goes further with TrueTime (§28.8).
 :::
 
 ::: industry
@@ -1230,7 +1228,7 @@ Interpretation: correctness now depends on the *configured* bound actually holdi
 **Definition — FLP impossibility.** In a fully asynchronous message-passing system with reliable links, no *deterministic* protocol can solve **consensus** (all correct processes decide the same value, the value was proposed by some process, and every correct process eventually decides) if even one process may crash-stop [Fischer et al. 1985].
 :::
 
-The result is surprising because the assumptions are generous: messages are never lost, and at most one process fails, by stopping cleanly. The only thing missing is a bound on delay.
+The assumptions are generous (no lost messages, one clean crash); only a delay bound is missing.
 
 ### 24.13.2 Intuition
 
@@ -1261,7 +1259,7 @@ flowchart LR
 | | Protocols that use an oracle to suspect failures | **Failure detectors** [Chandra and Toueg 1996]: an eventually accurate detector suffices |
 | | Solving weaker problems | Eventual consistency and CRDTs avoid consensus altogether (§27.14) |
 
-In practice, FLP explains a behavior you will see: during a partition or a storm of slow messages, a Raft cluster may fail to elect a leader for a while. It stays *safe* throughout, and recovers once messages flow normally. Raft's randomized election timeouts are a practical use of randomness to break symmetry and make progress quickly, though not Ben-Or's algorithm [Ongaro and Ousterhout 2014].
+In practice, a Raft cluster may fail to elect a leader during a storm of slow messages, stays *safe* throughout, and recovers once messages flow; its randomized election timeouts break symmetry, though they are not Ben-Or's algorithm [Ongaro and Ousterhout 2014].
 
 ::: mistake
 **Mistake — "FLP proves consensus is impossible, so systems like etcd cannot work."** FLP rules out a *guarantee of termination* in a purely asynchronous model. Real systems keep safety unconditionally and obtain liveness from timeouts, i.e., from the assumption that the network is eventually timely. FLP is also distinct from CAP (§25.8), which concerns availability of reads and writes during a partition.
@@ -1273,7 +1271,7 @@ In practice, FLP explains a behavior you will see: during a partition or a storm
 
 Saltzer, Reed and Clark's 1984 paper asks where in a layered system a function such as reliable delivery should be implemented [Saltzer et al. 1984]. Their answer, paraphrased: a function that can be implemented completely and correctly only with knowledge held by the application at the endpoints cannot be provided as a feature of the communication system alone. A lower layer may still provide a partial version, but only as a *performance optimization*.
 
-Their example is **careful file transfer**. A file moves from disk on host A, through A's memory and network stack, across the network, through B's stack and memory, onto B's disk. The network may guarantee reliable delivery, but a bit can still be corrupted in A's memory, in a buffer copy, or on B's disk. Only a check performed by the application at both ends (compare a checksum of the file as stored at B with one computed at A, and retry on mismatch) covers every step.
+Their example is **careful file transfer** from A's disk to B's disk. A reliable network still cannot prevent corruption in A's memory, a buffer copy or B's disk; only an application check at both ends (compare checksums of the stored and original file, retry on mismatch) covers every step.
 
 **Figure 24.15 — Where errors can enter a file transfer, and which check covers them.**
 
@@ -1287,7 +1285,7 @@ flowchart LR
   DB -.->|"end-to-end checksum<br/>compared with A"| MA
 ```
 
-**Reading the diagram.** Data flows left to right through two storage boundaries (the disks) and several memory copies; every arrow is a place where corruption or loss can occur. TCP's checksum and the link layer's CRC protect only the middle arrow. The dotted arrow is the application's asynchronous end-to-end verification: B computes a checksum of what it actually stored and A compares it with the original, retrying on mismatch. It covers every failure point, including the disks and memory, and it scales because it costs one checksum per file regardless of path length.
+**Reading the diagram.** Data flows left to right between two storage boundaries (the disks) through several copies; every arrow is a failure point. TCP and link-layer checks protect only the middle arrow. The dotted arrow is the asynchronous end-to-end verification, which covers every step and scales at one checksum per file regardless of path length.
 
 ::: formula
 **Undetected-corruption probability over many transfers**
@@ -1321,7 +1319,7 @@ Interpretation: a probability that looks negligible per transfer becomes a near-
 - **Delivery versus processing.** A TCP acknowledgment means the peer's kernel buffered the bytes (§7.7), not that the application processed them. A message broker should be acknowledged *after* processing (Chapters 30–31).
 - **Exactly-once effects.** No network can deliver exactly once; the endpoint achieves *effectively-once* processing with at-least-once delivery plus deduplication by idempotency key (§22.15).
 - **Security.** Encryption hop by hop leaves data exposed at every intermediary; end-to-end encryption does not (Chapter 10).
-- **Where lower layers still help.** Wi-Fi retransmits lost frames locally because waiting for an end-to-end TCP retransmission would be far slower. This is the "performance optimization" the argument allows.
+- **Where lower layers still help.** Wi-Fi retransmits frames locally because an end-to-end retransmission would be far slower: the permitted "performance optimization".
 
 ::: mistake
 **Mistake — "The network (or storage system) is reliable, so the application needn't check."** Each layer's guarantee covers only that layer. If the requirement is "the user's photo is stored intact and saved once", only the application can verify it.
@@ -1330,18 +1328,18 @@ Interpretation: a probability that looks negligible per transfer becomes a near-
 ## 24.15 Summary and revision notes
 
 ::: summary
-- A distributed system has **independent failures, no global clock and unreliable messages**; a node can never be certain of another's current state. The **two generals problem** shows that certainty of agreement over a lossy channel is impossible.
+- Distributed systems have **independent failures, no global clock and unreliable messages**; the **two generals problem** shows certainty of agreement over a lossy channel is impossible.
 - Distribute for **scale, fault tolerance, latency or data residency**. Replication gives $A_k = 1-(1-a)^k$ under independence, but fleets fail daily: $P_{\text{any}} = 1-(1-p)^n$.
-- The **eight fallacies** (reliable network, zero latency, infinite bandwidth, secure network, fixed topology, one administrator, free transport, homogeneous network) each map to a class of outages.
+- Each of the **eight fallacies** maps to a class of outages.
 - State a **system model**: timing (synchronous, partially synchronous, asynchronous) and faults (crash-stop, crash-recovery, omission, timing, Byzantine). Consensus needs $2f+1$ nodes for crashes, $3f+1$ for Byzantine faults.
-- **Network partitions** may be complete, partial or asymmetric; measured studies show many network faults per day in large datacenters, and partial partitions cause many catastrophic bugs.
+- **Network partitions** are complete, partial or asymmetric, and occur daily in large fleets; partial ones cause many catastrophic bugs.
 - A timeout means **unknown outcome**. **Gray failures** are differentially observable; detect them with what clients experience. Set timeouts from measured p99.9 plus pause margin.
 - Quartz drifts (1 ppm = 86.4 ms/day); NTP estimates $\theta = [(T_2-T_1)+(T_3-T_4)]/2$ with error up to $\delta/2$; PTP with hardware timestamps reaches sub-microsecond. Use monotonic clocks for durations; smear leap seconds consistently.
 - **Wall-clock LWW** silently discards causally later writes that fall within the skew window.
 - **Lamport clocks**: $a \to b \Rightarrow C(a) < C(b)$, total order with tie-breaking, no concurrency detection. **Vector clocks** characterize causality exactly at $O(n)$ size; **version vectors** detect concurrent writes as siblings; **dotted version vectors** fix same-replica lost updates.
 - **HLC** $(l, c)$ is causal, within skew of real time, and 64 bits; real-time guarantees still need bounded skew (uncertainty intervals, TrueTime in §28.8).
 - **FLP**: no deterministic asynchronous consensus guarantees termination with one crash; systems stay safe always and live under partial synchrony, randomization or failure detectors.
-- **End-to-end argument**: correctness checks (integrity, deduplication, acknowledgment of processing) belong at the endpoints; lower layers only optimize.
+- **End-to-end argument**: integrity, deduplication and processing acknowledgments belong at the endpoints; lower layers only optimize.
 :::
 
 ## 24.16 Knowledge checkpoint
@@ -1355,14 +1353,12 @@ Interpretation: a probability that looks negligible per transfer becomes a near-
 7. Define gray failure and give one example.
 8. A clock drifts at 20 ppm. How far off can it be after one hour?
 9. NTP timestamps: $T_1 = 0$, $T_2 = 50$, $T_3 = 52$, $T_4 = 22$ ms. Compute offset, delay and error bound.
-10. Why should a rate limiter or timeout use a monotonic clock?
-11. Under LWW, node A's clock is 80 ms fast. Which writes through node B can A's earlier writes override?
-12. Lamport timestamps $C(a) = 3$, $C(b) = 5$. What can you conclude?
-13. Compare [2,1,0] and [1,2,0]; then [1,1,0] and [2,1,3].
-14. What problem do dotted version vectors solve?
-15. Why can an HLC's $l$ never exceed real time by more than the clock skew?
-16. Does FLP mean Raft can lose data? Explain.
-17. State the end-to-end argument and give one application.
+10. Under LWW, node A's clock is 80 ms fast. Which writes through node B can A's earlier writes override?
+11. Lamport timestamps $C(a) = 3$, $C(b) = 5$. What can you conclude?
+12. Compare [2,1,0] and [1,2,0]; then [1,1,0] and [2,1,3].
+13. What problem do dotted version vectors solve?
+14. Does FLP mean Raft can lose data? Explain.
+15. State the end-to-end argument and give one application.
 
 <details><summary>Answers</summary>
 
@@ -1375,14 +1371,12 @@ Interpretation: a probability that looks negligible per transfer becomes a near-
 7. A failure seen by some observers but not others, e.g., a disk 100× slower that passes the heartbeat health check while application requests time out.
 8. $20 \times 10^{-6} \times 3{,}600 = 0.072$ s = 72 ms.
 9. $\delta = (22 - 0) - (52 - 50) = 20$ ms; $\theta = [(50 - 0) + (52 - 22)]/2 = 40$ ms (client behind by 40 ms); bound $\pm 10$ ms.
-10. Wall clocks can be stepped backwards or forwards by NTP, producing negative or huge durations.
-11. Any B write within 80 ms after an A write to the same key.
-12. Only that $b \not\to a$; $a$ may have happened before $b$ or they may be concurrent.
-13. [2,1,0] and [1,2,0] are concurrent; [1,1,0] < [2,1,3], so the first happened before the second.
-14. Concurrent writes through the same replica, which per-replica version vectors misorder as one dominating the other, losing a write.
-15. $l$ is always some node's physical clock reading, and no node's clock is ahead of real time by more than the skew bound.
-16. No. Raft is always safe; FLP only means that in bad asynchronous periods it may fail to make progress (elect a leader or commit).
-17. A function that needs endpoint knowledge must be implemented at the endpoints; lower layers can only optimize. Example: checksum the stored file end to end, or deduplicate by idempotency key.
+10. Any B write within 80 ms after an A write to the same key.
+11. Only that $b \not\to a$; $a$ may have happened before $b$ or they may be concurrent.
+12. [2,1,0] and [1,2,0] are concurrent; [1,1,0] < [2,1,3], so the first happened before the second.
+13. Concurrent writes through the same replica, which per-replica version vectors misorder as one dominating the other, losing a write.
+14. No. Raft is always safe; FLP only means that in bad asynchronous periods it may fail to make progress (elect a leader or commit).
+15. A function that needs endpoint knowledge must be implemented at the endpoints; lower layers can only optimize. Example: checksum the stored file end to end, or deduplicate by idempotency key.
 </details>
 
 ## 24.17 Interview questions
