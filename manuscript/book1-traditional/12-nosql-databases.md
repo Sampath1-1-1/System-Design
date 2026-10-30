@@ -10,23 +10,21 @@ Think of a city's storage options. A relational database is a well-run library: 
 
 After this chapter you should be able to:
 
-- Explain the scale-out, schema-flexibility and availability pressures that produced NoSQL, and name the 2006–2010 papers that defined it.
-- Describe the data model, internal mechanism and failure modes of key-value, document, wide-column, graph and time-series databases.
-- Design a DynamoDB single-table schema from a list of access patterns, including partition keys, sort keys and sparse global secondary indexes.
-- Compute DynamoDB read and write capacity units, compare on-demand and provisioned cost, and find the utilization break-even point.
-- Model a Cassandra table query-first, size its partitions with the documented cell-count formula, and fix an unbounded partition with bucketing.
-- Decide between embedding and referencing in MongoDB and choose compound indexes with the equality–sort–range rule.
-- Write a Cypher traversal and explain when index-free adjacency beats relational joins — and when it does not.
-- Explain Gorilla's delta-of-delta and XOR compression, and size a Prometheus deployment with retention and downsampling tiers.
-- Place search engines, vector databases and NewSQL systems on the map, and apply a selection flowchart and a polyglot-persistence architecture while accounting for its operational cost.
+- Explain the pressures that produced NoSQL and the 2006–2010 papers that defined it.
+- Describe the data model, internals and failure modes of key-value, document, wide-column, graph and time-series databases.
+- Design a DynamoDB single-table schema from access patterns, and compute its capacity units and billing break-even.
+- Model a Cassandra table query-first and size its partitions with the documented formula.
+- Choose between embedding and referencing in MongoDB and order compound indexes by the equality–sort–range rule.
+- Explain when index-free adjacency beats joins, and size a time-series store using Gorilla compression and downsampling.
+- Apply a selection flowchart and design a polyglot-persistence architecture, accounting for its operational cost.
 
 ## 12.2 Prerequisites
 
-- Relational model, normalization, joins, B-tree indexes and ACID transactions — §11.3–§11.12 (NoSQL is defined largely by what it removes from this list).
-- Partitioning by range and by hash — §14.6 (every NoSQL family here is partitioned; this chapter assumes you know what a partition is).
-- Latency numbers: memory, SSD and network round trips — §4.17 (to judge why a single-partition read is fast and a scatter-gather is not).
-- Serialization formats such as JSON and Protocol Buffers — §8.9 (documents are serialized objects).
-- Back-of-the-envelope estimation — §2.11 (the capacity examples use the same method).
+- Relational model, joins, B-tree indexes and ACID — §11.3–§11.12 (NoSQL is defined by what it removes).
+- Range and hash partitioning — §14.6 (every family here is partitioned).
+- Latency numbers — §4.17 (why single-partition reads are fast and scatter-gather is not).
+- Serialization formats — §8.9 (documents are serialized objects).
+- Back-of-the-envelope estimation — §2.11.
 
 Several topics appear here only in summary because another chapter owns them: log-structured merge trees (Chapter 13), replication and consistent hashing (Chapter 14, §14.8), quorums (§27.8), and consistency models (Chapter 25).
 
@@ -91,7 +89,7 @@ Early systems typically gave up **joins** (the application stores data pre-joine
 The pendulum then swung back: MongoDB 4.0 and DynamoDB added transactions in 2018, Cassandra added Paxos-based lightweight transactions, and the **NewSQL** systems of §12.11 showed that scalable, strongly consistent SQL is possible at a latency cost. The useful question today is "which data model and consistency guarantees fit this access pattern?" — answered in §12.12.
 
 ::: concept
-**Key insight — Aggregate orientation.** Sadalage and Fowler observe that key-value, document and wide-column databases share one idea: they store an **aggregate** — a cluster of related data that is read and written as a unit, such as an order with its line items — under one key [Sadalage & Fowler 2012]. Atomicity, partitioning and replication all happen per aggregate. If your access patterns line up with aggregates, these stores are fast and scale linearly. If you need to slice data across aggregates in unforeseen ways, you are back to wanting a relational model. Graph databases are the exception: they are relationship-oriented, not aggregate-oriented.
+**Key insight — Aggregate orientation.** Key-value, document and wide-column databases store an **aggregate** — related data read and written as a unit, such as an order with its line items — under one key, and atomicity, partitioning and replication happen per aggregate [Sadalage & Fowler 2012]. When access patterns follow aggregates these stores scale linearly; slicing across aggregates in unforeseen ways calls for a relational model. Graph databases are relationship-oriented instead.
 :::
 
 ::: mistake
@@ -128,11 +126,9 @@ Redis values are typed data structures, and commands execute one at a time on a 
 |---|---|---|
 | String | `SET session:9f3 "{...}" EX 1800` | Cached objects, sessions with TTL |
 | Hash | `HSET user:42 name Ana plan pro` | Small objects with fields |
-| List | `LPUSH feed:42 post:9001` | Recent-items lists, simple queues |
 | Set | `SADD online:room7 u42` | Membership, deduplication |
 | Sorted set | `ZINCRBY leaderboard 15 u42` | Leaderboards, rate-limit windows, priority queues |
 | Stream | `XADD events * type click` | Append-only event log with consumer groups |
-| HyperLogLog | `PFADD uniques:2026-10-30 u42` | Approximate distinct counts (§17.5) |
 
 Durability is optional: **RDB** snapshots write point-in-time files; the **AOF** (append-only file) logs every write and can `fsync` every second, bounding loss to about one second. Redis Cluster splits keys into 16,384 hash slots across primaries with asynchronous replicas, so an acknowledged write can be lost on failover. Licensing has shifted (as of 2026): Redis moved to source-available licenses in 2024, the Linux Foundation's **Valkey** fork followed, and Redis 8 added an AGPLv3 option [Redis Docs].
 
@@ -165,6 +161,7 @@ flowchart LR
   C([Client]) -->|HTTPS| RR[Request router]
   RR -->|partition map lookup| MD[(Partition metadata)]
   RR -->|"hash of partition key"| L1
+  RR -->|other keys| L2
   subgraph P1["Partition 1: Paxos group across 3 AZs"]
     L1["Leader replica<br/>CUST#c42: PROFILE, ORDER#..."]
     F1a[Replica AZ-b]
@@ -346,12 +343,11 @@ $$\text{WCU} = \sum_{\text{write types}} r_w \times \left\lceil \frac{s_w}{1\ \t
 
 Peak load: 1,000 orders/s placed. Each order writes a 1.5 KB header and three 0.6 KB line items. GSI1 projects the whole header (1.5 KB); GSI2 projects keys only (under 1 KB). Reads: 10,000 order-detail lookups/s (AP3), eventually consistent, each returning 1.5 + 3 × 0.6 = 3.3 KB.
 
-1. Header: $1{,}000 \times \lceil 1.5 \rceil = 1{,}000 \times 2 = 2{,}000$ WCU.
-2. Line items: $3{,}000 \times \lceil 0.6 \rceil = 3{,}000$ WCU.
-3. GSI1 copy of header: $1{,}000 \times 2 = 2{,}000$ WCU. GSI2 copy: $1{,}000 \times 1 = 1{,}000$ WCU.
-4. Total writes: $2{,}000 + 3{,}000 + 2{,}000 + 1{,}000 = 8{,}000$ WCU — of which 3,000 (37.5 %) are index maintenance.
-5. Reads via Query: $\lceil 3.3 / 4 \rceil = 1$ unit, × 0.5 for eventual consistency → $10{,}000 \times 0.5 = 5{,}000$ RCU.
-6. Same data via four GetItem calls: each item rounds to 1 unit, so $10{,}000 \times 4 \times 0.5 = 20{,}000$ RCU — four times more.
+1. Header $1{,}000 \times \lceil 1.5 \rceil = 2{,}000$ WCU; line items $3{,}000 \times \lceil 0.6 \rceil = 3{,}000$ WCU.
+2. GSI1 header copy $1{,}000 \times 2 = 2{,}000$ WCU; GSI2 copy $1{,}000 \times 1 = 1{,}000$ WCU.
+3. Total $8{,}000$ WCU, of which 3,000 (37.5 %) is index maintenance.
+4. Query reads: $\lceil 3.3 / 4 \rceil = 1$ unit × 0.5 → $10{,}000 \times 0.5 = 5{,}000$ RCU.
+5. Four GetItem calls instead round each item: $10{,}000 \times 4 \times 0.5 = 20{,}000$ RCU.
 
 **Interpretation.** Co-locating items cut read cost by 75 %; index maintenance is over a third of the write bill.
 
@@ -377,12 +373,11 @@ $$u^{*} = \frac{p_{\text{prov}} / 3600}{p_{\text{od}}}$$
 
 Assume us-east-1 list prices as of 2026 (verify before use): provisioned $0.00065 per WCU-hour and $0.00013 per RCU-hour; on-demand $0.625 per million write request units and $0.125 per million read request units.
 
-1. Writes: $u^{*} = (0.00065 / 3600) / (0.625 \times 10^{-6}) = 1.806 \times 10^{-7} / 6.25 \times 10^{-7} = 0.289$.
-2. Reads: $u^{*} = (0.00013 / 3600) / (0.125 \times 10^{-6}) = 0.289$ — the same ratio.
-3. The order table averages 30 % of its peak. Provisioned at peak for a 720-hour month: $8{,}000 \times 0.00065 \times 720 = \$3{,}744$ plus $5{,}000 \times 0.00013 \times 720 = \$468$, total **$4,212**.
-4. On-demand at 30 % of peak over 2,592,000 s: $2{,}400 \times 2{,}592{,}000 = 6.22 \times 10^{9}$ write units → $\$3{,}888$; $1{,}500 \times 2{,}592{,}000 = 3.89 \times 10^{9}$ read units → $\$486$; total **$4,374**.
+1. Writes: $u^{*} = (0.00065 / 3600) / (0.625 \times 10^{-6}) = 1.806 \times 10^{-7} / 6.25 \times 10^{-7} = 0.289$; reads give the same 0.289.
+2. The table averages 30 % of peak. Provisioned at peak for 720 hours: $8{,}000 \times 0.00065 \times 720 = \$3{,}744$ plus $5{,}000 \times 0.00013 \times 720 = \$468$, total **$4,212**.
+3. On-demand over 2,592,000 s: $2{,}400 \times 2{,}592{,}000 = 6.22 \times 10^{9}$ write units → $\$3{,}888$; $1{,}500 \times 2{,}592{,}000 = 3.89 \times 10^{9}$ read units → $\$486$; total **$4,374**.
 
-**Interpretation.** At 30 % utilization the modes cost within 4 % of each other, as the 29 % break-even predicts.
+**Interpretation.** At 30 % utilization the modes cost within 4 %, as the break-even predicts.
 
 **Engineering implication.** Spiky traffic (average far below 29 % of peak) favors on-demand; steady traffic with auto scaling near 70 % utilization costs about 40 % of on-demand when provisioned. Storage and replication are billed separately.
 :::
@@ -413,7 +408,6 @@ Assume us-east-1 list prices as of 2026 (verify before use): provisioned $0.0006
 | Throttling with spare table capacity | One partition key exceeds the per-partition limit | Throttle metrics with low table utilization; key-level contributor insights | Write-shard the key with a suffix | Choose high-cardinality partition keys (§14.10) |
 | Base-table writes throttled | GSI under-provisioned or hot | GSI throttle events | Raise GSI capacity | Size GSIs like tables; sparse projections |
 | Stale read after write | Eventually consistent read or GSI read | Users see missing items briefly | Retry or read from base table strongly | Strong reads where read-your-writes matters (§25.6) |
-| Redis data loss on failover | Asynchronous replication | Gaps after promotion | Rebuild from system of record | Treat Redis as a cache unless loss is acceptable |
 
 #### Common misconceptions
 
@@ -533,7 +527,6 @@ What to notice:
 | Acknowledged writes vanish after failover | Write concern below `majority`; primary failed before replication | Rollback files on old primary | Reconcile from rollback data | Use `w: "majority"` for important writes |
 | Hot shard | Monotonic shard key (timestamps, ObjectIds) routes all inserts to one chunk | Per-shard insert rate skew | Reshard (supported since 5.0) | Hashed or compound shard key |
 | Slow queries after growth | Missing or misordered compound index; collection scan | `explain()` shows `COLLSCAN`; slow-query log | Add ESR-ordered index | Review query shapes in code review |
-| Document too large | Unbounded embedded array | Write errors near 16 MB | Migrate to bucket pattern | Bound arrays by design |
 
 #### Common misconceptions
 
@@ -687,7 +680,7 @@ Each sensor reports every 10 s. Column sizes: `sensor_id` uuid 16 B, `day` date 
 2. Cells: $N_v = 8{,}640 \times (6 - 2 - 0) + 0 = 34{,}560$.
 3. Size: partition key $16 + 4 = 20$ B; per row regular + clustering $= 12 + 8 = 20$ B; so $S_t = 20 + 8{,}640 \times 20 + 34{,}560 \times 8 = 20 + 172{,}800 + 276{,}480 = 449{,}300$ B ≈ **0.45 MB**.
 4. Counterfactual — no `day` bucket, one year of data: $N_r = 3{,}153{,}600$, $N_v = 12{,}614{,}400$, $S_t \approx 63.1 + 100.9 = 164$ MB, and still growing.
-5. Cluster storage: 1 million sensors × 0.45 MB/day × RF 3 ≈ **1.35 TB/day** before compression; with the 90-day TTL, about 121 TB steady state.
+5. Cluster: $10^6$ sensors × 0.45 MB/day × RF 3 ≈ **1.35 TB/day** uncompressed; about 121 TB at the 90-day TTL.
 
 **Interpretation.** Daily buckets keep partitions near 0.45 MB, far below the widely cited guidance of about 100 MB (and the hard limit of two billion cells); the unbucketed design passes 100 MB within a year and keeps growing. Per-cell metadata is 61 % of the bucketed size.
 
@@ -733,11 +726,11 @@ Each sensor reports every 10 s. Column sizes: `sensor_id` uuid 16 B, `day` date 
 
 #### First-principles explanation
 
-Ask a room of people "who here knows someone who knows a cardiologist?". Each person thinks of their friends, and each friend of theirs — nobody consults a master list of every friendship in the city. A graph database stores each person with a direct list of their connections, so a question about a neighborhood of the graph costs time proportional to that neighborhood, not to the whole population.
+Asked "who knows someone who knows a cardiologist?", you think of your friends and theirs — you never consult a city-wide list of friendships. A graph database stores each node with direct links to its neighbors, so a neighborhood question costs time proportional to the neighborhood, not the population.
 
 #### Why does this exist?
 
-Some domains are mostly relationships: social networks, fraud rings, network topology, access-control hierarchies, supply chains, knowledge graphs. In SQL, each hop is a join through an edge table, and a question of unknown depth ("any path up to 6 hops") needs a recursive common table expression whose cost and plan are hard to predict. Graph databases make the traversal itself the primitive operation.
+Some domains are mostly relationships: social networks, fraud rings, access-control hierarchies, knowledge graphs. In SQL each hop is a join, and a question of unknown depth needs a recursive common table expression with hard-to-predict cost. Graph databases make traversal the primitive.
 
 **Table 12.9 — Property graph versus RDF.**
 
@@ -749,7 +742,6 @@ Some domains are mostly relationships: social networks, fraud rings, network top
 | Query languages | Cypher / openCypher, Gremlin, GQL (ISO/IEC 39075:2024) | SPARQL (W3C) |
 | Schema and reasoning | Optional constraints | Ontologies (RDFS, OWL) and inference |
 | Typical systems | Neo4j, Memgraph, TigerGraph, Amazon Neptune | Amazon Neptune, GraphDB, Apache Jena, Virtuoso |
-| Typical use | Application graphs, fraud, recommendations | Linked data, knowledge graphs, data integration |
 
 [W3C 2014; ISO 2024; Robinson et al. 2015]
 
@@ -767,7 +759,7 @@ flowchart LR
   B -->|WORKS_AT| E{{"Company: Acme"}}
 ```
 
-**Reading the diagram.** Shapes here distinguish node labels rather than the book's infrastructure legend: people, a device, accounts and a company. Every arrow is a typed, directed relationship that can carry properties (`since`, `amount`). The fraud signal is a short cycle — Ana and Chen share device `d-77` and money moves between their accounts — which is a three-hop pattern that a graph query finds by walking edges from Ana. There are no network or storage boundaries in this logical view; in a deployment the whole graph typically lives on one primary with read replicas, because cutting a graph across machines turns hops into network calls. Scaling options are discussed below.
+**Reading the diagram.** Shapes here distinguish node labels (people, device, accounts, company), not the book's infrastructure legend. Each arrow is a typed, directed relationship that may carry properties (`since`, `amount`). The fraud signal is a short cycle: Ana and Chen share device `d-77` and money flows between their accounts — a pattern found by walking edges from Ana. This is a logical view with no network boundaries; deployments usually keep the whole graph on one primary with read replicas, because cutting a graph across machines turns hops into network calls.
 
 ### 12.7.2 Index-free adjacency and Cypher
 
@@ -775,13 +767,12 @@ flowchart LR
 
 Neo4j's native store illustrates **index-free adjacency** [Robinson et al. 2015; Neo4j Docs]:
 
-1. Nodes, relationships and properties live in separate stores of fixed-size records, so the record for node *n* is found by arithmetic on its ID rather than by an index search.
-2. Each node record points to its first relationship; each relationship record points to its start and end nodes and to the next and previous relationships of *both* nodes — a doubly linked list per node.
-3. A traversal follows pointers: node → relationship → neighbor node → its relationships. No global index is consulted per hop.
-4. Indexes are still used once, to find the *starting* nodes (for example, `Person` by `name`).
-5. Transactions are ACID on the primary; clusters replicate to secondaries for read scaling and failover.
+1. Nodes, relationships and properties live in stores of fixed-size records, so node *n* is found by arithmetic on its ID, not an index search.
+2. A node record points to its first relationship; each relationship points to its two nodes and to the next and previous relationships of both — a linked list per node.
+3. A traversal follows these pointers; no global index is consulted per hop. Indexes are used once, to find the starting nodes.
+4. Transactions are ACID on the primary; secondaries serve reads and failover.
 
-A Cypher query for the fraud pattern, and a friends-of-friends recommendation:
+Two Cypher queries — the fraud pattern and a friends-of-friends recommendation:
 
 ```text
 // Accounts of people within 2 KNOWS hops of Ana who use the same device as Ana
@@ -798,9 +789,9 @@ ORDER BY mutual DESC LIMIT 10;
 
 What to notice:
 
-- Patterns are drawn as ASCII art: `(node)-[:TYPE]->(node)`. `*1..2` is a variable-length path, which in SQL would be a recursive CTE.
-- The first query anchors on one indexed node (`Ana`) and expands outward; its cost depends on Ana's neighborhood, not on the total number of people.
-- `NOT (me)-[:KNOWS]-(fof)` is a pattern used as a predicate — an anti-join expressed directly.
+- Patterns are ASCII art, `(node)-[:TYPE]->(node)`; `*1..2` is a variable-length path (a recursive CTE in SQL).
+- Each query anchors on one indexed node and expands outward, so cost depends on Ana's neighborhood, not the population.
+- `NOT (me)-[:KNOWS]-(fof)` is an anti-join written as a pattern.
 
 ### 12.7.3 When graphs beat joins
 
@@ -827,22 +818,22 @@ A social graph has $N = 100$ million people with average degree $d = 150$. Assum
 2. $k = 3$: $E_3 = 22{,}650 + 3{,}375{,}000 = 3{,}397{,}650$ → graph ≈ 0.68 s; join ≈ 3.4 s.
 3. Neither cost contains $N$ except through the logarithm in $t_{\text{idx}}$: doubling the population barely changes either.
 
-**Interpretation.** Index-free adjacency gives a constant-factor win per hop (here 5×, illustrative) and avoids building large intermediate join results — but the dominant term is $d^k$, which defeats *both* systems by three hops.
+**Interpretation.** Index-free adjacency wins a constant factor per hop (here 5×, illustrative) and avoids large intermediate join results, but the $d^k$ term defeats *both* systems by three hops.
 
-**Engineering implication.** Graphs beat joins for variable-depth, pattern-shaped queries over a bounded neighborhood (fraud rings, permission inheritance, shortest paths among thousands of nodes). For deep traversals, prune (filters, `LIMIT`, bidirectional search) or precompute. For one or two fixed hops over well-indexed tables, a relational database is usually just as good.
+**Engineering implication.** Graphs beat joins for variable-depth, pattern-shaped queries over bounded neighborhoods (fraud rings, permission inheritance). Prune or precompute deep traversals; for one or two fixed hops, a well-indexed relational database is usually as good.
 :::
 
 #### Real-world industry applications
 
 ::: industry
-**Facebook TAO.** Facebook serves its social graph — objects (users, posts, check-ins) and typed associations — through TAO, a geographically distributed, read-optimized graph cache over sharded MySQL. The API is graph-shaped (`assoc_range`, `assoc_count`), but storage is relational; the design shows that a graph *data model* does not require a native graph *database* when queries are mostly one hop and the scale is planetary.
+**Facebook TAO.** Facebook serves its social graph of objects and typed associations through TAO, a geographically distributed, read-optimized graph cache over sharded MySQL. The API is graph-shaped, the storage relational: a graph *data model* does not require a graph *database* when queries are mostly one hop and scale is planetary.
 *Evidence: Primary* — [Bronson et al. 2013]
 :::
 
 #### Advantages and disadvantages
 
-- **Advantages:** expressive multi-hop and path queries; performance tied to the touched subgraph; flexible schema for adding relationship types; graph algorithms (PageRank, community detection, shortest path) available as libraries.
-- **Disadvantages:** horizontal partitioning is hard because any cut adds network hops to traversals; write throughput and dataset size are typically bounded by one primary; fewer engineers know the query languages; analytics over the whole graph belong in batch graph processing, not an OLTP graph database.
+- **Advantages:** expressive path queries; cost tied to the touched subgraph; easy to add relationship types; graph algorithm libraries.
+- **Disadvantages:** hard to partition; writes and size usually bounded by one primary; scarcer expertise; whole-graph analytics belong in batch processing.
 
 #### Failure scenarios
 
@@ -857,7 +848,7 @@ A social graph has $N = 100$ million people with average degree $d = 150$. Assum
 #### Common misconceptions
 
 ::: mistake
-**"If my data has relationships, I need a graph database."** All business data has relationships; relational databases were built for them. Choose a graph database when the questions are about *paths and patterns of unknown depth*, not merely when entities refer to each other.
+**"If my data has relationships, I need a graph database."** Relational databases were built for relationships. Choose a graph database when questions are about *paths and patterns of unknown depth*.
 :::
 
 ## 12.8 Time-series databases
@@ -870,19 +861,18 @@ A social graph has $N = 100$ million people with average degree $d = 150$. Assum
 
 #### First-principles explanation
 
-A ship's logbook records the position every hour, in order, and nobody goes back to edit an entry from last Tuesday. Old pages are eventually summarized ("averaged 12 knots in March") and the detailed pages archived. Because entries arrive in time order and are almost never updated, the log can be written very compactly — the next entry is usually "same as before, one hour later".
+A ship's log records the position every hour, in order, and nobody edits last Tuesday's entry; old pages are summarized ("averaged 12 knots in March"). Because the next entry is usually "same as before, one hour later", the log can be written very compactly.
 
 #### Why does this exist?
 
-Monitoring, IoT and financial tick data produce enormous write rates of tiny records: a fleet of 10,000 servers exporting 1,000 metrics each every 15 s produces about 667,000 samples per second. A general-purpose database spends more bytes on row headers and index entries than on the 16 bytes of data (an 8-byte timestamp and an 8-byte float), and its B-tree inserts are random I/O. TSDBs exploit four properties: writes are appends near "now", reads are ranges over recent time, adjacent samples are similar, and old data is valuable only in aggregate.
+10,000 servers exporting 1,000 metrics every 15 s produce about 667,000 samples per second. A general-purpose database spends more on row headers and index entries than on each sample's 16 bytes (8-byte timestamp, 8-byte float). TSDBs exploit four properties: writes append near "now", reads scan recent ranges, adjacent samples are similar, and old data matters only in aggregate.
 
 #### How it works internally
 
-1. Incoming samples are routed to their series by hashing or looking up the label set; an **inverted index** maps each `label=value` pair to the IDs of series that have it (the same structure as a search engine's postings list, §16.3), so `{region="eu", job="api"}` is an intersection of two lists.
-2. Samples of each series are buffered in memory in time order and written to a **write-ahead log** for crash recovery.
-3. Buffers are cut into **chunks** (Prometheus uses up to 120 samples per chunk) and compressed with Gorilla-style encoding.
-4. Data is grouped into time-partitioned **blocks** (Prometheus: 2-hour blocks), later compacted into larger blocks.
-5. **Retention** deletes whole expired blocks — dropping a directory instead of deleting rows one by one — and **downsampling** replaces old raw samples with aggregates such as 5-minute or 1-hour min, max, sum and count.
+1. An **inverted index** maps each `label=value` pair to the series that have it (a postings list, §16.3), so `{region="eu", job="api"}` is a list intersection.
+2. Each series' samples are buffered in memory and logged to a **write-ahead log**.
+3. Buffers are cut into **chunks** (up to 120 samples in Prometheus) compressed Gorilla-style, grouped into time-partitioned **blocks** (2 hours in Prometheus) and compacted into larger blocks.
+4. **Retention** deletes whole expired blocks — a directory removal, not row deletes — and **downsampling** replaces old samples with aggregates (min, max, sum, count per 5 minutes or hour).
 
 **Figure 12.8 — Prometheus TSDB write and storage path.**
 
@@ -899,15 +889,15 @@ flowchart LR
   B2 -.->|remote write| R[(Long-term store)]
 ```
 
-**Reading the diagram.** Prometheus pulls metrics from targets over HTTP on an interval, appends each sample to the in-memory head block and to the write-ahead log on disk (synchronously, for recovery after a crash). Every two hours the head is cut into an immutable on-disk block containing compressed chunks and an inverted index; background compaction (dotted, asynchronous) merges blocks into larger ones, and retention deletes whole block directories once they are older than the configured period (15 days by default). Queries consult the postings index to find matching series and read both the head and persisted blocks. The local disk is a single-node storage boundary: Prometheus is not clustered, so durability and long retention come from remote-write to systems such as Thanos, Cortex or Mimir. Failure points: a crash costs only a WAL replay; a disk loss loses local history.
+**Reading the diagram.** Prometheus pulls metrics over HTTP and appends each sample to the in-memory head block and the on-disk write-ahead log. Every two hours the head becomes an immutable block of compressed chunks plus an index; compaction (dotted, asynchronous) merges blocks, and retention (15 days by default) deletes old block directories. Queries use the postings index and read both head and blocks. The local disk is a single-node storage boundary; long retention and durability come from remote-write to systems such as Thanos, Cortex or Mimir. Failure points: a crash costs a WAL replay; a lost disk loses local history.
 
 ### 12.8.2 Gorilla compression: delta-of-delta and XOR
 
-Facebook's Gorilla paper [Pelkonen et al. 2015] introduced the compression scheme that most modern TSDBs, including Prometheus, adapt. It encodes timestamps and values separately, each against the previous sample.
+Facebook's Gorilla paper [Pelkonen et al. 2015] introduced the compression most modern TSDBs adapt, encoding timestamps and values separately against the previous sample.
 
-**Timestamps — delta-of-delta.** Samples usually arrive at a fixed interval, so the difference between consecutive deltas is usually zero. For timestamps $t_{n-2}, t_{n-1}, t_n$ the encoder stores $D = (t_n - t_{n-1}) - (t_{n-1} - t_{n-2})$ with a variable-length prefix code: a single `0` bit if $D = 0$; `10` plus 7 bits if $D \in [-63, 64]$; `110` plus 9 bits if $D \in [-255, 256]$; `1110` plus 12 bits if $D \in [-2047, 2048]$; otherwise `1111` plus 32 bits.
+**Timestamps — delta-of-delta.** With a fixed scrape interval, consecutive deltas are equal, so the encoder stores $D = (t_n - t_{n-1}) - (t_{n-1} - t_{n-2})$ with a prefix code: `0` if $D = 0$; `10` + 7 bits for $D \in [-63, 64]$; `110` + 9 bits for $[-255, 256]$; `1110` + 12 bits for $[-2047, 2048]$; else `1111` + 32 bits.
 
-**Values — XOR.** Consecutive floating-point values of the same metric share sign, exponent and leading mantissa bits. XOR with the previous value yields mostly zeros: if the XOR is zero (value repeated), store a single `0`; otherwise store `1`, then either `0` and the meaningful bits inside the previous window of leading and trailing zeros, or `1`, 5 bits giving the leading-zero count, 6 bits giving the meaningful-bit length, and the meaningful bits.
+**Values — XOR.** Consecutive values share sign, exponent and leading mantissa bits, so XOR with the previous value is mostly zeros: store `0` if it is zero; otherwise `1`, then either `0` plus the meaningful bits within the previous leading/trailing-zero window, or `1`, a 5-bit leading-zero count, a 6-bit length and the meaningful bits.
 
 **Figure 12.9 — Gorilla's per-sample encoding decisions.**
 
@@ -925,9 +915,9 @@ flowchart TB
   W -->|no| V2["11 + 5-bit lead + 6-bit len<br/>+ meaningful bits"]
 ```
 
-**Reading the diagram.** Each new sample takes two independent paths through the encoder, one for its timestamp and one for its value, and both read only the previous sample's state — which is why chunks must be decoded sequentially from the start. The common case on each path costs one bit. The diagram has no network or storage boundaries; the failure point is data that defeats the assumptions — jittery timestamps fall into the 9- to 36-bit branches and noisy values into the 13-bit-header branch. Scaling is per series: series are encoded independently, so compression parallelizes across cores trivially.
+**Reading the diagram.** Each sample takes two independent paths, timestamp and value, both depending only on the previous sample — so chunks decode sequentially from the start. The common case on each path costs one bit. There are no network or storage boundaries; the failure point is data that defeats the assumptions (jittery timestamps, noisy values). Series encode independently, so compression parallelizes across cores.
 
-The following program counts the bits this scheme uses for three kinds of series:
+This program counts the bits used for three kinds of series:
 
 ```python
 """Gorilla-style compression (Pelkonen et al., VLDB 2015): delta-of-delta
@@ -998,8 +988,8 @@ What to notice:
 
 - A 120-sample chunk of a constant gauge costs 2 bits per sample once the interval is established (the second sample pays 9 bits to record the first delta); the 128-bit uncompressed header dominates, which is why chunks should not be too short.
 - The steadily increasing counter lands at 1.33 bytes per point — close to the 1.37 bytes per point the Gorilla paper reports for Facebook's production data, a 12× reduction from 16 bytes [Pelkonen et al. 2015].
-- Random values with one decimal place compress only 2×: their mantissas differ in almost every bit. Rounding values to the precision you actually need is a powerful compression lever.
-- The real format stores the first timestamp as a 14-bit offset from a block header, not 64 bits; the simplification changes only the first sample.
+- Random one-decimal values compress only 2× because their mantissas differ in almost every bit; storing only the precision you need is a strong lever.
+- The real format stores the first timestamp as a 14-bit offset from a block header.
 
 ### 12.8.3 Retention and downsampling
 
@@ -1029,9 +1019,9 @@ $$S = N_{\text{series}} \times \sum_{i} \frac{R_i}{\Delta_i} \times b_i$$
 3. One-hour rollups for one year: $8{,}760$ points; $10^6 \times 8{,}760 \times 10 = 87.6$ GB.
 4. Tiered total: $130 + 87.6 \approx$ **218 GB**, about 14× less than a year of raw data. Without compression (16 B/point) the 15-day raw tier alone would be 1.38 TB.
 
-**Interpretation.** Compression buys about 10×; downsampling buys another order of magnitude for long retention, at the cost of losing detail older than 15 days.
+**Interpretation.** Compression buys about 10×; downsampling another order of magnitude, at the cost of detail older than 15 days.
 
-**Engineering implication.** Choose rollup aggregates deliberately: you cannot compute a correct p99 from averaged rollups, so keep histograms or sketches if old percentiles matter. Series count — not sample rate — is usually the first limit, because each active series costs index and memory (see Table 12.12).
+**Engineering implication.** You cannot compute a correct p99 from averaged rollups, so keep histograms or sketches if old percentiles matter. Series count, not sample rate, is usually the first limit (Table 12.12).
 :::
 
 ### 12.8.4 Prometheus, InfluxDB and TimescaleDB
@@ -1045,7 +1035,6 @@ $$S = N_{\text{series}} \times \sum_{i} \frac{R_i}{\Delta_i} \times b_i$$
 | Storage | 2-hour blocks, Gorilla-style chunks, postings index | Version 3 rewritten on Apache Arrow, DataFusion and Parquet | Time-partitioned chunks (default 7 days); columnar compression of old chunks |
 | Query | PromQL | SQL and InfluxQL (v3) | Full PostgreSQL SQL, joins with relational tables |
 | Downsampling | Recording rules; long-term stores | Downsampling tasks or queries | Continuous aggregates; retention policies drop chunks |
-| Scale-out | Single node; Thanos, Cortex or Mimir for clustering | Product-tier dependent | PostgreSQL scaling (replicas); multi-node varies by offering |
 | Choose when | Operational metrics and alerting | High-ingest metrics or IoT with tags and fields | You need SQL, joins and PostgreSQL tooling |
 
 [Prometheus Docs; InfluxData Docs; Timescale Docs]
@@ -1053,7 +1042,7 @@ $$S = N_{\text{series}} \times \sum_{i} \frac{R_i}{\Delta_i} \times b_i$$
 #### Real-world industry applications
 
 ::: industry
-**Facebook Gorilla.** Facebook's monitoring system wrote to an HBase-backed store and needed faster queries over recent data. Gorilla keeps the most recent 26 hours in memory using delta-of-delta and XOR compression (1.37 bytes per point on average), writes through to HBase for durability, and reported a 73× improvement in query latency and 14× in query throughput over the previous system. Its encoding became the basis of Prometheus's chunk format and many others.
+**Facebook Gorilla.** Facebook's HBase-backed monitoring store was too slow for queries over recent data. Gorilla keeps the latest 26 hours in memory at 1.37 bytes per point, writes through to HBase, and reported 73× lower query latency and 14× higher throughput.
 *Evidence: Primary* — [Pelkonen et al. 2015]
 :::
 
@@ -1071,7 +1060,7 @@ $$S = N_{\text{series}} \times \sum_{i} \frac{R_i}{\Delta_i} \times b_i$$
 #### Common misconceptions
 
 ::: mistake
-**"A TSDB is just a table with a timestamp column."** For small volumes it can be. At scale the differences that matter are physical: per-series compression to 1–2 bytes per sample, time-partitioned blocks that make retention a file deletion, and an inverted label index. TimescaleDB shows the middle path — keep SQL, but change the storage layout underneath.
+**"A TSDB is just a table with a timestamp column."** At small volume, yes. At scale the differences are physical: 1–2 bytes per sample, retention as file deletion, and an inverted label index. TimescaleDB keeps SQL but changes the storage layout underneath.
 :::
 
 ## 12.9 Search engines as databases
@@ -1080,9 +1069,7 @@ $$S = N_{\text{series}} \times \sum_{i} \frac{R_i}{\Delta_i} \times b_i$$
 **Definition — Search engine (as a data store).** A system such as Elasticsearch, OpenSearch or Apache Solr that stores JSON documents and builds an **inverted index** — a map from each term to the list of documents containing it — so it can answer full-text, relevance-ranked, faceted and fuzzy queries.
 :::
 
-A relational `LIKE '%running shoes%'` scans every row and cannot rank results; an inverted index finds the documents containing both terms by intersecting two postings lists and scores them with BM25. Search engines also excel at faceted counts ("312 results in Shoes, 45 in Socks") and log analytics. Chapter 16 covers inverted indexes, analysis, ranking and distributed search in depth.
-
-As a *database*, a search engine has important limits. Indexing is **near-real-time**: a newly written document becomes searchable only after a periodic refresh (Elasticsearch's default refresh interval is 1 second), there are no multi-document transactions, and mapping changes often require reindexing [Elastic Docs]. The standard architecture therefore keeps the system of record in a transactional database and feeds the search index asynchronously through change data capture (§32.6), accepting that search results may lag by seconds and designing a full reindex path for when the two diverge.
+A relational `LIKE '%running shoes%'` scans every row and cannot rank; an inverted index intersects two postings lists and scores matches with BM25, and also serves faceted counts and log analytics (Chapter 16). As a *database* it has limits: indexing is **near-real-time** (Elasticsearch refreshes every 1 second by default), there are no multi-document transactions, and mapping changes often require reindexing [Elastic Docs]. The standard architecture keeps the system of record in a transactional database and feeds the index through change data capture (§32.6).
 
 ::: recommendation
 **Do not make the search index your only copy.** Treat it as a derived, rebuildable view. If you cannot regenerate it from a source of truth in hours, you have created a primary database without the durability features of one.
@@ -1094,9 +1081,7 @@ As a *database*, a search engine has important limits. Indexing is **near-real-t
 **Definition — Vector database.** A data store that indexes high-dimensional numeric vectors (**embeddings** produced by machine-learning models) and answers **approximate nearest neighbor (ANN) search** queries: "the *k* stored vectors most similar to this query vector", by cosine similarity, dot product or Euclidean distance.
 :::
 
-Embeddings place semantically similar items — a photo of a beach and the text "sunny coast" — near each other in a space of hundreds or thousands of dimensions. Exact nearest-neighbor search compares the query with every vector; at 100 million 768-dimension vectors that is about $7.7 \times 10^{10}$ multiply-adds per query. ANN indexes such as **HNSW** (a navigable multi-layer proximity graph [Malkov & Yashunin 2020]) and **IVF** (cluster, then search only nearby clusters) trade a little recall for orders-of-magnitude less work.
-
-You will meet vector search in three forms (as of 2026): dedicated databases (Milvus, Pinecone, Qdrant, Weaviate); extensions to existing databases (PostgreSQL's pgvector, MongoDB Atlas Vector Search, Cassandra 5.0, Redis, Elasticsearch/OpenSearch); and libraries embedded in services (FAISS). The design questions — recall versus latency, filtering by metadata, memory footprint, quantization — belong to Chapter 74, and retrieval-augmented generation (RAG) to Chapter 75. For this chapter, place vector stores on the map as a specialized secondary index: like search engines, they are usually fed from a system of record and rebuilt when the embedding model changes.
+Embeddings place similar items — a beach photo and the text "sunny coast" — near each other in hundreds of dimensions. Exact search over 100 million 768-dimension vectors costs about $7.7 \times 10^{10}$ multiply-adds per query; ANN indexes such as **HNSW** (a layered proximity graph [Malkov & Yashunin 2020]) and **IVF** (search only nearby clusters) trade a little recall for orders of magnitude less work. As of 2026 you meet vector search as dedicated databases (Milvus, Pinecone, Qdrant, Weaviate), as extensions (pgvector, MongoDB Atlas, Cassandra 5.0, Redis, Elasticsearch) and as libraries (FAISS). Treat it as a specialized secondary index, fed from a system of record and rebuilt when the embedding model changes; Chapter 74 covers the design in depth.
 
 ## 12.11 NewSQL
 
@@ -1104,7 +1089,7 @@ You will meet vector search in three forms (as of 2026): dedicated databases (Mi
 **Definition — NewSQL (distributed SQL).** Relational databases that keep SQL and ACID transactions with serializable or strong isolation while scaling horizontally across nodes and regions, by partitioning data into ranges replicated with a consensus protocol. The term was coined by analyst Matthew Aslett in 2011 [Pavlo & Aslett 2016].
 :::
 
-NewSQL answers the question the first NoSQL wave left open: can you scale out *without* giving up transactions and joins? The recipe the main systems share is: split tables into key ranges; replicate each range with Paxos or Raft (§26.6, §26.7) so a majority must agree on every write; run distributed transactions across ranges with a two-phase-commit variant (§28.4); and use timestamps to order transactions globally.
+NewSQL scales out *without* giving up transactions and joins: split tables into key ranges, replicate each with Paxos or Raft (§26.6, §26.7), run cross-range transactions with a two-phase-commit variant (§28.4), and order transactions with timestamps.
 
 **Table 12.13 — Three distributed SQL systems (deep treatment in Chapter 28).**
 
@@ -1114,18 +1099,18 @@ NewSQL answers the question the first NoSQL wave left open: can you scale out *w
 | CockroachDB | Cockroach Labs, SIGMOD 2020 paper | Raft per range | Hybrid logical clocks, bounded uncertainty | PostgreSQL wire compatibility; serializable by default [Taft et al. 2020] |
 | TiDB | PingCAP, VLDB 2020 paper | Raft in TiKV | Timestamp oracle in the Placement Driver | MySQL compatibility; columnar TiFlash replicas for analytics [Huang et al. 2020] |
 
-The price is latency and operational weight. A write must reach a majority of replicas — within a region that adds a few milliseconds; across regions it adds tens of milliseconds — and cross-range transactions add a second round of coordination. Spanner's commit wait deliberately pauses each commit for the clock uncertainty (single-digit milliseconds in the 2012 paper). Choose NewSQL when you have outgrown one PostgreSQL or MySQL primary *and* need multi-row transactions; it is not a faster single-node database. Chapter 28 (§28.8, §28.10) explains TrueTime, Percolator-style transactions and the trade-offs in detail.
+The price is latency: a write must reach a majority of replicas (milliseconds within a region, tens of milliseconds across regions), cross-range transactions add coordination, and Spanner's commit wait pauses for clock uncertainty. Choose NewSQL when you have outgrown one PostgreSQL or MySQL primary *and* need multi-row transactions (§28.8, §28.10).
 
 ## 12.12 Selection framework and SQL versus NoSQL comparison
 
 ### 12.12.1 A decision procedure
 
-Choosing a database is choosing which questions will be cheap and which will be impossible. A defensible choice follows four steps:
+Choosing a database is choosing which questions will be cheap and which impossible:
 
-1. **Write down the access patterns** with rates and latency targets: "get order by ID, 10,000/s, p99 < 20 ms"; "orders by customer, newest first"; "monthly revenue by region, once a day".
-2. **Write down the invariants** that must never be violated and how many entities each spans: "stock never negative" (one item), "debits equal credits" (two accounts).
-3. **Estimate size and growth** — data volume, write rate, peak-to-average ratio — with the methods of §2.11.
-4. **Pick the simplest store that serves the critical patterns**, then add specialized stores only for patterns it cannot serve.
+1. **List access patterns** with rates and latency targets ("get order by ID, 10,000/s, p99 < 20 ms").
+2. **List invariants** and how many entities each spans ("stock never negative": one; "debits equal credits": two).
+3. **Estimate size and growth** (§2.11).
+4. **Pick the simplest store that serves the critical patterns**, adding specialized stores only for patterns it cannot serve.
 
 **Figure 12.10 — Database selection flowchart.**
 
@@ -1147,10 +1132,10 @@ flowchart TB
   Q3 -->|"semantic similarity"| VEC[(Vector index)]
 ```
 
-**Reading the diagram.** Decision diamonds are questions about requirements, not technologies, and cylinders are families with one representative example each. The first question deliberately routes toward relational storage: if invariants span entities or the queries are not yet known, a relational database (scaled with replicas, §14.3) is the default, and NewSQL is the answer only when one primary cannot carry the write load or data. The right-hand branch picks a family by the dominant query shape. There are no protocols or failure paths; in practice one system usually serves several patterns, and specialized stores are added as *derived* views (§12.13). Revisit the chart when access patterns change — that is the moment a single-purpose NoSQL schema hurts most.
+**Reading the diagram.** Diamonds ask about requirements, not technologies; cylinders are families with one example each. The first question routes toward relational storage: if invariants span entities or queries are not yet known, a relational database with replicas (§14.3) is the default, and NewSQL applies only when one primary cannot carry the load. Otherwise the dominant query shape picks the family. There are no protocols or failure paths; in practice one system serves several patterns and specialized stores are added as *derived* views (§12.13). Revisit the chart when access patterns change.
 
 ::: recommendation
-**Default to PostgreSQL until a requirement rules it out.** A single modern PostgreSQL primary with replicas handles tens of thousands of transactions per second and terabytes of data, supports JSON documents (`jsonb`), full-text search, time-series (TimescaleDB) and vector search (pgvector) well enough for many products. Move a workload to a specialized store when you can name the requirement — write rate, latency at scale, multi-region availability, traversal depth — that PostgreSQL fails, and you can measure it.
+**Default to PostgreSQL until a requirement rules it out.** One PostgreSQL primary with replicas handles tens of thousands of transactions per second and terabytes of data, with `jsonb`, full-text search, TimescaleDB and pgvector covering many specialized needs. Move a workload when you can name and measure the requirement it fails.
 :::
 
 ### 12.12.2 Comparison table
@@ -1169,7 +1154,7 @@ flowchart TB
 | Use cases | Orders, payments, inventory | Sessions, carts, counters | Catalogs, profiles, content | Messages, IoT, event logs | Fraud, social, permissions | Metrics, IoT telemetry |
 | Choose when | Invariants span entities | Access is by key at scale | Aggregates read whole | Write volume dominates | Questions are paths | Data is timestamped samples |
 
-The table hides an important nuance: the boundaries are blurring. PostgreSQL stores documents; MongoDB runs transactions; Cassandra adds storage-attached secondary indexes; DynamoDB supports transactions and PartiQL, a SQL-compatible query language. Compare specific products against specific requirements, not families against slogans.
+The boundaries are blurring — PostgreSQL stores documents, MongoDB runs transactions, DynamoDB speaks PartiQL (a SQL-compatible language) — so compare specific products against specific requirements.
 
 ::: tip
 **Interview tip — justify, don't recite.** "We'll use Cassandra because it scales" earns little credit. "Messages are written 50,000/s and always read as the latest page of one channel, so I'll partition by `(channel_id, bucket)` with message ID as clustering column; there are no cross-channel transactions, so we don't need a relational store here" shows the access-pattern reasoning interviewers look for.
@@ -1185,7 +1170,7 @@ The table hides an important nuance: the boundaries are blurring. PostgreSQL sto
 
 #### First-principles explanation
 
-A household keeps money in a bank account, documents in a filing cabinet, food in a fridge and tools in a shed. Nobody stores food in the filing cabinet because it would be "simpler to have one place". But every additional place needs its own upkeep, and when you move house each one must be packed, moved and checked.
+A household keeps money in a bank, documents in a cabinet and food in a fridge; nobody stores food in the cabinet for simplicity's sake. But every extra place needs upkeep, and each must be packed and checked when you move.
 
 #### How it works internally
 
@@ -1215,7 +1200,7 @@ flowchart LR
   OS -.->|metrics| PR[(Prometheus)]
 ```
 
-**Reading the diagram.** Clients reach services through an API gateway over HTTPS. Solid arrows are synchronous reads and writes: the order service owns the system of record for orders and payments in PostgreSQL and keeps carts in a key-value store; the catalog service owns product documents in MongoDB. Dotted arrows are asynchronous: change data capture streams committed changes from PostgreSQL and MongoDB into Kafka, from which consumers build the Elasticsearch index and the Neo4j co-purchase graph; services emit metrics to Prometheus. Storage boundaries: each database is a separate failure domain with its own backups. Failure points: if the CDC pipeline stalls, search and recommendations serve stale data but orders keep working — the intended degradation. Scaling: each store scales independently, and each derived store can be rebuilt from Kafka or a fresh export.
+**Reading the diagram.** Clients reach services via an API gateway over HTTPS. Solid arrows are synchronous: the order service owns orders and payments in PostgreSQL and carts in a key-value store; the catalog service owns product documents in MongoDB. Dotted arrows are asynchronous: CDC streams committed changes into Kafka, whose consumers build the Elasticsearch index and the Neo4j co-purchase graph; services emit metrics to Prometheus. Each database is a separate failure domain with its own backups. If the CDC pipeline stalls, search and recommendations go stale but orders keep working — the intended degradation. Each store scales independently, and derived stores can be rebuilt from Kafka.
 
 ### 12.13.2 The operational costs
 
@@ -1223,29 +1208,169 @@ flowchart LR
 
 | Cost | What it involves |
 |---|---|
-| Expertise | On-call engineers who understand its failure modes, tuning and upgrade path |
-| Operations | Provisioning, patching, version upgrades, capacity planning, monitoring dashboards and alerts |
-| Backup and recovery | A separate backup method, restore drills and recovery-time objective per store |
-| Consistency | Derived stores lag; duplicates and reordering in pipelines; periodic reconciliation jobs |
-| Security and compliance | Another access-control model, encryption configuration and audit trail; data deletion (for example, privacy requests) must reach every copy |
-| Testing | Integration tests and local environments that run every store |
-| Money | Baseline cluster cost even when idle; replicated data stored several times |
+| Expertise | On-call engineers who know its failure modes and tuning |
+| Operations | Patching, upgrades, capacity planning, dashboards, alerts |
+| Backup and recovery | Separate backups, restore drills and recovery objectives |
+| Consistency | Lagging derived stores; reconciliation jobs |
+| Security and compliance | Another access model and audit trail; deletions must reach every copy |
+| Money | Baseline cluster cost even when idle; data stored several times |
 
 ::: industry
-**Database-per-service in microservices.** Microservice architectures commonly give each service its own database so services can evolve independently (§34.11); polyglot persistence follows naturally because each team picks the store that fits. The same choice is the source of the most common complaint about microservices — cross-service queries and consistency become pipeline problems.
+**Database-per-service.** Microservices commonly give each service its own database (§34.11), so polyglot persistence follows naturally — and cross-service queries and consistency become pipeline problems.
 *Evidence: Illustrative* — a widely described architectural pattern; not a claim about any specific company.
 :::
 
 ::: warning
-**Dual writes.** Writing to PostgreSQL and then to Elasticsearch from the same request handler looks simple, but if the process crashes between the two writes, or the second write fails and is not retried, the stores diverge silently. Use the transactional outbox or CDC so the second write is derived from the committed first one.
+**Dual writes.** Writing to PostgreSQL and then Elasticsearch in one handler diverges silently if the process crashes between them. Derive the second write from the committed first via an outbox or CDC.
 :::
 
 ::: recommendation
-**Budget the number of stores.** Add a database technology only when the requirement it serves is worth a permanent operational team cost. Many organizations publish an approved list (for example: one relational, one key-value, one search, one metrics) and require a design review for anything else.
+**Budget the number of stores.** Add a technology only when its requirement justifies a permanent operational cost; many organizations keep an approved list and review exceptions.
 :::
 
 #### Common misconceptions
 
 ::: mistake
-**"Polyglot persistence means every service should use a different database."** The goal is fit, not variety. Two services with similar access patterns should use the same technology so that expertise, tooling and operational runbooks are shared.
+**"Polyglot persistence means every service should use a different database."** The goal is fit, not variety; services with similar patterns should share technology, tooling and runbooks.
 :::
+
+## 12.14 Summary and revision notes
+
+::: summary
+- NoSQL arose from scale-out, schema-flexibility and availability pressures plus "one size does not fit all"; Bigtable, Dynamo, PNUTS and Cassandra defined the designs.
+- Key-value, document and wide-column stores are **aggregate-oriented**: data read together is stored together under one key.
+- **DynamoDB:** partition key (hashed) + sort key (ordered item collection); GSIs are asynchronous, eventually consistent copies; LSIs share the partition key. Design keys from access patterns; use sparse and overloaded indexes. WCU = 1 KB writes/s, RCU = 4 KB strong reads/s (½ for eventual); per-partition limits 3,000 RCU / 1,000 WCU; on-demand versus provisioned break-even ≈ 29 % utilization (as of 2026 prices).
+- **MongoDB:** embed what is owned, bounded and read together; reference what is shared or unbounded; order compound indexes Equality–Sort–Range; multi-document transactions since 4.0; use `w: "majority"`.
+- **Bigtable/Cassandra:** sorted sparse rows; CQL `PRIMARY KEY ((partition), clustering)`; one table per query; bucket partitions and size them with $N_v = N_r(N_c - N_{pk} - N_s) + N_s$; beware tombstones and last-write-wins.
+- **Graphs:** property graph versus RDF; index-free adjacency makes traversal cost depend on the neighborhood, but $d^k$ growth still dominates deep queries.
+- **Time-series:** labeled series, inverted label index, delta-of-delta and XOR compression (~1.37 B/sample in Gorilla), time blocks, retention by deletion, downsampling tiers; cardinality is the first limit.
+- Search engines and vector databases are derived indexes fed by CDC; NewSQL adds scale-out SQL transactions at a latency cost (Chapter 28).
+- Default to relational; add a specialized store for a named, measured requirement; feed derived stores asynchronously; budget each store's operational cost.
+:::
+
+## 12.15 Knowledge checkpoint
+
+1. Name the three pressures that produced NoSQL and one paper associated with each design response.
+2. Why must a DynamoDB Query name exactly one partition key?
+3. Give two differences between an LSI and a GSI.
+4. A Query returns three items of 1.2 KB each, eventually consistent. How many RCUs does it consume? How many would three GetItem calls consume?
+5. What makes a GSI sparse, and what is it useful for?
+6. State the ESR rule and explain why sort fields precede range fields.
+7. In `PRIMARY KEY ((sensor_id, day), ts)`, which columns determine placement and which determine order?
+8. How many cells does a Cassandra partition hold with 10,000 rows, 5 columns, 1 partition-key column and 1 static column?
+9. Why can deleted data reappear in Cassandra?
+10. What is index-free adjacency, and what does it not fix?
+11. Which Gorilla encoding costs one bit for a timestamp and one bit for a value?
+12. Why should a search index not be the only copy of data?
+
+<details><summary>Answers</summary>
+
+1. Scale-out (Bigtable, Dynamo: partition by key), schema flexibility (Bigtable's sparse columns; document stores), availability (Dynamo: sloppy quorums, always-writable).
+2. Only the partition key is hashed to locate data; without it the request would have to visit every partition.
+3. An LSI shares the table's partition key, must be created with the table, supports strong reads and limits item collections to 10 GB; a GSI has any key, can be added later, is eventually consistent and has its own throughput.
+4. Query sums sizes: 3.6 KB → 1 unit × 0.5 = 0.5 RCU. GetItems round each item: 3 × 1 × 0.5 = 1.5 RCU.
+5. Only items carrying the index key attribute appear in it; it is a cheap, self-maintaining list such as "orders awaiting shipment".
+6. Equality, Sort, Range. Once a range condition is applied, matching entries are no longer in sort-field order, so the sort would need an in-memory step.
+7. `(sensor_id, day)` is hashed for placement; `ts` orders rows within the partition.
+8. $10{,}000 \times (5 - 1 - 1) + 1 = 30{,}001$ cells.
+9. A replica that was down longer than `gc_grace_seconds` missed the tombstone; after the tombstone is purged elsewhere, the old value on that replica wins on repair.
+10. Each node points directly to its relationships, so a hop is a pointer chase rather than an index lookup. It does not fix exponential growth of neighborhoods ($d^k$).
+11. Delta-of-delta equal to 0 and XOR with the previous value equal to 0 (same interval, repeated value).
+12. It is near-real-time, non-transactional and often needs reindexing after mapping changes; it must be rebuildable from a system of record.
+</details>
+
+## 12.16 Interview questions
+
+### Basic
+
+**Q1. When would you choose a NoSQL database over a relational one?**
+
+**Answer.** When a named requirement exceeds what a relational primary with replicas can deliver or fits another model better: write volume or data size beyond one node with simple per-key access (key-value, wide-column); aggregates of varying shape read whole (document); multi-hop path queries (graph); high-rate timestamped samples (time-series). If invariants span entities or queries are still unknown, start relational.
+
+**Q2. What is the difference between a partition key and a sort key?**
+
+**Answer.** The partition key is hashed to choose the partition, so it should have high cardinality and even load. The sort key orders items within a partition, enabling range, prefix and newest-first queries over one item collection.
+
+### Intermediate
+
+**Q3. Design a DynamoDB schema for a chat app: send a message, list a conversation's recent messages, list a user's conversations by latest activity.**
+
+**Answer.** Messages: `PK=CONV#id, SK=MSG#<time-ordered ID>`, read newest first with a descending Query. Membership: `PK=USER#u, SK=CONV#id` carrying `lastActivity`, plus a GSI keyed `USER#u` / `<lastActivity>#CONV#id` for recency order (update or batch on each message). A conversation above about 1,000 writes/s needs write sharding; use TTL for retention.
+
+**Q4. A Cassandra cluster shows read timeouts on a few nodes only. Diagnose.**
+
+**Answer.** Suspect a large or hot partition or tombstones: check partition-size histograms, tombstone warnings and key-level traffic. Typical causes are partition keys without a time bucket and queue-like deletes. Fix the model (bucket, avoid deletes, TTL with time-window compaction), migrate, and repair within `gc_grace_seconds`.
+
+### Advanced
+
+**Q5. Design storage for a social network: profiles, posts, follow graph, feed, search and metrics.**
+
+**Answer.** Profiles and posts in a sharded relational or document store keyed by user (system of record). The follow graph as adjacency lists in a key-value or wide-column store, since one-hop queries dominate (the TAO pattern), with a batch graph job for multi-hop recommendations. Feeds as precomputed lists in wide-column or Redis; search in Elasticsearch via CDC; metrics in Prometheus. Discuss read-your-writes for own posts, fan-out cost and the cost of operating many stores.
+
+**Q6. Your team proposes moving from PostgreSQL to MongoDB "for scale". How do you evaluate it?**
+
+**Answer.** Demand the measured bottleneck (write rate, size, latency) and check whether indexes, replicas, partitioning, `jsonb` or a cache fix it. MongoDB fits if the workload is aggregate-shaped and a shard key matches access patterns; otherwise you trade joins and constraints for application code. Price the migration (backfill, CDC cut-over), skills, and invariants needing transactions.
+
+## 12.17 Practical exercises
+
+**Exercise 12.1 — Key design.** Extend the toy store of §12.4.4 with AP6, "all orders containing a given SKU in the last 30 days". Propose a GSI, add it, and compute its WCU cost at 1,000 orders/s.
+
+**Exercise 12.2 — Capacity.** Recompute the §12.4.5 example with strongly consistent reads and transactional header writes. At what average utilization does provisioned capacity become cheaper?
+
+**Exercise 12.3 — Cassandra modeling.** In a Cassandra 5 container, create the §12.6.3 tables, load one day for 100 sensors, and compare `nodetool tablestats` partition sizes with $S_t$.
+
+**Exercise 12.4 — Compression.** Modify the Gorilla program to round the CPU values to integers and to remove timestamp jitter. Report the bytes per point for each change.
+
+## 12.18 Design challenges
+
+1. **Ride-sharing trip store.** 2 million trips per day, GPS points every 4 s per active trip, queries by trip, by driver over 90 days, and live positions. Choose stores, keys and buckets; size storage for one year.
+2. **Fraud detection platform.** Card transactions at 20,000/s must be scored in 50 ms using shared-device and shared-address rings up to 3 hops. Decide what lives in a graph, what is precomputed, and how the graph is fed.
+3. **Migrating a monolith's database.** A 4 TB PostgreSQL database serves orders, catalog, search and analytics. Propose a polyglot target, the CDC pipeline, the cut-over sequence and the operational budget.
+
+## 12.19 References
+
+1. DeCandia, G., Hastorun, D., Jampani, M., Kakulapati, G., Lakshman, A., Pilchin, A., Sivasubramanian, S., Vosshall, P., Vogels, W. *Dynamo: Amazon's Highly Available Key-value Store*. SOSP, 2007. https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf
+2. Chang, F., Dean, J., Ghemawat, S., Hsieh, W. C., Wallach, D. A., Burrows, M., Chandra, T., Fikes, A., Gruber, R. E. *Bigtable: A Distributed Storage System for Structured Data*. OSDI, 2006.
+3. Lakshman, A., Malik, P. *Cassandra: A Decentralized Structured Storage System*. ACM SIGOPS Operating Systems Review 44(2), 2010.
+4. Pelkonen, T., Franklin, S., Teller, J., Cavallaro, P., Huang, Q., Meza, J., Veeraraghavan, K. *Gorilla: A Fast, Scalable, In-Memory Time Series Database*. PVLDB 8(12), 2015. https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
+5. Elhemali, M., et al. *Amazon DynamoDB: A Scalable, Predictably Performant, and Fully Managed NoSQL Database Service*. USENIX ATC, 2022. https://www.usenix.org/conference/atc22/presentation/elhemali
+6. Cooper, B. F., et al. *PNUTS: Yahoo!'s Hosted Data Serving Platform*. PVLDB 1(2), 2008.
+7. Kleppmann, M. *Designing Data-Intensive Applications*, ch. 2. O'Reilly, 2017.
+8. Sadalage, P. J., Fowler, M. *NoSQL Distilled*. Addison-Wesley, 2012.
+9. Stonebraker, M., Çetintemel, U. *"One Size Fits All": An Idea Whose Time Has Come and Gone*. ICDE, 2005.
+10. Stonebraker, M., et al. *The End of an Architectural Era (It's Time for a Complete Rewrite)*. VLDB, 2007.
+11. Brewer, E. *Towards Robust Distributed Systems*. PODC keynote, 2000.
+12. Gilbert, S., Lynch, N. *Brewer's Conjecture and the Feasibility of Consistent, Available, Partition-Tolerant Web Services*. ACM SIGACT News 33(2), 2002.
+13. Amazon Web Services. *Amazon DynamoDB Developer Guide*. https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/
+14. Amazon Web Services. *Amazon DynamoDB pricing*. https://aws.amazon.com/dynamodb/pricing/
+15. DeBrie, A. *The DynamoDB Book*. Self-published, 2020.
+16. MongoDB. *MongoDB Manual* (data modeling, indexes, transactions, limits). https://www.mongodb.com/docs/manual/
+17. Apache Cassandra. *Cassandra Documentation: Data Modeling*. https://cassandra.apache.org/doc/latest/cassandra/data_modeling/
+18. Chebotko, A., Kashlev, A., Lu, S. *A Big Data Modeling Methodology for Apache Cassandra*. IEEE BigData Congress, 2015.
+19. Borthakur, D., et al. *Apache Hadoop Goes Realtime at Facebook*. SIGMOD, 2011.
+20. Discord. *How Discord Stores Billions of Messages*. Discord blog, 2017. https://discord.com/blog/how-discord-stores-billions-of-messages
+21. Discord. *How Discord Stores Trillions of Messages*. Discord blog, 2023. https://discord.com/blog/how-discord-stores-trillions-of-messages
+22. Neo4j. *Neo4j Documentation* (Cypher Manual, Operations Manual). https://neo4j.com/docs/
+23. Robinson, I., Webber, J., Eifrem, E. *Graph Databases*, 2nd ed. O'Reilly, 2015.
+24. ISO/IEC 39075:2024. *Information technology — Database languages — GQL*. ISO, 2024.
+25. W3C. *RDF 1.1 Concepts and Abstract Syntax*. W3C Recommendation, 2014. https://www.w3.org/TR/rdf11-concepts/
+26. Bronson, N., et al. *TAO: Facebook's Distributed Data Store for the Social Graph*. USENIX ATC, 2013.
+27. Prometheus. *Storage*. Prometheus documentation. https://prometheus.io/docs/prometheus/latest/storage/
+28. InfluxData. *InfluxDB documentation*. https://docs.influxdata.com/
+29. Timescale. *TimescaleDB documentation*. https://docs.timescale.com/
+30. Elastic. *Elasticsearch Guide* (near real-time search, refresh). https://www.elastic.co/guide/
+31. Malkov, Y. A., Yashunin, D. A. *Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs*. IEEE TPAMI 42(4), 2020.
+32. Corbett, J. C., et al. *Spanner: Google's Globally-Distributed Database*. OSDI, 2012.
+33. Taft, R., et al. *CockroachDB: The Resilient Geo-Distributed SQL Database*. SIGMOD, 2020.
+34. Huang, D., et al. *TiDB: A Raft-based HTAP Database*. PVLDB 13(12), 2020.
+35. Pavlo, A., Aslett, M. *What's Really New with NewSQL?* SIGMOD Record 45(2), 2016.
+36. Fowler, M. *PolyglotPersistence*. martinfowler.com, 2011. https://martinfowler.com/bliki/PolyglotPersistence.html
+37. Redis. *Redis documentation*. https://redis.io/docs/latest/
+
+## 12.20 Open verification items
+
+- DynamoDB prices (on-demand $0.625/M write and $0.125/M read request units after the November 2024 reduction; provisioned $0.00065/WCU-h, $0.00013/RCU-h, us-east-1) confirmed only via third-party pages; aws.amazon.com was unreachable.
+- DynamoDB limits (400 KB items, per-partition 3,000 RCU/1,000 WCU, 20 GSIs, 5 LSIs, 10 GB item collections) and the 89.2 M requests/s figure (ATC 2022).
+- Cassandra "~100 MB per partition" is community guidance, not official docs; tombstone thresholds and `gc_grace_seconds` defaults per version.
+- Redis 8 AGPLv3 option and InfluxDB 3 architecture (as of 2026).
+- Pointer-chase and index-lookup costs in §12.7.3 are illustrative assumptions.

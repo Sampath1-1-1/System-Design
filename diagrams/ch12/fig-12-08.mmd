@@ -1,0 +1,11 @@
+%% Figure 12.8 — Prometheus TSDB write and storage path
+flowchart LR
+  T([Scrape targets]) -->|HTTP pull every 15 s| S[Scraper]
+  S --> H["Head block in memory<br/>open chunks per series"]
+  S -->|append| WAL[["Write-ahead log"]]
+  H -->|"cut every 2 h"| B1[("Block 2 h<br/>chunks + index")]
+  B1 -.->|compaction| B2[("Block 6 h, then larger")]
+  B2 -.->|"older than retention: delete dir"| X{{Deleted}}
+  Q([PromQL query]) -->|label match via postings| H
+  Q --> B2
+  B2 -.->|remote write| R[(Long-term store)]

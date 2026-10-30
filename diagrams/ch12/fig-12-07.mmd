@@ -1,0 +1,10 @@
+%% Figure 12.7 — A property graph for fraud and social queries
+flowchart LR
+  A(["Person: Ana"]) -->|KNOWS since 2019| B(["Person: Ben"])
+  B -->|KNOWS| C(["Person: Chen"])
+  A -->|USES| D["Device: d-77"]
+  C -->|USES| D
+  A -->|OWNS| AC1[("Account: 1001")]
+  C -->|OWNS| AC2[("Account: 2002")]
+  AC1 -->|"TRANSFER amount 900"| AC2
+  B -->|WORKS_AT| E{{"Company: Acme"}}

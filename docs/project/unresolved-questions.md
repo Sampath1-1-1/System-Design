@@ -83,3 +83,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-076 | 16 | Manning et al. Table 5.6 RCV1 figures (400 MB raw, 116 MB compressed), quoted from memory | Open | |
 | UQ-077 | 16 | Twitter Earlybird latency figures (10 s indexing, 50 ms query); GitHub code search 25 TB / 115 TB index figures (search snippets only) | Open | |
 | UQ-078 | 16 | Elastic Serverless "stateless" architecture claim | Open | Time-sensitive |
+| UQ-079 | 12 | DynamoDB on-demand ($0.625/M WRU, $0.125/M RRU after Nov 2024 cut) and provisioned ($0.00065/WCU-h, $0.00013/RCU-h) prices — third-party confirmation only | Open | Time-sensitive; break-even ≈29% re-checked arithmetically |
+| UQ-080 | 12 | DynamoDB limits and 89.2M requests/s Prime Day figure (Elhemali et al. 2022) | Open | |
+| UQ-081 | 12 | Cassandra ~100 MB partition guideline (community practice); tombstone thresholds and gc_grace_seconds defaults by version | Accepted | Labeled as guideline |
+| UQ-082 | 12 | Redis 8 AGPLv3 licensing option; InfluxDB 3 architecture (as of 2026) | Open | Time-sensitive |

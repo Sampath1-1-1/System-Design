@@ -1,0 +1,10 @@
+%% Figure 12.5 — Bigtable data model: the Webtable example
+flowchart LR
+  R["Row key<br/>com.cnn.www"] --> CF1["Family contents:"]
+  R --> CF2["Family anchor:"]
+  CF1 --> V1["contents: at t6<br/>html v3"]
+  CF1 --> V2["contents: at t5<br/>html v2"]
+  CF2 --> Q1["anchor:cnnsi.com<br/>at t9 = CNN"]
+  CF2 --> Q2["anchor:my.look.ca<br/>at t8 = CNN.com"]
+  R2["Row key<br/>com.cnn.www/sports"] -.->|next row in sort order| T[["Tablet: com.cnn.* range"]]
+  R -.-> T

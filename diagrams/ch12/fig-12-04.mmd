@@ -1,0 +1,15 @@
+%% Figure 12.4 — Embedding versus referencing in a document model
+flowchart LR
+  subgraph Orders["orders collection"]
+    O["order o901<br/>customer_id: c42<br/>items: [ {sku, qty, price}, ... ]<br/>shipping: {street, city}"]
+  end
+  subgraph Customers["customers collection"]
+    CU["customer c42<br/>name, email"]
+  end
+  subgraph Products["products collection"]
+    PR["product SKU-1<br/>title, specs, reviews_count"]
+  end
+  O -->|reference by customer_id| CU
+  O -->|reference by sku| PR
+  App([Application]) -->|"one read: order + items"| O
+  App -.->|"second query or lookup"| PR

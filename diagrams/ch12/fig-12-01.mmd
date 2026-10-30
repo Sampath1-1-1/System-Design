@@ -1,0 +1,15 @@
+%% Figure 12.1 — Forces that produced NoSQL and the design responses
+flowchart LR
+  P1["Data and traffic beyond<br/>one server"] --> R1["Partition by key natively<br/>no cross-partition joins"]
+  P2["Schema changes weekly"] --> R2["Self-describing records<br/>schema on read"]
+  P3["Writes must survive<br/>node and network failure"] --> R3["Replicate, relax consistency<br/>reconcile later"]
+  R1 --> F1[(Key-value)]
+  R1 --> F3[(Wide-column)]
+  R2 --> F2[(Document)]
+  R2 --> F3
+  R3 --> F1
+  R3 --> F3
+  P4["Specialized workloads<br/>graphs, metrics, text"] --> R4["Purpose-built engines"]
+  R4 --> F4[(Graph)]
+  R4 --> F5[(Time-series)]
+  R4 --> F6[(Search and vector)]
