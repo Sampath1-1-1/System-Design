@@ -18,13 +18,13 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 8 | Web Application Fundamentals | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,798 | 12 | 21 | 0 |
 | 9 | Real-Time Communication | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 16,868 | 10 | 14 | 0 |
 | 10 | Security Fundamentals for System Designers | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 17,623 | 10 | 13 | 0 |
-| 11 | Relational Databases | 1-2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 12 | NoSQL Databases | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 13 | Storage Engine Internals | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 14 | Database Scaling: Replication, Partitioning and Sharding | 2-3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 15 | Object, Block and File Storage | 2-3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 16 | Search Systems | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 17 | Data Structures and Algorithms for Scale | 2-3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 11 | Relational Databases | 1-2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 12 | NoSQL Databases | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 13 | Storage Engine Internals | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 14 | Database Scaling: Replication, Partitioning and Sharding | 2-3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 15 | Object, Block and File Storage | 2-3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 16 | Search Systems | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 17 | Data Structures and Algorithms for Scale | 2-3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 18 | Scalability | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 19 | Load Balancing | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 20 | Caching | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
