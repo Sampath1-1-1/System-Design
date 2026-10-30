@@ -881,6 +881,8 @@ A CDC topic exposes your table schema to every consumer, which turns a column re
 *Evidence: Primary* — [Andreakis and Papapanagiotou 2020]
 :::
 
+**Table 32.6 — Change data capture failure scenarios.**
+
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Source disk fills | Stalled slot retains WAL | Slot lag bytes | Restart connector or drop slot and re-snapshot | `max_slot_wal_keep_size`, alerts |
@@ -918,9 +920,9 @@ Compensations must themselves be idempotent and retriable until they succeed, be
 
 ### 32.7.2 Worked example: order, inventory and payment
 
-The shop's checkout saga has four steps. Table 32.6 lists each step and what happens if it fails.
+The shop's checkout saga has four steps. Table 32.7 lists each step and what happens if it fails.
 
-**Table 32.6 — The checkout saga and a failure at each step.**
+**Table 32.7 — The checkout saga and a failure at each step.**
 
 | Step | Service | Action | Kind | Compensation | If this step fails |
 |---|---|---|---|---|---|
@@ -981,7 +983,7 @@ sequenceDiagram
 
 A saga is ACD without I: atomic in the semantic sense, consistent within each service, durable, but not isolated. Other transactions see its intermediate states, which causes three anomalies: **lost updates** (another saga overwrites a change, and a compensation later overwrites theirs), **dirty reads** (a reader sees stock reserved by a saga that will be compensated) and **fuzzy reads** (two steps of one saga read different versions of the same data). Richardson collects countermeasures, drawing on Frank and Zahle's work on semantic ACID properties in multidatabases [Richardson 2018; Frank and Zahle 1998].
 
-**Table 32.7 — Countermeasures for the lack of isolation.**
+**Table 32.8 — Countermeasures for the lack of isolation.**
 
 | Countermeasure | How it works | Checkout example |
 |---|---|---|
@@ -1197,9 +1199,11 @@ What to notice:
 - `test_step_executed_but_not_logged_is_not_doubled` covers the other crash window: the action ran but its `DONE` record did not. The re-sent `reserve` is a no-op because the inventory service deduplicates by saga ID.
 - `Unavailable` after the pivot is retried forever; a `Rejected` before the pivot triggers compensation in reverse order. A real orchestrator would back off between retries (§22.12) and alert after a limit.
 - `release` and `reject` tolerate being called twice or for work that never happened, so a crash during compensation is also recoverable (`test_crash_during_compensation_then_resume`).
-- The order's `PENDING` status is the semantic lock of Table 32.7.
+- The order's `PENDING` status is the semantic lock of Table 32.8.
 
 ### 32.7.5 Failure scenarios and misconceptions
+
+**Table 32.9 — Saga failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
@@ -1564,3 +1568,128 @@ What to notice: `Catch` routes a failure before the pivot into the compensation 
 **Common misconception — "A workflow engine gives exactly-once side effects."** It gives exactly-once *workflow progress*: each step's completion is recorded once and never replayed. The activity itself is at-least-once, so a payment activity still needs an idempotency key.
 :::
 
+## 32.12 Summary and revision notes
+
+::: summary
+- **Event sourcing** stores an aggregate's append-only events as the source of truth; state is a fold of `apply` over them. Appends carry an **expected version** (optimistic concurrency). Replay costs $N/r$; **snapshots** cut per-command cost to about $t_s + S/(2r)$ but do not speed up projection rebuilds.
+- Events live forever: evolve schemas additively, **upcast** old versions on read, and treat rewriting history as a last resort. Keep personal data out of events or **crypto-shred** it with per-subject keys.
+- **CQRS** separates the write model from read models built by projections; reads are eventually consistent. Catch-up after a pause takes $\lambda D/(\mu - \lambda)$. Use consistency tokens for read-your-writes. Do not use CQRS for plain CRUD.
+- **Dual writes** to a database and a broker lose events (database first) or invent them (broker first). The **transactional outbox** writes the event in the same local transaction; a relay publishes it at least once. Polling relays are simple; log-tailing relays give commit order and lower latency. Relay throughput is $B/(t_q + B t_p + t_m)$.
+- **Log-based CDC** (Debezium) snapshots tables, then streams the WAL or binlog in commit order with before and after images; watch replication-slot retention and enforce schema compatibility with a registry.
+- A **saga** is $T_1 \dots T_n$ or $T_1 \dots T_j, C_j \dots C_1$. Steps are compensatable, the **pivot**, or retriable. Sagas lack isolation; use semantic locks, commutative updates, reread values and reservations.
+- **Choreography** suits short, stable flows and broadcasting facts; **orchestration** suits complex processes with compensations and deadlines.
+- Exactly-once *delivery* is impossible; **effectively-once = at-least-once + idempotent effect**. Kafka EOS covers Kafka-to-Kafka processing only.
+- **Idempotent consumers** use natural idempotency, a dedup table committed with the effect ($S = \lambda W b$), or versioned writes.
+- **Workflow engines** (Temporal, Step Functions) provide durable execution: the event history is the saga log, workflow code must be deterministic, and activities are at-least-once.
+:::
+
+## 32.13 Knowledge checkpoint
+
+1. Why must an event-sourced `apply` function never validate?
+2. What does the expected version prevent, and what does a writer do when it fails?
+3. A stream has 80,000 events, replay runs at 40,000 events/s, snapshots every 1,000 events with $t_s = 1$ ms. Compute load time with and without snapshots.
+4. Name two ways to evolve an event schema without rewriting history.
+5. How does crypto-shredding erase data from backups you cannot modify?
+6. A projection at $\mu = 3{,}000$ events/s, with $\lambda = 1{,}000$ events/s, was down for 30 minutes. How long does it take to catch up?
+7. Give the two failure sequences of a dual write and the anomaly each causes.
+8. Why can a polling relay that remembers the highest published `id` skip events?
+9. What does a Debezium change event contain, and why is delivery at-least-once?
+10. What is a pivot transaction, and how are failures before and after it handled?
+11. Name three countermeasures for the missing isolation of sagas.
+12. When would you choose choreography over orchestration?
+13. What exactly does a Kafka transaction make atomic?
+14. A consumer handles 2,000 messages/s and must remember IDs for 3 days at 50 bytes each. How much storage?
+15. Why must Temporal workflow code be deterministic, and what happens if it is not?
+
+<details><summary>Answers</summary>
+
+1. Replay must always reproduce history. An old event that today's rules reject still happened; if `apply` throws, the aggregate can never be loaded.
+2. Lost updates from concurrent writers on the same aggregate. The writer reloads the stream, re-validates the command against the new state, and retries or rejects.
+3. Without: $80{,}000/40{,}000 = 2$ s. With: $0.001 + 500/40{,}000 = 0.001 + 0.0125 = 13.5$ ms.
+4. Additive optional fields with defaults; upcasters that convert old versions on read (or a new event type).
+5. Backups contain only ciphertext; deleting the per-subject key from the key store makes every copy unreadable.
+6. Backlog $1{,}000 \times 1{,}800 = 1.8 \times 10^6$ events; $T = 1.8 \times 10^6 / 2{,}000 = 900$ s, 15 minutes.
+7. Database commit then crash before publish: lost event. Publish then database rollback or crash: phantom event.
+8. IDs are assigned at insert but become visible at commit; a transaction with a lower `id` can commit after the relay has passed it.
+9. Before and after row images, operation type, and source metadata (log position, commit time, table). Offsets are stored periodically, so after a restart events since the last stored offset are re-sent.
+10. The go/no-go step after which the saga must complete. Failures before or at the pivot trigger compensations in reverse order; failures after it are retried forward.
+11. Any three of: semantic lock, commutative updates, pessimistic view, reread value, version file, by value.
+12. For short, stable flows of two to four steps across autonomous teams, and for broadcasting facts that many domains consume.
+13. Writes to several partitions plus the consumer's input offsets, made visible together to `read_committed` consumers.
+14. $2{,}000 \times 259{,}200 \times 50 \approx 2.6 \times 10^{10}$ bytes $\approx 26$ GB.
+15. A replaying worker must regenerate exactly the commands recorded in the history to rebuild state. Nondeterminism produces different commands and a non-determinism error that stalls the execution.
+
+</details>
+
+## 32.14 Interview questions
+
+### Basic
+
+**Q1. What is the transactional outbox and why is it needed?**
+**Answer.** A service must update its database and publish an event, but there is no transaction across the two systems, so a crash between writes loses an event or publishes a phantom. The outbox inserts the event into a table in the same local transaction as the state change; a relay (polling or CDC) publishes committed rows and marks them, at least once. Consumers deduplicate by event ID. Mention ordering by aggregate key and monitoring outbox age.
+
+**Q2. What is the difference between event sourcing and CQRS?**
+**Answer.** Event sourcing is a storage choice: events are the source of truth and state is derived. CQRS is a model split: commands and queries use different models. They pair well because an event store cannot answer ad hoc queries, but either can be used alone. Both introduce eventual consistency in read models.
+
+### Intermediate
+
+**Q3. Design checkout across order, inventory and payment services without 2PC.**
+**Answer.** An orchestrated saga: create order `PENDING` (compensate: reject), reserve stock with a 15-minute expiry (compensate: release), charge card (pivot), approve order (retriable). Persist saga state before each command; every participant deduplicates by saga ID; commands and events flow through outboxes. Walk through a failure at each step, the semantic lock on `PENDING`, and what users see during compensation. Consider a workflow engine if timers and visibility matter.
+
+**Q4. Your team says Kafka exactly-once makes the email consumer safe. Respond.**
+**Answer.** EOS makes Kafka-to-Kafka read-process-write atomic. Sending an email is an external side effect: a crash after sending and before committing offsets re-sends it. Make it effectively-once by recording the send in a database with the event ID in the same transaction as the decision, using an outbox for the email request, and passing an idempotency key to the provider if it supports one. Some duplicates may remain possible; quantify and accept or reconcile.
+
+### Advanced
+
+**Q5. An event-sourced ledger has 3 billion events and a new regulatory report needs a projection over all of them by next week. Plan it.**
+**Answer.** Estimate: at 100,000 events/s per worker, a single pass takes about 8.3 hours; partition by account into 32 workers to bring it under 20 minutes, subject to event-store read bandwidth. Build the projection blue-green beside existing ones, checkpoint per partition, make upserts idempotent, verify against sampled full replays, then switch readers. Watch upcaster cost on old events, read load on the production store (replay from a replica or an archive copy), and snapshot schema versions.
+
+**Q6. When would you choose Temporal over a hand-rolled saga, and what discipline does it impose?**
+**Answer.** Choose it when processes are long-running, have timers, human steps, many branches, or need operator visibility and safe versioning. It imposes determinism in workflow code (no clocks, randomness or I/O except through SDK APIs), explicit versioning for code changes while executions are in flight, idempotent activities with sensible retry policies and timeouts, history-size management with Continue-As-New, and operating the service or paying for the cloud service.
+
+## 32.15 Practical exercises
+
+1. Extend the event-sourced account of §32.3.3 with a `snapshot_schema` field and make `load` ignore snapshots whose schema differs; add a test that changes `apply` and still loads correctly.
+2. Modify the outbox simulation to use a high-water-mark relay with two concurrent writers whose commits can reorder, and show a test that loses events; then fix it.
+3. Add a 15-minute reservation timeout to the saga in §32.7.4 so that a crashed orchestrator's reservations expire, and test that a late `charge_card` after expiry is refused.
+4. Run Debezium against a local PostgreSQL, stop the connector for ten minutes under write load, and graph replication-slot lag in bytes.
+5. Implement the loyalty consumer of Figure 32.14 with SQLite: a dedup table, then versioned writes; compare storage after one million messages.
+
+## 32.16 Design challenges
+
+1. **Ride-hailing trip lifecycle.** Model a trip (request, match, pickup, drop-off, payment, rating) as either an event-sourced aggregate or a workflow. Identify the pivot, the compensations, and the read models drivers and riders need, with their acceptable lag.
+2. **Search index for 500 million products.** Keep it consistent with a sharded MySQL catalog using CDC. Plan the initial load without downtime, schema changes, and the response to a connector outage of six hours.
+3. **Cross-border payment.** A transfer debits a local account, converts currency through a partner, and credits a foreign bank via an API that may take two days to confirm. Choose choreography, orchestration or a workflow engine, and specify every idempotency key.
+
+## 32.17 References
+
+1. Garcia-Molina, H., Salem, K. *Sagas*. Proceedings of ACM SIGMOD, 1987.
+2. Fowler, M. *Event Sourcing*. martinfowler.com, 2005. https://martinfowler.com/eaaDev/EventSourcing.html
+3. Fowler, M. *The LMAX Architecture*. martinfowler.com, 2011. https://martinfowler.com/articles/lmax.html
+4. Fowler, M. *CQRS*. martinfowler.com bliki, 2011. https://martinfowler.com/bliki/CQRS.html
+5. Young, G. *CQRS Documents*. 2010.
+6. Young, G. *Versioning in an Event Sourced System*. Leanpub, 2017.
+7. Richardson, C. *Microservices Patterns: With Examples in Java*. Manning, 2018. Pattern pages at https://microservices.io/patterns/
+8. Helland, P. *Life beyond Distributed Transactions: an Apostate's Opinion*. CIDR, 2007.
+9. Kleppmann, M. *Designing Data-Intensive Applications* (Ch. 11 "Stream Processing", Ch. 12 "The Future of Data Systems"). O'Reilly, 2017.
+10. Frank, L., Zahle, T. U. *Semantic ACID Properties in Multidatabases Using Remote Procedure Calls and Update Propagations*. Software: Practice and Experience 28(1), 1998.
+11. Debezium Project. *Debezium Documentation: PostgreSQL connector, Outbox Event Router, incremental snapshots*. https://debezium.io/documentation/
+12. Andreakis, A., Papapanagiotou, I. *DBLog: A Watermark Based Change-Data-Capture Framework*. arXiv, 2020.
+13. Das, S., et al. *All Aboard the Databus! LinkedIn's Scalable Consistent Change Data Capture Platform*. ACM Symposium on Cloud Computing (SoCC), 2012.
+14. Confluent. *Schema Registry Documentation: Schema Evolution and Compatibility*. https://docs.confluent.io/
+15. Apache Kafka. *KIP-98: Exactly Once Delivery and Transactional Messaging*. 2017. https://cwiki.apache.org/confluence/display/KAFKA/KIP-98+-+Exactly+Once+Delivery+and+Transactional+Messaging
+16. Temporal Technologies. *Temporal Documentation: Workflows, Activities, Event History, Retry Policies*. https://docs.temporal.io/
+17. Amazon Web Services. *AWS Step Functions Developer Guide*. https://docs.aws.amazon.com/step-functions/
+18. Netflix Technology Blog. *Netflix Conductor: A Microservices Orchestrator*. 2016.
+19. European Parliament and Council. *Regulation (EU) 2016/679 (General Data Protection Regulation)*, Article 17. Official Journal of the European Union L 119, 2016.
+20. PostgreSQL Global Development Group. *PostgreSQL 16 Documentation: Logical Decoding; Replication Slots*. https://www.postgresql.org/docs/16/logicaldecoding.html
+
+## 32.18 Open verification items
+
+- LMAX throughput (about six million orders per second) and nightly-snapshot recovery, against Fowler 2011.
+- Young 2017 title and publisher; exact URL of Young's 2010 *CQRS Documents*.
+- Frank and Zahle 1998 as the origin of Richardson's countermeasure list.
+- DBLog arXiv identifier and Netflix Conductor blog URL.
+- Debezium's default delivery guarantee as of 2026 (exactly-once support via Kafka Connect may exist for some connectors).
+- Step Functions Standard/Express limits and semantics, and Temporal history limits, as of 2026; per-step latency figures in Table 32.13.
+- Whether crypto-shredding satisfies Article 17 is a legal question; no source asserted.

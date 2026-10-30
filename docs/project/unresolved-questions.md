@@ -185,3 +185,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-178 | 33 | Kolny (2023) Prime Video post: title, "90%" cost figure, URL; Noonan (2018) Segment post: title and service count | Open | |
 | UQ-179 | 33 | Westeinde (2019) Shopify modular-monolith post title; current status of Packwerk | Open | Time-sensitive |
 | UQ-180 | 18 / 33 | Route 53 use of shuffle sharding; title/year of AWS cell-based architecture whitepaper; Cockburn and Palermo URLs | Open | Merge with UQ-110 |
+| UQ-181 | 32 | LMAX ~6M orders/s and nightly-snapshot recovery (Fowler 2011) | Open | |
+| UQ-182 | 32 | Young (2017) title; URL of Young's 2010 *CQRS Documents* | Open | |
+| UQ-183 | 32 | Frank & Zahle (1998) as source of Richardson's saga isolation countermeasures | Open | |
+| UQ-184 | 32 | DBLog arXiv ID; Netflix Conductor blog URL; Debezium default delivery guarantee (as of 2026) | Open | |
+| UQ-185 | 32 | Step Functions and Temporal limits (as of 2026); per-step latency figures in Table 32.13 | Open | Time-sensitive |
+| UQ-186 | 32 | Whether crypto-shredding satisfies GDPR Art. 17 erasure | Accepted | Legal question; text presents it as commonly used, not as legal advice |
