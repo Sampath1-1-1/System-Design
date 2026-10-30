@@ -1,0 +1,12 @@
+%% Figure 6.9 — Priority inversion on Mars Pathfinder
+sequenceDiagram
+  participant L as Low: weather data task
+  participant M as Medium: communications task
+  participant H as High: bus management task
+  participant W as Watchdog timer
+  L->>L: lock information-bus mutex
+  H->>H: wakes, tries to lock mutex, blocks on L
+  M->>M: wakes, preempts L, runs for a long time
+  Note over L: L cannot run, so cannot unlock
+  W-->>H: H missed its deadline
+  W-->>W: declare fault, reset whole spacecraft

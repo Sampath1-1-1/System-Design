@@ -1,0 +1,16 @@
+%% Figure 9.2 — Long polling with cursors and a hold timeout
+sequenceDiagram
+    participant C as Client
+    participant S as Poll Server
+    participant B as Pub/Sub Broker
+    C->>S: GET /poll?cursor=41
+    Note over S: nothing after 41, park request
+    S-->>C: 204 after hold timeout of 30 s
+    C->>S: GET /poll?cursor=41
+    Note over S: park request
+    B--)S: event 42 for this user
+    S-->>C: 200 OK items=[42] cursor=42
+    C->>S: GET /poll?cursor=42
+    B--)S: event 43 arrives in the gap
+    Note over S: 43 is newer than 42, respond at once
+    S-->>C: 200 OK items=[43] cursor=43

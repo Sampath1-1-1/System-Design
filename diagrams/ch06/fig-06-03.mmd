@@ -1,0 +1,15 @@
+%% Figure 6.3 — A context switch between two threads triggered by a timer interrupt
+sequenceDiagram
+  participant A as Thread A, user mode
+  participant CPU as CPU core
+  participant K as Kernel scheduler
+  participant B as Thread B, user mode
+  A->>CPU: executing instructions
+  CPU-->>K: timer interrupt, switch to kernel mode
+  K->>K: save A registers to A kernel stack
+  K->>K: update A accounting, mark A Ready
+  K->>K: pick next task, B
+  K->>CPU: load B page table root if other process
+  K->>K: restore B registers and stack pointer
+  K->>B: return to user mode
+  B->>CPU: executing instructions

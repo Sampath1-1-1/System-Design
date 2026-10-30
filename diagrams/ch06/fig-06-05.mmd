@@ -1,0 +1,16 @@
+%% Figure 6.5 — Translating a virtual address: TLB, page walk and page fault
+flowchart TB
+  VA([CPU issues virtual address]) --> T{TLB hit?}
+  T -->|yes, about 1 cycle| PA[Physical address<br/>to cache and RAM]
+  T -->|no| W[Hardware page walk<br/>up to 4 memory reads]
+  W --> P{Page present<br/>and permitted?}
+  P -->|yes| F[Fill TLB entry] --> PA
+  P -->|no| PF[Page fault:<br/>trap into kernel]
+  PF --> V{Valid mapping?}
+  V -->|no| SEG[Send SIGSEGV<br/>process usually dies]
+  V -->|yes, page in RAM| MIN[Minor fault:<br/>update page table]
+  V -->|yes, page on disk| MAJ[Major fault:<br/>block thread, read from disk]
+  MAJ --> DISK[(SSD or HDD)]
+  MIN --> RET[Retry the instruction]
+  DISK --> RET
+  RET --> VA

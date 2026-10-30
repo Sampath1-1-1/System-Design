@@ -1,0 +1,18 @@
+%% Figure 9.3 — SSE streaming, disconnection and resumption with `Last-Event-ID`
+sequenceDiagram
+    participant C as Browser EventSource
+    participant LB as Load Balancer
+    participant S as SSE Server
+    participant BUF as Event Buffer
+    C->>LB: GET /events Accept text/event-stream
+    LB->>S: forward request
+    S-->>C: 200 OK Content-Type text/event-stream
+    S-->>C: id 1042 data price 101.25
+    S-->>C: id 1043 data price 101.40
+    Note over C,S: network drops, TCP connection lost
+    Note over C: wait retry interval of 5 s
+    C->>LB: GET /events Last-Event-ID 1043
+    LB->>S: forward, possibly to another server
+    S->>BUF: read events after 1043
+    BUF-->>S: 1044 and 1045
+    S-->>C: id 1044, then id 1045, then live events

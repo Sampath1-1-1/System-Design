@@ -1,0 +1,12 @@
+%% Figure 4.9 — Six recurring quantitative relationships
+flowchart LR
+  U[Utilization] -->|raises| TP[Throughput]
+  U -->|raises sharply| LAT[Latency]
+  B[Batch size] -->|raises| TP
+  B -->|raises| LAT
+  REP[Replica count] -->|raises| DUR[Durability]
+  REP -->|raises| COST[Cost]
+  MTTR[Repair time] -->|lowers| AV[Availability]
+  MTTR -->|lowers| DUR
+  ACC[Accuracy target] -->|raises| LAT
+  ACC -->|raises| COST

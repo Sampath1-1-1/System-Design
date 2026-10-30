@@ -1,0 +1,10 @@
+%% Figure 6.1 — Layout of a process's virtual address space on Linux x86-64
+flowchart TB
+  K["Kernel space<br/>upper half, kernel mode only"]
+  ST["Stack<br/>grows downward"]
+  MM["Memory-mapped region<br/>shared libraries, mmap files"]
+  HP["Heap<br/>grows upward via brk or mmap"]
+  BSS["BSS<br/>zero-initialized globals"]
+  DATA["Data<br/>initialized globals"]
+  TEXT["Text<br/>machine code, read-only"]
+  K --- ST --- MM --- HP --- BSS --- DATA --- TEXT

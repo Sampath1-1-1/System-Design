@@ -1,0 +1,18 @@
+%% Figure 9.8 — Mobile push architecture
+flowchart LR
+    subgraph Device
+      APP([Mobile App]) --- OS[OS Push Daemon]
+    end
+    APP -->|1 register| OS
+    OS -->|2 token| APP
+    APP -->|3 upload token, HTTPS| API[App Backend API]
+    API --> TOK[(Token Store)]
+    EV[[Event Queue]] -.->|4 event| NS[Notification Service]
+    NS --> TOK
+    NS -->|5a HTTP/2 + JWT| APNS{{APNs}}
+    NS -->|5b HTTPS v1 + OAuth| FCM{{FCM}}
+    APNS -.->|6 best-effort delivery| OS
+    FCM -.->|6 best-effort delivery| OS
+    APNS -.->|410 Unregistered| NS
+    FCM -.->|404 UNREGISTERED| NS
+    APP -->|7 on open, sync from cursor| API

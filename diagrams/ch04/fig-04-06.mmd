@@ -1,0 +1,18 @@
+%% Figure 4.6 — Series, parallel and k-of-n availability
+flowchart LR
+  C([Client]) -->|HTTPS| LB["Load balancer<br/>A = 0.9999"]
+  subgraph Parallel["Parallel: either node suffices"]
+    W1["App node 1<br/>A = 0.99"]
+    W2["App node 2<br/>A = 0.99"]
+  end
+  LB --> W1
+  LB --> W2
+  subgraph Quorum["2-of-3: majority must be up"]
+    R1[(Replica 1)]
+    R2[(Replica 2)]
+    R3[(Replica 3)]
+  end
+  W1 -->|SQL| R1
+  W2 -->|SQL| R1
+  R1 -->|replicate| R2
+  R1 -->|replicate| R3

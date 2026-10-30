@@ -1,0 +1,22 @@
+%% Figure 9.7 — Mesh, SFU and MCU topologies for a four-person call
+flowchart LR
+    subgraph Mesh
+      M1([P1]) <--> M2([P2])
+      M1 <--> M3([P3])
+      M1 <--> M4([P4])
+      M2 <--> M3
+      M2 <--> M4
+      M3 <--> M4
+    end
+    subgraph SFU
+      S1([P1]) <-->|1 up, 3 down| F[SFU forwards packets]
+      S2([P2]) <--> F
+      S3([P3]) <--> F
+      S4([P4]) <--> F
+    end
+    subgraph MCU
+      U1([P1]) <-->|1 up, 1 down| X[MCU decodes and mixes]
+      U2([P2]) <--> X
+      U3([P3]) <--> X
+      U4([P4]) <--> X
+    end

@@ -1,0 +1,6 @@
+%% Figure 6.8 — Resource-allocation graph with a deadlock cycle
+flowchart LR
+  T1[Thread T1] -->|waits for| B[(Lock B)]
+  B -->|held by| T2[Thread T2]
+  T2 -->|waits for| A[(Lock A)]
+  A -->|held by| T1

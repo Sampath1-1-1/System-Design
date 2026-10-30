@@ -1,0 +1,7 @@
+%% Figure 6.12 — The write path from application to stable storage
+flowchart LR
+  APP[Application] -->|write| PC[Page cache<br/>dirty pages in RAM]
+  PC -.->|background writeback<br/>about 30 s later| DC[Drive write cache<br/>often volatile]
+  APP -->|fsync| PC
+  PC -->|fsync forces write<br/>plus cache flush| DC
+  DC --> MEDIA[(Stable media:<br/>NAND flash or platter)]

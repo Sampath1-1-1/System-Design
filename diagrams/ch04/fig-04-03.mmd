@@ -1,0 +1,5 @@
+%% Figure 4.3 — The M/M/1 queue
+flowchart LR
+  A([Arrivals rate λ]) -->|random gaps| Q[[FIFO queue<br/>Lq jobs waiting]]
+  Q -->|next job| S["Server<br/>rate μ, busy fraction ρ"]
+  S -->|completed| D([Departures rate λ])

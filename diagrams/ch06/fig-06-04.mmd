@@ -1,0 +1,11 @@
+%% Figure 6.4 — Multi-level feedback queue decisions
+flowchart TB
+  N([New job]) --> Q0[Queue 0: highest priority<br/>short slice]
+  Q0 --> D0{Allotment used up?}
+  D0 -->|no, blocked for I/O| Q0
+  D0 -->|yes| Q1[Queue 1: medium priority<br/>longer slice]
+  Q1 --> D1{Allotment used up?}
+  D1 -->|no| Q1
+  D1 -->|yes| Q2[Queue 2: lowest priority<br/>longest slice]
+  Q2 --> Q2
+  T{{Boost timer every S ms}} -.->|move all jobs| Q0

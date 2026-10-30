@@ -1,0 +1,14 @@
+%% Figure 9.10 — Decision flowchart for choosing a real-time technique
+flowchart TD
+    A{App in foreground<br/>with a live connection?} -->|No| PUSH[Mobile or web push<br/>plus sync on open]
+    A -->|Yes| B{Audio, video or<br/>peer-to-peer data?}
+    B -->|Yes| RTC[WebRTC<br/>plus SFU for groups]
+    B -->|No| C{Is staleness of<br/>T seconds acceptable<br/>and N/T affordable?}
+    C -->|Yes| SP[Short polling<br/>with jitter and caching]
+    C -->|No| D{Does the client send<br/>frequent low-latency<br/>messages too?}
+    D -->|No| E{Do streaming responses<br/>survive your network path?}
+    E -->|Yes| SSE[Server-Sent Events]
+    E -->|No| LP[Long polling]
+    D -->|Yes| F{Are WebSockets allowed<br/>end to end?}
+    F -->|Yes| WS[WebSockets over wss]
+    F -->|No| LP
