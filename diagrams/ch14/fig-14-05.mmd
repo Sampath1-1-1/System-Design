@@ -1,0 +1,15 @@
+%% Figure 14.5 — Four ways to answer "which partition holds this key?"
+flowchart TB
+  K([Key or row]) --> D{Scheme}
+  D -->|range| RB["Sorted boundaries<br/>binary search"]
+  D -->|hash| HF["h of key<br/>then hash range or mod P"]
+  D -->|list| LT["Value to partition<br/>lookup table"]
+  D -->|directory| DS[Directory service]
+  DS --- DC[(Directory store<br/>replicated)]
+  RB --> PM["Partition map:<br/>partition to node"]
+  HF --> PM
+  LT --> PM
+  DS --> PM
+  PM -->|SQL or KV request| N1[(Node A)]
+  PM -->|SQL or KV request| N2[(Node B)]
+  PM -->|SQL or KV request| N3[(Node C)]

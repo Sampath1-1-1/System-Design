@@ -1,0 +1,11 @@
+%% Figure 17.9 — A Merkle tree over four records and the inclusion proof for record C
+flowchart TD
+  ROOT["Root = H of H_AB and H_CD"] --> HAB["H_AB = H of H_A and H_B"]
+  ROOT --> HCD["H_CD = H of H_C and H_D"]
+  HAB --> HA["H_A = H of record A"]
+  HAB --> HB["H_B = H of record B"]
+  HCD --> HC["H_C = H of record C"]
+  HCD --> HD["H_D = H of record D"]
+  HC --> RC[(Record C)]
+  HD -.->|proof item 1| HC
+  HAB -.->|proof item 2| HCD

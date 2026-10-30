@@ -1,0 +1,12 @@
+%% Figure 14.1 — Primary–replica architecture with read/write splitting
+flowchart LR
+  C([Client]) -->|HTTPS| APP[App service]
+  APP -->|SQL| PX["Proxy or driver<br/>read/write split"]
+  PX -->|"writes and<br/>fresh reads"| P[(Primary)]
+  PX -->|"reads"| R1[(Replica 1)]
+  PX -->|"reads"| R2[(Replica 2)]
+  P -.->|"WAL or binlog stream"| R1
+  P -.->|"WAL or binlog stream"| R2
+  R2 -.->|cascade| R3[(Replica 3<br/>other region)]
+  MON[Lag monitor] -.->|poll positions| R1
+  MON -.->|poll positions| R2

@@ -1,0 +1,21 @@
+%% Figure 15.3 — PUT then GET in an S3-style store (illustrative)
+sequenceDiagram
+  participant C as Client
+  participant FE as Front end
+  participant PL as Placement
+  participant SN as Storage nodes
+  participant IX as Index partition
+  C->>FE: PUT /b/k body
+  FE->>PL: choose nodes for 14 fragments
+  PL-->>FE: node list across zones
+  FE->>SN: write fragments in parallel
+  SN-->>FE: durable acks
+  FE->>IX: commit k to version v2
+  IX-->>FE: committed
+  FE-->>C: 200 OK ETag
+  C->>FE: GET /b/k
+  FE->>IX: lookup k
+  IX-->>FE: v2 and fragment map
+  FE->>SN: read any 10 fragments
+  SN-->>FE: fragment data
+  FE-->>C: 200 OK body

@@ -6,9 +6,13 @@
 
 **Access-control model** — A rule system that answers "may subject *S* perform action *A* on resource *R* (in context *C*)?" The three models in common use differ in what the rules are written in terms of: **roles** (RBAC), **attributes** (ABAC) or **relationships** (ReBAC). *(§8.12.1)*
 
+**ACID** — The four guarantees of a database transaction, named by Härder and Reuter [Härder and Reuter 1983]: **Atomicity** — all of a transaction's writes take effect, or none do. **Consistency** — a transaction takes the database from one state satisfying all declared invariants (constraints) to another. **Isolation** — concurrently executing transactions do not see each other's partial effects; at the strongest level, the outcome equals some serial execution. **Durability** — once a commit is acknowledged, its effects survive crashes. *(§11.12)*
+
 **Active recall** — Deliberately retrieving information from memory without looking at the source, for example by answering a question, drawing a diagram or explaining aloud. Its measured benefit for later retention is called the **testing effect**. *(§3.4.2)*
 
 **Address space** — The range of memory addresses a process can use. On Linux x86-64 with 4-level page tables, user space spans 2⁴⁷ bytes = 128 TiB of *virtual* addresses; the kernel occupies the upper half and is not accessible from user mode. *(§6.3.2)*
+
+**Analysis** — The process that converts raw text into the terms stored in (or looked up from) an inverted index. An **analyzer** is a pipeline of zero or more **character filters** (rewrite the raw character stream), exactly one **tokenizer** (split the stream into tokens with positions and offsets) and zero or more **token filters** (modify, remove or add tokens). *(§16.4.1)*
 
 **Anycast** — An addressing scheme in which the same IP prefix is announced via BGP from many locations at once. Each client's packets are routed to whichever announcing location is "closest" according to BGP path selection. *(§7.5.3)*
 
@@ -26,6 +30,8 @@
 
 **Authentication (AuthN)** — Verifying *who* a client is. **Authorization (AuthZ)** is deciding *what* that verified identity may do (§8.12). AuthN failures return `401`; AuthZ failures return `403`. *(§8.11)*
 
+**Autocomplete (typeahead)** — A service that, given the prefix a user has typed so far, returns a short ranked list (typically 5–10) of likely completions, usually popular past queries or entity names, on every keystroke or after a short pause. *(§16.9.1)*
+
 **Availability** — The fraction of time (or of requests) for which a system serves correctly: $A = \text{uptime}/(\text{uptime} + \text{downtime})$, or, request-based, $A = \text{successful requests} / \text{valid requests}$. It is commonly quoted in "nines": 99.9% is "three nines". *(§4.14.1)*
 
 ## B
@@ -38,9 +44,21 @@
 
 **Bit and byte** — A **bit** (symbol b) is a single binary digit, 0 or 1. A **byte** (symbol B) is 8 bits. Storage and memory are conventionally measured in bytes; network link speeds are conventionally measured in bits per second (bps). *(§4.5.1)*
 
+**Block, file and object storage** — **Block storage** exposes a numbered array of fixed-size blocks (typically 512 B or 4 KiB) that a client reads and writes by offset; the client's own file system or database gives the blocks meaning. **File storage** exposes a hierarchical namespace of directories and byte-addressable files with POSIX-like operations (open, read at offset, write at offset, rename, lock), shared by many clients over a protocol such as NFS or SMB. **Object storage** exposes a flat namespace of immutable **objects**, each a byte string plus metadata addressed by a key within a **bucket**, accessed over HTTP with whole-object PUT, GET (optionally a byte range), DELETE and LIST. *(§15.3.1)*
+
+**Bloom filter** — A probabilistic data structure for set membership, introduced by Burton Bloom in 1970, that stores a set of $n$ items in an array of $m$ bits using $k$ hash functions [Bloom 1970]. A query answers either "definitely not in the set" or "probably in the set". It never gives a **false negative** (saying "no" for an item that was added), and gives a **false positive** (saying "yes" for an item that was not added) with a probability $p$ that depends on $m$, $n$ and $k$. *(§17.4.1)*
+
 **Bottleneck** — The resource whose capacity limits the throughput of the whole system for a given workload. Throughput cannot rise above the bottleneck's capacity no matter how much the other resources are improved. Formally, it is the resource with the highest **service demand** per request (defined below). *(§2.6.1)*
 
 **Branch prediction** — Hardware that guesses the outcome of a conditional jump (a **branch**, e.g. an `if` or a loop condition) before it is computed, so that the pipeline can keep fetching instructions. A wrong guess is a **misprediction** and forces a pipeline flush. *(§5.3.4)*
+
+**B-tree and B+ tree** — A **B-tree** is a balanced search tree whose nodes are disk pages holding many sorted keys; every leaf is at the same depth, and nodes split and merge to stay between half-full and full [Bayer and McCreight 1972]. A **B+ tree** is the variant used by almost every relational database: internal nodes hold only separator keys and child pointers, all keys and values (or row pointers) live in the leaves, and leaves are linked to their siblings so range scans can walk sideways [Comer 1979]. *(§11.8.1)*
+
+**B-tree storage engine** — A storage engine that keeps each table or index as a B+ tree of fixed-size pages and **updates pages in place**: a change to a key rewrites the page that holds it. Internal pages hold separator keys and child page numbers; leaf pages hold the keys with either the rows themselves (a clustered index) or pointers to them. *(§13.6.1)*
+
+**Bucket, key, object and flat namespace** — A **bucket** is a named container with its own access policy, region and configuration. An **object** is an immutable byte string (from zero bytes to tens of terabytes) plus system metadata (size, content type, checksum, version ID) and user metadata. A **key** is the object's full name within the bucket, for example `photos/2026/10/u42/abc.jpg`. The namespace is **flat**: the slashes are ordinary characters, and "folders" are an illusion produced by listing keys that share a **prefix** and grouping them at a **delimiter** (usually `/`). *(§15.4.1)*
+
+**Buffer pool** — A region of memory, managed by the database itself, divided into page-sized **frames** that cache disk pages. A **page table** maps page IDs to frames; each frame carries a **pin count** (how many threads are using it right now), a **dirty flag** (whether it differs from the disk copy) and bookkeeping for the **replacement policy** that chooses which page to evict. *(§13.4.1)*
 
 ## C
 
@@ -58,6 +76,12 @@
 
 **Clock rate** — The frequency at which a core's internal circuitry steps from one state to the next, measured in hertz (cycles per second). A 4 GHz core has a **cycle time** of 1 / (4 × 10⁹) s = 0.25 ns. *(§5.3.2)*
 
+**Clustered and secondary index** — In a **clustered index** (an index-organized table), the leaf level of the index *is* the table: rows are stored in key order inside the index's leaf pages. A table can have at most one. A **secondary index** stores, for each key, a pointer to the row; the table can have many. *(§11.7.2)*
+
+**Columnar storage (column store)** — A layout that stores each column of a table contiguously — all values of `price`, then all values of `country` — instead of storing each row's fields together. Column stores are optimized for analytical queries that read a few columns of many rows [Abadi et al. 2013]. *(§13.13.1)*
+
+**Compaction** — The background merge of sorted runs in an LSM tree that removes overwritten values and tombstones and bounds the number of runs a read must consult. A **compaction strategy** decides which runs to merge and when; it sets the engine's read, write and space amplification. *(§13.9.1)*
+
 **Compare-and-swap (CAS)** — An atomic CPU instruction that, in one indivisible step, compares a memory location with an expected value and, only if they are equal, replaces it with a new value, reporting whether it succeeded. On x86-64 it is `LOCK CMPXCHG`; ARMv8.1 and later provide `CAS`, and earlier ARM uses load-linked/store-conditional pairs. *(§6.10.4)*
 
 **Component** — A unit of a system with a clear responsibility and an interface — for example a web service, a database, a cache, a message queue, a load balancer or a third-party payment provider. *(§1.3.1)*
@@ -74,11 +98,19 @@
 
 **Connection gateway** — A dedicated, thin service tier whose only job is to terminate long-lived client connections (WebSocket, SSE, long polling), authenticate them, track which user and topics each connection belongs to, and move messages between those connections and back-end services through a messaging layer. It contains no business logic. *(§9.9.1)*
 
+**Connection pooler** — A component that keeps a small number of open database connections and lends them to a much larger number of clients for the duration of a session, a transaction or a statement. It may live inside the application (a client-side pool) or run as a separate proxy shared by many application instances. *(§14.13.1)*
+
 **Consistent hashing** — A way of assigning keys to nodes so that, when a node is added or removed, only about $K/N$ of the $K$ keys change owner, where $N$ is the number of nodes. Both keys and nodes are hashed onto the same circular number space (the **ring**). Each key belongs to the first node found by moving clockwise from the key's position [Karger et al. 1997]. *(§3.3.2)*
+
+**Content-defined chunking (CDC)** — Splitting a byte stream into variable-size chunks whose boundaries are chosen by the content itself: a rolling hash is computed over a small sliding window, and a boundary is declared wherever the hash matches a pattern (for example, its low 13 bits equal a fixed value). Each chunk is then identified by a cryptographic hash of its bytes, so identical chunks are stored once (**deduplication**). *(§15.8.3)*
 
 **Context diagram** — A diagram that shows the whole system as a single box, surrounded by the people (actors) and external systems that interact with it, with each interaction labeled. Context diagrams come from structured analysis [DeMarco 1979] and are Level 1 of the C4 model [Brown C4]. *(§2.4.1)*
 
 **Context switch** — The kernel operation that stops one thread running on a CPU core, saves its CPU state into its PCB, and loads the saved state of another thread so that it resumes where it left off. *(§6.4)*
+
+**Cost-based optimizer** — The component that enumerates equivalent physical plans for a query (access paths, join orders, join algorithms), estimates each plan's cost from **statistics** about the data using a **cost model**, and returns the plan with the lowest estimated cost. *(§11.10.1)*
+
+**Count-Min sketch** — A $d \times w$ array of counters with one hash function per row that estimates the frequency of any item in a stream. Each update increments one counter per row; each query returns the minimum of the item's $d$ counters. The estimate never underestimates and, with probability at least $1 - \delta$, overestimates by at most $\varepsilon N$, where $N$ is the total of all updates [Cormode & Muthukrishnan 2005]. *(§17.6.1)*
 
 **CPU-bound and I/O-bound** — A workload is **CPU-bound** when its speed is limited by how fast the processor can execute instructions; giving it a faster CPU or more cores speeds it up. It is **I/O-bound** when it spends most of its time waiting for storage or the network; a faster CPU barely helps, but more concurrency or faster devices do. A related category, **memory-bound**, is limited by memory latency or bandwidth (§5.9) — the CPU looks "busy" but is mostly stalled. *(§5.8)*
 
@@ -90,6 +122,8 @@
 
 **Cryptographic hash function** — A deterministic function $H$ that maps an input of any length to a fixed-length output (the **digest**), such that it is computationally infeasible to (1) find an input that hashes to a given digest (**preimage resistance**), (2) given one input, find a different input with the same digest (**second-preimage resistance**), and (3) find any two distinct inputs with the same digest (**collision resistance**). *(§10.4.1)*
 
+**Cuckoo filter** — A hash table of $b$-slot buckets that stores a short **fingerprint** of each item (an $f$-bit hash) in one of two candidate buckets. Membership checks two buckets for a matching fingerprint; deletion removes one copy of the fingerprint. *(§17.4.7)*
+
 ## D
 
 **Deadline** — An absolute point in time by which a client needs an RPC to complete. gRPC transmits it as a remaining timeout; when it passes, the client stops waiting with `DEADLINE_EXCEEDED` and the server can see that the call was canceled [gRPC Docs: Deadlines]. *(§8.8.4)*
@@ -99,6 +133,8 @@
 **Decomposition** — Dividing a system into smaller parts (**components**) so that each part has one clear responsibility, a well-defined interface, and as few dependencies on other parts as possible. Each part can then be understood, built, scaled and changed mostly on its own. *(§2.3.2)*
 
 **Deliberate practice** — Effortful practice designed to improve performance. It targets specific weaknesses, has clear goals, gives immediate feedback and is usually guided by a teacher or coach [Ericsson et al. 1993]. *(§3.4.6)*
+
+**Denormalization** — Deliberately storing a fact more than once, or storing a derived value, to make important reads cheaper, while accepting the cost of keeping the copies consistent. *(§11.5.5)*
 
 **Design assumption** — A belief about the workload, the environment or the business that the design depends on but that has not yet been verified, for example "80% of requests are reads" or "the payment provider responds within 1 s at p99". An assumption is **stated** when it is written down with its value, its source, your confidence in it and how it will be checked. *(§2.7.1)*
 
@@ -112,7 +148,11 @@
 
 **Distributed denial of service (DDoS)** — An attack that makes a service unavailable by overwhelming some finite resource — network bandwidth, packet-processing capacity, connection-state tables, or application CPU, memory and database capacity — with traffic from many sources at once, typically a **botnet** of compromised devices or abused open servers. *(§10.11)*
 
+**Distributed file system** — A file system whose namespace and data are spread across many machines, so that files can be larger than any one disk and throughput can grow with the number of machines, while clients still use file-like operations (create, open, read, write or append, delete). *(§15.5.1)*
+
 **DNS time to live (TTL)** — A per-record value, in seconds, that tells any cache how long it may reuse the record before asking again. **Negative caching** stores "this name does not exist" (NXDOMAIN) answers for a duration derived from the zone's SOA record [RFC 2308]. *(§7.6.4)*
+
+**Document database** — A database that stores self-describing, hierarchical records — **documents**, usually JSON or a binary encoding of it such as BSON — grouped into **collections**, and that can index and query fields inside the documents, including nested fields and array elements. *(§12.5.1)*
 
 **Domain Name System (DNS)** — A hierarchical, distributed database that maps human-readable **domain names** (such as `www.example.com`) to data, most often IP addresses, and the protocol used to query it [RFC 1034; RFC 1035]. *(§7.6.1)*
 
@@ -122,9 +162,13 @@
 
 ## E
 
+**Elasticsearch cluster** — A set of nodes that share one cluster state (index definitions, mappings and the location of every shard copy). An **index** is a logical collection of documents divided into **primary shards**; each primary has zero or more **replica shards**; every shard is one Lucene index. *(§16.8.1)*
+
 **Encapsulation** — The process by which each layer of the stack prepends its own header (and sometimes appends a trailer) to the data unit handed down by the layer above, treating that data unit as an opaque payload. **Decapsulation** is the reverse at the receiver. *(§7.3.1)*
 
 **Envelope encryption** — Encrypting data with a **data-encryption key (DEK)** generated for that data, then encrypting ("wrapping") the DEK with a KEK held in a KMS, and storing the wrapped DEK alongside the ciphertext [AWS Docs: KMS concepts]. *(§10.9.2)*
+
+**Erasure code and RS(k, m)** — An **erasure code** transforms $k$ data fragments into $k + m$ fragments such that the original data can be rebuilt from some subset of them after the others are lost ("erased"). A **Reed–Solomon** code RS($k$, $m$) is a **maximum distance separable (MDS)** code: *any* $k$ of the $k+m$ fragments suffice, so it tolerates the loss of any $m$ fragments. A code is **systematic** when the first $k$ fragments are the unmodified data, so healthy reads need no decoding. *(§15.6.1)*
 
 **Event loop** — A single thread that repeatedly waits for events (ready sockets, expired timers, completed tasks) using an I/O multiplexing call, and dispatches each event to a short, non-blocking handler. *(§6.13.4)*
 
@@ -140,9 +184,13 @@
 
 **Forward secrecy** — A property of a key-exchange protocol whereby compromise of a party's long-term private key does not reveal session keys from past sessions. It is achieved by using fresh **ephemeral** key pairs for every session (the "E" in ECDHE) and deleting them afterward. *(§10.4.4)*
 
+**Functional dependency** — In a relation $R$, the functional dependency $X \to Y$ holds if any two rows that agree on the columns $X$ also agree on the columns $Y$. $X$ is the **determinant**. Example: `product_id → product_name` because one product ID always has one name. *(§11.5.1)*
+
 **Functional requirement (FR)** — A statement of a behavior the system must provide: an input, action or event, and the observable result. Functional requirements describe *what* the system does — for example, "a signed-in user can upload a JPEG or PNG photo up to 20 MB, and it appears in their followers' feeds". *(§1.6.1)*
 
 ## G
+
+**Graph database** — A database whose data model is a graph of **vertices** (nodes) and **edges** (relationships), optimized for traversing edges. In the **property graph** model, nodes carry labels, edges carry a type and a direction, and both carry key-value properties. In the **RDF** model, all data is a set of subject–predicate–object **triples**. *(§12.7.1)*
 
 **GraphQL** — A query language for APIs and a runtime for executing those queries against a strongly typed **schema**. The client sends a document describing exactly the fields it wants; the server returns JSON of the same shape [GraphQL Spec]. *(§8.7.1)*
 
@@ -152,23 +200,35 @@
 
 **Hard disk drive (HDD)** — A storage device that records data magnetically on spinning platters, read and written by heads mounted on a moving arm (the **actuator**). Data is organized in concentric **tracks** divided into **sectors** of 512 or 4096 bytes. *(§5.6.1)*
 
+**Hash function** — A deterministic function $h$ that maps an input of any length to a fixed-size integer (for example 32, 64 or 128 bits), called the **hash** or **digest**. A **non-cryptographic hash function** is designed for speed and statistical uniformity on ordinary inputs. A **cryptographic hash function** additionally resists an adversary who tries to find collisions or preimages (§10.4.1). *(§17.3.1)*
+
 **High-level design (HLD)** — A description of a system as a set of major components (services, data stores, queues, caches, external dependencies), their responsibilities, the interfaces and protocols between them, data flows, and deployment topology — at a level of detail where each component is a box whose internals are not yet specified. *(§1.5.1)*
 
+**Hot partition and hot key** — A **hot partition** receives a disproportionate share of requests or data relative to its peers, enough to saturate its node while others are idle. A **hot key** is a single key responsible for that excess. **Skew** is the general term for uneven distribution of data or load across partitions. *(§14.10)*
+
 **HTTP cookie** — A small name–value pair that a server asks the browser to store, via the `Set-Cookie` response header, and that the browser automatically returns in the `Cookie` request header on later requests to matching URLs [RFC 6265]. *(§8.10.1)*
+
+**HyperLogLog (HLL)** — A probabilistic algorithm that estimates the number of distinct items (the **cardinality**) in a multiset using $m$ small registers, with relative standard error about $1.04/\sqrt{m}$, independent of the cardinality itself [Flajolet et al. 2007]. *(§17.5.1)*
 
 ## I
 
 **Idempotent method** — A method for which the intended effect on the server of sending the same request $N > 0$ times is the same as sending it once [RFC 9110 §9.2.2]. The *response* may differ (a second `DELETE` may return 404); the *state* does not. *(§8.6.3)*
 
+**Index** — A secondary data structure, kept in sync with a table by the database, that maps values of one or more **key columns** to the locations of the rows holding them, so that rows can be found without scanning the whole table. Most relational indexes are B+ trees (§11.8); others include hash, GiST, GIN and BRIN indexes in PostgreSQL and full-text and spatial indexes in MySQL. *(§11.7.1)*
+
 **Instruction pipeline** — A technique in which the core splits instruction execution into stages and works on different stages of several consecutive instructions at the same time, like an assembly line. *(§5.3.3)*
 
 **Interleaving** — Mixing different kinds of problems or concepts within one practice session (A B C A C B), instead of finishing all practice on one kind before moving to the next (AAA BBB CCC, called **blocking**). *(§3.4.5)*
+
+**Inverted index** — A mapping from each distinct **term** (a normalized word or token) to a **postings list**: the sorted list of identifiers of the documents that contain the term, optionally with the term's frequency and positions in each document. The set of all terms is the **dictionary** (or **vocabulary**, or **lexicon**). *(§16.3.1)*
 
 **I/O (input/output)** — Any transfer of data between the CPU/memory and a device outside it: storage, network cards, GPUs, keyboards. A **device controller** on each device does the physical work; the CPU communicates with it through **device registers** and shared memory. *(§5.7)*
 
 **IOPS** — Input/output operations per second: the number of independent read or write requests a device completes per second, quoted for a stated request size (usually 4 KiB) and **queue depth** (number of requests outstanding at once). *(§5.6.5)*
 
 **IP address** — A numeric identifier assigned to a network interface that the Internet Protocol uses to deliver packets. An **IPv4** address is 32 bits, written as four decimal octets (`203.0.113.25`) [RFC 791]. An **IPv6** address is 128 bits, written as eight groups of four hexadecimal digits separated by colons (`2001:db8:0:1::25`) [RFC 8200]. *(§7.4.1)*
+
+**Isolation anomalies** — **Dirty write:** a transaction overwrites another's uncommitted write. **Dirty read:** a transaction reads another's uncommitted write (which may later roll back). **Non-repeatable (fuzzy) read:** a transaction reads a row twice and sees different committed values because another transaction updated it in between. **Phantom:** a transaction runs the same *predicate* query twice (`WHERE status = 'pending'`) and gets a different set of rows because another transaction inserted or deleted matching rows. **Lost update:** two transactions read the same value, both compute a new value from it and write; the second write silently overwrites the first. **Read skew:** a transaction sees part of another transaction's effects (reads account A before a transfer commits and account B after it). **Write skew:** two transactions read an overlapping set of rows, each checks an invariant, then each writes a *different* row; each write is valid alone but together they violate the invariant. *(§11.13.1)*
 
 ## J
 
@@ -178,6 +238,10 @@
 
 **Key management service (KMS)** — A managed service, backed by hardware security modules (HSMs), that generates and stores **key-encryption keys (KEKs)** that never leave it in plaintext, performs cryptographic operations with them on request, enforces access policies on every use and logs every call. Examples: AWS KMS, Google Cloud KMS, Azure Key Vault, HashiCorp Vault's Transit engine. *(§10.9.2)*
 
+**Keys** — A **superkey** is a set of columns whose values are unique across all rows. A **candidate key** is a minimal superkey: remove any column and it stops being unique. The **primary key** is the candidate key chosen as the row's main identifier; it must be unique and NOT NULL. Other candidate keys are enforced with `UNIQUE` constraints. A **foreign key** is a column (or set) in one table whose values must match a key of another table, a rule called **referential integrity**. *(§11.4.1)*
+
+**Key-value store** — A database whose primary interface is `get(key)`, `put(key, value)` and `delete(key)`, where the value is opaque to the database or has a small set of built-in types. The key alone determines where the value lives. *(§12.4.1)*
+
 ## L
 
 **Latency and bandwidth (hardware)** — **Latency** is the time from issuing one request to receiving its first byte (for example, ~100 ns for a DRAM load). **Bandwidth** is the maximum rate at which data can be moved once transfers are flowing (for example, ~38 GB/s for one DDR5-4800 channel). Achieved bandwidth is **throughput**. *(§5.9.1)*
@@ -186,7 +250,13 @@
 
 **Little's Law** — For any stable system observed over a long period, the average number of items in the system equals the average arrival rate multiplied by the average time each item spends in the system: $L = \lambda W$ [Little 1961]. *(§4.11.1)*
 
+**Local and global secondary indexes** — A **local index** (also **document-partitioned** index) is stored inside each partition and covers only that partition's rows. A **global index** (also **term-partitioned** index) is a separate structure covering all rows, partitioned by the *indexed value* rather than by the row's key, so all entries for one value live together [Kleppmann 2017]. *(§14.11)*
+
 **Logarithm** — The logarithm base $b$ of $x$, written $\log_b x$, is the exponent to which $b$ must be raised to give $x$: if $b^y = x$ then $y = \log_b x$. *(§4.4.1)*
+
+**Log-structured merge tree (LSM tree)** — A storage structure that buffers writes in a sorted in-memory table (the **memtable**), periodically writes it out as an immutable sorted file (a **sorted string table, SSTable**), and merges SSTables in the background (**compaction**) into progressively larger sorted runs organized in **levels**. Introduced by O'Neil, Cheng, Gawlick and O'Neil [O'Neil et al. 1996]; the memtable/SSTable design popularized by Google's Bigtable [Chang et al. 2006] and implemented in LevelDB, RocksDB, Cassandra, HBase, ScyllaDB and many others. *(§13.8.1)*
+
+**Log-structured storage** — A storage design in which every write — insert, update or delete — is appended to the end of a file, and existing data is never modified in place. Old versions become garbage that a background **compaction** (or merge) process removes by copying live data into new files. *(§13.7.1)*
 
 **Long polling** — A technique in which the client sends an HTTP request that the server deliberately does not answer until either new data is available or a server-side timeout *T*<sub>hold</sub> expires; on receiving any response, the client immediately sends the next request. *(§9.4.1)*
 
@@ -200,19 +270,41 @@
 
 **Memory hierarchy** — The layered arrangement of storage technologies in a computer, from small, fast and expensive per byte (registers, caches) to large, slow and cheap per byte (disks, tape), in which each level acts as a cache for the level below it. *(§5.5.2)*
 
+**Merkle tree (hash tree)** — A tree in which every leaf holds the hash of a data block and every interior node holds the hash of its children's hashes. The **root hash** summarizes the entire data set: changing any block changes the root [Merkle 1987]. *(§17.8.1)*
+
 **Message authentication code (MAC)** — A short tag computed from a message and a secret key, $t = \text{MAC}_K(m)$, such that without $K$ it is infeasible to produce a valid tag for any new message. **HMAC** is the standard construction from a hash function: $\text{HMAC}_K(m) = H\big((K \oplus \text{opad}) \,\|\, H((K \oplus \text{ipad}) \,\|\, m)\big)$ [Krawczyk et al. 1997]. *(§10.4.6)*
+
+**Metadata service** — The component that maps names to data: directory entries, file or object attributes (size, owner, permissions, version, checksum) and the locations of each chunk or fragment. It is on the path of every open, create, list and delete, while the data path bypasses it. *(§15.7.1)*
 
 **Mobile push notification** — A message sent by an application's server to a platform-operated push service — Apple Push Notification service (**APNs**) for Apple platforms, Firebase Cloud Messaging (**FCM**) for Android (and optionally iOS and web) — which delivers it, on a best-effort basis, over a single persistent connection that the operating system maintains to that service on behalf of all apps. *(§9.8.1)*
 
+**Monotonic reads** — A guarantee that a client never sees data move backwards in time: once it has read a value at some version, later reads return that version or newer. *(§14.4.3)*
+
 **Multi-core processor** — A single chip containing several complete cores, each with its own pipeline and private caches, sharing the last-level cache and memory. *(§5.3.6)*
+
+**Multipart upload** — A protocol for uploading one large object as independently uploaded **parts**: the client *initiates* an upload and receives an upload ID, uploads numbered parts (in any order, in parallel, retrying any part), then *completes* the upload with the list of part numbers and their ETags, at which point the store assembles the object atomically. Until completion, or after an *abort*, the object is not visible. *(§15.8.1)*
+
+**Multi-primary replication** — A topology in which more than one node accepts writes for the same data and each primary replicates its changes to the others. It is also called **multi-leader** or **active–active** replication. Because two primaries can change the same row concurrently without coordination, the system must detect and resolve **write conflicts**. *(§14.5)*
 
 **Mutex (mutual-exclusion lock)** — An object with two operations, `lock` and `unlock`, guaranteeing that at most one thread holds it at a time. A thread that calls `lock` while another holds it waits. *(§6.10.1)*
 
+**MVCC** — A concurrency-control technique in which a write creates a new **version** of a row instead of overwriting it in place, and each transaction reads the versions visible in its **snapshot**: the set of transactions that had committed when the snapshot was taken. Readers therefore never block writers and writers never block readers; only writers of the same row wait for each other. *(§11.14.1)*
+
 ## N
+
+**Natural and surrogate keys** — A **natural key** is a candidate key with business meaning (email address, ISBN, country code). A **surrogate key** is a meaningless value generated by the system (an auto-increment integer, a UUID) whose only job is identification. *(§11.4.2)*
+
+**Near-real-time (NRT) search** — A search system in which newly written documents become searchable after a short, bounded delay (typically one second to a minute) rather than immediately, because making them visible requires creating a new segment and reopening the searcher. *(§16.10.1)*
 
 **Network Address Translation (NAT)** — A function, usually in a router or gateway, that rewrites the source and/or destination IP addresses (and usually ports) of packets as they pass, keeping a **translation table** so that replies can be rewritten back. The most common form, **source NAT with port translation** (NAPT, often just "NAT"), lets many hosts with private addresses share one public address [RFC 3022]. *(§7.13)*
 
+**NewSQL (distributed SQL)** — Relational databases that keep SQL and ACID transactions with serializable or strong isolation while scaling horizontally across nodes and regions, by partitioning data into ranges replicated with a consensus protocol. The term was coined by analyst Matthew Aslett in 2011 [Pavlo & Aslett 2016]. *(§12.11)*
+
 **Non-functional requirement (NFR)** — A requirement on *how well* the system performs its functions, or on constraints under which it operates, expressed as a measurable target — for example "p99 feed latency ≤ 300 ms at 2,000 RPS" or "monthly availability ≥ 99.9%". NFRs are also called **quality attributes** or, informally, the **"-ilities"** (scalability, availability, durability, …). *(§1.7.1)*
+
+**Normal forms (1NF to BCNF)** — **1NF:** every column holds a single atomic value (no lists or repeating groups). **2NF:** 1NF, and no non-key column depends on only *part* of a composite candidate key. **3NF:** 2NF, and no non-key column depends on another non-key column (no transitive dependency); formally, for every non-trivial $X \to A$, either $X$ is a superkey or $A$ is part of some candidate key. **BCNF (Boyce–Codd normal form):** for every non-trivial $X \to A$, $X$ is a superkey. BCNF removes 3NF's exception for key columns. *(§11.5.2)*
+
+**NoSQL database** — A database that does not use the relational table-and-join model as its primary data model and typically trades some combination of cross-record transactions, ad-hoc querying and fixed schemas for horizontal scale-out, flexible schemas or availability during failures. The name is usually read as "not only SQL"; it describes a movement, not a specification. *(§12.3.1)*
 
 **NUMA (non-uniform memory access)** — A memory architecture in which each processor socket (or each chiplet group within a socket) has its own directly attached memory. A core can access all memory in the machine, but accessing its **local** memory is faster than accessing **remote** memory attached to another socket. *(§5.10)*
 
@@ -232,13 +324,23 @@
 
 ## P
 
+**Page** — The fixed-size unit (typically 4–16 KiB) in which a storage engine reads, writes, caches and logs data. A page on disk is sometimes called a **block**; the engine keeps a copy of a page in memory in a **frame** of its buffer pool. *(§13.3.1)*
+
 **Page cache** — The kernel's in-RAM cache of file contents, organized in pages. Reads are served from it when possible; writes normally modify pages in it (marking them **dirty**) and return immediately, with the kernel writing them back to storage later. *(§6.6.6)*
+
+**Partition key, sort key and item collection** — In DynamoDB every **item** (a record of up to 400 KB, as of 2026) has a primary key made of a **partition key** and, optionally, a **sort key**. DynamoDB hashes the partition key to choose the storage partition. All items sharing a partition key form an **item collection**, stored together and ordered by sort key, so a single **Query** can return a contiguous, sorted range of them. *(§12.4.3)*
+
+**Partition (shard)** — A subset of a dataset's rows, stored and served together, such that every row belongs to exactly one partition. **Partitioning** is dividing a dataset this way and spreading the partitions over nodes. **Sharding** is a synonym used mostly for partitioning across separate database servers. This book uses *partition* and *shard* interchangeably for the data subset and reserves **network partition** for a network split (§24.7). The column or columns that decide a row's partition form the **partition key** (or **shard key**). *(§14.6.1)*
 
 **Percentile** — The $q$-th percentile of a set of measurements is the value at or below which $q$% of the measurements fall. Latency percentiles are written **p50** (the median), **p95**, **p99** and **p99.9** (also written p999): the 50th, 95th, 99th and 99.9th percentiles. *(§4.8.1)*
 
 **Percentile latency (p50, p95, p99, p99.9)** — The latency value below which the given percentage of requests fall. If p99 latency is 300 ms, 99% of requests completed in 300 ms or less and 1% took longer. p50 is the median. *(§1.7.1)*
 
 **PKCE (Proof Key for Code Exchange, "pixy")** — An extension in which the client creates a random secret, the **code verifier**, sends only its SHA-256 hash, the **code challenge**, with the authorization request, and must present the verifier when redeeming the authorization code. An attacker who intercepts the code cannot redeem it without the verifier [RFC 7636]. *(§8.14.3)*
+
+**Polyglot persistence** — Using several different data-storage technologies within one system, each chosen for the access pattern it serves best, rather than forcing all data into one database [Fowler 2011; Sadalage & Fowler 2012]. *(§12.13.1)*
+
+**Primary key in CQL** — In Cassandra Query Language, `PRIMARY KEY ((a, b), c, d)` declares `(a, b)` as the **partition key** — hashed to choose the replicas and defining what is stored together — and `c, d` as **clustering columns**, which order rows *within* the partition on disk. *(§12.6.2)*
 
 **Priority inversion** — A situation in which a high-priority thread is blocked waiting for a lock held by a low-priority thread, while a medium-priority thread, which needs no lock, preempts the low-priority one, so the high-priority thread effectively runs at the lowest priority. *(§6.11.5)*
 
@@ -264,11 +366,27 @@
 
 **Race condition** — A bug in which the result of a program depends on the relative timing or interleaving of concurrent operations on shared state. A **data race** is the specific case where two threads access the same memory location concurrently, at least one access is a write, and nothing orders them. *(§6.9)*
 
+**Read-your-writes consistency** — A guarantee that after a client writes a value, its subsequent reads return that value or a newer one. It says nothing about other clients' reads. It is also called **read-after-write consistency**. *(§14.4.3)*
+
+**Rebalancing** — Moving partitions, or parts of them, between nodes so that data and load stay evenly spread as nodes are added, removed or replaced, or as the data grows. A good rebalancing scheme keeps the database available throughout, moves no more data than necessary and leaves load balanced at the end. *(§14.9)*
+
 **Register** — A tiny, extremely fast storage slot inside a core, typically 64 bits wide for general-purpose registers. x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A (AArch64) exposes 31. Reading a register costs essentially nothing beyond the instruction that uses it. *(§5.3.2)*
+
+**Relation** — A **relation** is a named set of **tuples** that share the same **attributes**. Each attribute has a name and a **domain** (the set of allowed values, such as 64-bit integers). In SQL a relation is a **table**, a tuple is a **row** and an attribute is a **column**. The relation's name and attributes together form its **schema**; the set of rows at a moment is its **instance**. *(§11.3.1)*
+
+**Relevance score** — A number computed for each (query, document) pair that estimates how well the document satisfies the query. A **ranking function** computes it; the engine returns the $k$ highest-scoring documents. *(§16.5.1)*
 
 **Reliability, MTBF, MTTR and failure rate** — **Reliability** $R(t)$ is the probability that a component operates without failure for a period of length $t$. The **mean time between failures (MTBF)** is the average operating time from the end of one repair to the next failure (for non-repairable parts the same quantity is called **MTTF**, mean time to failure). The **mean time to repair (MTTR)** is the average time from failure to restored service, including detection, diagnosis and repair. The **failure rate** $\lambda$ is the average number of failures per unit of operating time. *(§4.15.1)*
 
 **Remote procedure call (RPC)** — A mechanism that lets a program call a function in another process, usually on another machine, with syntax that resembles a local function call. Generated **stubs** serialize the arguments, send them over the network, and deserialize the result [Birrell and Nelson 1984]. *(§8.8.1)*
+
+**Replication** — Keeping a copy of the same data on more than one node. Each copy is a **replica**. In **primary–replica replication**, exactly one node, the **primary** (called the "master" in older documentation), accepts writes and streams its changes to the **replicas**, which apply them in the same order and serve reads. *(§14.3.1)*
+
+**Replication lag** — The delay between a change committing on the primary and the same change becoming visible on a replica. It can be measured as time (seconds), as log volume (bytes of WAL not yet replayed) or as transactions. *(§14.4.2)*
+
+**Replication log formats** — **Statement-based replication** ships the SQL statements the primary executed. **Row-based replication** ships the before and after images of each changed row. **Physical replication** (WAL shipping) ships the storage engine's low-level log of byte changes to data pages. **Logical replication** ships a decoded, engine-independent description of row changes per table, which subscribers can filter and apply to a different schema or version. *(§14.4.5)*
+
+**Replication modes** — In **synchronous replication**, the primary does not report a commit as successful until at least one designated replica has durably received it (or, in stricter settings, applied it). In **asynchronous replication**, the primary reports success after its own local commit and ships the change afterwards. **Semi-synchronous replication** is MySQL's name for a middle ground: the primary waits until at least one replica has *received and logged* the change, but not until it has applied it, and it falls back to asynchronous mode if no replica answers within a timeout. *(§14.4.1)*
 
 **Request–response lifecycle** — The complete sequence of network and processing steps between a client issuing a request and receiving the full response, including name resolution, connection establishment, routing through intermediaries, application processing, data access and the return path. *(§8.5.1)*
 
@@ -278,13 +396,19 @@
 
 **Routing and forwarding** — **Forwarding** is the per-packet act of choosing an outgoing interface for a packet based on its destination address and the **forwarding table**. **Routing** is the control-plane process of building those tables by exchanging reachability information with other routers. *(§7.5.1)*
 
+**RUM conjecture** — For any access method, bounding two of **R**ead overhead, **U**pdate overhead and **M**emory (space) overhead forces the third to be worse: you can optimize for at most two [Athanassoulis et al. 2016]. *(§13.11.1)*
+
 ## S
 
 **Safe method** — A method whose semantics are read-only: the client does not request, and does not expect, any state change on the server [RFC 9110 §9.2.1]. Logging or metrics side effects are allowed. *(§8.6.3)*
 
+**Search engine (as a data store)** — A system such as Elasticsearch, OpenSearch or Apache Solr that stores JSON documents and builds an **inverted index** — a map from each term to the list of documents containing it — so it can answer full-text, relevance-ranked, faceted and fuzzy queries. *(§12.9)*
+
 **Secret** — Any value that grants access and must be kept confidential: database passwords, API keys, OAuth client secrets, TLS and signing private keys, encryption keys, webhook HMAC keys. **Secrets management** is the practice of storing, distributing, rotating, auditing and revoking secrets so that they are available to the workloads that need them and to nobody else. *(§10.8)*
 
 **Security property** — A statement about what must remain true about a system even when an adversary is actively trying to violate it. The classic triad is **confidentiality** (only authorized parties can read data), **integrity** (data and behavior cannot be changed without detection) and **availability** (authorized parties can use the system when they need it), often abbreviated **CIA**. System designers add **authentication** (knowing who is acting), **authorization** (deciding what that actor may do) and **non-repudiation** (an actor cannot credibly deny an action they took). *(§10.3.1)*
+
+**Segment** — A self-contained, immutable mini-index (its own dictionary, postings, stored fields, norms and doc values) covering a subset of documents. A Lucene index is a set of segments plus a **commit point** file (`segments_N`) listing which segments are live; a search runs over every live segment and combines the results. *(§16.6.1)*
 
 **Semaphore** — An integer counter with two atomic operations introduced by Dijkstra: **wait** (P, or *acquire*) decrements it and blocks if the result would be negative; **signal** (V, or *release*) increments it and wakes a waiter [Dijkstra 1965]. *(§6.10.2)*
 
@@ -306,6 +430,10 @@
 
 **Single-page application (SPA) / client-side rendering (CSR)** — The server sends a nearly empty HTML shell plus a JavaScript bundle; the JavaScript calls JSON APIs and builds the page in the browser. Navigation afterwards happens without full page loads. *(§8.4.2)*
 
+**Skip list** — An ordered linked list augmented with extra levels of "express" pointers. Each node is promoted to the next level with probability $p$ (typically 1/2 or 1/4), so level $i$ contains about a fraction $p^i$ of the nodes. Search, insert and delete take expected $O(\log n)$ time [Pugh 1990]. *(§17.7.1)*
+
+**Slotted page** — A page layout in which a **header** is followed by an array of **slots** (also called line pointers or item IDs) that grows from the front, while variable-length **records** (tuples) are packed from the back. Each slot stores the offset and length of one record; free space sits in the middle. *(§13.3.2)*
+
 **Software architecture** — "The set of structures needed to reason about the system, which comprise software elements, relations among them, and properties of both" [Bass et al. 2021]. The international standard for architecture description defines it as the fundamental concepts or properties of a system in its environment, embodied in its elements, relationships, and in the principles of its design and evolution [ISO/IEC/IEEE 42010]. *(§1.4.1)*
 
 **Solid-state drive (SSD)** — A storage device with no moving parts that stores data in **NAND flash** memory cells, managed by an on-board controller running a **flash translation layer** (FTL). *(§5.6.2)*
@@ -314,9 +442,13 @@
 
 **Speedup** — The ratio of the time a job takes on one processor (or node) to the time it takes on $N$: $S(N) = T(1)/T(N)$. Perfect, **linear** speedup is $S(N) = N$. *(§4.12.1)*
 
+**SQL** — The Structured Query Language, standardized by ANSI/ISO, with sublanguages for defining schema (DDL: `CREATE`, `ALTER`, `DROP`), manipulating data (DML: `SELECT`, `INSERT`, `UPDATE`, `DELETE`) and controlling transactions (`BEGIN`, `COMMIT`, `ROLLBACK`). Every major database implements the core standard plus its own dialect. *(§11.6.1)*
+
 **Stateless service** — A service that keeps no client-specific data in its own memory between requests. Every request carries, or lets the service look up from a shared store, everything needed to process it. *(§8.3.2)*
 
 **Static site generation (SSG)** — HTML is produced at build time and served as static files, usually from a CDN (Chapter 21). Pages that change per user cannot be fully static. *(§8.4.2)*
+
+**Storage tier and lifecycle policy** — A **storage tier** (storage class) is a price/performance point for the same data: **hot** (frequent access, highest storage price, no retrieval fee), **warm** or infrequent access (cheaper storage, per-GB retrieval fee, minimum storage duration), **cold** (cheaper again, slower or costlier retrieval) and **archive** (cheapest storage, retrieval in hours). A **lifecycle policy** is a set of rules, usually by prefix, tag or age, that automatically transitions objects between tiers and expires (deletes) them. *(§15.9)*
 
 **STRIDE** — A mnemonic for six threat categories, developed at Microsoft in 1999 by Loren Kohnfelder and Praerit Garg and popularized by Shostack [Shostack 2014]: **S**poofing, **T**ampering, **R**epudiation, **I**nformation disclosure, **D**enial of service and **E**levation of privilege. Each category is the violation of one security property. *(§10.3.4)*
 
@@ -342,7 +474,13 @@
 
 **Threat model** — A structured description of a system, the **assets** in it that are worth protecting, the **adversaries** who might attack it and their capabilities, the **threats** (ways a security property could be violated), and the **mitigations** chosen for each threat [Shostack 2014]. *(§10.3.2)*
 
+**Time-series database (TSDB)** — A database optimized for sequences of timestamped measurements. Data is organized into **series**, each identified by a metric name plus a set of **labels** (tags) such as `{host="web-3", region="eu"}`, and each series is an append-only list of **samples** `(timestamp, value)`. *(§12.8.1)*
+
+**Torn write (torn page)** — A page write that is interrupted by a crash so that part of the page on disk is new and part is old. It arises because the database page (8 or 16 KiB) is larger than the unit the device or file system writes atomically (commonly 4 KiB or 512 bytes). *(§13.12.2)*
+
 **Trade-off** — A situation where improving one desired property of a system makes another worse. Examples: lower latency at higher cost, stronger consistency at lower availability during network partitions, faster delivery at higher operational risk. Every design decision is a trade-off. If you cannot name what an option makes worse, you have not understood it yet. *(§2.8.1)*
+
+**Transaction** — A sequence of reads and writes that the database treats as one logical unit: either all of its effects become permanent together (**commit**) or none of them do (**abort** or **rollback**), and concurrently running transactions are isolated from each other's intermediate states. *(§11.11.1)*
 
 **Transport Layer Security (TLS)** — A protocol that gives two communicating applications **confidentiality** (eavesdroppers cannot read the data), **integrity** (tampering is detected) and **authentication** (at least the server proves its identity, usually with an X.509 certificate). **HTTPS** is HTTP carried over TLS, on TCP port 443 by default. TLS 1.3 is specified in RFC 8446 (2018). *(§7.10.1)*
 
@@ -358,13 +496,23 @@
 
 **Vector** — An ordered list of $d$ numbers, $\mathbf{a} = (a_1, a_2, \ldots, a_d)$, where $d$ is the **dimension**. Geometrically, a vector is an arrow from the origin to a point in $d$-dimensional space; its **length** (or norm) is $\lVert \mathbf{a} \rVert = \sqrt{a_1^2 + \cdots + a_d^2}$. *(§4.9.1)*
 
+**Vector database** — A data store that indexes high-dimensional numeric vectors (**embeddings** produced by machine-learning models) and answers **approximate nearest neighbor (ANN) search** queries: "the *k* stored vectors most similar to this query vector", by cosine similarity, dot product or Euclidean distance. *(§12.10)*
+
 **Virtual memory** — A mechanism in which every address a program uses is a **virtual address** that the hardware's **memory-management unit (MMU)** translates, using tables maintained by the kernel, into a **physical address** in RAM, or into a fault if no valid mapping exists. *(§6.6.1)*
+
+**Virtual node (vnode)** — One of $V$ positions on the ring assigned to the same physical node, typically by hashing labels such as `"db-3#vn17"`. A physical node owns the union of the arcs that end at its vnodes. A vnode is sometimes called a **token**. *(§14.8.1)*
+
+**Volcano (iterator) model** — An execution model in which a query plan is a tree of operators, each implementing the same interface — `open()`, `next()` and `close()` — and each `next()` call pulls one row from the operator's children on demand [Graefe 1994]. *(§11.9.2)*
 
 ## W
 
 **WebRTC** — A set of IETF protocols (overview in RFC 8825 [Alvestrand 2021]) and a W3C browser API [W3C WebRTC] for real-time audio, video and arbitrary data directly between peers. Media travels over SRTP, data over SCTP data channels, both secured by DTLS, typically over UDP; peers discover a working network path using ICE with the help of STUN and TURN servers. *(§9.7.1)*
 
 **WebSocket** — A protocol, standardized in RFC 6455 [Fette & Melnikov 2011], that starts as an HTTP/1.1 request, *upgrades* the underlying TCP connection, and thereafter carries a full-duplex sequence of framed messages in both directions with 2–14 bytes of framing overhead per frame. URLs use the schemes `ws://` (plain TCP, default port 80) and `wss://` (over TLS, default port 443). *(§9.6.1)*
+
+**Wide-column store** — A database whose rows are identified by a key, sorted (globally or within a partition) by that key, and contain a sparse, variable set of columns grouped into **column families**; each row may have millions of columns and each cell may hold several timestamped versions. Bigtable, HBase, Cassandra and ScyllaDB belong to this family. *(§12.6.1)*
+
+**Write-ahead log (WAL)** — An append-only file of **log records** describing every change to the database, written *before* the changed pages themselves reach disk. Each record is identified by a monotonically increasing **log sequence number (LSN)**, usually its byte offset in the log. Also called the redo log (InnoDB) or journal. *(§13.5.1)*
 
 ## Z
 

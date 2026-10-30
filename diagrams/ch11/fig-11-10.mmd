@@ -1,0 +1,8 @@
+%% Figure 11.10 — PostgreSQL version chain for product 42
+flowchart LR
+  IX["B+ tree index entry<br/>product_id 42 to TID 0,1"] --> V1["lp 1: on_hand 10<br/>xmin 993, xmax 994"]
+  V1 -->|"t_ctid"| V2["lp 2: on_hand 9<br/>xmin 994, xmax 995"]
+  V2 -->|"t_ctid"| V3["lp 3: on_hand 8<br/>xmin 995, xmax 0"]
+  S1(["Snapshot taken before 994 commits"]) -.->|"sees"| V1
+  S2(["Snapshot taken after 995 commits"]) -.->|"sees"| V3
+  VAC["VACUUM"] -->|"reclaims lp 2,<br/>redirects lp 1 to lp 3"| V1

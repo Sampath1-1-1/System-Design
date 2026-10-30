@@ -1,0 +1,11 @@
+%% Figure 14.9 — Salting a hot counter across partitions
+flowchart LR
+  W1([Like events]) -->|"increment, random suffix"| SW[Write path]
+  SW -->|"post:991 suffix 0"| P0[(Partition 0)]
+  SW -->|"post:991 suffix 1"| P1[(Partition 1)]
+  SW -->|"post:991 suffix s-1"| PS[(Partition s-1)]
+  R1([Viewers]) -->|read count| CA[(Cache, TTL 1 s)]
+  CA -->|"miss: sum s sub-keys"| AG[Aggregator]
+  AG -->|parallel reads| P0
+  AG -->|parallel reads| P1
+  AG -->|parallel reads| PS

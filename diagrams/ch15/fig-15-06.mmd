@@ -1,0 +1,17 @@
+%% Figure 15.6 — An RS(10,4) stripe across 14 failure domains
+flowchart LR
+  OBJ([Object block 640 MB]) --> ENC[Encoder RS 10,4]
+  subgraph Data["10 data fragments, 64 MB each"]
+    D1[(D1 rack 1)]
+    D2[(D2 rack 2)]
+    DX[("D3 to D9<br/>racks 3 to 9")]
+    D10[(D10 rack 10)]
+  end
+  subgraph Parity["4 parity fragments"]
+    P1[(P1 rack 11)]
+    P2[(P2 rack 12)]
+    P3[(P3 rack 13)]
+    P4[(P4 rack 14)]
+  end
+  ENC --> Data
+  ENC --> Parity

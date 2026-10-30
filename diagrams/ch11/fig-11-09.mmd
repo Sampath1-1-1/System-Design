@@ -1,0 +1,13 @@
+%% Figure 11.9 — Write skew: both doctors go off call
+sequenceDiagram
+  participant A as Txn A - Alice
+  participant DB as Database
+  participant B as Txn B - Bob
+  A->>DB: SELECT count WHERE on_call - returns 2
+  B->>DB: SELECT count WHERE on_call - returns 2
+  A->>DB: UPDATE alice SET on_call = false
+  B->>DB: UPDATE bob SET on_call = false
+  A->>DB: COMMIT - ok
+  B->>DB: COMMIT
+  Note over B,DB: REPEATABLE READ: ok, nobody on call
+  Note over B,DB: SERIALIZABLE: aborted, retry sees 1

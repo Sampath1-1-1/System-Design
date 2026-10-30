@@ -1,0 +1,10 @@
+%% Figure 15.2 — Generic S3-style object store (illustrative)
+flowchart LR
+  C([Client]) -->|HTTPS signed request| FE[Front end<br/>auth and routing]
+  FE -->|key lookup or commit| IDX[Metadata index<br/>partitioned by key range]
+  IDX --> MDB[(Index partitions<br/>replicated)]
+  FE -->|where to write| PL[Placement service]
+  SN -.->|capacity and health| PL
+  FE -->|stream fragments| SN[(Storage nodes<br/>disks across zones)]
+  BG[[Background: repair,<br/>scrub, GC, lifecycle]] -.-> SN
+  BG -.-> IDX

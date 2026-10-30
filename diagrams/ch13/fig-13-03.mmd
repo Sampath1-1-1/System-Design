@@ -1,0 +1,18 @@
+%% Figure 13.3 — WAL, commit and checkpoint timeline
+sequenceDiagram
+  participant T as Transaction
+  participant BP as Buffer pool
+  participant W as WAL file
+  participant CK as Checkpointer
+  participant D as Data files
+  T->>BP: update row on page 7
+  BP->>W: append LSN 100 update page 7
+  Note over BP: page 7 dirty, pageLSN 100
+  T->>W: append LSN 110 COMMIT
+  W->>W: fsync up to LSN 110
+  W-->>T: commit acknowledged
+  CK->>W: LSN 120 BEGIN_CHECKPOINT<br/>dirty pages: 7 recLSN 100
+  CK->>D: write page 7, WAL already durable past 100
+  CK->>W: LSN 140 END_CHECKPOINT
+  T->>BP: update page 9, LSN 150, no commit yet
+  Note over T,D: crash: page 9 change lost from RAM, LSN 150 maybe in WAL

@@ -1,0 +1,16 @@
+%% Figure 14.6 — Multi-tenant sharding with logical shards and a tenant directory
+flowchart LR
+  C([Client]) -->|HTTPS with tenant token| API[API service]
+  API -->|tenant_id| RT["Shard router<br/>cached map"]
+  DIR[(Tenant directory<br/>overrides plus map)] -.->|change notifications| RT
+  RT -->|"hash to logical shard<br/>0 to 4095"| MAP{"Override for<br/>this tenant?"}
+  MAP -->|no| SC["Shared cluster k<br/>owns many logical shards"]
+  MAP -->|yes| DC["Dedicated cluster<br/>for one large tenant"]
+  subgraph SC_G["Shared cluster k"]
+    SC --> PK[(Primary)]
+    PK -.->|async| RK[(Replica)]
+  end
+  subgraph DC_G["Dedicated cluster"]
+    DC --> PD[(Primary)]
+    PD -.->|async| RD[(Replica)]
+  end

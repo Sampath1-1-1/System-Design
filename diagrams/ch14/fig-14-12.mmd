@@ -1,0 +1,12 @@
+%% Figure 14.12 — PgBouncer in transaction-pooling mode
+flowchart LR
+  subgraph APPS["300 app pods, pools of 20"]
+    A1[Pod 1]
+    A2[Pod 2]
+    AN[Pod 300]
+  end
+  A1 -->|"20 client conns"| PB["PgBouncer<br/>pool_mode=transaction"]
+  A2 -->|"20 client conns"| PB
+  AN -->|"20 client conns"| PB
+  PB -->|"about 60 server conns"| PG[(PostgreSQL primary)]
+  PB -.->|"queue when pool busy"| WQ[[Waiting clients]]

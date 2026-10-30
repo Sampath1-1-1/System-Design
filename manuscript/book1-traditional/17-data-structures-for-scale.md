@@ -715,3 +715,1059 @@ XOR filters [Graf & Lemire 2020] and the ribbon filters available in RocksDB are
 ::: mistake
 **"Bigger items need bigger filters."** Filter size depends only on the number of items and the target false-positive rate, not on item size. A 2 KB URL and an 8-byte integer each cost 9.6 bits at 1%.
 :::
+
+## 17.5 HyperLogLog
+
+### 17.5.1 Counting distinct items from leading zeros
+
+::: definition
+**Definition — HyperLogLog (HLL).** A probabilistic algorithm that estimates the number of distinct items (the **cardinality**) in a multiset using $m$ small registers, with relative standard error about $1.04/\sqrt{m}$, independent of the cardinality itself [Flajolet et al. 2007].
+:::
+
+#### First-principles explanation
+
+Suppose a friend flips a coin repeatedly and tells you only the longest run of heads that started a sequence: "Once I got five heads in a row before the first tail." A run of five heads has probability $1/32$, so your friend probably made about 32 attempts. A run of 20 heads suggests about a million attempts. You learned the number of attempts from one small number, the longest run.
+
+Hash each item to a uniform bit string and read its leading zeros as coin flips. The probability that a hash starts with at least $r - 1$ zeros, so that its first 1-bit is at position $r$ or later, is $2^{-(r-1)}$. If the largest such position over all items is $R$, there were probably about $2^R$ *distinct* items. Duplicates do not matter: the same item always hashes to the same bits, so seeing it twice cannot raise the maximum. One maximum is very noisy (one lucky hash doubles the estimate), so HLL keeps many independent maxima and averages them.
+
+#### Why does this exist?
+
+Counting distinct items exactly needs memory proportional to the number of distinct items: a set of 1 billion 8-byte user IDs is at least 8 GB, and you may want one count per page, per day, per country. Analytics systems ask "how many unique users?" millions of times per day, and they need to combine counts across servers and time windows. A sum of per-server distinct counts double-counts users seen by two servers; HLL sketches can be merged without double counting.
+
+#### How it works internally
+
+1. Choose precision $p$; allocate $m = 2^p$ registers, all 0.
+2. For each item, compute a 64-bit hash. The first $p$ bits choose register $j$. In the remaining $64 - p$ bits, find $\rho$, the position of the leftmost 1-bit (1 if the first bit is 1).
+3. Set $M[j] = \max(M[j], \rho)$.
+4. To estimate, combine the registers with a **harmonic mean**, which damps the effect of a few unusually large registers, and multiply by a bias-correction constant.
+5. For small cardinalities, when many registers are still 0, switch to **linear counting**: $m \ln(m/V)$, where $V$ is the number of zero registers.
+6. To **merge** sketches from several servers, take the register-wise maximum. The result is exactly the sketch that one server would have built from the combined stream.
+
+**Figure 17.5 — The HyperLogLog update and estimate path.**
+
+```mermaid
+flowchart LR
+  X([item: user-81723]) --> H["64-bit hash"]
+  H --> SPLIT{"Split bits"}
+  SPLIT -->|first p bits| J["register index j<br/>0 to m - 1"]
+  SPLIT -->|remaining bits| R["rho = position<br/>of first 1-bit"]
+  J --> UPD["M j = max of M j and rho"]
+  R --> UPD
+  UPD --> REG[("m registers<br/>6 bits each")]
+  REG -->|harmonic mean| EST["E = alpha m^2 / sum 2^-M j"]
+  REG2[("Sketch from server 2")] -.->|register-wise max| REG
+  EST --> OUT([Estimated distinct count])
+```
+
+**Reading the diagram.** Each item is hashed once. The leading $p$ bits pick one of $m$ registers; the position of the first 1-bit among the remaining bits is that item's "longest run" observation. The register keeps only the maximum it has seen, so memory never grows. Updates are synchronous, constant-time, in-memory operations. The dotted edge shows the asynchronous merge path: sketches built on other servers or for other hours are combined with a register-wise maximum, typically in a batch or query layer, and the merged sketch answers "distinct users across all servers" with the same accuracy as one sketch. The estimate is computed on demand from the registers. Failure points: a poor hash breaks the coin-flip assumption and biases every estimate; mixing sketches built with different hash functions or precisions produces nonsense. Scaling is by sharding the stream freely and merging later, which is the property that makes HLL valuable in distributed analytics.
+
+#### Mathematical foundations
+
+::: formula
+**HyperLogLog estimate and standard error**
+
+$$E = \alpha_m \, m^2 \left( \sum_{j=1}^{m} 2^{-M[j]} \right)^{-1}, \qquad \alpha_m \approx \frac{0.7213}{1 + 1.079/m}, \qquad \mathrm{SE} \approx \frac{1.04}{\sqrt{m}}, \qquad \text{memory} = m \times 6 \text{ bits}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $E$ | Estimated number of distinct items | items |
+| $m$ | Number of registers, $m = 2^p$ | registers |
+| $M[j]$ | Value of register $j$: the largest first-1-bit position seen | count |
+| $\alpha_m$ | Bias-correction constant (valid for $m \ge 128$) | dimensionless |
+| $\mathrm{SE}$ | Relative standard error of $E$ | fraction |
+| 6 bits | Register width: enough to hold values up to 63, sufficient for a 64-bit hash | bits |
+:::
+
+::: example
+**Worked example — Redis's HyperLogLog.** Redis uses $p = 14$.
+
+1. Registers: $m = 2^{14} = 16{,}384$.
+2. Standard error: $1.04/\sqrt{16{,}384} = 1.04/128 = 0.0081$, i.e. 0.81%.
+3. Memory: $16{,}384 \times 6 = 98{,}304$ bits $= 12{,}288$ bytes $= 12$ KiB.
+4. For 1 billion distinct users, one standard error is $\pm 8.1$ million, and about 95% of estimates fall within two standard errors, $\pm 16.3$ million.
+5. An exact set of 1 billion 8-byte IDs needs at least 8 GB, about 650,000 times more memory.
+6. Daily uniques for each of 1 million pages: $10^6 \times 12$ KiB ≈ 12.3 GB in dense form. Most pages have few visitors, and a **sparse representation** stores only non-zero registers for small sketches, so the real total is far smaller.
+
+*Interpretation.* Accuracy depends only on $m$. Quadrupling memory halves the error: $p = 16$ (48 KiB) gives 0.41%. *Engineering implication.* For dashboards, 0.81% is invisible; for billing or anything a customer can dispute, use exact counts.
+:::
+
+Heule, Nunkesser and Hall at Google described **HyperLogLog++**, three changes that most production systems now use: a 64-bit hash, which removes the large-cardinality correction the original 32-bit version needed as hash collisions became likely; an empirically measured bias correction for cardinalities up to about $5m$, where the raw estimate is biased; and a sparse representation with higher precision for small sets [Heule et al. 2013].
+
+#### Code example
+
+```python
+import hashlib
+import math
+
+class HyperLogLog:
+    """HyperLogLog (Flajolet et al. 2007) with 2^p registers and a 64-bit hash.
+    Includes the linear-counting correction for small cardinalities."""
+
+    def __init__(self, p: int = 14, salt: bytes = b""):
+        self.p, self.m = p, 1 << p
+        self.registers = bytearray(self.m)
+        self.salt = salt
+        self.alpha = 0.7213 / (1 + 1.079 / self.m)        # bias constant for m >= 128
+
+    def add(self, item: str) -> None:
+        x = int.from_bytes(hashlib.blake2b(item.encode(), digest_size=8, salt=self.salt).digest(), "big")
+        j = x >> (64 - self.p)                            # first p bits choose the register
+        w = x & ((1 << (64 - self.p)) - 1)                # remaining 64 - p bits
+        rank = (64 - self.p) - w.bit_length() + 1         # position of the leftmost 1-bit
+        if rank > self.registers[j]:
+            self.registers[j] = rank
+
+    def count(self) -> float:
+        z = sum(2.0 ** -r for r in self.registers)
+        estimate = self.alpha * self.m * self.m / z       # normalized harmonic mean
+        zeros = self.registers.count(0)
+        if estimate <= 2.5 * self.m and zeros:            # small range: linear counting
+            estimate = self.m * math.log(self.m / zeros)
+        return estimate
+
+    def merge(self, other: "HyperLogLog") -> None:
+        self.registers = bytearray(max(a, b) for a, b in zip(self.registers, other.registers))
+
+n, trials = 100_000, 50
+print(f"{'p':>3} {'registers':>9} {'memory':>9} {'predicted SE':>12} {'measured RMS err':>16}")
+for p in (10, 12, 14):
+    errors = []
+    for t in range(trials):
+        h = HyperLogLog(p, salt=t.to_bytes(4, "little"))
+        for i in range(n):
+            h.add(f"user-{i}")
+        errors.append((h.count() - n) / n)
+    rms = math.sqrt(sum(e * e for e in errors) / trials)
+    mem = h.m * 6 / 8                                     # 6-bit registers, as in Redis
+    print(f"{p:3d} {h.m:9d} {mem:7.0f} B {1.04 / math.sqrt(h.m):12.4f} {rms:16.4f}")
+
+# Mergeability: two days of visitors with 50,000 in common
+day1, day2 = HyperLogLog(14), HyperLogLog(14)
+for i in range(0, 150_000):
+    day1.add(f"user-{i}")
+for i in range(100_000, 250_000):
+    day2.add(f"user-{i}")
+day1.merge(day2)
+print(f"union estimate {day1.count():,.0f} (true 250,000)")
+```
+
+Output:
+
+```text
+  p registers    memory predicted SE measured RMS err
+ 10      1024     768 B       0.0325           0.0383
+ 12      4096    3072 B       0.0163           0.0162
+ 14     16384   12288 B       0.0081           0.0073
+union estimate 248,111 (true 250,000)
+```
+
+What to notice:
+
+- Each trial uses a different hash salt, which acts as an independent hash function, so the RMS error over trials estimates the standard error. With 50 trials, the measured RMS itself is uncertain by about ±10%. The $p = 12$ and $p = 14$ rows match the prediction; the $p = 10$ row is 18% high, and a separate 200-trial run at $n = 20{,}000$ measured 0.0330 against the predicted 0.0325.
+- The sketch for 100,000 distinct users is 12 KB whether the stream has 100,000 events or 100 billion.
+- The merged sketch estimates the two-day union at 248,111, an error of −0.76%, without double-counting the 50,000 users present on both days.
+- `salt` is a keyed BLAKE2b parameter. Every sketch that you intend to merge must use the same hash and salt.
+
+::: industry
+**Redis `PFADD`, `PFCOUNT`, `PFMERGE`.** Redis implements HyperLogLog as a string value with 16,384 6-bit registers (12 KB) and a sparse encoding for small cardinalities; its documentation states a standard error of 0.81% [Redis Docs: HyperLogLog; Sanfilippo 2014]. A typical use is one key per page per day (`PFADD uniques:2026-10-30:/home u42`), merged with `PFMERGE` into weekly keys. Google BigQuery exposes HyperLogLog++ through its `HLL_COUNT` functions, so partial sketches can be stored in tables and merged later [Google Cloud Docs: BigQuery HLL functions].
+*Evidence: Primary* — [Redis Docs: HyperLogLog; Google Cloud Docs]
+:::
+
+#### Failure scenarios and misconceptions
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Intersection estimate is meaningless | Computed as $\lvert A\rvert + \lvert B\rvert - \lvert A \cup B\rvert$; errors scale with the large sets | Negative or wildly varying estimates | Use exact counts or MinHash-based estimates for intersections | Only rely on HLL for unions and single-set counts |
+| Merged count is far too high | Sketches built with different hashes, salts or precisions | Union exceeds sum of parts | Rebuild from raw data | Version the hash and $p$ with the sketch |
+| Small counts are biased | Raw estimator range below ~$5m$ | Systematic error in tests with known small sets | Use HLL++ bias correction or linear counting | Use a library that implements HLL++ |
+
+::: mistake
+**"HLL counts events."** It counts *distinct* items. Adding the same user a million times leaves the sketch unchanged. If you want the number of events, use a counter; if you want per-item frequencies, use a Count-Min sketch (§17.6).
+:::
+
+::: mistake
+**"Intersections work like unions."** For two sets of 10 million users with 100,000 in common, each cardinality has a standard error of about 81,000 at $p = 14$, so the inclusion–exclusion estimate of the intersection has an error larger than the intersection itself.
+:::
+
+## 17.6 Count-Min sketch and heavy hitters
+
+### 17.6.1 The Count-Min sketch
+
+::: definition
+**Definition — Count-Min sketch.** A $d \times w$ array of counters with one hash function per row that estimates the frequency of any item in a stream. Each update increments one counter per row; each query returns the minimum of the item's $d$ counters. The estimate never underestimates and, with probability at least $1 - \delta$, overestimates by at most $\varepsilon N$, where $N$ is the total of all updates [Cormode & Muthukrishnan 2005].
+:::
+
+#### First-principles explanation
+
+Imagine counting votes with a few small tally sheets instead of one line per candidate. Each sheet has a few hundred boxes, and each candidate is assigned one box per sheet by a different rule. Boxes are shared, so any box may contain votes for several candidates: every box *overcounts* its candidates. But the candidates sharing a box differ from sheet to sheet, so a candidate's least-inflated box, the minimum across sheets, is close to the truth. Adding more boxes per sheet reduces how much each box is inflated; adding more sheets reduces the chance that *every* box is badly inflated.
+
+#### Why does this exist?
+
+You want per-item counts over a stream with millions of distinct keys: requests per client IP for abuse detection, plays per song, queries per search term. An exact hash map needs memory proportional to the number of distinct keys, and an attacker can create unbounded keys (random IPs, random query strings). The sketch has a fixed size chosen in advance, supports addition (two sketches with the same hashes merge by adding their arrays element-wise), and gives a guaranteed error bound.
+
+#### Architecture diagram
+
+**Figure 17.6 — A Count-Min sketch with d = 3 rows.**
+
+```mermaid
+flowchart LR
+  X([update: /page/42 +1]) --> H1["h1 gives column 5"]
+  X --> H2["h2 gives column 1"]
+  X --> H3["h3 gives column 9"]
+  H1 -->|increment| R1[("Row 1: w counters")]
+  H2 -->|increment| R2[("Row 2: w counters")]
+  H3 -->|increment| R3[("Row 3: w counters")]
+  Q([query: /page/42]) -.->|read 3 counters| R1
+  Q -.->|read| R2
+  Q -.->|read| R3
+  R1 --> MIN["estimate = min of 3 counters"]
+  R2 --> MIN
+  R3 --> MIN
+```
+
+**Reading the diagram.** An update hashes the item once per row and increments exactly one counter in each row, so it costs $d$ memory writes regardless of how many distinct items exist. A query (dotted, because it is typically issued by a separate reader such as a dashboard or a rate limiter) reads the same $d$ counters and returns their minimum. Each counter is a storage cell shared by every item that hashes to it, which is why estimates only err upward. The rows are independent, so the structure is easy to partition: each stream partition keeps its own sketch with the same hash functions, and a merger adds the arrays. Failure points: counters that overflow (use 64-bit counters for long-lived sketches), sketches built with different hash seeds being merged, and the error bound growing with $N$, so a sketch that is never reset or decayed becomes less accurate over time.
+
+#### Mathematical foundations
+
+::: formula
+**Count-Min sizing and error bound**
+
+$$w = \left\lceil \frac{e}{\varepsilon} \right\rceil, \qquad d = \left\lceil \ln \frac{1}{\delta} \right\rceil, \qquad f_x \le \hat{f}_x \le f_x + \varepsilon N \text{ with probability } \ge 1 - \delta$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $w$ | Counters per row (width) | counters |
+| $d$ | Rows, one hash function each (depth) | rows |
+| $\varepsilon$ | Error as a fraction of the stream total | fraction |
+| $\delta$ | Probability that the error bound is exceeded for a given query | probability |
+| $N$ | Sum of all updates in the stream | events |
+| $f_x$, $\hat{f}_x$ | True and estimated count of item $x$ | events |
+| $e$ | Euler's number, ≈ 2.718 | dimensionless |
+:::
+
+::: example
+**Worked example — sizing a per-URL request counter.** You want errors of at most 0.1% of traffic ($\varepsilon = 0.001$) with 99% confidence ($\delta = 0.01$).
+
+1. Width: $w = \lceil 2.718 / 0.001 \rceil = 2{,}719$.
+2. Depth: $d = \lceil \ln 100 \rceil = \lceil 4.605 \rceil = 5$.
+3. Counters: $2{,}719 \times 5 = 13{,}595$; with 4-byte counters, 54.4 KB.
+4. For a stream of $N = 10^6$ requests, each estimate is within $+1{,}000$ of the truth with probability 99%.
+5. Scale it up: a day of $N = 10^{10}$ requests gives an error bound of $10^7$. A URL with a true count of 50,000 is lost in that noise, while one with $10^8$ requests is estimated within 10%.
+
+*Interpretation.* The error is additive and proportional to the *whole stream*, not to the item. Count-Min is accurate for heavy items and useless for rare ones. *Engineering implication.* Use it for heavy hitters, rate limiting of abusive keys and frequency-based admission (as in TinyLFU caches, §20.9). Reset or decay the sketch per window so that $N$ stays bounded.
+:::
+
+A common refinement is **conservative update**: on each update, increment only those of the item's $d$ counters that equal the current minimum. It reduces overestimation substantially and keeps the no-underestimate guarantee, but sketches updated this way can no longer be merged by simple addition with exact equivalence to a single sketch.
+
+### 17.6.2 Heavy hitters and top-k
+
+**Heavy hitters** are items whose frequency exceeds a threshold, such as 0.1% of traffic; **top-*k*** asks for the $k$ most frequent items. Two approaches dominate.
+
+1. **Count-Min plus a min-heap.** On each update, query the sketch for the item's estimate. Keep a min-heap of the $k$ items with the largest estimates; if the new estimate exceeds the heap's minimum, replace that minimum. Memory is the sketch plus $k$ entries.
+2. **Space-Saving** [Metwally et al. 2005]. Keep exactly $k$ (item, count) counters. If the item has a counter, increment it. If there is a free counter, take it. Otherwise, evict the item with the smallest count $c_{\min}$ and give the newcomer count $c_{\min} + 1$: it inherits the evicted count as an upper bound on how often it might have appeared unseen.
+
+::: formula
+**Space-Saving guarantee**
+
+$$c_x - f_x \le c_{\min} \le \frac{N}{k}, \qquad f_x > \frac{N}{k} \Rightarrow x \text{ is monitored}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $k$ | Number of counters | counters |
+| $N$ | Stream length | events |
+| $c_x$, $f_x$ | Reported and true count of monitored item $x$ | events |
+| $c_{\min}$ | Smallest counter value | events |
+:::
+
+::: example
+**Worked example — 100 counters over 1 million events.** $N/k = 10^6/100 = 10{,}000$. Any URL with more than 10,000 requests (1% of traffic) is guaranteed to be among the 100 monitored items, and each reported count overestimates by at most 10,000. *Interpretation.* Accuracy is again relative to the whole stream, but memory is just $k$ entries. *Engineering implication.* To report a reliable top 10, monitor several times more counters than 10, so that items ranked 11–100 absorb the churn.
+:::
+
+**Figure 17.7 — A distributed top-k pipeline.**
+
+```mermaid
+flowchart LR
+  E([Click events]) -->|produce| K[[Event log, 32 partitions]]
+  K -->|consume| W1["Worker 1: CMS + top-k heap"]
+  K -->|consume| W2["Worker 2: CMS + top-k heap"]
+  K -->|consume| W3["Worker n: CMS + top-k heap"]
+  W1 -.->|every 10 s: sketch + candidates| AGG["Aggregator: add sketches,<br/>re-rank union of candidates"]
+  W2 -.->|every 10 s| AGG
+  W3 -.->|every 10 s| AGG
+  AGG -->|write top 100| ST[(Trending store)]
+  API([Trending API]) -->|read| ST
+```
+
+**Reading the diagram.** Click events enter a partitioned event log (Chapter 30). Each worker consumes some partitions and maintains a local Count-Min sketch and a heap of candidate heavy hitters. Every 10 seconds the workers asynchronously ship their sketches and candidate lists to an aggregator (dotted arrows). The aggregator adds the sketches, re-estimates every candidate against the merged sketch, and writes the global top 100 to a store that the trending API reads synchronously. A globally heavy item that is moderately frequent on every worker might miss each local top-*k*; sending more candidates per worker (for example top 1,000 to produce a global top 100), or partitioning the log by item key so that each item's events land on one worker, reduces that risk. Failure points: a slow worker delays the window (use event-time windows with a lateness bound, Chapter 31), and the aggregator is a single point of failure that should be restartable from the log. The aggregator does little work, so scaling is mainly adding workers and partitions.
+
+#### Code example
+
+```python
+import hashlib
+import heapq
+import math
+import random
+from collections import Counter
+
+class CountMinSketch:
+    """Count-Min sketch (Cormode & Muthukrishnan 2005): d rows x w counters."""
+
+    def __init__(self, epsilon: float, delta: float):
+        self.w = math.ceil(math.e / epsilon)               # width from accuracy
+        self.d = math.ceil(math.log(1 / delta))            # depth from confidence
+        self.table = [[0] * self.w for _ in range(self.d)]
+        self.total = 0
+
+    def _columns(self, item: str):
+        digest = hashlib.blake2b(item.encode(), digest_size=16).digest()
+        h1 = int.from_bytes(digest[:8], "little")
+        h2 = int.from_bytes(digest[8:], "little")
+        return [(h1 + r * h2) % self.w for r in range(self.d)]
+
+    def add(self, item: str, count: int = 1) -> None:
+        self.total += count
+        for row, col in enumerate(self._columns(item)):
+            self.table[row][col] += count
+
+    def estimate(self, item: str) -> int:
+        return min(self.table[row][col] for row, col in enumerate(self._columns(item)))
+
+class TopK:
+    """Heavy hitters: a Count-Min sketch plus a min-heap of the k largest estimates."""
+
+    def __init__(self, k: int, epsilon: float, delta: float):
+        self.k, self.cms = k, CountMinSketch(epsilon, delta)
+        self.heap, self.members = [], {}                   # heap of (estimate, item)
+
+    def add(self, item: str) -> None:
+        self.cms.add(item)
+        est = self.cms.estimate(item)
+        if item in self.members:
+            self.members[item] = est                       # lazily refreshed below
+        elif len(self.heap) < self.k:
+            self.members[item] = est
+            heapq.heappush(self.heap, (est, item))
+        elif est > self.heap[0][0]:
+            # refresh stale heap entries before deciding whom to evict
+            self.heap = [(self.members[i], i) for _, i in self.heap]
+            heapq.heapify(self.heap)
+            if est > self.heap[0][0]:
+                _, evicted = heapq.heapreplace(self.heap, (est, item))
+                del self.members[evicted]
+                self.members[item] = est
+
+    def top(self):
+        return sorted(((c, i) for i, c in self.members.items()), reverse=True)
+
+def space_saving(stream, k):
+    """Metwally et al. 2005: k counters; the newcomer replaces the minimum and inherits its count."""
+    counters = {}
+    for item in stream:
+        if item in counters:
+            counters[item] += 1
+        elif len(counters) < k:
+            counters[item] = 1
+        else:
+            victim = min(counters, key=counters.get)      # O(k); production uses a stream-summary list
+            counters[item] = counters.pop(victim) + 1
+    return sorted(((c, i) for i, c in counters.items()), reverse=True)
+
+# A Zipf-like stream: 1,000,000 events over 100,000 distinct URLs (exponent 1.1)
+rng = random.Random(1)
+universe = 100_000
+weights = [1 / (r ** 1.1) for r in range(1, universe + 1)]
+stream = [f"/page/{r}" for r in rng.choices(range(1, universe + 1), weights=weights, k=1_000_000)]
+truth = Counter(stream)
+
+eps, delta = 0.001, 0.01
+cms = CountMinSketch(eps, delta)
+for item in stream:
+    cms.add(item)
+N = cms.total
+errors = [cms.estimate(x) - c for x, c in truth.items()]
+assert min(errors) >= 0                                     # never underestimates
+print(f"w = {cms.w}, d = {cms.d}, counters = {cms.w * cms.d:,} vs distinct items = {len(truth):,}")
+print(f"error bound eps*N = {eps * N:,.0f}; max error = {max(errors)}; "
+      f"mean error = {sum(errors) / len(errors):.1f}; "
+      f"items over bound = {sum(e > eps * N for e in errors)} of {len(errors):,} (delta allows {delta:.0%})")
+
+tk = TopK(10, eps, delta)
+for item in stream:
+    tk.add(item)
+true_top = [i for i, _ in truth.most_common(10)]
+print("CMS+heap top-10 recall:", len(set(i for _, i in tk.top()) & set(true_top)) / 10)
+ss = space_saving(stream, 100)
+print("Space-Saving (100 counters) top-10 recall:", len(set(i for _, i in ss[:10]) & set(true_top)) / 10)
+print("true top-3:", truth.most_common(3))
+print("Space-Saving top-3:", [(i, c) for c, i in ss[:3]])
+```
+
+Output:
+
+```text
+w = 2719, d = 5, counters = 13,595 vs distinct items = 64,589
+error bound eps*N = 1,000; max error = 2474; mean error = 61.1; items over bound = 1 of 64,589 (delta allows 1%)
+CMS+heap top-10 recall: 1.0
+Space-Saving (100 counters) top-10 recall: 1.0
+true top-3: [('/page/1', 134738), ('/page/2', 63178), ('/page/3', 40195)]
+Space-Saving top-3: [('/page/1', 134738), ('/page/2', 63178), ('/page/3', 40195)]
+```
+
+What to notice:
+
+- Width 2,719 and depth 5 reproduce the worked example. The `assert` confirms that no estimate is below the truth.
+- Only 1 of 64,589 items exceeded the $\varepsilon N = 1{,}000$ bound, far fewer than the 1% that $\delta$ permits; the bound is conservative. The mean overestimate is just 61.
+- Both heavy-hitter methods recover the true top 10 exactly on this skewed (Zipf) stream. Real traffic is usually skewed like this, which is why these methods work well in practice. On a nearly uniform stream there are no heavy hitters to find, and both methods return arbitrary items.
+- Space-Saving's top three counts are exact here, because those items were never evicted.
+- Production Space-Saving uses a "stream-summary" linked structure for $O(1)$ eviction instead of `min()` over a dictionary.
+
+::: industry
+**Twitter Algebird and Redis Stack.** Twitter open-sourced Algebird, a Scala library of mergeable aggregations (Count-Min sketch, HyperLogLog, Bloom filters and others) designed to be combined across Hadoop, Scalding and Storm jobs: each partition builds a sketch and the framework adds them [Twitter: Algebird]. The RedisBloom module (bundled in Redis Stack, and in Redis Open Source since Redis 8 as of 2025) provides `CMS.INCRBY`/`CMS.QUERY` for Count-Min sketches and `TOPK.ADD`/`TOPK.LIST` for top-*k* tracking [Redis Docs: Count-min sketch; Top-K].
+*Evidence: Primary* — [Twitter: Algebird; Redis Docs]
+:::
+
+::: mistake
+**"Count-Min gives each item's count within ε percent."** The bound is $\varepsilon N$, a fraction of the *entire stream*. An item with 0.001% of traffic can be overestimated by 100× its true count. Report Count-Min estimates only for items well above $\varepsilon N$.
+:::
+
+## 17.7 Skip lists
+
+### 17.7.1 Probabilistic levels instead of rebalancing
+
+::: definition
+**Definition — Skip list.** An ordered linked list augmented with extra levels of "express" pointers. Each node is promoted to the next level with probability $p$ (typically 1/2 or 1/4), so level $i$ contains about a fraction $p^i$ of the nodes. Search, insert and delete take expected $O(\log n)$ time [Pugh 1990].
+:::
+
+#### First-principles explanation
+
+A subway line has local trains that stop at every station and an express train that stops at every fourth. To reach station 37, you ride the express to station 36, the last express stop before your destination, then switch to the local for one stop. A skip list stacks several such express lines. Unlike a planned subway, it chooses each station's express status by coin flip, so no central planner has to rebalance anything when stations are added.
+
+#### Why does this exist?
+
+Balanced search trees (red–black, AVL) guarantee $O(\log n)$ operations, but their rebalancing rotations are intricate and touch several nodes per update. That makes them hard to implement correctly and very hard to make concurrent. Pugh's insight was that randomization gives the same *expected* performance with a far simpler algorithm: an insert changes only the predecessors' pointers at the levels the new node occupies, and no other part of the structure moves [Pugh 1990].
+
+#### How it works internally
+
+1. **Search** for key $x$: start at the head's top level. Move right while the next key is less than $x$; when it is not, drop down a level. At level 0, the next node is $x$ if $x$ is present.
+2. **Insert** $x$: search as above, remembering the last node visited on each level (the update path). Draw a random level $\ell$: start at 1 and add a level while a coin with probability $p$ comes up heads. Splice the new node in after the remembered node on each of levels $1..\ell$.
+3. **Delete**: search, then unlink the node from each level it occupies.
+4. **Range scan** $[a, b]$: search for $a$, then walk level 0 until passing $b$. This is why skip lists suit ordered data such as leaderboards and memtables.
+
+**Figure 17.8 — A skip list with three levels; searching for 40.**
+
+```mermaid
+flowchart LR
+  subgraph L3["Level 3"]
+    H3[head] --> N30c[30] --> E3[end]
+  end
+  subgraph L2["Level 2"]
+    H2[head] --> N10b[10] --> N30b[30] --> N50b[50] --> E2[end]
+  end
+  subgraph L1["Level 1: every node"]
+    H1[head] --> N10[10] --> N20[20] --> N30[30] --> N40[40] --> N50[50] --> E1[end]
+  end
+  N30c -.->|down| N30b
+  N30b -.->|down| N30
+```
+
+**Reading the diagram.** Each subgraph is one level; solid arrows are forward pointers within a level, and the dotted arrows show the search path moving down a level at node 30 (one node object holds all its levels; the copies are drawn per level for clarity). A search for 40 starts at the top-level head, moves right to 30, sees that the next key at level 3 is the end marker, drops to level 2, sees 50 > 40, drops to level 1 and steps once to 40: four forward moves instead of four steps along the bottom list, a gap that widens as $n$ grows. Everything is in memory and synchronous. Failure points: an unlucky sequence of coin flips can make one search slow (the guarantee is probabilistic), and pointer chasing across scattered nodes causes CPU cache misses (§5.4), which is why on-disk indexes use B-trees instead. Concurrency scales well because an insert locks or compare-and-swaps only the few predecessor pointers it changes.
+
+#### Mathematical foundations
+
+::: formula
+**Skip list levels, search cost and memory**
+
+$$L(n) = \log_{1/p} n, \qquad \mathbb{E}[\text{search path}] \le \frac{L(n)}{p} + \frac{1}{1-p}, \qquad \mathbb{E}[\text{pointers per node}] = \frac{1}{1-p}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of elements | elements |
+| $p$ | Probability of promoting a node to the next level | probability |
+| $L(n)$ | Expected number of levels in use | levels |
+| Search path | Forward moves plus level drops during one search | steps |
+| Pointers per node | Average forward pointers stored per element | pointers |
+:::
+
+::: example
+**Worked example — choosing p for one million elements.**
+
+1. $p = 1/2$: $L = \log_2 10^6 = 19.9$ levels; search path $\le 19.9/0.5 + 1/0.5 = 41.9$ steps; 2.00 pointers per node.
+2. $p = 1/4$: $L = \log_4 10^6 = 6/\log_{10} 4 = 6/0.602 = 9.97$ levels; search path $\le 9.97/0.25 + 1/0.75 = 41.2$ steps; 1.33 pointers per node.
+
+*Interpretation.* Both choices give about 40 steps, but $p = 1/4$ stores a third fewer pointers. *Engineering implication.* This is why Redis uses $p = 1/4$: 8 bytes saved per pointer across millions of sorted-set members is real memory, and search cost barely changes.
+:::
+
+#### Code example and measured validation
+
+```python
+import math
+import random
+
+class Node:
+    __slots__ = ("key", "forward")
+    def __init__(self, key, level):
+        self.key, self.forward = key, [None] * level
+
+class SkipList:
+    """Pugh's skip list with promotion probability p (Redis uses p = 0.25, max level 32)."""
+
+    def __init__(self, p: float = 0.25, max_level: int = 32, seed: int = 0):
+        self.p, self.max_level = p, max_level
+        self.head = Node(None, max_level)
+        self.level = 1
+        self.pointers = 0                                # total forward pointers allocated
+        self.rng = random.Random(seed)
+
+    def _random_level(self) -> int:
+        lvl = 1
+        while self.rng.random() < self.p and lvl < self.max_level:
+            lvl += 1
+        return lvl
+
+    def insert(self, key) -> None:
+        update, x = [self.head] * self.max_level, self.head
+        for i in reversed(range(self.level)):           # descend, remembering the last node per level
+            while x.forward[i] and x.forward[i].key < key:
+                x = x.forward[i]
+            update[i] = x
+        lvl = self._random_level()
+        self.level = max(self.level, lvl)
+        node = Node(key, lvl)
+        self.pointers += lvl
+        for i in range(lvl):                             # splice in at each of its levels
+            node.forward[i], update[i].forward[i] = update[i].forward[i], node
+
+    def search(self, key):
+        """Return (found, number of key comparisons)."""
+        x, steps = self.head, 0
+        for i in reversed(range(self.level)):
+            while x.forward[i] and x.forward[i].key < key:
+                x, steps = x.forward[i], steps + 1
+            steps += 1                                   # the comparison that stopped us
+        x = x.forward[0]
+        return (x is not None and x.key == key), steps
+
+    def range(self, lo, hi):
+        """All keys in [lo, hi]: find lo in O(log n), then walk level 0."""
+        x = self.head
+        for i in reversed(range(self.level)):
+            while x.forward[i] and x.forward[i].key < lo:
+                x = x.forward[i]
+        x, out = x.forward[0], []
+        while x and x.key <= hi:
+            out.append(x.key)
+            x = x.forward[0]
+        return out
+
+for p in (0.5, 0.25):
+    for n in (10_000, 100_000, 1_000_000):
+        sl = SkipList(p=p, seed=42)
+        keys = list(range(n))
+        random.Random(1).shuffle(keys)
+        for k in keys:
+            sl.insert(k)
+        probe = random.Random(2).sample(range(n), 2_000)
+        avg = sum(sl.search(k)[1] for k in probe) / len(probe)
+        L = math.log(n, 1 / p)
+        bound = L / p + 1 / (1 - p)                       # Pugh's expected-cost bound
+        print(f"p={p:<4} n={n:>9,}  levels={sl.level:2d}  log_1/p(n)={L:5.1f}  "
+              f"avg comparisons={avg:5.1f}  Pugh bound={bound:5.1f}  "
+              f"pointers/node={sl.pointers / n:4.2f} (expect {1 / (1 - p):4.2f})")
+print("range(500, 505):", sl.range(500, 505))
+```
+
+Output (about 40 s in CPython):
+
+```text
+p=0.5  n=   10,000  levels=14  log_1/p(n)= 13.3  avg comparisons= 27.5  Pugh bound= 28.6  pointers/node=1.98 (expect 2.00)
+p=0.5  n=  100,000  levels=17  log_1/p(n)= 16.6  avg comparisons= 32.7  Pugh bound= 35.2  pointers/node=2.00 (expect 2.00)
+p=0.5  n=1,000,000  levels=20  log_1/p(n)= 19.9  avg comparisons= 38.4  Pugh bound= 41.9  pointers/node=2.00 (expect 2.00)
+p=0.25 n=   10,000  levels= 7  log_1/p(n)=  6.6  avg comparisons= 23.8  Pugh bound= 27.9  pointers/node=1.33 (expect 1.33)
+p=0.25 n=  100,000  levels= 9  log_1/p(n)=  8.3  avg comparisons= 31.9  Pugh bound= 34.6  pointers/node=1.34 (expect 1.33)
+p=0.25 n=1,000,000  levels=11  log_1/p(n)= 10.0  avg comparisons= 37.4  Pugh bound= 41.2  pointers/node=1.33 (expect 1.33)
+range(500, 505): [500, 501, 502, 503, 504, 505]
+```
+
+What to notice:
+
+- The number of levels in use tracks $\log_{1/p} n$, and the measured search path stays below Pugh's bound at every size.
+- Going from $10^4$ to $10^6$ elements (100×) adds only about 11–14 comparisons: logarithmic growth.
+- Pointers per node match $1/(1-p)$ exactly, confirming the memory saving of $p = 1/4$.
+
+::: industry
+**Redis sorted sets and LSM memtables.** A Redis sorted set (`ZADD`, `ZRANGE`, `ZRANK`) larger than a small threshold is stored as a hash table from member to score plus a skip list ordered by (score, member). The skip list uses $p = 1/4$ and a maximum of 32 levels, and each forward pointer records a *span* (how many level-0 nodes it jumps), so `ZRANK` can sum spans along the search path and return a rank in $O(\log n)$. Small sorted sets use a compact listpack instead [Redis Docs: Sorted sets; Redis source `t_zset.c`]. LevelDB and RocksDB use a skip list as the default in-memory memtable, because it supports concurrent inserts and ordered iteration for flushing to sorted SSTables [RocksDB Wiki: MemTable]. Java's `ConcurrentSkipListMap` is a lock-free sorted map built on the same idea.
+*Evidence: Primary* — [Redis Docs; RocksDB Wiki]
+:::
+
+::: mistake
+**"Skip lists guarantee O(log n)."** The bound is on the *expected* cost over the random coin flips. The probability of a much slower search falls off exponentially, so in practice it never matters, but an adversary who can predict your random number generator could build a degenerate list. Seed it from a good source.
+:::
+
+## 17.8 Merkle trees
+
+### 17.8.1 Hash trees for verification and anti-entropy
+
+::: definition
+**Definition — Merkle tree (hash tree).** A tree in which every leaf holds the hash of a data block and every interior node holds the hash of its children's hashes. The **root hash** summarizes the entire data set: changing any block changes the root [Merkle 1987].
+:::
+
+#### First-principles explanation
+
+Two libraries want to check that their copies of a 1-million-book catalog are identical. Comparing every entry means sending a million entries across town. Instead, each library writes a one-line summary of each shelf, then of each aisle (computed from its shelves' summaries), then of each floor, then of the building. They phone each other and compare the building summaries. If those match, they are done. If not, they compare the floor summaries, then only the aisles on mismatched floors, then only the shelves in mismatched aisles. With a tree of summaries, the work is proportional to the number of *differences* times the depth of the tree, not to the size of the catalog.
+
+#### Why does this exist?
+
+Merkle introduced hash trees in the late 1970s so that one signature over a root could authenticate many values [Merkle 1987]. Distributed systems use them for two jobs: **verification** (prove that one record belongs to a data set identified by a trusted root, without sending the data set) and **anti-entropy** (find which parts of two replicas differ, sending only a few hashes).
+
+#### How it works internally
+
+1. Hash each record to make the leaves. Use a cryptographic hash such as SHA-256 when an adversary might forge data; replicas that only need to detect accidental divergence can use a cheaper hash.
+2. Hash adjacent pairs to make the next level up, and repeat until one root remains. Prefix leaf and interior inputs with different bytes (for example `0x00` and `0x01`, as Certificate Transparency does [RFC 6962]) so that an interior node can never be passed off as a leaf.
+3. **Inclusion proof** for record $i$: the sibling hash at each level on the path from leaf $i$ to the root. A verifier recomputes the root from the record and the siblings and compares it with the trusted root.
+4. **Anti-entropy**: two replicas compare roots; if they differ, they compare children and descend only into subtrees whose hashes differ, until they reach the divergent leaves.
+
+**Figure 17.9 — A Merkle tree over four records and the inclusion proof for record C.**
+
+```mermaid
+flowchart TD
+  ROOT["Root = H of H_AB and H_CD"] --> HAB["H_AB = H of H_A and H_B"]
+  ROOT --> HCD["H_CD = H of H_C and H_D"]
+  HAB --> HA["H_A = H of record A"]
+  HAB --> HB["H_B = H of record B"]
+  HCD --> HC["H_C = H of record C"]
+  HCD --> HD["H_D = H of record D"]
+  HC --> RC[(Record C)]
+  HD -.->|proof item 1| HC
+  HAB -.->|proof item 2| HCD
+```
+
+**Reading the diagram.** Leaves (bottom) are hashes of records; each parent hashes its two children; the root summarizes everything. To prove that record C is in the set, the server sends C plus two sibling hashes (dotted edges): $H_D$ and $H_{AB}$. The verifier computes $H_C$, then $H_{CD} = H(H_C, H_D)$, then $H(H_{AB}, H_{CD})$, and compares the result with a root it already trusts (from a signed log head or a block header). Records live in storage; hashes can be cached in memory or stored beside the data. The computation is synchronous and local to the verifier. Failure points: a stale root (the verifier must obtain the root through a trusted channel), and rebuilding large trees after many updates, which costs CPU; incremental trees update only the path from a changed leaf to the root. The structure scales logarithmically: a billion records need a proof of only 30 hashes.
+
+::: formula
+**Merkle proof size and anti-entropy cost**
+
+$$h = \lceil \log_2 n \rceil, \qquad \text{proof size} = h \times H_{\text{bytes}}, \qquad \text{hashes compared} \le 1 + 2\,k\,h$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of leaves (records or key ranges) | leaves |
+| $h$ | Tree height | levels |
+| $H_{\text{bytes}}$ | Size of one hash (32 for SHA-256) | bytes |
+| $k$ | Number of divergent leaves between two replicas | leaves |
+:::
+
+::: example
+**Worked example — 1,048,576 records on two replicas.**
+
+1. Height: $h = \log_2 2^{20} = 20$.
+2. Inclusion proof: $20 \times 32 = 640$ bytes, compared with sending all leaf hashes ($2^{20} \times 32$ B = 33.6 MB) or the data itself.
+3. Anti-entropy with $k = 2$ divergent records: at most $1 + 2 \times 2 \times 20 = 81$ hash comparisons out of about 2.1 million tree nodes.
+
+*Interpretation.* Both costs grow with $\log n$; anti-entropy cost grows with the number of differences, not the data size. *Engineering implication.* Replicas can run anti-entropy continuously in the background at negligible network cost when they are mostly in sync, which is the normal case.
+:::
+
+```python
+import hashlib
+
+def h(data: bytes) -> bytes:
+    return hashlib.sha256(data).digest()
+
+def leaf_hash(record: bytes) -> bytes:
+    return h(b"\x00" + record)          # domain separation: leaves and interior nodes
+def node_hash(left: bytes, right: bytes) -> bytes:
+    return h(b"\x01" + left + right)    # can never be confused (cf. RFC 6962)
+
+def build(records):
+    """Return all levels, leaves first. An odd node is promoted unchanged."""
+    level = [leaf_hash(r) for r in records]
+    levels = [level]
+    while len(level) > 1:
+        nxt = [node_hash(level[i], level[i + 1]) for i in range(0, len(level) - 1, 2)]
+        if len(level) % 2:
+            nxt.append(level[-1])
+        levels.append(nxt)
+        level = nxt
+    return levels
+
+def proof(levels, index):
+    """Sibling hashes from leaf to root: the audit path for one record."""
+    path = []
+    for level in levels[:-1]:
+        sibling = index ^ 1
+        if sibling < len(level):
+            path.append((sibling < index, level[sibling]))   # (sibling is on the left?, hash)
+        index //= 2
+    return path
+
+def verify(record, path, root):
+    acc = leaf_hash(record)
+    for sibling_is_left, sib in path:
+        acc = node_hash(sib, acc) if sibling_is_left else node_hash(acc, sib)
+    return acc == root
+
+def diff(a, b, level=None, index=0, found=None):
+    """Anti-entropy: descend only into subtrees whose hashes differ. Returns (leaf indexes, hashes compared)."""
+    if found is None:
+        level, found = len(a) - 1, ([], [0])
+    found[1][0] += 1
+    if a[level][index] == b[level][index]:
+        return found
+    if level == 0:
+        found[0].append(index)
+        return found
+    for child in (2 * index, 2 * index + 1):
+        if child < len(a[level - 1]):
+            diff(a, b, level - 1, child, found)
+    return found
+
+records = [f"key-{i}=value-{i}".encode() for i in range(1 << 20)]       # 1,048,576 records
+replica_a = build(records)
+records_b = list(records)
+for i in (12_345, 777_777):                                               # two divergent records
+    records_b[i] = b"stale"
+replica_b = build(records_b)
+
+root = replica_a[-1][0]
+p = proof(replica_a, 424_242)
+print(f"tree height = {len(replica_a) - 1}, proof length = {len(p)} hashes = {32 * len(p)} bytes")
+print("valid record verifies:", verify(records[424_242], p, root))
+print("tampered record verifies:", verify(b"key-424242=forged", p, root))
+leaves, compared = diff(replica_a, replica_b)
+print(f"roots equal: {replica_a[-1][0] == replica_b[-1][0]}; divergent leaves: {leaves}; "
+      f"hashes compared: {compared[0]} of {sum(len(l) for l in replica_a):,}")
+```
+
+Output:
+
+```text
+tree height = 20, proof length = 20 hashes = 640 bytes
+valid record verifies: True
+tampered record verifies: False
+roots equal: False; divergent leaves: [12345, 777777]; hashes compared: 79 of 2,097,151
+```
+
+What to notice: the proof is exactly 20 hashes (640 bytes); a forged record fails verification against the same proof; and the anti-entropy walk finds both divergent records after 79 comparisons, just under the bound of 81.
+
+**Figure 17.10 — Merkle-tree anti-entropy between two replicas.**
+
+```mermaid
+sequenceDiagram
+  participant A as Replica A
+  participant B as Replica B
+  A->>B: root hash for token range 0 to 2^20
+  B-->>A: mismatch, my children are X and Y
+  A->>A: left child equals X, right child differs from Y
+  A->>B: compare children of right subtree
+  B-->>A: hashes for next level
+  Note over A,B: repeat for about 20 levels, only along differing paths
+  A->>B: leaf 777777 differs
+  B-->>A: stream rows in leaf range 777777
+  A->>A: apply newer versions by timestamp
+```
+
+**Reading the diagram.** Replica A starts a background repair for one key range by sending its root hash. Replica B replies that its root differs and returns its two child hashes. A compares them with its own, finds that only the right subtree differs, and asks for the next level of that subtree only. The exchange descends about 20 levels and touches only differing paths. At the leaves, the replicas exchange the actual rows for the divergent range, and each applies the newer version using the system's conflict-resolution rule (§27.14). Every message is a synchronous request/response over the internode protocol, but the repair as a whole is asynchronous with respect to client traffic. Storage boundaries: trees are built by scanning each replica's local data (an expensive, I/O-heavy step), then compared over the network. Failure points: building trees on a busy node competes with client reads; a tree whose leaves cover large ranges forces "overstreaming" of whole ranges for one changed row; and comparing trees built at different moments reports spurious differences for in-flight writes. Systems scale this by repairing ranges incrementally and on a schedule.
+
+::: industry
+**Dynamo, Cassandra and Git.** Amazon's Dynamo keeps one Merkle tree per key range hosted by a node and uses it to detect and repair divergence between replicas after failures [DeCandia et al. 2007]. Apache Cassandra's anti-entropy repair (`nodetool repair`) builds Merkle trees over token ranges on each replica, compares them and streams only mismatched ranges [Apache Cassandra Docs: Repair]. Git stores every file, directory and commit as an object named by the hash of its content; a commit names the tree hash, which names subtree and file hashes, forming a Merkle structure in which identical commit hashes imply identical histories [Chacon & Straub 2014]. Certificate Transparency logs use Merkle trees so that anyone can verify, with logarithmic-size proofs, that a certificate is in the log and that the log is append-only (§10.5) [RFC 6962].
+*Evidence: Primary* — [DeCandia et al. 2007; Apache Cassandra Docs; Chacon & Straub 2014; RFC 6962]
+:::
+
+Chapter 27 (§27.13) places Merkle-tree anti-entropy alongside read repair and hinted handoff in leaderless replication.
+
+## 17.9 Geospatial indexing
+
+### 17.9.1 Why location needs its own index
+
+"Find all drivers within 1 km" looks like a database query: `WHERE lat BETWEEN ... AND lon BETWEEN ...`. A B-tree on `lat` can use only one of the two ranges efficiently. It returns a horizontal strip around the whole planet at the right latitude, and the database then filters that strip by longitude. A composite index on `(lat, lon)` has the same problem, because a B-tree orders keys along one dimension. The fix is to map two-dimensional positions onto a one-dimensional key so that points close on the map usually have close keys. Curves that do this are called **space-filling curves**, and every index in this section is a variation on the idea: divide the map into **cells**, give each cell an ID, index points by cell ID, and answer a proximity query by looking up a small set of cells and filtering the candidates by exact distance.
+
+### 17.9.2 Geohash
+
+::: definition
+**Definition — Geohash.** A string encoding of a latitude/longitude cell, published by Gustavo Niemeyer in 2008, formed by alternately bisecting the longitude and latitude ranges, interleaving the resulting bits (longitude first) and writing every 5 bits as one base-32 character [Niemeyer 2008]. Each additional character subdivides the cell into 32 smaller cells, so a geohash that is a prefix of another names a cell containing it.
+:::
+
+#### How it works internally
+
+1. Start with longitude range $[-180, 180]$ and latitude range $[-90, 90]$.
+2. Take the longitude midpoint. If the point is east of it, emit bit 1 and keep the upper half; otherwise emit 0 and keep the lower half.
+3. Do the same with latitude, and keep alternating.
+4. Group bits in fives and map each group to the alphabet `0123456789bcdefghjkmnpqrstuvwxyz` (the letters a, i, l and o are omitted to avoid confusion with digits).
+
+The interleaving traces a **Z-order (Morton) curve**: within each cell the four sub-quadrants are visited in a Z pattern. Points with a long shared prefix are close together. The reverse is not always true. Two points a meter apart on either side of a major cell boundary, such as the equator or the prime meridian, can have geohashes with no common prefix at all. Proximity search must therefore always look at neighboring cells, never at a prefix alone.
+
+**Figure 17.11 — Geohash refinement: each character narrows the cell.**
+
+```mermaid
+flowchart TD
+  W["World: 2 ranges<br/>lon -180 to 180, lat -90 to 90"] -->|first 5 bits| C1["9<br/>about 5,000 x 5,000 km"]
+  C1 -->|next 5 bits| C2["9q<br/>about 1,250 x 620 km"]
+  C2 -->|next 5 bits| C3["9q8<br/>about 156 x 156 km"]
+  C3 -->|next 5 bits| C4["9q8y<br/>about 39 x 19 km"]
+  C4 -->|next 5 bits| C5["9q8yy<br/>about 4.9 x 4.9 km"]
+  C5 -->|next 5 bits| C6["9q8yyk<br/>about 1.2 x 0.6 km"]
+  C6 --> IDX[("Index: key = geohash,<br/>value = driver IDs")]
+```
+
+**Reading the diagram.** Each arrow appends one character (5 bits) and shrinks the cell by a factor of 32 in area; the sizes are at the equator, and widths shrink by $\cos(\text{latitude})$ toward the poles. The chain shows the cells containing a point in San Francisco. Because a longer geohash extends a shorter one, a range scan over keys starting with `9q8yy` in any ordered store (B-tree, sorted set, LSM tree) returns every point in that 4.9 km cell, which is how geohash turns a 2-D query into 1-D range scans. All steps are pure computation; the only storage is the index at the bottom. The failure point is the boundary effect described above, and the main scaling decision is the precision, which trades the number of cells scanned against the number of false candidates per cell.
+
+::: formula
+**Geohash cell size**
+
+$$b_{\text{lon}} = \left\lceil \frac{5L}{2} \right\rceil, \quad b_{\text{lat}} = \left\lfloor \frac{5L}{2} \right\rfloor, \quad W = \frac{360^\circ}{2^{b_{\text{lon}}}} \times 111.32 \cos\varphi \ \text{km}, \quad H = \frac{180^\circ}{2^{b_{\text{lat}}}} \times 110.57 \ \text{km}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $L$ | Geohash length | characters |
+| $b_{\text{lon}}$, $b_{\text{lat}}$ | Bits spent on longitude and latitude | bits |
+| $W$, $H$ | Cell width (east–west) and height (north–south) | km |
+| $\varphi$ | Latitude of the cell | degrees |
+| 111.32, 110.57 | Approximate km per degree of longitude at the equator and of latitude | km/degree |
+:::
+
+::: example
+**Worked example — a 6-character cell in San Francisco ($\varphi = 37.77^\circ$).**
+
+1. Bits: $5 \times 6 = 30$, so $b_{\text{lon}} = 15$, $b_{\text{lat}} = 15$.
+2. Width: $360/32{,}768 = 0.010986^\circ$; $\times 111.32 = 1.223$ km at the equator; $\times \cos 37.77^\circ = 0.7905$ gives 0.967 km.
+3. Height: $180/32{,}768 = 0.005493^\circ \times 110.57 = 0.607$ km.
+
+*Interpretation.* A 6-character cell here is about 970 m × 610 m, not square. *Engineering implication.* The 3 × 3 block of cells around a point extends at least one cell height, 610 m, in every direction. That covers a 500 m search radius but **not** a 1 km radius. The program below measures what happens if you ignore this.
+:::
+
+**Table 17.6 — Geohash precision (cell size at the equator, computed by the program below).**
+
+| Length | Bits | Width | Height | Typical use |
+|---|---|---|---|---|
+| 1 | 5 | 5,009 km | 4,976 km | Continent |
+| 2 | 10 | 1,252 km | 622 km | Large country region |
+| 3 | 15 | 157 km | 156 km | Metropolitan region |
+| 4 | 20 | 39.1 km | 19.4 km | City |
+| 5 | 25 | 4.9 km | 4.9 km | District; 1–2 km searches |
+| 6 | 30 | 1.2 km | 0.61 km | Neighborhood; ~500 m searches |
+| 7 | 35 | 153 m | 152 m | Block |
+| 8 | 40 | 38 m | 19 m | Building |
+| 9 | 45 | 4.8 m | 4.8 m | Doorway (beyond typical GPS accuracy) |
+| 10 | 50 | 1.2 m | 0.59 m | Below GPS accuracy |
+
+#### Code example: geohash encoding and a proximity search
+
+```python
+import math
+import random
+from collections import defaultdict
+
+BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"          # no a, i, l, o
+
+def encode(lat: float, lon: float, length: int) -> str:
+    """Interleave longitude and latitude bisection bits (longitude first), 5 bits per character."""
+    lat_rng, lon_rng = [-90.0, 90.0], [-180.0, 180.0]
+    out, bits, bit_count, even = [], 0, 0, True
+    while len(out) < length:
+        rng, val = (lon_rng, lon) if even else (lat_rng, lat)
+        mid = (rng[0] + rng[1]) / 2
+        if val >= mid:
+            bits, rng[0] = (bits << 1) | 1, mid
+        else:
+            bits, rng[1] = bits << 1, mid
+        even, bit_count = not even, bit_count + 1
+        if bit_count == 5:
+            out.append(BASE32[bits])
+            bits, bit_count = 0, 0
+    return "".join(out)
+
+def decode_box(gh: str):
+    """Return (lat_min, lat_max, lon_min, lon_max) of a geohash cell."""
+    lat_rng, lon_rng, even = [-90.0, 90.0], [-180.0, 180.0], True
+    for ch in gh:
+        v = BASE32.index(ch)
+        for shift in range(4, -1, -1):
+            rng = lon_rng if even else lat_rng
+            mid = (rng[0] + rng[1]) / 2
+            if (v >> shift) & 1:
+                rng[0] = mid
+            else:
+                rng[1] = mid
+            even = not even
+    return lat_rng[0], lat_rng[1], lon_rng[0], lon_rng[1]
+
+def neighbors(gh: str):
+    """The 8 surrounding cells (center-offset method; ignores the poles and the antimeridian)."""
+    la0, la1, lo0, lo1 = decode_box(gh)
+    dlat, dlon = la1 - la0, lo1 - lo0
+    clat, clon = (la0 + la1) / 2, (lo0 + lo1) / 2
+    return [encode(clat + i * dlat, clon + j * dlon, len(gh))
+            for i in (-1, 0, 1) for j in (-1, 0, 1) if (i, j) != (0, 0)]
+
+def covering(lat: float, lon: float, radius_km: float, length: int):
+    """All cells of this length that intersect the circle's bounding box (exact recall)."""
+    la0, la1, lo0, lo1 = decode_box(encode(lat, lon, length))
+    dlat, dlon = la1 - la0, lo1 - lo0
+    ri = math.ceil(radius_km / (dlat * 111.0))             # rows needed above and below
+    rj = math.ceil(radius_km / (dlon * 111.0 * math.cos(math.radians(lat))))
+    clat, clon = (la0 + la1) / 2, (lo0 + lo1) / 2
+    return [encode(clat + i * dlat, clon + j * dlon, length)
+            for i in range(-ri, ri + 1) for j in range(-rj, rj + 1)]
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    r = 6371.0088
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+print("encode(57.64911, 10.40744, 11) =", encode(57.64911, 10.40744, 11))   # reference: u4pruydqqvj
+
+print(f"{'len':>3} {'bits':>4} {'cell width (equator)':>21} {'cell height':>12}")
+for length in range(1, 11):
+    lon_bits = math.ceil(5 * length / 2)
+    lat_bits = 5 * length // 2
+    w_km = 360 / 2 ** lon_bits * 111.32
+    h_km = 180 / 2 ** lat_bits * 110.57
+    fmt = lambda km: f"{km:,.1f} km" if km >= 1 else f"{km * 1000:,.2f} m"
+    print(f"{length:3d} {5 * length:4d} {fmt(w_km):>21} {fmt(h_km):>12}")
+
+# Proximity search: 200,000 drivers around San Francisco; find those within 1 km of a rider
+rng = random.Random(3)
+drivers = [(37.70 + rng.random() * 0.12, -122.52 + rng.random() * 0.14) for _ in range(200_000)]
+rider = (37.7749, -122.4194)
+truth = {i for i, d in enumerate(drivers) if haversine_km(*rider, *d) <= 1.0}
+for P, method in ((6, "3x3"), (5, "3x3"), (6, "cover")):
+    index = defaultdict(list)                        # geohash -> driver ids (in production: a sorted key range)
+    for i, (lat, lon) in enumerate(drivers):
+        index[encode(lat, lon, P)].append(i)
+    cell = encode(*rider, P)
+    cells = [cell] + neighbors(cell) if method == "3x3" else covering(*rider, 1.0, P)
+    candidates = [i for c in cells for i in index[c]]
+    hits = {i for i in candidates if haversine_km(*rider, *drivers[i]) <= 1.0}
+    la0, la1, lo0, lo1 = decode_box(cell)
+    print(f"P={P} {method:5s} cell {cell}: {haversine_km(la0, lo0, la0, lo1) * 1000:,.0f} m x "
+          f"{haversine_km(la0, lo0, la1, lo0) * 1000:,.0f} m; {len(cells)} cells -> "
+          f"{len(candidates):,} candidates, {len(hits):,} within 1 km, "
+          f"recall {len(hits) / len(truth):.3f} (brute force finds {len(truth):,})")
+```
+
+Output:
+
+```text
+encode(57.64911, 10.40744, 11) = u4pruydqqvj
+len bits  cell width (equator)  cell height
+  1    5            5,009.4 km   4,975.6 km
+  2   10            1,252.3 km     622.0 km
+  3   15              156.5 km     155.5 km
+  4   20               39.1 km      19.4 km
+  5   25                4.9 km       4.9 km
+  6   30                1.2 km     607.38 m
+  7   35              152.87 m     151.84 m
+  8   40               38.22 m      18.98 m
+  9   45                4.78 m       4.75 m
+ 10   50                1.19 m       0.59 m
+P=6 3x3   cell 9q8yyk: 966 m x 611 m; 9 cells -> 6,470 candidates, 3,601 within 1 km, recall 0.942 (brute force finds 3,822)
+P=5 3x3   cell 9q8yy: 3,864 m x 4,887 m; 9 cells -> 130,946 candidates, 3,822 within 1 km, recall 1.000 (brute force finds 3,822)
+P=6 cover cell 9q8yyk: 966 m x 611 m; 25 cells -> 17,908 candidates, 3,822 within 1 km, recall 1.000 (brute force finds 3,822)
+```
+
+What to notice:
+
+- The encoder reproduces the widely used reference geohash `u4pruydqqvj` for (57.64911, 10.40744), and the precision table reproduces Table 17.6.
+- **The 3 × 3 trick at 6 characters silently misses 5.8% of drivers within 1 km**, exactly as the worked example predicted: the cells are only 611 m tall.
+- Dropping to 5 characters restores full recall but scans 130,946 candidates, 65% of all drivers, because each cell is now about 4 km on a side.
+- Covering the circle's bounding box with 25 six-character cells gives full recall with 17,908 candidates, 7× fewer than the 5-character scan. The general rule: pick the precision from the radius, then cover the search area with as many cells as it takes.
+- Drivers are uniformly spread at about 1,220 per km² in this test, so the expected count within 1 km is $\pi \times 1^2 \times 1{,}220 \approx 3{,}830$; brute force found 3,822.
+
+### 17.9.3 Quadtrees
+
+A geohash grid is fixed: a 6-character cell in central Manhattan may hold thousands of drivers while one over a lake holds none. A **quadtree** adapts to density [Finkel & Bentley 1974]. Each node covers a rectangle and holds up to a capacity, say 100 points. When it overflows, it splits into four children (NW, NE, SW, SE) and redistributes its points. Dense areas become deep and fine; empty areas stay as one large leaf. A proximity query descends only into nodes whose rectangles intersect the search circle.
+
+**Figure 17.12 — An adaptive quadtree: dense areas split further.**
+
+```mermaid
+flowchart TD
+  R["Root: whole city<br/>capacity exceeded, split"] --> NW["NW: suburbs<br/>40 points, leaf"]
+  R --> NE["NE: downtown<br/>split again"]
+  R --> SW["SW: park<br/>3 points, leaf"]
+  R --> SE["SE: airport<br/>70 points, leaf"]
+  NE --> NE1["NE-NW: 95 points, leaf"]
+  NE --> NE2["NE-NE: financial district<br/>split again"]
+  NE --> NE3["NE-SW: 60 points, leaf"]
+  NE --> NE4["NE-SE: 88 points, leaf"]
+  NE2 --> D1["4 leaves of about 90 points each"]
+```
+
+**Reading the diagram.** The root covers the city and has split because it exceeded its capacity. Three quadrants are leaves with few enough points; downtown (NE) has split again, and its financial district has split a third time. A query near the park reads one leaf; a query downtown descends three levels to a small leaf. The tree lives in memory on the service that owns it; edges are parent-to-child pointers, traversed synchronously. Failure points: moving points (drivers report every few seconds) force constant removal and reinsertion and occasional splits and merges, which complicates concurrency; and an in-memory tree on one server is a single point of failure, so production designs shard it by region and rebuild it from the location stream after a restart. Quadtrees suit in-memory indexes of moderately dynamic points; for a persistent index on an ordinary database, the fixed cells of geohash or S2 fit B-trees better.
+
+### 17.9.4 Google S2
+
+**S2** is Google's open-source spherical geometry library [S2 Geometry Docs]. It avoids the distortion of latitude/longitude grids, whose cells become slivers near the poles, by projecting the sphere onto the six faces of a cube. Each face is divided as a quadtree, and the cells are ordered along a **Hilbert curve**, a space-filling curve that, unlike the Z-curve, never jumps: consecutive cells always share an edge. A cell is named by a 64-bit **cell ID** that encodes the face, the path down the quadtree and the level (0–30). Because children's IDs fall in a contiguous range inside their parent's, "all points in this cell" is a range scan on a 64-bit integer column. A **region coverer** approximates any shape (circle, polygon) with a small set of cells at mixed levels, and a query becomes a handful of integer ranges.
+
+::: formula
+**Average S2 cell area at level L**
+
+$$\bar{A}_L \approx \frac{4\pi R^2}{6 \times 4^{L}} = \frac{510.1 \times 10^{6} \text{ km}^2}{6 \times 4^{L}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\bar{A}_L$ | Average area of a level-$L$ cell | km² |
+| $R$ | Earth's mean radius, ≈ 6,371 km | km |
+| $L$ | Cell level, 0 (a cube face) to 30 | level |
+:::
+
+::: example
+**Worked example — which S2 level for a 1 km search?** Level 12: $85.0 \times 10^6 / 4^{12} = 85.0 \times 10^6 / 16{,}777{,}216 = 5.07$ km², cells about 2.3 km across. Level 13: 1.27 km², about 1.1 km across. Level 30: $85.0 \times 10^6 / 4^{30}$ km² $= 7.4 \times 10^{-11}$ km² $\approx 0.74$ cm². *Interpretation.* Each level divides area by 4, and 31 levels span from a sixth of the planet to under a square centimeter. *Engineering implication.* Index points at a fine level (often the leaf ID itself) and let the region coverer pick coarse cells for the query, so that one index serves every search radius.
+:::
+
+### 17.9.5 Uber H3
+
+**H3** is Uber's open-source hexagonal grid [H3 Docs; Brodsky 2018]. It projects the globe onto an icosahedron and tiles it with hexagons at 16 resolutions (0–15). Resolution 0 has 122 base cells, and each finer resolution has about 7 times as many cells (aperture 7). Twelve cells at every resolution must be pentagons, because a sphere cannot be tiled with hexagons alone. A hexagon's six neighbors all share an edge and all lie the same distance from its center, whereas a square cell has four edge neighbors and four corner neighbors at 1.41× the distance. That makes hexagons a natural unit for analyzing movement, smoothing values over neighborhoods ("rings") and pricing by area. The trade-off is hierarchy: seven child hexagons do not exactly tile their parent, so parent–child containment is approximate, unlike S2 and geohash.
+
+**Table 17.7 — Selected H3 resolutions (average hexagon, from the H3 library version 4).**
+
+| Resolution | Average area | Average edge length | Cells on Earth | Typical use |
+|---|---|---|---|---|
+| 0 | 4,357,449 km² | 1,281 km | 122 | Continental |
+| 5 | 252.9 km² | 9.85 km | 2,016,842 | Regional demand |
+| 7 | 5.16 km² | 1.41 km | 98,825,162 | City districts |
+| 8 | 0.737 km² | 531 m | 691,776,122 | Neighborhood supply and demand |
+| 9 | 0.105 km² | 201 m | 4,842,432,842 | Pickup zones, street blocks |
+| 10 | 0.0150 km² | 75.9 m | 33,897,029,882 | Fine-grained locations |
+| 15 | 0.90 m² | 0.58 m | about $5.7 \times 10^{14}$ | Sub-meter (beyond GPS accuracy) |
+
+A k-ring query (`grid_disk` in H3 v4) returns a hexagon and all hexagons within $k$ steps: 7 cells for $k = 1$ and 19 for $k = 2$ ($1 + 3k(k+1)$).
+
+::: industry
+**Uber.** Uber's engineering blog describes building H3 to analyze supply, demand and pricing across cities: events are bucketed by hexagon, and hexagons' equal-distance neighbors make smoothing across adjacent areas straightforward. Uber open-sourced the library in 2018 [Brodsky 2018; H3 Docs]. **Redis** offers geospatial commands (`GEOADD`, `GEOSEARCH`) that store each member's 52-bit interleaved geohash as its sorted-set score, so a radius search becomes range scans over the cells that cover the area, followed by a distance filter [Redis Docs: Geospatial].
+*Evidence: Primary* — [Brodsky 2018; H3 Docs; Redis Docs]
+:::
+
+### 17.9.6 Putting it together: a proximity service
+
+**Figure 17.13 — A nearby-drivers service built on a cell index.**
+
+```mermaid
+flowchart LR
+  D([Driver apps]) -->|GPS every 4 s over HTTPS| LS[Location service]
+  LS -->|compute cell ID| GI[("Geo index: cell to drivers,<br/>sharded by region")]
+  LS -.->|append| LOG[[Location stream]]
+  R([Rider app]) -->|nearby request| QS[Query service]
+  QS -->|cover circle with cells| GI
+  GI -->|candidate drivers| QS
+  QS -->|exact distance filter,<br/>rank by ETA| R
+  LOG -.->|rebuild after failure| GI
+```
+
+**Reading the diagram.** Drivers send positions every 4 seconds; the location service computes each position's cell (geohash, S2 or H3) and moves the driver between cells in the geo index, which is held in memory (Redis or a custom service) and sharded by region so that a city's index fits on one shard. Every update is also appended asynchronously to a location stream (dotted), which feeds analytics and lets a failed index shard be rebuilt in seconds. A rider's request goes to the query service, which covers the search circle with cells, reads candidates from the index synchronously, filters them by exact distance and ranks them by estimated arrival time from a routing service (not shown). Load: 1 million active drivers at one update per 4 s is 250,000 writes per second, so the index must be in memory and partitioned. Failure points: a stale driver entry (a driver whose app died) needs a TTL on each entry; a hot shard during a big event needs finer cells or a shard split; and cells straddling a shard boundary make the query fan out to two shards. Chapter 55 (§55.1, §55.2) develops this into a full ride-matching design.
+
+**Table 17.8 — Geospatial indexes compared.**
+
+| | Geohash | Quadtree | S2 | H3 | R-tree |
+|---|---|---|---|---|---|
+| Cell shape | Lat/lon rectangles | Adaptive rectangles | Spherical quadrilaterals | Hexagons (+12 pentagons) | Bounding boxes of data |
+| Key | Base-32 string (prefix = parent) | Tree path | 64-bit ID (range = parent) | 64-bit ID | None (tree pages) |
+| Adapts to density | No | Yes | No (coverer mixes levels) | No | Yes |
+| Works in any ordered store | Yes | No (in memory) | Yes | Yes (exact match per cell) | No (specialized index) |
+| Distortion | High near poles | Depends on projection | Low | Low | — |
+| Neighbor queries | 8 neighbors, boundary quirks | Tree walk | Edge neighbors | Uniform rings | Box overlap |
+| Choose when | Simple prefix/range scans, Redis, Elasticsearch | In-memory dynamic points | Global coverage, polygons, ranges on integers | Movement analytics, aggregation, pricing | Polygons and shapes in PostGIS (GiST) |
+
+::: mistake
+**"Searching the 3 × 3 block of geohash cells finds everything within the radius."** Only if the cell's smaller side is at least the radius, and cell width shrinks with latitude. The measurement above lost 5.8% of results at 1 km with 6-character cells. Derive precision from the radius and latitude, or use a region coverer.
+:::

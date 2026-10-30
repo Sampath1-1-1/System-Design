@@ -1,0 +1,10 @@
+%% Figure 15.7 — Azure-style LRC(12,2,2) stripe
+flowchart TB
+  subgraph G1["Local group 1"]
+    X1[(x1 to x6)] --> PX[(local parity px)]
+  end
+  subgraph G2["Local group 2"]
+    Y1[(y1 to y6)] --> PY[(local parity py)]
+  end
+  X1 --> GP[(global parities p1 p2)]
+  Y1 --> GP

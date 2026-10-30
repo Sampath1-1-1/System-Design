@@ -1,0 +1,25 @@
+%% Figure 14.2 — Commit paths under asynchronous, semi-synchronous and synchronous replication
+sequenceDiagram
+  participant C as Client
+  participant P as Primary
+  participant R as Replica
+  Note over C,R: Asynchronous
+  C->>P: COMMIT
+  P->>P: write and flush local log
+  P-->>C: OK
+  P-)R: ship log records later
+  Note over C,R: Semi-synchronous, MySQL AFTER_SYNC
+  C->>P: COMMIT
+  P->>P: write and flush binlog
+  P->>R: send events
+  R->>R: write relay log
+  R-->>P: ACK received
+  P->>P: commit in storage engine
+  P-->>C: OK
+  Note over C,R: Synchronous, PostgreSQL remote_apply
+  C->>P: COMMIT
+  P->>P: flush local WAL
+  P->>R: stream WAL
+  R->>R: flush and apply
+  R-->>P: applied up to LSN
+  P-->>C: OK

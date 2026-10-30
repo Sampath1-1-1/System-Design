@@ -1,0 +1,11 @@
+%% Figure 17.4 — Inserting into a full cuckoo filter by relocation
+flowchart LR
+  X([insert x]) --> FP["fingerprint fp_x<br/>i1 = 12, i2 = 12 XOR h of fp_x = 40"]
+  FP --> D1{Free slot in<br/>bucket 12 or 40?}
+  D1 -->|yes| ST[(Store fp_x)]
+  D1 -->|no| K1["Evict fp_y from bucket 40<br/>put fp_x in its slot"]
+  K1 --> K2["Move fp_y to its alternate:<br/>40 XOR h of fp_y = 7"]
+  K2 --> D2{Free slot<br/>in bucket 7?}
+  D2 -->|yes| ST
+  D2 -->|no, kick again| K1
+  K2 -.->|after 500 kicks| FULL{{Table full: resize or reject}}

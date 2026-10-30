@@ -1,0 +1,15 @@
+%% Figure 13.8 — LSM point-lookup read path
+flowchart TB
+  Q([Get key k]) --> MEM{In memtables?}
+  MEM -->|yes| R([Return value or tombstone])
+  MEM -->|no| L0{Next L0 file:<br/>Bloom filter says maybe?}
+  L0 -->|no, skip file| L0
+  L0 -->|maybe| BLK[Index block, then data block<br/>block cache or disk]
+  BLK -->|found| R
+  BLK -->|false positive| L0
+  L0 -->|L0 exhausted| LV{Level i: file covering k,<br/>Bloom says maybe?}
+  LV -->|no: next level| LV
+  LV -->|maybe| BLK2[Read one data block]
+  BLK2 -->|found| R
+  BLK2 -->|not found: next level| LV
+  LV -->|all levels checked| NF([Not found])

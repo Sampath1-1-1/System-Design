@@ -1,0 +1,11 @@
+%% Figure 11.3 — Secondary-index lookup paths in InnoDB and PostgreSQL
+flowchart LR
+  Q([Query: WHERE email = x])
+  subgraph InnoDB["MySQL InnoDB"]
+    S1["Secondary B+ tree<br/>email to customer_id"] -->|"PK value 4242"| CL[("Clustered B+ tree<br/>customer_id to full row")]
+  end
+  subgraph PG["PostgreSQL"]
+    S2["B+ tree index<br/>email to TID"] -->|"TID page 17, slot 3"| HP[("Heap pages<br/>rows in insert order")]
+  end
+  Q -->|"descend"| S1
+  Q -->|"descend"| S2

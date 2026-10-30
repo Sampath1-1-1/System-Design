@@ -1,0 +1,9 @@
+%% Figure 13.6 — Bitcask: an in-memory hash index over append-only files
+flowchart LR
+  C([Client]) -->|put k3 v9| ACT[[Active file<br/>append only]]
+  C -->|get k1| KD[Keydir in RAM<br/>key to file, offset, size]
+  KD -->|one positioned read| F1[(Immutable file 1)]
+  ACT -->|after append: update entry| KD
+  M[Merge process] -.->|copy live records| NEW[(Merged file<br/>plus hint file)]
+  F1 -.->|read| M
+  F2[(Immutable file 2)] -.->|read| M

@@ -1,0 +1,11 @@
+%% Figure 14.7 — A ring with three nodes and two vnodes each
+flowchart LR
+  A1["A vn0<br/>pos 0.05"] --> B1["B vn0<br/>pos 0.22"]
+  B1 --> C1["C vn0<br/>pos 0.31"]
+  C1 --> A2["A vn1<br/>pos 0.48"]
+  A2 --> C2["C vn1<br/>pos 0.63"]
+  C2 --> B2["B vn1<br/>pos 0.86"]
+  B2 -->|wraps past 1.0| A1
+  K1(["key x<br/>h = 0.40"]) -.->|walk clockwise| A2
+  K2(["key y<br/>h = 0.95"]) -.->|walk clockwise, wrap| A1
+  K3(["key z<br/>h = 0.70"]) -.->|walk clockwise| B2

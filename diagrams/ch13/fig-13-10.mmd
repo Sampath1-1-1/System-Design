@@ -1,0 +1,13 @@
+%% Figure 13.10 — InnoDB doublewrite protecting against a torn page
+sequenceDiagram
+  participant BP as Buffer pool
+  participant DW as Doublewrite area
+  participant TS as Tablespace files
+  participant R as Crash recovery
+  BP->>DW: write batch of dirty pages sequentially
+  DW->>DW: fsync
+  BP->>TS: write each page to its home location
+  Note over TS: crash: page 7 torn, half old and half new
+  R->>TS: read page 7, checksum fails
+  R->>DW: fetch intact copy of page 7
+  R->>TS: restore page 7, then apply redo log

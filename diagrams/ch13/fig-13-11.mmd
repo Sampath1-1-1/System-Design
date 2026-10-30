@@ -1,0 +1,14 @@
+%% Figure 13.11 — Row-oriented versus column-oriented layout of the same table
+flowchart TB
+  subgraph ROW["Row store: one page holds whole rows"]
+    R1["1, IN, 250, 2025-01-03"] --- R2["2, US, 120, 2025-01-03"] --- R3["3, IN, 75, 2025-01-04"]
+  end
+  subgraph COL["Column store: one file or chunk per column"]
+    C1["id: 1, 2, 3"]
+    C2["country: IN, US, IN<br/>dictionary + bit-packed"]
+    C3["amount: 250, 120, 75"]
+    C4["date: run-length encoded"]
+  end
+  Q([SUM amount WHERE country = IN]) -->|row store reads all fields| ROW
+  Q -->|column store reads 2 of 4 columns| C2
+  Q --> C3

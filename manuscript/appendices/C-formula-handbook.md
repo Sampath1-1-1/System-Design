@@ -1384,3 +1384,962 @@ $$B_{\text{victim}} = B_{\text{attacker}} \times A$$
 | $B_{\text{attacker}}$ | Spoofed request traffic the attacker sends | bits/s |
 | $A$ | Bandwidth amplification factor of the abused protocol (response bytes / request bytes) | dimensionless |
 :::
+
+## Chapter 11 — Relational Databases
+
+*From §11.6.3*
+
+::: formula
+**I/O cost of join algorithms**
+
+$$C_{\text{tuple NLJ}} = M + p_R \cdot M \cdot N \qquad C_{\text{block NLJ}} = M + \left\lceil \frac{M}{B-2} \right\rceil N$$
+
+$$C_{\text{index NLJ}} = M + p_R \cdot M \cdot c_{\text{idx}} \qquad C_{\text{Grace hash}} \approx 3(M + N) \qquad C_{\text{sort-merge}} \approx 3(M+N) \text{ to } 5(M+N)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M$, $N$ | Pages in the outer relation $R$ and inner relation $S$ | pages |
+| $p_R$ | Rows per page of $R$ | rows/page |
+| $B$ | Buffer pages available to the join (one for output, one for the inner scan) | pages |
+| $c_{\text{idx}}$ | Page reads to find matching inner rows through an index (descent plus row fetch) | pages/row |
+| $C$ | Total page reads and writes | page I/Os |
+:::
+
+*From §11.7.5*
+
+::: formula
+**Break-even selectivity for a secondary-index scan**
+
+$$s^{*} = \frac{P \cdot c_{\text{seq}}}{n \cdot c_{\text{rand}}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $s^{*}$ | Fraction of rows matched above which a full scan is cheaper | dimensionless |
+| $P$ | Pages in the table | pages |
+| $n$ | Rows in the table | rows |
+| $c_{\text{seq}}$ | Cost of a sequential page read | cost units/page |
+| $c_{\text{rand}}$ | Cost of a random page read | cost units/page |
+:::
+
+*From §11.8.2*
+
+::: formula
+**Height of a B+ tree with $L$ entries per leaf**
+
+$$h = 1 + \left\lceil \log_f \left\lceil \frac{n}{L} \right\rceil \right\rceil, \qquad f = \left\lfloor \frac{u \cdot P}{e_{\text{int}}} \right\rfloor, \qquad L = \left\lfloor \frac{u \cdot P}{e_{\text{leaf}}} \right\rfloor$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $h$ | Levels from root to leaf (page reads per lookup with a cold cache) | levels |
+| $n$ | Entries (rows) indexed | rows |
+| $P$ | Page size | bytes |
+| $u$ | Average fraction of each page holding entries (fill factor minus headers) | dimensionless |
+| $e_{\text{int}}$ | Bytes per internal entry (separator key + child pointer + overhead) | bytes |
+| $e_{\text{leaf}}$ | Bytes per leaf entry (full row for a clustered index; key + pointer for a secondary index) | bytes |
+| $f$ | Fan-out of internal pages | children/page |
+| $L$ | Entries per leaf page | entries/page |
+:::
+
+*From §11.10.1*
+
+::: formula
+**Size of the join-order search space**
+
+$$N_{\text{left-deep}} = n! \qquad N_{\text{bushy}} = \frac{(2(n-1))!}{(n-1)!} \qquad W_{\text{DP}} \approx n \cdot 2^{\,n-1}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of tables joined | tables |
+| $N_{\text{left-deep}}$ | Join orders where every join's inner input is a base table | plans |
+| $N_{\text{bushy}}$ | All binary join trees, including joins of two intermediate results | plans |
+| $W_{\text{DP}}$ | Approximate subproblems examined by Selinger-style dynamic programming over left-deep plans | subproblems |
+:::
+
+*From §11.10.2*
+
+::: formula
+**Cost of a sequential scan with one filter (PostgreSQL)**
+
+$$C_{\text{seq}} = P \cdot c_{\text{seq}} + n \cdot c_{\text{tuple}} + n \cdot k \cdot c_{\text{op}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $P$ | Heap pages (`pg_class.relpages`) | pages |
+| $n$ | Rows (`pg_class.reltuples`) | rows |
+| $k$ | Operators evaluated per row in the filter | operators |
+| $c_{\text{seq}}$, $c_{\text{tuple}}$, $c_{\text{op}}$ | `seq_page_cost`, `cpu_tuple_cost`, `cpu_operator_cost` | cost units |
+:::
+
+*From §11.10.2*
+
+::: formula
+**Cardinality estimate under the independence assumption**
+
+$$\hat{r} = n \cdot \prod_{i=1}^{k} s_i, \qquad s_i \approx \text{freq}(v_i) \text{ or } \frac{1}{d_i}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\hat{r}$ | Estimated rows satisfying all $k$ predicates | rows |
+| $n$ | Rows in the table | rows |
+| $s_i$ | Selectivity of predicate $i$ (fraction of rows passing it) | dimensionless |
+| $\text{freq}(v_i)$ | Sampled frequency of value $v_i$ if it is a most-common value | dimensionless |
+| $d_i$ | Number of distinct values in the column | values |
+:::
+
+*From §11.14.2*
+
+::: formula
+**Time until transaction-ID wraparound**
+
+$$T_{\text{wrap}} = \frac{2^{31} - A}{\lambda_{\text{xid}}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_{\text{wrap}}$ | Time until PostgreSQL must stop assigning transaction IDs | seconds |
+| $A$ | Current age of the oldest unfrozen transaction ID in the database | transactions |
+| $\lambda_{\text{xid}}$ | Rate of transactions that write (read-only transactions consume no ID) | transactions/second |
+:::
+
+## Chapter 12 — NoSQL Databases
+
+*From §12.4.5*
+
+::: formula
+**DynamoDB capacity units**
+
+$$\text{WCU} = \sum_{\text{write types}} r_w \times \left\lceil \frac{s_w}{1\ \text{KB}} \right\rceil \times t_w \qquad \text{RCU} = \sum_{\text{read types}} r_r \times \left\lceil \frac{s_r}{4\ \text{KB}} \right\rceil \times c_r$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $r_w$, $r_r$ | Rate of a given write or read type, including index writes | operations/second |
+| $s_w$ | Size of the item written (for a GSI, the projected size) | KB |
+| $s_r$ | Item size for GetItem; total returned size for Query | KB |
+| $t_w$ | 1 for standard writes, 2 for transactional writes | dimensionless |
+| $c_r$ | 0.5 eventually consistent, 1 strongly consistent, 2 transactional | dimensionless |
+:::
+
+*From §12.4.5*
+
+::: formula
+**On-demand versus provisioned break-even utilization**
+
+$$u^{*} = \frac{p_{\text{prov}} / 3600}{p_{\text{od}}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $u^{*}$ | Average utilization of provisioned capacity above which provisioned is cheaper | fraction (0–1) |
+| $p_{\text{prov}}$ | Price of one provisioned capacity unit for one hour | USD per unit-hour |
+| $p_{\text{od}}$ | Price of one on-demand request unit | USD per request unit |
+:::
+
+*From §12.6.4*
+
+::: formula
+**Cassandra partition cells and size**
+
+$$N_v = N_r\,(N_c - N_{pk} - N_s) + N_s$$
+
+$$S_t = \sum_i \text{sizeOf}(c_{k_i}) + \sum_j \text{sizeOf}(c_{s_j}) + N_r \times \Big(\sum_k \text{sizeOf}(c_{r_k}) + \sum_l \text{sizeOf}(c_{c_l})\Big) + N_v \times \text{sizeOf}(t_{\text{avg}})$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N_v$ | Number of cells (values) in the partition | cells |
+| $N_r$ | Number of rows in the partition | rows |
+| $N_c$ | Number of columns in the table | columns |
+| $N_{pk}$ | Number of partition-key columns | columns |
+| $N_s$ | Number of static columns | columns |
+| $S_t$ | Estimated partition size on disk, one replica, before compression | bytes |
+| $c_k, c_s, c_r, c_c$ | Partition-key, static, regular and clustering columns | bytes each |
+| $t_{\text{avg}}$ | Average per-cell metadata (the docs use the 8-byte timestamp) | bytes |
+:::
+
+*From §12.7.3*
+
+::: formula
+**Cost of a k-hop traversal**
+
+$$E_k = \sum_{i=1}^{k} d^{\,i} \qquad T_{\text{graph}} \approx E_k \times t_{\text{ptr}} \qquad T_{\text{join}} \approx E_k \times t_{\text{idx}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $E_k$ | Edges expanded by a $k$-hop traversal without pruning | edges |
+| $d$ | Average out-degree (neighbors per node) | edges/node |
+| $k$ | Number of hops | hops |
+| $t_{\text{ptr}}$ | Cost of following one adjacency pointer | µs |
+| $t_{\text{idx}}$ | Cost of one index lookup on the edge table, growing with $\log N$ | µs |
+:::
+
+*From §12.8.3*
+
+::: formula
+**Tiered time-series storage**
+
+$$S = N_{\text{series}} \times \sum_{i} \frac{R_i}{\Delta_i} \times b_i$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S$ | Total storage | bytes |
+| $N_{\text{series}}$ | Number of active series | series |
+| $R_i$ | Retention period of tier $i$ | seconds |
+| $\Delta_i$ | Sample (or rollup) interval of tier $i$ | seconds |
+| $b_i$ | Bytes per stored point in tier $i$ after compression | bytes/point |
+:::
+
+## Chapter 13 — Storage Engine Internals
+
+*From §13.3.2*
+
+::: formula
+**Records per slotted page**
+
+$$n = \left\lfloor \frac{P - H}{r + s} \right\rfloor$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Records that fit in one page | records |
+| $P$ | Page size | bytes |
+| $H$ | Page header size | bytes |
+| $r$ | Stored record size including per-record header and alignment padding | bytes |
+| $s$ | Slot (line pointer) size | bytes |
+:::
+
+*From §13.4.3*
+
+::: formula
+**Break-even reference interval (the "five-minute rule")**
+
+$$T_{BE} = \frac{C_{dev} / IOPS_{dev}}{C_{RAM} \times P}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_{BE}$ | Break-even interval: cache a page if it is re-referenced more often than once per $T_{BE}$ | seconds |
+| $C_{dev}$ | Price of one storage device | dollars |
+| $IOPS_{dev}$ | Random reads per second the device sustains | reads/s |
+| $C_{RAM}$ | Price of memory | dollars/byte |
+| $P$ | Page size | bytes |
+:::
+
+*From §13.5.3*
+
+::: formula
+**Redo work after a crash**
+
+$$W_{redo} \approx r_{WAL} \times \Delta t_{ckpt}, \qquad T_{redo} \approx \frac{W_{redo}}{b_{replay}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $W_{redo}$ | Log volume between the redo start point and the crash | bytes |
+| $r_{WAL}$ | Rate at which the workload generates log | bytes/s |
+| $\Delta t_{ckpt}$ | Time between checkpoints (worst case, crash just before the next one) | s |
+| $T_{redo}$ | Duration of the redo pass | s |
+| $b_{replay}$ | Replay throughput, usually limited by random page reads, not log reads | bytes/s |
+:::
+
+*From §13.6.1*
+
+::: formula
+**B+ tree height**
+
+$$N_{leaf} = \left\lceil \frac{N}{n_{leaf}} \right\rceil, \qquad h = 1 + \left\lceil \log_{f} N_{leaf} \right\rceil$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Number of rows (keys) | rows |
+| $n_{leaf}$ | Rows per leaf page at the typical fill factor | rows/page |
+| $N_{leaf}$ | Number of leaf pages | pages |
+| $f$ | Fan-out: child pointers per internal page at the typical fill factor | pointers/page |
+| $h$ | Number of levels including the leaf level | levels |
+:::
+
+*From §13.8.1*
+
+::: formula
+**Number of levels in a leveled LSM tree**
+
+$$L = \left\lceil \log_T \frac{N}{S_1} \right\rceil + 1 \quad (\text{levels } L_1 \ldots L_L, \text{ for } N > S_1)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $L$ | Number of levels below L0 | levels |
+| $N$ | Total data size | bytes |
+| $S_1$ | Target size of level 1 | bytes |
+| $T$ | Size ratio (fan-out) between adjacent levels | dimensionless |
+:::
+
+*From §13.9.1*
+
+::: formula
+**Approximate amplification of compaction strategies**
+
+$$WA_{level} \approx 2 + L\,\frac{T+1}{2}, \qquad WA_{tier} \approx 2 + L, \qquad WA_{lazy} \approx 2 + (L-1) + \frac{T+1}{2}$$
+
+$$R_{level} \approx L, \qquad R_{tier} \approx (T-1)L, \qquad R_{lazy} \approx (T-1)(L-1) + 1$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $WA$ | Write amplification: bytes written to storage per byte written by the application (the 2 counts the WAL and the memtable flush) | dimensionless |
+| $R$ | Sorted runs a point lookup may probe in the worst case (excluding memtables) | runs |
+| $L$ | Number of levels (tiers), $\lceil \log_T (N/M) \rceil$ | levels |
+| $T$ | Size ratio between levels; runs merged at once in tiering | dimensionless |
+| $N$ | Data size | bytes |
+| $M$ | Memtable flush size | bytes |
+:::
+
+*From §13.10*
+
+::: formula
+**Bloom filter false-positive rate (summary of §17.4)**
+
+$$p \approx \left(1 - e^{-kn/m}\right)^k, \qquad k_{opt} = \frac{m}{n}\ln 2, \qquad p_{opt} \approx 0.6185^{\,m/n}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $p$ | Probability that an absent key gets "probably yes" | dimensionless |
+| $m$ | Bits in the filter | bits |
+| $n$ | Keys inserted | keys |
+| $k$ | Hash functions | count |
+:::
+
+*From §13.11.1*
+
+::: formula
+**The three amplifications**
+
+$$RA = \frac{\text{bytes read from storage}}{\text{bytes returned}}, \qquad WA = \frac{\text{bytes written to storage}}{\text{bytes written by the application}}, \qquad SA = \frac{\text{bytes on storage}}{\text{bytes of live data}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $RA$ | Read amplification (often counted instead as I/Os per lookup) | dimensionless |
+| $WA$ | Write amplification at the engine level, before the SSD's own WAF | dimensionless |
+| $SA$ | Space amplification | dimensionless |
+:::
+
+*From §13.13.2*
+
+::: formula
+**Size of a dictionary-encoded, bit-packed column**
+
+$$S \approx \frac{N \lceil \log_2 d \rceil}{8} + d \cdot \bar{v}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S$ | Encoded column size | bytes |
+| $N$ | Number of rows | rows |
+| $d$ | Number of distinct values | values |
+| $\bar{v}$ | Average size of one dictionary entry | bytes |
+:::
+
+## Chapter 14 — Database Scaling: Replication, Partitioning and Sharding
+
+*From §14.3.1*
+
+::: formula
+**Read capacity of a replicated group**
+
+$$R_{\max} = n \cdot (u \cdot c - w) \qquad \text{valid only while } w < u \cdot c$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $R_{\max}$ | Maximum sustainable read rate across the group | reads/s |
+| $n$ | Number of nodes serving reads (replicas, plus the primary if it serves reads) | nodes |
+| $c$ | Capacity of one node, expressed in read-equivalent operations | ops/s |
+| $u$ | Target utilization, leaving headroom for spikes and failover | dimensionless (0–1) |
+| $w$ | Cost of applying the full write stream on one node, in read-equivalent operations | ops/s |
+:::
+
+*From §14.4.1*
+
+::: formula
+**Commit latency with $k$ acknowledgments**
+
+$$T_{\text{commit}} \approx T_{\text{local}} + \text{RTT}_{(k)} + T_{\text{remote}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_{\text{commit}}$ | Time from the client's `COMMIT` to the primary's reply | ms |
+| $T_{\text{local}}$ | Time to flush the log on the primary | ms |
+| $\text{RTT}_{(k)}$ | The $k$-th smallest round-trip time among the eligible replicas | ms |
+| $T_{\text{remote}}$ | Work the replica does before acknowledging (write, flush or apply) | ms |
+| $k$ | Number of replica acknowledgments required ($k = 0$ for asynchronous) | count |
+:::
+
+*From §14.4.2*
+
+::: formula
+**Replica catch-up time**
+
+$$T_{\text{catch-up}} = \frac{B}{r_{\text{apply}} - r_{\text{in}}} \qquad (r_{\text{apply}} > r_{\text{in}})$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_{\text{catch-up}}$ | Time until the replica's lag returns to near zero | s |
+| $B$ | Backlog of unapplied changes when catch-up starts | transactions |
+| $r_{\text{apply}}$ | Rate at which the replica can apply changes | transactions/s |
+| $r_{\text{in}}$ | Rate at which the primary generates new changes during catch-up | transactions/s |
+:::
+
+*From §14.7.4*
+
+::: formula
+**Number of shards required**
+
+$$S = \left\lceil \max\left( \frac{D}{C_{\text{disk}} \cdot f},\; \frac{W}{w_{\text{node}} \cdot u},\; \frac{R}{n_{\text{read}} \cdot r_{\text{node}} \cdot u} \right) \right\rceil$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S$ | Number of shards (each one a replicated group) | shards |
+| $D$ | Data size at the planning horizon, one copy, including indexes | TB |
+| $C_{\text{disk}}$ | Usable storage per node | TB |
+| $f$ | Target fill fraction, leaving room for compaction, backups and growth between reshards | dimensionless (0–1) |
+| $W$ | Peak write rate at the horizon | writes/s |
+| $w_{\text{node}}$ | Sustainable write rate of one primary (from benchmarks) | writes/s |
+| $R$ | Peak read rate that reaches the database, after caches | reads/s |
+| $n_{\text{read}}$ | Nodes per shard that serve reads | nodes |
+| $r_{\text{node}}$ | Sustainable read rate of one node | reads/s |
+| $u$ | Target utilization at peak | dimensionless (0–1) |
+:::
+
+*From §14.8.3*
+
+::: formula
+**Expected keys moved on a membership change**
+
+$$E[\text{moved on add}] = \frac{K}{N+1} \qquad\qquad E[\text{moved on remove}] = \frac{K}{N}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $K$ | Total number of keys | keys |
+| $N$ | Number of nodes before the change | nodes |
+:::
+
+*From §14.8.4*
+
+::: formula
+**Load imbalance on a ring with virtual nodes**
+
+$$\text{CV}(N, V) = \frac{\sqrt{\text{Var}[L]}}{E[L]} = \sqrt{\frac{N-1}{NV+1}} \;\approx\; \frac{1}{\sqrt{V}} \quad (N \gg 1)$$
+
+$$\frac{E[\max_i L_i]}{1/N} \approx 1 + z_N \cdot \text{CV}(N, V) \quad (V \gtrsim 16), \qquad \frac{E[\max_i L_i]}{1/N} = H_N \quad (V = 1)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $L$, $L_i$ | Fraction of the key space owned by a node (by node $i$) | dimensionless (0–1) |
+| $N$ | Number of physical nodes | nodes |
+| $V$ | Virtual nodes per physical node | vnodes/node |
+| $\text{CV}$ | Coefficient of variation: standard deviation of a node's load divided by its mean | dimensionless |
+| $z_N$ | Expected maximum of $N$ independent standard normal variables: 1.16 for $N=5$, 1.54 for $N=10$, 2.51 for $N=100$, 3.24 for $N=1{,}000$ | dimensionless |
+| $H_N$ | $N$-th harmonic number $1 + \tfrac12 + \dots + \tfrac1N \approx \ln N + 0.577$ | dimensionless |
+:::
+
+*From §14.10*
+
+::: formula
+**Salt factor for a hot key**
+
+$$s = \left\lceil \frac{\lambda_{\text{key}}}{u \cdot c_{\text{part}}} \right\rceil \qquad\qquad \text{read amplification} = s$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $s$ | Number of sub-keys (salt factor) | sub-keys |
+| $\lambda_{\text{key}}$ | Write rate to the hot key | writes/s |
+| $c_{\text{part}}$ | Write capacity of one partition | writes/s |
+| $u$ | Target utilization of a partition | dimensionless (0–1) |
+:::
+
+*From §14.11*
+
+::: formula
+**Probability that a scatter-gather query hits at least one slow partition**
+
+$$P_{\text{slow}} = 1 - (1 - q)^{n}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $P_{\text{slow}}$ | Probability that the gathered query waits for at least one slow response | dimensionless (0–1) |
+| $q$ | Probability that one partition's response is slow, e.g. $0.01$ beyond its p99 | dimensionless (0–1) |
+| $n$ | Number of partitions queried | partitions |
+:::
+
+*From §14.13.1*
+
+::: formula
+**Server connections needed behind a transaction pooler (Little's Law)**
+
+$$C_{\text{server}} = \lambda_{\text{tx}} \cdot W_{\text{tx}} \cdot (1 + h)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $C_{\text{server}}$ | Server connections the pool needs | connections |
+| $\lambda_{\text{tx}}$ | Transaction rate through the pooler | transactions/s |
+| $W_{\text{tx}}$ | Time a transaction holds a server connection, from `BEGIN` to `COMMIT` | s |
+| $h$ | Headroom fraction for bursts | dimensionless |
+:::
+
+## Chapter 15 — Object, Block and File Storage
+
+*From §15.3.1*
+
+::: formula
+**Access time for one read**
+
+$$t \approx t_{\text{first}} + \frac{S}{B} \qquad\qquad t_{\text{parallel}} \approx t_{\text{first}} + \frac{S}{\min(c \cdot B,\; B_{\text{NIC}})}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $t$ | Time to read the whole request | s |
+| $t_{\text{first}}$ | Time to first byte (network round trip, lookup, seek or flash read) | s |
+| $S$ | Bytes requested | bytes |
+| $B$ | Throughput of one stream (connection or volume) | bytes/s |
+| $c$ | Number of parallel streams (for example byte-range GETs) | count |
+| $B_{\text{NIC}}$ | Client network interface limit | bytes/s |
+:::
+
+*From §15.4.2*
+
+::: formula
+**Prefixes needed for a target request rate**
+
+$$N_{\text{prefix}} = \left\lceil \frac{R_{\text{peak}}}{r_{\text{prefix}}} \right\rceil$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N_{\text{prefix}}$ | Distinct key prefixes over which requests must be spread | count |
+| $R_{\text{peak}}$ | Peak request rate of one type (writes or reads) | requests/s |
+| $r_{\text{prefix}}$ | Sustained rate one partitioned prefix supports | requests/s |
+:::
+
+*From §15.5.1*
+
+::: formula
+**Metadata memory for an in-memory namespace**
+
+$$M = N_{\text{files}} \cdot b_{\text{file}} + N_{\text{chunks}} \cdot b_{\text{chunk}} \qquad N_{\text{chunks}} \approx \sum_{\text{files}} \left\lceil \frac{\text{file size}}{C} \right\rceil$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M$ | Memory needed by the metadata server | bytes |
+| $N_{\text{files}}$ | Number of files (and directories) | count |
+| $N_{\text{chunks}}$ | Number of chunks or blocks | count |
+| $b_{\text{file}}, b_{\text{chunk}}$ | Bytes of metadata per file and per chunk | bytes |
+| $C$ | Chunk (block) size | bytes |
+:::
+
+*From §15.6.1*
+
+::: formula
+**Overhead, fault tolerance and repair reads of a (k, m) code**
+
+$$\text{overhead} = \frac{k + m}{k} \qquad \text{tolerated losses} = m \qquad \text{repair read per lost fragment} = r \times F$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $k$ | Data fragments per stripe | count |
+| $m$ | Parity fragments per stripe | count |
+| overhead | Raw bytes stored per logical byte | dimensionless (×) |
+| $r$ | Fragments read to rebuild one: 1 for replication, $k$ for RS, local group size for LRC | count |
+| $F$ | Fragment size | bytes |
+:::
+
+*From §15.6.1*
+
+::: formula
+**Approximate annual probability of losing a stripe (generalizing §4.16)**
+
+$$P_{\text{loss/yr}} \approx \frac{n!}{(n - m - 1)!}\;\lambda^{m+1}\;T^{\,m} \times H, \qquad n = k + m, \;\; \lambda T \ll 1$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Fragments per stripe (replicas for replication) | count |
+| $m$ | Losses tolerated | count |
+| $\lambda$ | Per-fragment (per-disk) failure rate, AFR/8,760 | failures/hour |
+| $T$ | Mean time to detect and rebuild one lost fragment | hours |
+| $H$ | Hours per year (8,760) | hours/year |
+:::
+
+*From §15.6.1*
+
+::: formula
+**Daily repair read traffic in a fleet**
+
+$$R_{\text{day}} = \frac{N_{\text{disk}} \times \text{AFR}}{365} \times D_{\text{used}} \times r$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $R_{\text{day}}$ | Bytes read per day to rebuild failed disks | bytes/day |
+| $N_{\text{disk}}$ | Disks in the fleet | count |
+| AFR | Annualized failure rate | fraction/year |
+| $D_{\text{used}}$ | Data stored per disk | bytes |
+| $r$ | Fragments read per fragment rebuilt | count |
+:::
+
+*From §15.8.1*
+
+::: formula
+**Part sizing and upload time**
+
+$$p_{\min} = \max\!\left(5\ \text{MiB},\; \frac{S}{N_{\max}}\right) \qquad N = \left\lceil \frac{S}{p} \right\rceil \qquad t \approx \frac{S}{\min(c \cdot b,\; B_{\text{NIC}})}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S$ | Object size | bytes |
+| $p$, $p_{\min}$ | Chosen and minimum part size | bytes |
+| $N_{\max}$ | Maximum parts per upload (10,000 in S3) | count |
+| $N$ | Number of parts | count |
+| $c$ | Concurrent part uploads | count |
+| $b$ | Throughput per connection | bytes/s |
+| $B_{\text{NIC}}$ | Client network limit | bytes/s |
+:::
+
+*From §15.8.3*
+
+::: formula
+**Expected chunk size and deduplication index size**
+
+$$E[\text{chunk}] \approx s_{\min} + 2^{b} \qquad M_{\text{index}} = \frac{U}{E[\text{chunk}]} \times e$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $b$ | Number of hash bits that must match (boundary probability $2^{-b}$ per byte) | bits |
+| $s_{\min}$ | Minimum chunk size (no boundary is accepted earlier) | bytes |
+| $E[\text{chunk}]$ | Expected chunk size (ignoring the maximum cap) | bytes |
+| $U$ | Unique data stored | bytes |
+| $e$ | Index entry size (hash plus location) | bytes |
+:::
+
+*From §15.9*
+
+::: formula
+**Cost of one cohort of data over its lifetime**
+
+$$C = \sum_{\text{tiers } i} V \cdot p_i \cdot t_i \;+\; \sum_{\text{transitions } j} N_{\text{obj}} \cdot q_j \;+\; V_{\text{read}} \cdot g$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $V$ | Volume of the cohort | GB |
+| $p_i$, $t_i$ | Storage price and months spent in tier $i$ | $/GB-month, months |
+| $N_{\text{obj}}$ | Number of objects | count |
+| $q_j$ | Price per lifecycle transition request into tier $j$ | $/request |
+| $V_{\text{read}}$, $g$ | Data retrieved and its per-GB retrieval fee | GB, $/GB |
+:::
+
+## Chapter 16 — Search Systems
+
+*From §16.3.4*
+
+::: formula
+**Variable-byte length of an integer**
+
+$$\text{bytes}(g) = \max\!\left(1, \left\lceil \frac{\lfloor \log_2 g \rfloor + 1}{7} \right\rceil\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $g$ | The integer to encode, here a docID gap ($g \geq 1$) | count |
+| $\lfloor \log_2 g \rfloor + 1$ | Number of significant bits in $g$ | bits |
+| $\text{bytes}(g)$ | Encoded length, 7 payload bits per byte | bytes |
+:::
+
+*From §16.3.5*
+
+::: formula
+**Inverted index size (one copy)**
+
+$$S_{\text{index}} \approx \underbrace{N \cdot u \cdot (b_d + b_f)}_{\text{docIDs + frequencies}} + \underbrace{N \cdot L \cdot b_p}_{\text{positions}} + \underbrace{M \cdot b_t}_{\text{dictionary}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Number of documents | documents |
+| $u$ | Average number of *distinct* terms per document (postings per document) | postings/document |
+| $L$ | Average number of tokens per document (one position each) | tokens/document |
+| $b_d$, $b_f$ | Compressed bytes per docID gap and per term frequency | bytes |
+| $b_p$ | Compressed bytes per position gap | bytes |
+| $M$ | Number of distinct terms in the collection | terms |
+| $b_t$ | Dictionary bytes per term (term text + pointers + statistics) | bytes |
+:::
+
+*From §16.5.2*
+
+::: formula
+**TF-IDF weight of term $t$ in document $d$**
+
+$$w_{t,d} = \text{tf}_{t,d} \times \log_{10}\frac{N}{\text{df}_t} \qquad \text{score}(q,d) = \sum_{t \in q} w_{t,d}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\text{tf}_{t,d}$ | Occurrences of term $t$ in document $d$ | count |
+| $N$ | Documents in the collection | documents |
+| $\text{df}_t$ | Documents containing $t$ | documents |
+| $w_{t,d}$ | Weight of $t$ in $d$ | dimensionless |
+:::
+
+*From §16.5.3*
+
+::: formula
+**BM25 inverse document frequency (Lucene form)**
+
+$$\text{IDF}(t) = \ln\!\left(1 + \frac{N - n_t + 0.5}{n_t + 0.5}\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Documents in the collection (or shard; see §16.7.5) | documents |
+| $n_t$ | Documents containing term $t$ (document frequency) | documents |
+| $\text{IDF}(t)$ | Weight of a match on $t$ | dimensionless |
+:::
+
+*From §16.5.3*
+
+::: formula
+**BM25 score**
+
+$$\text{score}(q, d) = \sum_{t \in q} \text{IDF}(t) \cdot \frac{f_{t,d}\,(k_1 + 1)}{f_{t,d} + k_1\left(1 - b + b \cdot \dfrac{|d|}{\text{avgdl}}\right)}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $f_{t,d}$ | Frequency of term $t$ in document (field) $d$ | count |
+| $\lvert d \rvert$ | Length of $d$ in terms after analysis | terms |
+| $\text{avgdl}$ | Average length of that field across the collection | terms |
+| $k_1$ | Term-frequency saturation parameter; Lucene default 1.2 (typical 1.2–2.0) | dimensionless |
+| $b$ | Length-normalization strength, 0 (none) to 1 (full); default 0.75 | dimensionless |
+| $\text{score}(q,d)$ | Relevance score; only comparable within one query | dimensionless |
+:::
+
+*From §16.6.3*
+
+::: formula
+**Write amplification of tiered merging**
+
+$$W \approx 1 + \log_m \frac{S_{\max}}{S_{\text{flush}}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $W$ | Bytes written to disk per byte of new index data | dimensionless |
+| $m$ | Merge factor: segments merged together per tier | count |
+| $S_{\max}$ | Maximum merged segment size | bytes |
+| $S_{\text{flush}}$ | Typical size of a newly flushed segment | bytes |
+:::
+
+*From §16.7.3*
+
+::: formula
+**Scatter–gather tail latency**
+
+$$P(\text{query fast}) = p^{S} \qquad q_{\text{shard}} = q_{\text{query}}^{1/S}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $p$ | Probability one shard answers within threshold $T$ | dimensionless |
+| $S$ | Number of shards the query waits for | count |
+| $P(\text{query fast})$ | Probability all $S$ shards answer within $T$ | dimensionless |
+| $q_{\text{query}}$ | Target percentile for the whole query (e.g. 0.99) | dimensionless |
+| $q_{\text{shard}}$ | Percentile each shard must meet at $T$ | dimensionless |
+:::
+
+*From §16.7.4*
+
+::: formula
+**Deep pagination cost at the coordinator**
+
+$$E = S \cdot (\textit{from} + \textit{size})$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S$ | Shards queried | count |
+| $\textit{from}$ | Offset of the first requested result | results |
+| $\textit{size}$ | Results per page | results |
+| $E$ | Entries every query phase must return and the coordinator must merge | entries |
+:::
+
+*From §16.9.1*
+
+::: formula
+**Autocomplete load and precomputed-index memory**
+
+$$\lambda_{\text{ac}} = \lambda_{\text{search}} \cdot c \cdot f \qquad M_{\text{top-}k} \approx P \cdot k \cdot b$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda_{\text{search}}$ | Searches started per second | searches/s |
+| $c$ | Characters typed per search before selecting or submitting | characters |
+| $f$ | Fraction of keystrokes that send a request (after debounce and client caching) | dimensionless |
+| $\lambda_{\text{ac}}$ | Suggestion request rate | requests/s |
+| $P$ | Number of trie nodes (distinct prefixes) with stored suggestions | nodes |
+| $k$ | Suggestions stored per prefix | count |
+| $b$ | Bytes per stored suggestion reference | bytes |
+| $M_{\text{top-}k}$ | Memory for the precomputed lists | bytes |
+:::
+
+*From §16.10.3*
+
+::: formula
+**End-to-end freshness latency**
+
+$$T_{\text{fresh}} \approx T_{\text{cdc}} + T_{\text{queue}} + T_{\text{batch}} + T_{\text{index}} + T_{\text{refresh}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_{\text{cdc}}$ | Commit to event published in Kafka | s |
+| $T_{\text{queue}}$ | Time the event waits for the indexer (consumer lag) | s |
+| $T_{\text{batch}}$ | Wait for a bulk request to fill or its timer to fire | s |
+| $T_{\text{index}}$ | Bulk request execution on primary and replicas | s |
+| $T_{\text{refresh}}$ | Wait for the next refresh: uniform in $[0, I]$, mean $I/2$ | s |
+| $T_{\text{fresh}}$ | Commit in source database to searchable | s |
+:::
+
+## Chapter 17 — Data Structures and Algorithms for Scale
+
+*From §17.3.3*
+
+::: formula
+**Expected bucket load and the chi-square uniformity test**
+
+$$\mu = \frac{n}{B}, \qquad \sigma \approx \sqrt{\frac{n}{B}}, \qquad \chi^2 = \sum_{i=1}^{B} \frac{(c_i - \mu)^2}{\mu}, \qquad \mathbb{E}[\chi^2] \approx B - 1, \quad \mathrm{sd}(\chi^2) \approx \sqrt{2(B-1)}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of keys hashed | keys |
+| $B$ | Number of buckets | buckets |
+| $\mu$ | Expected keys per bucket | keys/bucket |
+| $\sigma$ | Standard deviation of a bucket's count under a uniform hash | keys/bucket |
+| $c_i$ | Observed number of keys in bucket $i$ | keys |
+| $\chi^2$ | Chi-square statistic: total squared deviation from uniform | dimensionless |
+:::
+
+*From §17.4.3*
+
+::: formula
+**Bloom filter false-positive rate**
+
+$$p \approx \left(1 - e^{-kn/m}\right)^{k}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $p$ | Probability that a query for an item not in the set returns "probably present" | probability (0–1) |
+| $n$ | Number of items inserted | items |
+| $m$ | Size of the bit array | bits |
+| $k$ | Number of hash functions (bit positions per item) | count |
+| $e^{-kn/m}$ | Approximate fraction of bits still 0 | fraction |
+:::
+
+*From §17.4.3*
+
+::: formula
+**Optimal number of hash functions**
+
+$$k^{*} = \frac{m}{n} \ln 2 \approx 0.693 \, \frac{m}{n}, \qquad p\big|_{k = k^*} = \left(\tfrac{1}{2}\right)^{k^*}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $k^{*}$ | Number of hash functions that minimizes $p$ (round to an integer) | count |
+| $m/n$ | Bits per element | bits/item |
+| $\ln 2$ | Natural logarithm of 2, ≈ 0.693 | dimensionless |
+:::
+
+*From §17.4.3*
+
+::: formula
+**Bits per element for a target false-positive rate**
+
+$$\frac{m}{n} = \frac{-\ln p}{(\ln 2)^2} \approx 1.44 \log_2 \frac{1}{p}, \qquad k = -\log_2 p$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $m/n$ | Bits of filter needed per inserted item | bits/item |
+| $p$ | Target false-positive rate | probability |
+| $(\ln 2)^2$ | ≈ 0.4805 | dimensionless |
+| $k$ | Matching number of hash functions (rounded) | count |
+:::
+
+*From §17.4.7*
+
+::: formula
+**Cuckoo filter false-positive bound and space cost**
+
+$$\varepsilon \le \frac{2b}{2^{f}}, \qquad f \ge \log_2 \frac{2b}{\varepsilon}, \qquad \text{bits per item} = \frac{f}{\alpha} \approx \frac{\log_2(1/\varepsilon) + \log_2(2b)}{\alpha}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\varepsilon$ | False-positive rate | probability |
+| $b$ | Slots per bucket (4 is the common choice) | slots |
+| $f$ | Fingerprint length | bits |
+| $\alpha$ | Load factor reached before inserts fail (≈ 0.95 for $b = 4$) | fraction |
+:::
+
+*From §17.5.1*
+
+::: formula
+**HyperLogLog estimate and standard error**
+
+$$E = \alpha_m \, m^2 \left( \sum_{j=1}^{m} 2^{-M[j]} \right)^{-1}, \qquad \alpha_m \approx \frac{0.7213}{1 + 1.079/m}, \qquad \mathrm{SE} \approx \frac{1.04}{\sqrt{m}}, \qquad \text{memory} = m \times 6 \text{ bits}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $E$ | Estimated number of distinct items | items |
+| $m$ | Number of registers, $m = 2^p$ | registers |
+| $M[j]$ | Value of register $j$: the largest first-1-bit position seen | count |
+| $\alpha_m$ | Bias-correction constant (valid for $m \ge 128$) | dimensionless |
+| $\mathrm{SE}$ | Relative standard error of $E$ | fraction |
+| 6 bits | Register width: enough to hold values up to 63, sufficient for a 64-bit hash | bits |
+:::
+
+*From §17.6.1*
+
+::: formula
+**Count-Min sizing and error bound**
+
+$$w = \left\lceil \frac{e}{\varepsilon} \right\rceil, \qquad d = \left\lceil \ln \frac{1}{\delta} \right\rceil, \qquad f_x \le \hat{f}_x \le f_x + \varepsilon N \text{ with probability } \ge 1 - \delta$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $w$ | Counters per row (width) | counters |
+| $d$ | Rows, one hash function each (depth) | rows |
+| $\varepsilon$ | Error as a fraction of the stream total | fraction |
+| $\delta$ | Probability that the error bound is exceeded for a given query | probability |
+| $N$ | Sum of all updates in the stream | events |
+| $f_x$, $\hat{f}_x$ | True and estimated count of item $x$ | events |
+| $e$ | Euler's number, ≈ 2.718 | dimensionless |
+:::
+
+*From §17.6.2*
+
+::: formula
+**Space-Saving guarantee**
+
+$$c_x - f_x \le c_{\min} \le \frac{N}{k}, \qquad f_x > \frac{N}{k} \Rightarrow x \text{ is monitored}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $k$ | Number of counters | counters |
+| $N$ | Stream length | events |
+| $c_x$, $f_x$ | Reported and true count of monitored item $x$ | events |
+| $c_{\min}$ | Smallest counter value | events |
+:::
+
+*From §17.7.1*
+
+::: formula
+**Skip list levels, search cost and memory**
+
+$$L(n) = \log_{1/p} n, \qquad \mathbb{E}[\text{search path}] \le \frac{L(n)}{p} + \frac{1}{1-p}, \qquad \mathbb{E}[\text{pointers per node}] = \frac{1}{1-p}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of elements | elements |
+| $p$ | Probability of promoting a node to the next level | probability |
+| $L(n)$ | Expected number of levels in use | levels |
+| Search path | Forward moves plus level drops during one search | steps |
+| Pointers per node | Average forward pointers stored per element | pointers |
+:::
+
+*From §17.8.1*
+
+::: formula
+**Merkle proof size and anti-entropy cost**
+
+$$h = \lceil \log_2 n \rceil, \qquad \text{proof size} = h \times H_{\text{bytes}}, \qquad \text{hashes compared} \le 1 + 2\,k\,h$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of leaves (records or key ranges) | leaves |
+| $h$ | Tree height | levels |
+| $H_{\text{bytes}}$ | Size of one hash (32 for SHA-256) | bytes |
+| $k$ | Number of divergent leaves between two replicas | leaves |
+:::

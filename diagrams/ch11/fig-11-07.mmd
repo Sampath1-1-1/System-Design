@@ -1,0 +1,12 @@
+%% Figure 11.7 — Non-repeatable read under READ COMMITTED
+sequenceDiagram
+  participant A as Txn A - report
+  participant DB as Database
+  participant B as Txn B - restock
+  A->>DB: SELECT on_hand WHERE product 42
+  DB-->>A: 10
+  B->>DB: UPDATE on_hand = on_hand - 3
+  B->>DB: COMMIT
+  A->>DB: SELECT on_hand WHERE product 42
+  DB-->>A: 7 under READ COMMITTED
+  Note over A,DB: REPEATABLE READ returns 10 again: same snapshot

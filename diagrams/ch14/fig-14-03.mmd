@@ -1,0 +1,16 @@
+%% Figure 14.3 — Two lag anomalies: lost own write and time going backwards
+sequenceDiagram
+  participant U as User
+  participant P as Primary
+  participant R1 as Replica 1, lag 0.1 s
+  participant R2 as Replica 2, lag 5 s
+  U->>P: update display name to Ada
+  P-->>U: OK
+  U->>R2: read profile
+  R2-->>U: old name, own write missing
+  Note over U,R2: violates read-your-writes
+  U->>R1: read comment count
+  R1-->>U: 12 comments
+  U->>R2: refresh
+  R2-->>U: 9 comments
+  Note over U,R2: violates monotonic reads

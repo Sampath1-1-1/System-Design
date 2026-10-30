@@ -1,0 +1,10 @@
+%% Figure 11.1 — Decomposing the flat order export into BCNF tables
+flowchart LR
+  F["order_lines_flat<br/>key: order_id + product_id"] -->|"split FD1: 2NF"| OW["orders_wide<br/>key: order_id"]
+  F -->|"split FD4: 2NF"| P[("products<br/>key: product_id")]
+  F -->|"keep FD5"| OL[("order_lines<br/>key: order_id + product_id")]
+  OW -->|"split FD2: 3NF"| O[("orders<br/>key: order_id")]
+  OW -->|"split FD2: 3NF"| C[("customers<br/>key: customer_id")]
+  OL -.->|"FK order_id"| O
+  OL -.->|"FK product_id"| P
+  O -.->|"FK customer_id"| C

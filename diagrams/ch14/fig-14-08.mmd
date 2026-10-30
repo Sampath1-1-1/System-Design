@@ -1,0 +1,14 @@
+%% Figure 14.8 — Online resharding as a state machine
+stateDiagram-v2
+  [*] --> Provisioned
+  Provisioned --> Capturing: start CDC or dual writes
+  Capturing --> Backfilling: snapshot at position P
+  Backfilling --> CatchingUp: copy done
+  CatchingUp --> Verifying: lag below threshold
+  Verifying --> CatchingUp: mismatch found and fixed
+  Verifying --> ReadsSwitched: checksums match
+  ReadsSwitched --> WritesSwitched: brief write freeze and fence source
+  ReadsSwitched --> Verifying: errors, roll reads back
+  WritesSwitched --> Provisioned: rollback via reverse stream
+  WritesSwitched --> CleanedUp: rollback window over
+  CleanedUp --> [*]

@@ -2,31 +2,29 @@
 
 > **Level:** 3 · **Track:** A (Traditional) · **Estimated reading time:** 3.5 h
 
-When you call `INSERT` on PostgreSQL, `Put` on RocksDB or `save()` on an ORM, a piece of software called the **storage engine** decides where those bytes live on disk, how they are found again, and what happens if the power fails halfway through. Two databases with the same SQL dialect can differ by ten times in write volume, disk space or tail latency purely because of their storage engines. This chapter opens the box. You will see how a database packs rows into fixed-size pages, keeps hot pages in memory, survives crashes with a write-ahead log, and organizes data either as an in-place B-tree or as a log-structured merge (LSM) tree. You will learn to estimate read, write and space amplification with numbers, and to choose an engine for a workload instead of by reputation.
+When you call `INSERT` on PostgreSQL, `Put` on RocksDB or `save()` on an ORM, a piece of software called the **storage engine** decides where those bytes live on disk, how they are found again, and what happens if the power fails halfway through. Two databases with the same SQL dialect can differ tenfold in write volume, disk space or tail latency purely because of their storage engines. This chapter opens the box: pages, buffer pools, write-ahead logs, B-trees and log-structured merge (LSM) trees, and the numbers that let you choose an engine for a workload instead of by reputation.
 
 ## 13.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Draw a slotted page and explain how it gives records stable identifiers while allowing variable-length rows and in-page compaction.
-- Explain how a buffer pool uses a page table, pin counts and dirty flags; compare LRU, clock and LRU-K eviction; and justify why many engines use `O_DIRECT` instead of the operating system's page cache.
-- Describe write-ahead logging, log sequence numbers (LSNs), fuzzy checkpoints and the three ARIES recovery passes, and estimate recovery time from the WAL rate and checkpoint interval.
-- Trace a B-tree page split, explain latch crabbing, and contrast in-place B-trees with copy-on-write B-trees such as LMDB.
-- Build a log-structured store from first principles: Bitcask, then a full LSM tree with memtable, SSTables, WAL replay and compaction (you will run one in Python).
-- Compare size-tiered, leveled and hybrid compaction, and calculate their write, read and space amplification for a given data size.
-- Use the RUM conjecture to reason about read, update and memory (space) overheads, and calculate each for a B-tree and an LSM tree.
-- Explain torn writes, checksums, the InnoDB doublewrite buffer and PostgreSQL full-page writes.
-- Explain why columnar storage, encoding (RLE, dictionary, bit-packing) and vectorized execution make analytical scans 10–100× cheaper.
-- Choose between InnoDB-style, PostgreSQL-heap-style and RocksDB-style engines for a stated workload, and defend the choice with numbers.
+- Draw a slotted page and explain why records get stable identifiers.
+- Explain a buffer pool's page table, pin counts and dirty flags; compare LRU, clock and LRU-K; and justify `O_DIRECT`.
+- Describe WAL, LSNs, fuzzy checkpoints and the three ARIES passes, and estimate recovery time.
+- Trace a B-tree page split, explain latch crabbing, and contrast in-place with copy-on-write B-trees.
+- Build and run a toy LSM tree (memtable, SSTables, WAL replay, compaction), starting from Bitcask.
+- Calculate write, read and space amplification for size-tiered, leveled and hybrid compaction, and apply the RUM conjecture.
+- Explain torn writes, checksums, the doublewrite buffer and full-page writes.
+- Explain why columnar layout, encoding and vectorized execution make analytical scans 10–100× cheaper.
+- Choose between InnoDB-, PostgreSQL-heap- and RocksDB-style engines for a workload, with numbers.
 
 ## 13.2 Prerequisites
 
-- HDDs, SSDs, IOPS, queue depth and SSD write amplification — §5.6 (every engine design here is a response to device behavior; SSD write amplification multiplies with the engine's own).
-- The page cache, `mmap` and copy-on-write — §6.6.5–§6.6.6 (buffer pools replace or sit beside the page cache).
-- `fsync`, journaling and group commit — §6.14 (this chapter builds the database's own journal on top of them; the group-commit formula is in §6.14.3 and is not repeated here).
-- Indexes, B-trees and B+ trees, transactions and MVCC — §11.7, §11.8, §11.11, §11.14 (we cover how a B-tree is *stored and made crash-safe*, not what an index is).
-- Logarithms and powers — §4.3 (tree heights and LSM level counts are logarithms).
-- Units: in this chapter **KiB/MiB/GiB** (powers of two) are used for page and block sizes; **KB/MB/GB/TB** (powers of ten) for data volumes and capacity estimates.
+- Storage devices, IOPS and SSD write amplification — §5.6 (engine designs respond to device behavior).
+- Page cache, `mmap`, copy-on-write — §6.6.5–§6.6.6 (buffer pools replace or sit beside them).
+- `fsync`, journaling and group commit — §6.14 (the group-commit formula in §6.14.3 is not repeated).
+- B+ trees, transactions and MVCC — §11.8, §11.11, §11.14 (here: how a B-tree is stored and made crash-safe).
+- Logarithms — §4.3. Units: **KiB/MiB** for page and block sizes; **KB/MB/GB/TB** (powers of ten) for data volumes.
 
 ## 13.3 Pages and blocks
 
@@ -38,13 +36,11 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Imagine a library that lends books only by the whole shelf. If you want one sentence, you still carry the shelf to your desk. You would quickly start arranging books so that things read together sit on the same shelf, and you would keep the shelves you use most near your desk. Storage devices behave like that library. An SSD reads and programs flash in pages of 4–16 KiB; an HDD pays milliseconds of seek before transferring anything (§5.6.1). Reading 100 bytes costs almost the same as reading 8 KiB. So a database never asks the disk for "a row"; it asks for the page that contains the row, and it organizes everything — tables, indexes, free-space maps, even the log — in page-sized units.
+Imagine a library that lends books only by the whole shelf: to read one sentence you carry a shelf. Storage devices behave like that library. An SSD reads flash in pages of 4–16 KiB; an HDD pays milliseconds of seek before transferring anything (§5.6.1), so reading 100 bytes costs almost the same as reading 8 KiB. A database therefore never asks the disk for "a row"; it asks for the page containing it, and organizes tables, indexes and logs in page-sized units.
 
 #### Why does this exist?
 
-Pages give the engine three things. First, **I/O efficiency**: one request moves many rows. Second, **a unit of caching and recovery**: the buffer pool caches pages, the write-ahead log describes changes to pages, and each page carries the LSN of the last change applied to it (§13.5). Third, **addressability**: a row can be named by `(page number, slot number)`, a compact pointer that indexes can store.
-
-Page size is a trade-off. Larger pages mean fewer I/Os for scans and shallower B-trees (§13.6), but more bytes moved and logged when one small row changes, and a larger unit that can be torn by a crash (§13.12).
+Pages give **I/O efficiency** (one request moves many rows), **a unit of caching and recovery** (the buffer pool caches pages; the log describes changes to pages, §13.5) and **addressability** (a row is named by `(page, slot)`). Larger pages mean fewer I/Os for scans and shallower B-trees, but more bytes written when one small row changes and a larger unit that a crash can tear (§13.12).
 
 **Table 13.1 — Default page sizes (as of 2025).**
 
@@ -64,14 +60,11 @@ Page size is a trade-off. Larger pages mean fewer I/Os for scans and shallower B
 
 #### How it works internally
 
-1. **Header.** Fixed fields at the start: the page LSN (§13.5), a checksum (§13.12), flags, the number of slots, and pointers to the start and end of free space. PostgreSQL's page header is 24 bytes, with `pd_lower` and `pd_upper` marking the free-space hole [PostgreSQL Docs: Database Page Layout].
-2. **Insert.** Copy the record into the end of the free space (moving the "upper" pointer down), then append a slot pointing to it (moving the "lower" pointer up). The new record's identifier is `(page, slot number)`.
-3. **Read.** Look up the slot, follow the offset, read `length` bytes.
-4. **Delete.** Mark the slot unused. The bytes become a hole; nothing else moves.
-5. **Update that grows a record.** If there is room, rewrite the record elsewhere in the page and repoint its slot; the identifier does not change.
-6. **Compaction.** When free space is fragmented, slide live records together to the back of the page and rewrite their slot offsets. Because outside pointers name *slots*, not byte offsets, compaction is invisible to indexes.
-
-The indirection in steps 5 and 6 is the whole point: it lets the engine move records *within* a page without updating every index that points at them.
+1. **Header:** page LSN (§13.5), checksum (§13.12), slot count and free-space pointers. PostgreSQL's header is 24 bytes, with `pd_lower` and `pd_upper` bounding the free-space hole [PostgreSQL Docs: Database Page Layout].
+2. **Insert:** copy the record to the end of free space, then append a slot pointing to it. The record's identifier is `(page, slot)`.
+3. **Read:** look up the slot and follow its offset.
+4. **Delete:** mark the slot unused; the bytes become a hole.
+5. **Grow or compact:** move records within the page and rewrite their slot offsets. Because indexes name *slots*, not byte offsets, these moves are invisible to them — the whole point of the indirection.
 
 #### Architecture diagram
 
@@ -91,7 +84,7 @@ flowchart LR
   S -.->|offset and length| R1
 ```
 
-**Reading the diagram.** The page is one contiguous 8 KiB buffer, laid out left to right as it appears in memory and on disk. The **header** holds the page LSN, a checksum and two pointers (`lower`, `upper`) that bound the free space. The **slot array** grows rightward as records are added; **records** are written from the end of the page leftward, so both regions grow into the central free space and the page is full only when they meet. An index entry (the cylinder, a separate storage structure) stores `(page 7, slot 1)` — a synchronous lookup goes from the index to the slot, and the slot's offset leads to the record bytes (the dotted arrow marks this extra indirection rather than an asynchronous path). The failure point is the page as a unit: if a crash writes only part of it, header, slots and records may disagree, which is why the checksum and torn-write protection of §13.12 exist. Scaling happens by adding pages, never by growing one.
+**Reading the diagram.** One contiguous 8 KiB buffer, left to right as on disk. The slot array grows rightward and records grow leftward from the end; the page is full when they meet in the free space. An index entry (a separate storage structure) names `(page 7, slot 1)`; the lookup is synchronous, and the dotted arrow marks the slot-to-record indirection, not an asynchronous path. Failure point: a crash that writes only part of the page leaves header, slots and records inconsistent, hence checksums and torn-write protection (§13.12). Tables scale by adding pages, never by growing one.
 
 #### Mathematical foundations
 
@@ -120,7 +113,7 @@ Each row holds 76 bytes of column data. PostgreSQL adds a 23-byte tuple header, 
 4. Pages: $10^9 / 75 = 13\,333\,334$ pages; size $= 13\,333\,334 \times 8192 \approx 109.2$ GB.
 5. Raw column data: $10^9 \times 76 = 76$ GB. Overhead factor: $109.2 / 76 \approx 1.44$.
 
-**Interpretation.** Before any index, dead tuple or free space, the table is 44% larger than its data, because of per-row headers (needed for MVCC, §11.14), slots and alignment. **Engineering implication.** Narrow rows pay proportionally more overhead; ordering columns so that 8-byte fields come first can reduce padding, and leaving free space on purpose (PostgreSQL's `fillfactor`, for example 90%) trades space for cheaper updates (§13.14.3). This 1.44 is a component of the **space amplification** you will meet in §13.11.
+**Interpretation.** Before any index or dead tuple, the table is 44% larger than its data, because of MVCC tuple headers (§11.14), slots and alignment. **Engineering implication.** Narrow rows pay proportionally more; ordering 8-byte columns first reduces padding, and a deliberate `fillfactor` below 100% trades space for cheaper updates (§13.14.3). This 1.44 is part of the **space amplification** of §13.11.
 :::
 
 #### Code example
@@ -213,17 +206,16 @@ free bytes now: 1654
 
 What to notice:
 
-- 39 records of 98 bytes plus 4-byte slots fill $4 + 39 \times 102 = 3982$ of 4096 bytes, leaving 114: the formula above with $H = 4$, $r = 98$, $s = 4$.
-- Deleting does not increase `free_space()`: the holes are unusable until `compact()` runs. Real engines track this "fragmented" space separately and compact lazily (PostgreSQL does it during page pruning and `VACUUM`).
-- After compaction slot 1 still returns the same record, at a different byte offset. That stability is what lets indexes store `(page, slot)`.
-- Deleted slots are not reused here, so slot numbers only grow; PostgreSQL reuses dead line pointers only after `VACUUM` has removed every index entry pointing at them.
+- 39 records of 98 bytes plus 4-byte slots fill $4 + 39 \times 102 = 3982$ of 4096 bytes, leaving 114 — the formula with $H = 4$, $r = 98$, $s = 4$.
+- Deleting does not raise `free_space()`: holes are unusable until `compact()` runs (PostgreSQL compacts during page pruning and `VACUUM`).
+- After compaction slot 1 returns the same record from a different offset; that stability lets indexes store `(page, slot)`.
 
 #### Alternatives and trade-offs
 
-Fixed-length records need no slots (record *i* sits at offset $H + i \times r$), which is why some column stores and fixed-width index pages skip them. **Index-organized** (clustered) tables such as InnoDB's store rows *inside* B-tree leaf pages ordered by primary key (§13.14.1); the slot directory then also keeps records in key order so a page can be binary-searched. Values too large for a page are moved out of line: PostgreSQL's TOAST stores values above roughly 2 KB in a separate table, and InnoDB stores long columns on overflow pages.
+Fixed-length records need no slots (record *i* sits at offset $H + i \times r$). Clustered tables such as InnoDB's keep rows inside B-tree leaves, with slots in key order for binary search (§13.14.1). Values too large for a page move out of line (PostgreSQL TOAST above roughly 2 KB; InnoDB overflow pages).
 
 ::: mistake
-**"A row is the unit of I/O."** It never is. Updating one 50-byte field dirties a whole 8 or 16 KiB page, which must eventually be written in full and, the first time after a checkpoint, may be copied into the log as well (§13.12). Reasoning in rows instead of pages is the most common reason for underestimating a database's write volume.
+**"A row is the unit of I/O."** It never is. Updating one 50-byte field dirties a whole 8 or 16 KiB page, which is eventually written in full and, after a checkpoint, may also be copied into the log (§13.12). Reasoning in rows is the commonest cause of underestimated write volume.
 :::
 
 ## 13.4 Buffer pools
@@ -236,24 +228,23 @@ Fixed-length records need no slots (record *i* sits at offset $H + i \times r$),
 
 #### First-principles explanation
 
-Think of a workbench with 1,000 numbered trays and a warehouse of a billion boxes. To work on a box you fetch it into a free tray and write the box number on a whiteboard (the page table) so others can find it. While you are holding a box you put a clip on its tray (a **pin**) so nobody swaps it out from under you. If you change what is in the box, you stick a red dot on the tray (**dirty**): before that tray can be reused, the box must be carried back and shelved. When all trays are full and you need a new box, you pick an unclipped tray whose contents have not been needed for a while (the **replacement policy**), shelve it first if it has a red dot, and reuse the tray.
+Think of a workbench with 1,000 trays beside a warehouse of a billion boxes. You fetch a box into a free tray and note its number on a whiteboard (the page table). While using it you clip the tray (a **pin**) so nobody swaps it out; if you change its contents you add a red dot (**dirty**), meaning it must be shelved before the tray is reused. When the trays are full, you pick an unclipped tray not needed for a while (the **replacement policy**).
 
 #### Why does this exist?
 
-RAM is about 1,000 times faster than an NVMe SSD for a random access (~100 ns versus ~80 µs, §5.6.5) but costs far more per byte. The working set of most databases — the pages touched in a given minute — is much smaller than the database, so caching the right pages turns most page requests into memory accesses. The database could leave this to the operating system's page cache (§6.6.6), but it knows things the kernel does not: which pages belong to an index root versus a one-off table scan, which dirty pages must not be written before their log records (§13.5), and when a page is merely being prefetched.
+RAM is about 1,000 times faster than NVMe for a random access (~100 ns versus ~80 µs, §5.6.5), and most databases' working sets are far smaller than the data. The database could leave caching to the kernel's page cache (§6.6.6), but it knows what the kernel does not: which pages are index roots and which belong to a one-off scan, and which dirty pages must not be written before their log records (§13.5).
 
 #### How it works internally
 
 A thread that needs page 42 calls `fetch(42)`:
 
-1. **Look up** 42 in the page table (a hash table protected by latches).
-2. **Hit:** increment the frame's pin count, record the access for the replacement policy, and return a pointer to the frame.
-3. **Miss:** obtain a frame from the **free list**; if it is empty, ask the **replacer** for a victim among frames with pin count 0.
-4. If the victim is dirty, first make sure the log is durable up to the victim's page LSN (the **WAL rule**, §13.5.2), then write the victim to disk.
-5. Remove the victim from the page table, read page 42 into the frame, verify its checksum (§13.12), insert it into the page table, pin it and return it.
-6. When the thread is done it calls `unpin(42, dirty)`. Pinned pages are never evicted, so a leaked pin is a memory leak that slowly shrinks the usable pool.
+1. **Look up** 42 in the page table (a latched hash table). On a **hit**, increment the pin count, note the access for the replacer, return the frame.
+2. On a **miss**, take a frame from the free list or ask the **replacer** for a victim with pin count 0.
+3. If the victim is dirty, ensure the log is durable up to its page LSN (the **WAL rule**, §13.5.1), then write it.
+4. Read page 42 into the frame, verify its checksum (§13.12), update the page table, pin and return it.
+5. The caller later calls `unpin(42, dirty)`. Pinned pages are never evicted, so a leaked pin slowly shrinks the pool.
 
-Separately, **background writers** (PostgreSQL's background writer and checkpointer, InnoDB's page cleaner threads) flush dirty pages ahead of demand, so that the eviction in step 4 rarely has to wait for a write.
+**Background writers** (PostgreSQL's bgwriter and checkpointer, InnoDB's page cleaners) flush dirty pages ahead of demand so step 3 rarely waits.
 
 #### Architecture diagram
 
@@ -271,17 +262,17 @@ flowchart LR
   BG[Background writer] -.->|flush dirty pages early| DM
 ```
 
-**Reading the diagram.** A query thread asks for page 42; the request path is synchronous (solid arrows). The page table resolves the page ID to a frame on a hit and returns a pinned pointer. On a miss, the replacer chooses an unpinned victim; if the victim is dirty, the disk manager writes it back, but only after the WAL has been flushed past that page's LSN (the WAL rule), so the log files and data files are two separate storage boundaries with an ordering constraint between them. The background writer works asynchronously (dotted arrow), cleaning dirty frames before they are needed. Failure points: a crash loses every dirty frame (recovered from the WAL, §13.5); a thread that never unpins causes the pool to run out of evictable frames; and a hot page-table latch limits concurrency, which engines address by partitioning the table (InnoDB splits a large pool into multiple instances). The pool scales vertically with RAM; beyond one machine, see caching in Chapter 20.
+**Reading the diagram.** Solid arrows are the synchronous request path: page table, then frame on a hit, or replacer and disk manager on a miss. A dirty victim is written only after the WAL is flushed past its page LSN, an ordering constraint between two storage boundaries (log files and data files). The background writer cleans frames asynchronously (dotted). Failure points: a crash loses dirty frames (recovered from the WAL); leaked pins exhaust evictable frames; a hot page-table latch limits concurrency, so InnoDB partitions large pools into instances. The pool scales vertically with RAM.
 
 ### 13.4.2 Eviction policies: LRU, clock and LRU-K
 
-**Least recently used (LRU)** evicts the page whose last access is oldest, using a linked list that moves a page to the head on every access. It has two problems inside a database. First, moving a list node on every hit needs a lock on a shared list, which becomes a contention point at millions of hits per second. Second, **sequential flooding**: a single scan of a 100 GB table touches each page once and pushes every hot index page out of a 32 GB pool, even though none of the scanned pages will be read again.
+**LRU** evicts the page whose last access is oldest. Inside a database it has two problems: moving a list node on every hit makes the shared list a contention point, and **sequential flooding** — one scan of a 100 GB table pushes every hot index page out of a 32 GB pool although no scanned page is read again.
 
-**Clock** (second chance) approximates LRU cheaply. Frames sit in a circle, each with a reference bit set on access. To evict, a "clock hand" sweeps: a frame with bit 1 has it cleared and survives this pass; the first frame with bit 0 (and pin count 0) is the victim. A hit only sets a bit, with no list manipulation. PostgreSQL uses a variant called **clock sweep** in which each buffer has a usage count, incremented on access up to a cap of 5 and decremented as the hand passes, so frequently used pages survive several sweeps [PostgreSQL source: `src/backend/storage/buffer/README`].
+**Clock** approximates LRU cheaply: frames sit in a circle with a reference bit set on access; a sweeping hand clears set bits and evicts the first unpinned frame whose bit is already clear. PostgreSQL's **clock sweep** uses a usage count (capped at 5) instead of a bit, so frequently used pages survive several sweeps [PostgreSQL source: `src/backend/storage/buffer/README`].
 
-**LRU-K** evicts the page whose *K*-th most recent access is oldest [O'Neil, O'Neil and Weikum 1993]. With $K = 2$, a page touched once by a scan has an infinitely old second access and is evicted first, while a page referenced twice recently is protected. LRU-K is resistant to scans and distinguishes frequency from recency, at the cost of keeping access history. Related designs include **2Q** [Johnson and Shasha 1994] and ARC (§20.9).
+**LRU-K** evicts the page whose *K*-th most recent access is oldest [O'Neil, O'Neil and Weikum 1993]. With $K = 2$, a page touched once by a scan is evicted first, so LRU-K resists scans and captures frequency, at the cost of access history. Related designs are **2Q** [Johnson and Shasha 1994] and ARC (§20.9).
 
-Real engines add explicit scan resistance on top. InnoDB uses **midpoint insertion**: its LRU list is split into a "new" sublist (by default 5/8 of the pool) and an "old" sublist (3/8, `innodb_old_blocks_pct = 37`); a newly read page enters at the head of the old sublist and is promoted only if it is accessed again after a delay (`innodb_old_blocks_time`, default 1,000 ms), so a one-pass scan never reaches the new sublist [MySQL Docs: Making the Buffer Pool Scan Resistant]. PostgreSQL gives large sequential scans, `VACUUM` and bulk writes a small private **ring buffer** of frames, so they recycle their own frames instead of evicting everyone else's.
+InnoDB uses **midpoint insertion**: new pages enter the head of an "old" sublist (37% of the pool) and are promoted only if accessed again after `innodb_old_blocks_time` (1,000 ms by default), so a one-pass scan never reaches the "new" sublist [MySQL Docs: Making the Buffer Pool Scan Resistant]. PostgreSQL gives large scans and `VACUUM` a small private **ring buffer** of frames.
 
 **Table 13.2 — Buffer replacement policies.**
 
@@ -295,14 +286,9 @@ Real engines add explicit scan resistance on top. InnoDB uses **midpoint inserti
 
 ### 13.4.3 Double buffering, `O_DIRECT` and the page cache
 
-If a database reads its files with ordinary `read()`, every page is cached twice: once in the kernel page cache and once in the buffer pool. This **double buffering** wastes RAM, and the kernel's own read-ahead and writeback decisions compete with the database's. Opening files with **`O_DIRECT`** tells Linux to transfer data directly between the device and the database's (suitably aligned) buffers, bypassing the page cache. The database must then do its own read-ahead and asynchronous I/O, and it still needs `fsync`/`fdatasync` for durability, because `O_DIRECT` does not flush the drive's write cache (§6.14.3, pitfall 6).
+Reading files with ordinary `read()` caches every page twice, in the kernel page cache and in the buffer pool. This **double buffering** wastes RAM, and kernel read-ahead and writeback compete with the database's own. **`O_DIRECT`** transfers data directly between the device and aligned database buffers; the engine must then do its own read-ahead and asynchronous I/O, and still needs `fsync`, because `O_DIRECT` does not flush the drive cache (§6.14.3).
 
-Engines differ in which side of this trade-off they take:
-
-- **InnoDB** is designed to own memory: the usual recommendation is a buffer pool of most of the server's RAM with `innodb_flush_method = O_DIRECT`, which became the Linux default in MySQL 8.4 [MySQL Docs: InnoDB Startup Options].
-- **PostgreSQL** has historically used buffered I/O and relies on the page cache as a second-level cache; its documentation suggests starting `shared_buffers` at about 25% of RAM on a dedicated server [PostgreSQL Docs: Resource Consumption]. Direct I/O exists only as a developer option (`debug_io_direct`, from version 16), and version 18 introduced an asynchronous I/O subsystem (as of 2025).
-- **RocksDB** uses buffered I/O by default with its own block cache for uncompressed blocks, and can be switched to direct I/O for reads and for flush/compaction writes [RocksDB Wiki: Direct IO].
-- **LMDB** goes the other way entirely: it maps the whole file with `mmap` and lets the kernel be the buffer pool. That makes it small and fast for read-mostly workloads, but gives up control over eviction and I/O scheduling (§6.6.6 summarizes the case against `mmap` in databases [Crotty et al. 2022]).
+**InnoDB** owns memory: a buffer pool of most of RAM with `O_DIRECT`, the Linux default from MySQL 8.4 [MySQL Docs: InnoDB Startup Options]. **PostgreSQL** uses buffered I/O, with `shared_buffers` starting around 25% of RAM and the page cache as a second-level cache [PostgreSQL Docs: Resource Consumption]; direct I/O is only a developer option (`debug_io_direct`, version 16), and version 18 added asynchronous I/O (as of 2025). **RocksDB** defaults to buffered I/O plus its own block cache, with optional direct I/O [RocksDB Wiki: Direct IO]. **LMDB** maps the file with `mmap` and lets the kernel be its buffer pool, trading control for simplicity (§6.6.6, [Crotty et al. 2022]).
 
 #### Mathematical foundations
 
@@ -330,7 +316,7 @@ Assume DRAM at $\$4$/GB, so $C_{RAM} = 4 \times 10^{-9}$ \$/byte, and $P = 8192$
 1. **HDD:** $C_{dev} = \$300$, $IOPS_{dev} = 200$. Cost per unit of read capacity: $300 / 200 = \$1.50$ per read/s. $T_{BE} = 1.50 / (3.28 \times 10^{-5}) \approx 45\,700$ s $\approx 12.7$ hours.
 2. **NVMe SSD:** $C_{dev} = \$400$, $IOPS_{dev} = 400\,000$. Cost: $400 / 400\,000 = \$0.001$ per read/s. $T_{BE} = 0.001 / (3.28 \times 10^{-5}) \approx 30.5$ s.
 
-**Interpretation.** On hard disks, any page touched more than about twice a day earns its place in RAM, so the answer was "cache everything you can". On NVMe, only pages re-referenced roughly every half minute or more often are worth caching on cost grounds; colder pages are cheaper to re-read. **Engineering implication.** With flash, size the buffer pool for the *hot* working set and a latency target, not for the whole database; measure the buffer hit ratio and the distribution of page re-reference intervals before buying RAM. The calculation ignores CPU cost per I/O and latency SLOs, both of which push toward a somewhat larger pool.
+**Interpretation.** On HDDs, a page touched about twice a day earns its RAM; on NVMe, only pages re-referenced every half minute or so do. **Engineering implication.** With flash, size the pool for the hot working set and the latency target, not the whole database. CPU cost per I/O and latency SLOs, ignored here, push toward a somewhat larger pool.
 :::
 
 #### Failure scenarios
@@ -339,10 +325,9 @@ Assume DRAM at $\$4$/GB, so $C_{RAM} = 4 \times 10^{-9}$ \$/byte, and $P = 8192$
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Throughput collapses after a nightly report runs | Sequential flooding evicts the hot set | Hit ratio drops during scan; read IOPS spike afterward | Wait for re-warm; pre-warm hot tables | Scan-resistant policy; ring buffers; run reports on a replica |
-| Long stall on page requests ("free buffer waits") | All frames dirty; eviction waits for writes | Wait-event statistics; dirty page percentage near 100% | Raise background flushing rate | Tune page cleaners / bgwriter; faster log device |
-| Database restarted, p99 latency high for an hour | Cold buffer pool | Hit ratio low after restart | Warm up gradually before taking traffic | Dump and reload the pool's page list (InnoDB does this by default); `pg_prewarm` |
-| Server swaps or is killed by the OOM killer | Buffer pool plus page cache plus per-connection memory exceed RAM | Swap activity; kernel OOM log | Restart with a smaller pool | Size the pool with headroom; disable overcommit surprises (§6.6.4) |
+| Throughput collapses after a report | Scan floods the pool | Hit ratio drops | Re-warm | Scan-resistant policy; reports on a replica |
+| Stalls waiting for free frames | All frames dirty | Wait events; dirty % near 100 | Flush faster | Tune page cleaners or bgwriter |
+| High p99 after restart | Cold pool | Low hit ratio | Warm before taking traffic | Dump/reload page list; `pg_prewarm` |
 
 ::: mistake
 **"A 99% buffer hit ratio means the disk does not matter."** At 50,000 page requests per second, 1% misses is 500 random reads per second, each 80 µs on NVMe or 10 ms on an HDD — enough to saturate a hard disk (§5.6.1). Hit ratios must be read together with the absolute miss rate and the device's IOPS.
@@ -358,31 +343,24 @@ Assume DRAM at $\$4$/GB, so $C_{RAM} = 4 \times 10^{-9}$ \$/byte, and $P = 8192$
 
 #### First-principles explanation
 
-A shopkeeper keeps a cash book. Every sale is written as one line at the bottom of the book the moment it happens; the shelves and the stock ledger are tidied up later, at the end of the day. If a fire alarm interrupts the tidying, nothing is lost: the shopkeeper reads the cash book from the last time the ledger was known to be correct and redoes the missing entries. Writing one line at the end of a book is fast; reorganizing shelves is slow. The cash book is the WAL, the shelves are data pages, and "the last time the ledger was correct" is a **checkpoint**.
+A shopkeeper writes every sale as one line at the bottom of a cash book the moment it happens, and tidies the stock ledger later. If a fire alarm interrupts the tidying, nothing is lost: she replays the cash book from the last time the ledger was known to be correct. Appending a line is fast; reorganizing shelves is slow. The cash book is the WAL, the ledger is the data pages, and "last known correct" is a **checkpoint**.
 
 #### Why does this exist?
 
-A transaction may change rows on ten random pages. Writing those ten pages at commit time would cost ten random writes plus ten `fsync`-ordered waits, and a crash in the middle would leave some pages new and some old. The WAL converts that into one small *sequential* append and one `fsync` per commit (or per group of commits, §6.14.3). Two buffer-management freedoms follow, named in the recovery literature [Härder and Reuter 1983]:
-
-- **No-force:** committed changes need *not* be written to their pages at commit. If the pages are lost in a crash, the log has enough information to **redo** them.
-- **Steal:** a page containing *uncommitted* changes *may* be written to disk (for example, when the buffer pool evicts it). If the transaction later aborts or the system crashes, the log has enough information to **undo** them.
-
-Steal/no-force gives the buffer pool maximum freedom and the fastest commits, at the price of needing both redo and undo during recovery. That is the design point ARIES was built for.
+Writing a transaction's ten random pages at commit would cost ten random writes, and a crash midway would leave some pages new and some old. The WAL replaces them with one small *sequential* append and one `fsync` per commit group (§6.14.3). Two freedoms follow [Härder and Reuter 1983]: **no-force** — committed changes need not reach their pages at commit, because the log can **redo** them; and **steal** — pages with *uncommitted* changes may be written (say, on eviction), because the log can **undo** them. Steal/no-force gives the fastest commits and freest buffer pool, at the price of needing both redo and undo — the design point of ARIES.
 
 #### How it works internally
 
-A typical update log record contains: LSN; the transaction ID; `prevLSN` (the same transaction's previous record, forming a per-transaction chain backward through the log); the page ID; the type of operation; a **redo** part (how to reapply it) and an **undo** part (how to reverse it). Records are usually **physiological**: physical to a page ("on page 7") but logical within it ("insert this tuple at slot 3"), which keeps them small and tolerant of in-page compaction.
+An update record holds its LSN, transaction ID, `prevLSN` (the transaction's previous record, chaining backward), page ID, and **redo** and **undo** information. Records are usually **physiological**: physical to a page, logical within it ("insert at slot 3 of page 7"). Two rules make the WAL correct:
 
-Two rules make the WAL correct:
+1. **WAL rule:** before a dirty page is written, the log must be durable up to that page's `pageLSN`: $\text{pageLSN} \le \text{flushedLSN}$. Otherwise a change could reach disk with no record able to undo it.
+2. **Commit rule:** a transaction is acknowledged only after its commit record is durable.
 
-1. **The WAL rule.** Before a dirty page is written to disk, every log record up to that page's `pageLSN` must already be durable: $\text{pageLSN} \le \text{flushedLSN}$. Otherwise a crash could leave a change on disk with no log record able to undo it.
-2. **The commit rule.** A transaction is acknowledged only after its commit record (and therefore all its earlier records) is durable in the log.
-
-Each page header stores its `pageLSN`, the LSN of the last record applied to it. During recovery, comparing a record's LSN with the page's `pageLSN` tells the engine whether the change is already on the page — the trick that makes redo **idempotent**.
+Because each page stores the LSN of the last change applied to it, recovery can tell whether a record is already on the page, which makes redo **idempotent**.
 
 ### 13.5.2 Checkpoints
 
-Without checkpoints, recovery would have to replay the log from the beginning of time, and the log could never be deleted. A **checkpoint** bounds both. A *sharp* checkpoint would stop all transactions and flush every dirty page — simple, but it freezes the database for seconds. Real engines take **fuzzy checkpoints**: write a `BEGIN_CHECKPOINT` record, record the current **dirty page table** (each dirty page with its `recLSN`, the LSN of the first change that dirtied it) and **transaction table** (active transactions and their last LSN), write `END_CHECKPOINT`, and let pages be flushed gradually in the background while normal work continues. Recovery must start redo from the smallest `recLSN` in the dirty page table, and log before that point can be recycled.
+A **checkpoint** bounds how much log recovery must read and how much log must be kept. Rather than freezing the database to flush everything, engines take **fuzzy checkpoints**: log the **dirty page table** (each dirty page with its `recLSN`, the LSN that first dirtied it) and the **transaction table**, then flush pages gradually in the background. Redo starts from the smallest `recLSN`; older log can be recycled.
 
 **Figure 13.3 — WAL, commit and checkpoint timeline.**
 
@@ -406,17 +384,17 @@ sequenceDiagram
   Note over T,D: crash: page 9 change lost from RAM, LSN 150 maybe in WAL
 ```
 
-**Reading the diagram.** Five participants: the transaction, the buffer pool (RAM), the WAL file and the data files (two separate durable storage boundaries), and the checkpointer. Solid arrows are synchronous steps; the dashed return arrow is the acknowledgement. The update is applied to page 7 in memory and described in the log at LSN 100; the commit waits only for the sequential `fsync` of the log up to LSN 110, never for page 7. The checkpointer later writes page 7 to the data file, respecting the WAL rule, and records which pages were dirty. At the crash, page 9's change exists only in RAM and perhaps in an unflushed log tail, and its transaction had not committed, so recovery must ensure it does not appear. Scaling note: the log is a single sequential stream, so its device's `fsync` latency and bandwidth bound commit throughput; engines put it on the fastest, power-loss-protected device available.
+**Reading the diagram.** The WAL file and data files are separate durable storage boundaries; the buffer pool is RAM. Solid arrows are synchronous; the dashed arrow is the acknowledgement. The commit waits only for a sequential log `fsync` up to LSN 110, never for page 7, which the checkpointer writes later, respecting the WAL rule. At the crash, page 9's uncommitted change exists only in RAM and perhaps the log tail; recovery must ensure it does not appear. Scaling: the log is one sequential stream, so its device's flush latency bounds commit throughput; put it on fast, power-loss-protected storage.
 
 ### 13.5.3 ARIES recovery: analysis, redo, undo
 
-**ARIES** (Algorithms for Recovery and Isolation Exploiting Semantics), developed at IBM by Mohan and colleagues, is the reference design for steal/no-force recovery and underlies DB2 and SQL Server among others [Mohan et al. 1992]. Its three passes are:
+**ARIES**, developed at IBM, is the reference design for steal/no-force recovery and underlies DB2 and SQL Server among others [Mohan et al. 1992]:
 
-1. **Analysis** (forward from the last checkpoint to the end of the log). Rebuild the dirty page table and transaction table as of the crash. Transactions with a commit record are **winners**; those still active are **losers**.
-2. **Redo** (forward from the smallest `recLSN`). **Repeat history**: reapply every logged change — including those of losers — whose LSN is greater than the page's `pageLSN`. After redo, the database is in exactly the state it was in at the moment of the crash.
-3. **Undo** (backward from the end of the log). Roll back every loser by following its `prevLSN` chain, processing the largest outstanding LSN first. Each undo action is itself logged as a **compensation log record (CLR)** carrying an `undoNextLSN` pointer to the next record to undo. If the system crashes *during* recovery, the next recovery redoes the CLRs and continues from `undoNextLSN`, never undoing anything twice.
+1. **Analysis** (forward from the last checkpoint): rebuild the dirty page and transaction tables; committed transactions are **winners**, active ones **losers**.
+2. **Redo** (forward from the smallest `recLSN`): **repeat history** — reapply every change, losers' included, whose LSN exceeds the page's `pageLSN`, restoring the exact pre-crash state.
+3. **Undo** (backward): roll back losers along their `prevLSN` chains, logging each step as a **compensation log record (CLR)** whose `undoNextLSN` says what to undo next. A crash during recovery redoes the CLRs and resumes, never undoing twice.
 
-Repeating history before undoing sounds wasteful, but it is what lets ARIES support fine-grained (row-level) locking and logical undo: after redo, the page structure is exactly what the loser's undo records expect, even if other committed transactions have since changed the same page.
+Repeating history first is what allows row-level locking and logical undo: after redo, pages are exactly as the undo records expect, even if committed transactions changed them since.
 
 **Figure 13.4 — The three ARIES passes over the log.**
 
@@ -430,7 +408,7 @@ flowchart LR
   E -.->|3 Undo backward, write CLRs| A
 ```
 
-**Reading the diagram.** The four boxes are positions in a single WAL file, ordered left to right by LSN (the thin lines only show order). Analysis reads forward from the last checkpoint to the end of the log to rebuild the tables of dirty pages and active transactions. Redo reads forward from the smallest `recLSN`, which may be well before the checkpoint because fuzzy checkpoints do not flush pages, and reapplies changes to data pages that are older than the record. Undo (dotted, because it follows per-transaction `prevLSN` chains rather than a sequential scan) walks backward as far as the oldest record of any loser, writing CLRs. Storage boundaries: the log is read; data pages are read and written through the buffer pool. Failure point: a long-running transaction pushes point A far back, so undo, and the log the engine must retain, grow with transaction age. Scaling: redo can be parallelized by page, because records for different pages are independent.
+**Reading the diagram.** The boxes are positions in one WAL file, ordered by LSN. Analysis scans forward from the checkpoint; redo scans forward from the smallest `recLSN`, which precedes the checkpoint because fuzzy checkpoints do not flush pages; undo (dotted: it follows `prevLSN` chains, not a sequential scan) walks back to the oldest loser record, writing CLRs. The log is read; data pages are read and written through the buffer pool. Failure point: a long-running transaction pushes point A far back, lengthening undo and log retention. Scaling: redo parallelizes by page.
 
 #### Mathematical foundations
 
@@ -455,25 +433,20 @@ A PostgreSQL server generates $r_{WAL} = 30$ MB/s of WAL at peak. Replay runs at
 
 1. Checkpoint every 5 minutes: $W_{redo} = 30 \times 300 = 9000$ MB $= 9$ GB. $T_{redo} = 9000 / 150 = 60$ s.
 2. Checkpoint every 1 minute: $W_{redo} = 30 \times 60 = 1.8$ GB; $T_{redo} = 12$ s.
-3. But the shorter interval has a cost. With full-page writes (§13.12.3), the first change to each page after every checkpoint logs the whole 8 KiB page. If the workload dirties 200,000 distinct pages per minute, each 1-minute checkpoint triggers up to $200\,000 \times 8192 \approx 1.64$ GB of page images, about $1.64 / 60 \approx 27$ MB/s — nearly doubling the WAL rate. With 5-minute checkpoints, a page touched repeatedly is imaged only once per 5 minutes.
+3. The cost: with full-page writes (§13.12.3), the first change to each page after a checkpoint logs the whole 8 KiB page. If 200,000 distinct pages are dirtied per minute, 1-minute checkpoints add up to $200\,000 \times 8192 \approx 1.64$ GB per minute, $\approx 27$ MB/s — nearly doubling the WAL rate.
 
-**Interpretation.** Checkpoint frequency trades recovery time against steady-state write volume. **Engineering implication.** Pick the interval from the recovery-time objective (RTO, §39.8) and measure the WAL rate with the real workload; PostgreSQL's defaults (`checkpoint_timeout = 5min`, `max_wal_size = 1GB`) are deliberately conservative and are often raised on write-heavy systems, accepting longer recovery that a hot-standby failover (§27.11) hides anyway.
+**Interpretation.** Checkpoint frequency trades recovery time against steady-state write volume. **Engineering implication.** Derive the interval from the recovery-time objective (RTO, §39.8) and the measured WAL rate; write-heavy PostgreSQL systems often raise `checkpoint_timeout` (default 5 min) and `max_wal_size` (default 1 GB), letting a standby failover (§27.11) hide the longer recovery.
 :::
 
 ### 13.5.4 Group commit and relaxed durability
 
-Because the commit rule needs one log `fsync` per commit, the log device's flush latency caps commit throughput unless commits share flushes. **Group commit** — letting one `fsync` cover all commits that arrived while the previous one was in progress — multiplies throughput by the batch size; the formula and a worked example are in §6.14.3. Engines also let you trade durability for speed explicitly. InnoDB's `innodb_flush_log_at_trx_commit = 1` (the default) flushes at every commit; `2` writes at commit but flushes about once per second, so an operating-system crash can lose up to a second of commits; `0` does both about once per second. PostgreSQL's `synchronous_commit = off` acknowledges before the flush, risking the last few hundred milliseconds of commits but never corrupting the database, because the WAL rule still holds for pages.
+**Group commit** lets one log `fsync` cover every commit that arrived during the previous flush (formula in §6.14.3). Engines also trade durability for speed explicitly: InnoDB's `innodb_flush_log_at_trx_commit = 1` (default) flushes at every commit, while `2` flushes about once per second, so an OS crash can lose about a second of commits. PostgreSQL's `synchronous_commit = off` risks the last fraction of a second of commits but never corruption, because the WAL rule still holds.
 
 #### Real-world industry applications
 
 ::: industry
-**PostgreSQL: redo-only recovery.** PostgreSQL logs every change in its WAL and recovers by redo from the last checkpoint's redo point, but it has no undo pass. It does not need one: its MVCC design (§11.14) never overwrites a row in place; an aborted transaction's new row versions stay in the heap, invisible because the transaction status log (`pg_xact`) marks it aborted, and `VACUUM` removes them later. The WAL also feeds streaming replication and point-in-time recovery, so a single mechanism provides durability, replicas and backups.
-*Evidence: Primary* — [PostgreSQL Docs: Reliability and the Write-Ahead Log]
-:::
-
-::: industry
-**InnoDB: redo plus undo, ARIES-style.** InnoDB writes physiological redo records to its redo log and keeps before-images in separate **undo logs**, which serve both rollback and consistent reads of old versions. Crash recovery applies the redo log, then rolls back incomplete transactions using undo records. Since MySQL 8.0.30 the redo log's total size is set with `innodb_redo_log_capacity`, which bounds how far behind the checkpoint can fall.
-*Evidence: Primary* — [MySQL Docs: InnoDB Redo Log; InnoDB Undo Logs]
+**PostgreSQL versus InnoDB recovery.** PostgreSQL recovers by redo only: MVCC never overwrites rows in place, so an aborted transaction's versions stay in the heap, invisible because `pg_xact` marks it aborted, until `VACUUM` removes them. The same WAL feeds replication and point-in-time recovery. InnoDB is ARIES-like: redo log plus separate **undo logs** that serve rollback and consistent reads; recovery applies redo, then rolls back incomplete transactions.
+*Evidence: Primary* — [PostgreSQL Docs: Reliability and the Write-Ahead Log; MySQL Docs: InnoDB Redo Log; InnoDB Undo Logs]
 :::
 
 #### Failure scenarios
@@ -482,13 +455,13 @@ Because the commit rule needs one log `fsync` per commit, the log device's flush
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Recovery takes 20 minutes after a crash | Long checkpoint interval and high WAL rate | Startup logs show redo progress | Wait; or fail over to a replica | Size checkpoint interval from the RTO |
-| Disk fills with WAL | Checkpoints stalled, or a replication slot/replica not consuming WAL | WAL directory size alert | Fix the consumer; drop abandoned slots | Monitor WAL retention; cap slot lag |
-| Acknowledged commits missing after power loss | Log device cache not flushed; durability relaxed in configuration | Gaps compared with client records | Restore from replica | Power-loss-protected devices; review `fsync` settings |
-| Undo grows without bound | Long-running transaction keeps old versions alive | History list length / oldest transaction age | Kill or commit the transaction | Statement and idle-transaction timeouts |
+| Recovery takes 20 minutes | Long checkpoint interval, high WAL rate | Redo progress in logs | Fail over to a replica | Size interval from the RTO |
+| Disk fills with WAL | Stalled checkpoints or unconsumed replication slot | WAL size alert | Fix consumer; drop slot | Monitor retention and slot lag |
+| Acknowledged commits lost | Drive cache not flushed; relaxed settings | Gaps versus clients | Restore from replica | Power-loss protection; audit `fsync` settings |
+| Undo grows without bound | Long-running transaction | Oldest transaction age | Kill or commit it | Transaction timeouts |
 
 ::: mistake
-**"The checkpoint is what makes a commit durable."** Commits are durable when their log records are flushed. A checkpoint only limits how much log recovery must read and allows old log to be recycled; data pages written by a checkpoint were already recoverable from the log.
+**"The checkpoint is what makes a commit durable."** Commits are durable when their log records are flushed. A checkpoint only bounds recovery work and lets old log be recycled.
 :::
 
 ## 13.6 B-tree storage engines
@@ -499,28 +472,26 @@ Because the commit rule needs one log `fsync` per commit, the log device's flush
 **Definition — B-tree storage engine.** A storage engine that keeps each table or index as a B+ tree of fixed-size pages and **updates pages in place**: a change to a key rewrites the page that holds it. Internal pages hold separator keys and child page numbers; leaf pages hold the keys with either the rows themselves (a clustered index) or pointers to them.
 :::
 
-The logical structure of B-trees and B+ trees — sorted keys, high fan-out, all leaves at the same depth, sibling links for range scans — is covered in §11.8. Here the question is what happens physically: how the tree is laid out in pages, how it grows, how many I/Os a lookup costs, and how many threads can use it at once.
+The logical structure of B+ trees is covered in §11.8. Here the questions are physical: how the tree grows in pages, what a lookup costs in I/O, and how threads share it.
 
 #### First-principles explanation
 
-Picture a filing cabinet with guide cards. The top drawer has one card per drawer below ("A–F", "G–M", …); each drawer has one card per folder; each folder holds the documents. To find a document you read three cards, not a million documents. When a folder overflows, you split it into two folders and add one guide card to the drawer above; very rarely, the drawer itself overflows and you split that too. The cabinet stays balanced because it grows only by splitting, from the bottom up.
+Picture a filing cabinet with guide cards: one card per drawer, one per folder. To find a document you read three cards, not a million documents. When a folder overflows you split it and add a guide card above; rarely, the drawer overflows too. The cabinet stays balanced because it grows only by splitting, bottom up.
 
 #### How it works internally
 
-**Lookup.** Start at the root page (whose page number is stored in a fixed place in the file's metadata), binary-search the separator keys to find the child, fetch the child through the buffer pool, repeat until a leaf.
+**Lookup.** From the root, binary-search separator keys and fetch the child through the buffer pool until reaching a leaf.
 
-**Insert and page split.** When the target leaf has room, insert into its slotted page (§13.3) and log the change. When it does not:
+**Insert and split.** If the leaf has room, insert into its slotted page (§13.3) and log it. Otherwise:
 
-1. Allocate a new page.
-2. Move the upper half of the leaf's entries to it (a 50/50 split).
-3. Link the new page into the leaf-level sibling chain.
-4. Insert a separator key and a pointer to the new page into the parent; if the parent is full, split it the same way, possibly up to the root.
-5. If the root splits, allocate a new root with two children; the tree grows one level taller.
-6. Log the whole split so that recovery reapplies it completely or not at all. ARIES treats a split as a **nested top action**: once finished, it is not undone even if the transaction that caused it later aborts, because other transactions may already have used the new page [Mohan et al. 1992].
+1. Allocate a new page and move the upper half of the entries to it.
+2. Link it into the leaf sibling chain.
+3. Insert a separator into the parent, splitting the parent the same way if it is full; a root split adds a level.
+4. Log the split as one unit. ARIES treats it as a **nested top action**: it is not undone if the triggering transaction aborts, because others may already use the new page [Mohan et al. 1992].
 
-Engines special-case **append-heavy keys** (auto-increment IDs, timestamps): splitting 50/50 when inserting at the right edge would leave a trail of half-empty pages, so PostgreSQL and InnoDB detect rightmost inserts and split unevenly, leaving the old page nearly full.
+For rightmost inserts (auto-increment keys, timestamps), PostgreSQL and InnoDB split unevenly, leaving the old page nearly full instead of a trail of half-empty pages.
 
-**Delete and merge.** Deleting may leave a page under-full. Merging with a sibling (and removing a separator from the parent) reverses a split, but merging eagerly causes thrashing when a page oscillates around the threshold. InnoDB attempts a merge when a page falls below `MERGE_THRESHOLD`, 50% by default; PostgreSQL never merges partially full index pages and reclaims only pages that `VACUUM` finds completely empty [MySQL Docs: Configuring the Merge Threshold for Index Pages; PostgreSQL source: `src/backend/access/nbtree/README`].
+**Delete and merge.** Merging under-full pages reverses a split, but eager merging thrashes. InnoDB attempts a merge below `MERGE_THRESHOLD` (50% by default); PostgreSQL reclaims only pages `VACUUM` finds completely empty [MySQL Docs: Configuring the Merge Threshold for Index Pages; PostgreSQL source: `src/backend/access/nbtree/README`].
 
 **Figure 13.5 — A leaf page split propagating a separator to the parent.**
 
@@ -537,7 +508,7 @@ flowchart TB
   BEFORE ==>|allocate page, move upper half,<br/>add separator, log as one action| AFTER
 ```
 
-**Reading the diagram.** Each box is one page. Before the split, inserting 35 targets leaf A, which has no free space. The split allocates leaf B, moves the upper entries to it, links A to B through the sibling pointer (used by range scans), and inserts a separator into the parent so lookups for keys from 34 upward are routed to B. All three pages (A, B, parent) change, so one logical insert dirties three pages and produces log records for each — a source of write amplification. Every arrow here is a synchronous pointer within the same data file. Failure point: a crash between writing B and updating the parent would orphan B, which is why the split is logged as one atomic action. Scaling: at high fan-out, splits are rare — roughly one leaf split per few dozen inserts and one parent split per several hundred leaf splits.
+**Reading the diagram.** Each box is a page in one data file; arrows are synchronous pointers. Inserting 35 into full leaf A allocates leaf B, moves the upper entries, links A to B for range scans, and adds a separator to the parent. One logical insert dirties three pages — write amplification. Failure point: a crash between writing B and updating the parent would orphan B, hence logging the split atomically. Scaling: with 57 rows per leaf and fan-out 716 (below), a leaf splits about every 28 inserts into it and a parent about every 358 leaf splits.
 
 #### Mathematical foundations
 
@@ -566,40 +537,34 @@ Assume 16 KiB pages filled to 70% (a typical steady state after random inserts; 
 4. Height: $\log_{716} 17\,543\,860 = \ln(1.754 \times 10^7) / \ln 716 = 16.68 / 6.57 = 2.54$, so $\lceil 2.54 \rceil = 3$ internal levels and $h = 4$.
 5. Internal pages: $17\,543\,860 / 716 \approx 24\,503$, then $\lceil 24\,503 / 716 \rceil = 35$, then 1 root: $24\,539$ pages $\times$ 16 KiB $\approx 402$ MB.
 
-**Interpretation.** Four levels index a billion rows, and all internal levels fit in about 400 MB of buffer pool. A point lookup then costs at most **one** random read (the leaf). **Engineering implication.** B-tree read cost is nearly flat in table size as long as internal pages stay cached; the danger is not height but a working set of *leaves* that exceeds RAM. Wide keys reduce fan-out (a 100-byte string key gives $f \approx 100$ and adds a level), which is one reason to prefer compact primary keys in clustered engines.
+**Interpretation.** Four levels index a billion rows, and the internal levels fit in about 400 MB, so a point lookup costs at most **one** random read. **Engineering implication.** Read cost is nearly flat in table size while internal pages stay cached; the real danger is a working set of *leaves* larger than RAM. Wide keys cut fan-out and can add a level, one reason to prefer compact primary keys.
 :::
 
 ### 13.6.2 Concurrency: latches and latch crabbing
 
-A **latch** is a short-term mutex or reader-writer lock on an in-memory structure such as a page frame, held for microseconds; it is distinct from a **lock**, which protects logical data (rows, key ranges) for the life of a transaction and participates in deadlock detection (§11.15). Latches protect the B-tree's physical consistency while threads descend it concurrently.
+A **latch** is a short-term mutex on an in-memory structure such as a page frame, held for microseconds; a **lock** protects logical data for a transaction's lifetime and takes part in deadlock detection (§11.15). **Latch crabbing** descends like a crab: hold the parent's latch, acquire the child's, and release the parent when safe [Bayer and Schkolnick 1977].
 
-**Latch crabbing** (or coupling) moves down the tree like a crab: hold the parent's latch, acquire the child's, and release the parent only when it is safe to do so [Bayer and Schkolnick 1977].
+1. **Readers** latch the child shared, then release the parent: at most two latches at a time.
+2. **Writers** latch exclusively and release all ancestors on reaching a **safe** node, one that cannot split (has free space) or merge on this operation.
+3. **Optimistically**, since splits are rare, writers descend with shared latches and latch only the leaf exclusively, restarting pessimistically if a split is needed. The root is then almost never exclusively latched.
 
-1. **Readers** take a shared latch on the child, then release the parent's. At most two latches are held at any moment.
-2. **Writers** take exclusive latches on the way down and release all ancestors as soon as they reach a **safe** node: one that will not split on this insert (it has free space) or merge on this delete (it is more than half full). Only an unsafe path keeps its ancestors latched, because a split there may need to modify them.
-3. **Optimistic variant.** Since splits are rare, writers first descend with shared latches and take an exclusive latch only on the leaf. If the leaf turns out to need a split, they release everything and restart pessimistically. This keeps the root, which every operation passes through, almost never exclusively latched.
-
-**B-link trees** [Lehman and Yao 1981] go further: each page stores a "high key" and a pointer to its right sibling, so a reader that arrives at a page just after a concurrent split can detect that its key has moved and follow the right-link, instead of needing the parent to be latched. PostgreSQL's B-tree implementation is based on this design.
+**B-link trees** [Lehman and Yao 1981] add a high key and right-sibling pointer to every page, so a reader arriving just after a concurrent split follows the right-link instead of latching the parent. PostgreSQL's B-tree is based on this design.
 
 ### 13.6.3 Copy-on-write B-trees
 
-An in-place B-tree needs a WAL because a crash can leave a page half-updated relative to its parent. A **copy-on-write (COW) B-tree**, sometimes called a shadowing B-tree, never modifies a page that is reachable from the current root. To change a leaf, it writes a *new* copy of the leaf, then a new copy of its parent pointing at the new leaf, and so on up to a new root. A commit is one small atomic write that switches the root pointer. Readers that started before the commit continue to see the old root and therefore a consistent snapshot, with no locks [Rodeh 2008].
-
-**LMDB** (Lightning Memory-Mapped Database) is the best-known example. It memory-maps the file, allows one writer at a time with any number of concurrent lock-free readers, and keeps two **meta pages** that alternate as the "current root" record; after a crash, the meta page with the higher valid transaction ID is the database, so there is no log and no recovery procedure [LMDB Docs]. Pages freed by a commit are put on a free list and reused once no reader still needs them. The Btrfs and ZFS file systems use the same idea (§6.14.2).
-
-The trade-offs are sharp. Each committed change rewrites the whole root-to-leaf path: with height 4 and 4 KiB pages, a one-row update writes $4 \times 4096 = 16$ KiB plus a meta page — a write amplification of about 160× for a 100-byte value, amortized only when one transaction updates many keys. A long-running read transaction pins old pages and prevents their reuse, so the file grows. And a single writer limits write concurrency.
+A **copy-on-write (COW)** or shadowing B-tree never modifies a page reachable from the current root. Changing a leaf writes a new leaf, a new parent pointing to it, and so on to a new root; a commit atomically switches the root pointer. Readers that began earlier keep the old root — a consistent snapshot without locks — and no WAL is needed [Rodeh 2008].
 
 ::: industry
-**LMDB in OpenLDAP and embedded systems.** LMDB was written for the OpenLDAP directory server, a read-dominated workload where lock-free snapshot reads and the absence of a recovery procedure matter more than write throughput. Its design — COW B+ tree, `mmap`, single writer, two meta pages — keeps the library very small and makes reads essentially memory accesses once the data is cached by the kernel. Trade-off: write throughput is bounded by one writer and per-commit path copying, and long readers can bloat the file.
+**LMDB.** Written for the read-dominated OpenLDAP directory server, LMDB memory-maps its file, allows one writer and any number of lock-free readers, and alternates between two **meta pages** recording the current root; after a crash the meta page with the higher valid transaction ID *is* the database, so there is no recovery procedure. Freed pages are reused once no reader needs them. Trade-offs: each commit copies the root-to-leaf path — with height 4 and 4 KiB pages, 16 KiB for a 100-byte update, about 160× write amplification unless a transaction batches many keys — long readers bloat the file, and one writer bounds write concurrency. Btrfs and ZFS use the same idea (§6.14.2).
 *Evidence: Primary* — [LMDB Docs]
 :::
 
 #### Advantages and disadvantages
 
-B-tree engines give predictable reads — one root-to-leaf path, typically one I/O when internal pages are cached — efficient range scans along sibling links, and mature support for row-level locking and in-place MVCC. Their weaknesses all come from in-place page updates: random writes, page-sized write amplification for small changes (§13.11), fragmentation and partly empty pages (space amplification of roughly $1/0.69 \approx 1.45$ from fill factor alone), and the need for torn-page protection (§13.12).
+B-trees give predictable one-I/O point reads, efficient range scans along sibling links, and mature row-level locking. Their weaknesses come from in-place updates: random writes, page-sized write amplification (§13.11), partly empty pages ($SA \approx 1/0.69 \approx 1.45$ from fill factor alone) and torn-page risk (§13.12).
 
 ::: mistake
-**"B-trees need one disk write per insert."** The page write happens later, when the buffer pool flushes or a checkpoint runs, and by then many inserts may have landed on the same page; what is written at commit is a small sequential log record. The cost of a B-tree insert depends on how many inserts share a page before it is flushed, which depends on key locality (§13.11.2).
+**"B-trees need one disk write per insert."** At commit only a small sequential log record is written; the page is written later, by which time many inserts may share it. Insert cost therefore depends on key locality (§13.11.2).
 :::
 
 ## 13.7 Log-structured storage
@@ -612,11 +577,11 @@ B-tree engines give predictable reads — one root-to-leaf path, typically one I
 
 #### First-principles explanation
 
-Return to the shopkeeper's cash book of §13.5. Suppose you decide that the cash book is not just a recovery aid but *the* record: to find a customer's balance you look for the most recent line about them. Writing is now as fast as it can possibly be — one sequential append — and crash recovery is trivial, because there is nothing but the log. The two new problems are that finding the latest line about a customer requires an index, and that the book fills with obsolete lines that someone must periodically tidy away. Every log-structured engine is a particular answer to those two problems. The idea dates back to the log-structured file system [Rosenblum and Ousterhout 1992].
+Suppose the shopkeeper's cash book of §13.5 becomes *the* record: a balance is the most recent line about a customer. Writing is one append and recovery is trivial, but finding the latest line needs an index, and obsolete lines must be tidied away. Every log-structured engine answers those two problems; the idea goes back to the log-structured file system [Rosenblum and Ousterhout 1992].
 
 #### Why does this exist?
 
-Sequential writes are 100–600× faster than random ones on HDDs (§5.6.1) and still several times better on SSDs, where they also reduce the drive's internal write amplification (§5.6.3). In-place B-trees turn small random updates into random page writes. A log-structured design turns *all* writes into large sequential ones and moves the cost to reads and to background compaction.
+Sequential writes are 100–600× faster than random ones on HDDs (§5.6.1) and still better on SSDs, where they also cut the drive's internal write amplification (§5.6.3). Log structuring makes *all* writes sequential and moves the cost to reads and background compaction.
 
 ### 13.7.2 Bitcask: a hash index over a log
 
@@ -624,11 +589,11 @@ Bitcask, the default storage backend of the Riak key-value store, is the simples
 
 #### How it works internally
 
-1. **Data files.** One **active** file receives appends; when it reaches a size limit it is closed and becomes immutable, and a new active file starts. Each record is `CRC | timestamp | key size | value size | key | value`. A delete appends a special **tombstone** value.
-2. **Keydir.** An in-memory hash table maps every key to `(file ID, value position, value size, timestamp)` of its latest record. A write appends the record and then updates the keydir entry.
-3. **Read.** Look up the key in the keydir and do **one** positioned read of the value. There is never more than one disk seek per read.
-4. **Merge (compaction).** In the background, read the immutable files, keep only records that the keydir still points to, write them to new files, and delete the old ones. Merge also writes **hint files** listing each key and position, so a restart can rebuild the keydir by reading hints rather than every data file.
-5. **Recovery.** Rebuild the keydir from hint files and the tail of the active file; a CRC mismatch identifies a record torn by a crash.
+1. **Data files.** One **active** file takes appends of `CRC | timestamp | key size | value size | key | value`; full files become immutable. A delete appends a **tombstone**.
+2. **Keydir.** An in-memory hash table maps every key to the file, position and size of its latest record.
+3. **Read.** One keydir lookup and **one** positioned read.
+4. **Merge.** In the background, copy records the keydir still references into new files, delete the old ones, and write **hint files** (keys and positions) for fast restarts.
+5. **Recovery.** Rebuild the keydir from hint files and the active file's tail; a CRC mismatch marks a torn final record.
 
 **Figure 13.6 — Bitcask: an in-memory hash index over append-only files.**
 
@@ -643,15 +608,15 @@ flowchart LR
   F2[(Immutable file 2)] -.->|read| M
 ```
 
-**Reading the diagram.** Writes go synchronously to the end of the single active file and then update the keydir, a hash table held entirely in RAM. Reads consult the keydir and perform exactly one positioned read in whichever data file holds the latest value. The merge process (dotted, asynchronous) reads immutable files, copies only records the keydir still references into a new merged file with a hint file, and deletes the inputs. The storage boundary is clear: index in memory, data on disk. Failure points: losing the process loses the keydir, which is rebuilt from hint files on restart; a torn record at the end of the active file is detected by its CRC. Scaling limit: the keydir must hold *every* key in RAM.
+**Reading the diagram.** Writes append synchronously to the active file and then update the keydir; reads take one keydir lookup and one positioned read. Merging (dotted) is asynchronous. The storage boundary is stark: the whole index in RAM, all data on disk. Failure points: a crash loses the keydir, rebuilt from hint files; a torn final record fails its CRC. Scaling limit: every key must fit in RAM.
 
 #### Mathematical foundations
 
-The keydir's size is the defining constraint. Suppose a store holds 200 million keys of 32 bytes and the per-key overhead of the hash table entry and its metadata is about 50 bytes (an illustrative assumption; the exact figure depends on the implementation). The keydir then needs $2 \times 10^8 \times (32 + 50) = 16.4$ GB of RAM, regardless of how large or small the values are. With 1 KB values the data is 200 GB, a comfortable ratio; with 10-byte values, the index is larger than the data.
+With 200 million 32-byte keys and an assumed ~50 bytes of per-entry overhead (illustrative), the keydir needs $2 \times 10^8 \times 82 = 16.4$ GB of RAM whatever the value sizes: fine for 1 KB values (200 GB of data), absurd for 10-byte values.
 
 #### Advantages and disadvantages
 
-Bitcask offers predictable low latency: one append per write, one seek per read, simple crash recovery. It cannot do **range queries**, because a hash table has no order, and it requires all keys to fit in RAM. Both limitations disappear if the files are *sorted* by key and the index is allowed to be sparse — which is exactly the LSM tree.
+Bitcask gives one append per write, one seek per read and simple recovery, but no **range queries** (a hash has no order) and a RAM-bound key count. Sorting the files by key and allowing a sparse index removes both limits — which is the LSM tree.
 
 ## 13.8 LSM trees: memtables and SSTables
 
@@ -663,17 +628,17 @@ Bitcask offers predictable low latency: one append per write, one seek per read,
 
 #### First-principles explanation
 
-A busy librarian receives returned books all day. Re-shelving each book immediately means walking to a random shelf for every book. Instead she sorts returns on a trolley; when the trolley is full, she wheels it out and shelves the whole sorted batch in one pass. Over time there are several sorted "batches" on side shelves, so to find a book you check the trolley first, then the newest batch, then older ones. Each night she merges side batches into the main sorted shelves. The trolley is the memtable, a shelved batch is an SSTable, and the nightly merge is compaction.
+A librarian sorts returned books on a trolley instead of walking to a random shelf for each; when it is full she shelves the sorted batch on a side shelf in one pass. To find a book you check the trolley, then the newest batch, then older ones; nightly she merges batches into the main shelves. Trolley = memtable, batch = SSTable, nightly merge = compaction.
 
 #### How it works internally: the write path
 
-1. **Log.** Append the write to the WAL and make it durable according to the commit policy (§13.5.4). The WAL exists only to rebuild the memtable after a crash.
-2. **Memtable.** Insert into the memtable, a sorted in-memory structure — a skip list in LevelDB and RocksDB (§17.7). A delete inserts a **tombstone**.
-3. **Freeze.** When the memtable reaches its size limit (RocksDB's `write_buffer_size`, 64 MB by default), make it immutable and start a new one, so writes never wait for the flush.
-4. **Flush.** Write the immutable memtable to disk as a new SSTable in **level 0** in one sequential pass, then delete the WAL segment it covered.
-5. **Compact.** Background threads merge SSTables into larger, non-overlapping sorted runs in deeper levels (§13.9), discarding overwritten values and, at the bottom level, tombstones.
+1. **Log:** append to the WAL (§13.5.4), which exists only to rebuild the memtable after a crash.
+2. **Memtable:** insert into a sorted in-memory structure — a skip list in LevelDB and RocksDB (§17.7). A delete inserts a **tombstone**.
+3. **Freeze:** at the size limit (RocksDB `write_buffer_size`, 64 MB by default) the memtable becomes immutable and a new one starts, so writes never wait.
+4. **Flush:** write it as a new **level 0** SSTable in one sequential pass; drop the WAL segment it covered.
+5. **Compact:** merge SSTables into larger non-overlapping runs in deeper levels (§13.9), discarding overwritten values and, at the bottom, tombstones.
 
-An **SSTable** is immutable and sorted by key. Internally it is divided into **data blocks** (RocksDB default 4 KiB before compression), followed by an **index block** with one entry per data block (the block's last key and offset), a **filter block** holding a Bloom filter (§13.10), and a fixed-size **footer** pointing to the index and filter. Because it is sorted, the index can be sparse — one entry per block, not per key — and a sequential merge of several SSTables produces another sorted SSTable without random access.
+An **SSTable** is immutable and sorted: **data blocks** (RocksDB default 4 KiB before compression), an **index block** with one entry per block, a **filter block** with a Bloom filter (§13.10), and a **footer** locating them. Sorting allows a sparse index and lets several SSTables be merged sequentially into a new one.
 
 **Figure 13.7 — LSM tree write path and levels.**
 
@@ -688,19 +653,11 @@ flowchart TB
   L2 -.->|compaction| LN[(Last level: about 90%<br/>of all data)]
 ```
 
-**Reading the diagram.** The client's write is synchronous only through steps 1 and 2: a sequential WAL append and an in-memory insert; the request then returns. Everything below the dashed line of RAM — freezing, flushing and compaction — is asynchronous background work (dotted arrows). Level 0 contains whole memtable flushes whose key ranges overlap; from level 1 down, each level is one sorted run split into non-overlapping files, and each level is about ten times larger than the one above (RocksDB defaults: `max_bytes_for_level_base` = 256 MB, multiplier 10). Storage boundaries: WAL and SSTables on disk; memtables in RAM. Failure points: if flushes or compactions fall behind the write rate, L0 accumulates files and the engine deliberately slows or stops writes (a **write stall**); a crash loses memtables, which are rebuilt from the WAL. Scaling: throughput is bounded by background compaction bandwidth, not by the foreground write path.
+**Reading the diagram.** Only steps 1 and 2 are synchronous: a sequential WAL append and an in-memory insert. Flushing and compaction are asynchronous (dotted). L0 holds whole flushes with overlapping key ranges; from L1 down, each level is one sorted run in non-overlapping files, about ten times larger than the level above (RocksDB defaults: `max_bytes_for_level_base` 256 MB, multiplier 10). Memtables live in RAM; WAL and SSTables on disk. Failure points: if compaction lags, L0 files pile up and the engine slows or stops writes (a **write stall**); a crash loses memtables, rebuilt from the WAL. Scaling is bounded by compaction bandwidth.
 
 #### How it works internally: the read path
 
-A point lookup for key *k* must find the newest version, so it searches from newest to oldest and stops at the first hit:
-
-1. The active memtable, then any immutable memtables.
-2. Every L0 SSTable, newest first (their ranges overlap, so each might contain *k*).
-3. In each deeper level, the single SSTable whose key range covers *k* (found by binary search over the level's file boundaries).
-4. Within an SSTable: check the Bloom filter; if it says "maybe", binary-search the index block, read one data block (from the **block cache** if present), and search inside it.
-5. If the first version found is a tombstone, the key is deleted.
-
-A **range scan** cannot stop early; it opens an iterator on every memtable and on every SSTable whose range overlaps the query, and merges them with a heap, hiding older versions and tombstones. Bloom filters do not help range scans (prefix Bloom filters help only when the range shares a fixed key prefix).
+A point lookup searches newest to oldest and stops at the first version found (a tombstone means deleted): the memtables; every L0 file, newest first, since their ranges overlap; then the one file per deeper level whose range covers the key. In each file it checks the Bloom filter, then the index block, then reads one data block, from the **block cache** if present. A **range scan** cannot stop early: it merges iterators over every memtable and overlapping SSTable, and Bloom filters do not help it.
 
 **Figure 13.8 — LSM point-lookup read path.**
 
@@ -721,7 +678,7 @@ flowchart TB
   LV -->|all levels checked| NF([Not found])
 ```
 
-**Reading the diagram.** All steps are synchronous within one request. The memtables are checked in RAM first. Then each L0 file is tried in turn — the loop arrow — because L0 files overlap; for each, the Bloom filter (held in memory) usually answers "definitely not here" without I/O. Deeper levels need at most one file each. Only a "maybe" leads to an index lookup and a data-block read, served from the block cache in RAM or from disk — the storage boundary where latency jumps from microseconds to tens of microseconds or more. A false positive costs one wasted block read and the search continues. Failure points: too many L0 files (compaction lag) lengthen every lookup; a block cache that is too small turns index and data block reads into I/O. Scaling: per-lookup cost grows with the number of sorted runs, which compaction keeps small.
+**Reading the diagram.** Every step is synchronous. Memtables are checked in RAM; each L0 file is tried in turn (the loop), and its in-memory Bloom filter usually rules it out without I/O; deeper levels need one file each. Only a "maybe" reaches the block cache or disk — the storage boundary where latency jumps from microseconds to tens of microseconds. A false positive wastes one block read. Failure points: L0 backlog lengthens every lookup; an undersized block cache turns index and data reads into I/O. Cost grows with the number of sorted runs, which compaction keeps small.
 
 #### Mathematical foundations
 
@@ -747,7 +704,7 @@ $S_1 = 256$ MB, $T = 10$, $N = 1$ TB $= 10^{12}$ bytes.
 2. $\log_{10} 3906 = 3.59$; $\lceil 3.59 \rceil = 4$; $L = 4 + 1 = 5$.
 3. Check: capacities are L1 256 MB, L2 2.56 GB, L3 25.6 GB, L4 256 GB, L5 2.56 TB. Four levels hold at most 284 GB, so 1 TB needs L5.
 
-**Interpretation.** Five levels plus L0 cover a terabyte; with the last level's size set to the actual data and upper levels sized backward from it (RocksDB's `level_compaction_dynamic_level_bytes`, on by default since version 8.4), about 90% of the data lives in the last level [RocksDB Wiki: Leveled Compaction]. **Engineering implication.** A point lookup probes at most about 5 levels plus a handful of L0 files; each level is also a further rewrite of every byte (§13.9). The size ratio $T$ is the single most important tuning knob, trading lookup cost against write cost.
+**Interpretation.** Five levels plus L0 cover a terabyte; with upper levels sized backward from the last (`level_compaction_dynamic_level_bytes`, default since RocksDB 8.4), about 90% of data sits in the last level [RocksDB Wiki: Leveled Compaction]. **Engineering implication.** A lookup probes at most ~5 levels plus a few L0 files, and every level is another rewrite of each byte (§13.9); the size ratio $T$ trades one against the other.
 :::
 
 #### Code example
@@ -1015,12 +972,11 @@ write amplification = 5.1
 
 What to notice:
 
-- **Write-ahead order.** `put` appends to the WAL *before* touching the memtable. The test "crashes" by discarding the in-memory object and reopening; the 12 unflushed entries come back from the WAL and all 2,000 keys match a reference dictionary, including deleted ones.
-- **Torn tail.** `_replay_wal` stops at the first record that does not parse, the same way real engines stop at the first record whose checksum fails (§13.12).
-- **Atomic structure changes.** An SSTable becomes part of the tree only when the `MANIFEST` naming it has been atomically replaced (the pattern of §6.14.3). Files not in the manifest are orphans from a crash and are deleted on startup. RocksDB's MANIFEST plays the same role with a log of version edits.
-- **Why the manifest matters for tombstones.** Compaction drops tombstones. If a crash left both the merged file and its inputs visible, an old input could resurrect a deleted key; switching the manifest before deleting inputs prevents that.
-- **Write amplification of 5.1** decomposes into WAL (1.18), flush (1.18) and compaction (2.70). The extra 18% in each is JSON framing. Full-merge compaction rewrites everything each time, so its cost grows with data size; real engines compact incrementally (§13.9).
-- **The Bloom filter** uses 10 bits per key and 7 hash functions; on a test of 10,000 absent keys it returned "maybe" for about 1%, as §13.10 predicts.
+- **Write-ahead order:** `put` logs before touching the memtable. After the simulated crash, 12 unflushed entries return from the WAL and all 2,000 keys (deleted ones included) match the reference dictionary.
+- **Torn tail:** replay stops at the first unparsable record, as real engines stop at the first failed checksum (§13.12).
+- **Manifest:** an SSTable joins the tree only when the atomically replaced `MANIFEST` names it (§6.14.3); orphans are deleted at startup, like RocksDB's MANIFEST. Switching the manifest before deleting compaction inputs stops an old input resurrecting a key whose tombstone was dropped.
+- **Write amplification 5.1** = WAL 1.18 + flush 1.18 + compaction 2.70 (the 18% is JSON framing). Full merges rewrite everything, so real engines compact incrementally (§13.9).
+- **Bloom filter:** 10 bits per key, 7 hashes; about 1% "maybe" on 10,000 absent keys, as §13.10 predicts.
 
 ## 13.9 Compaction strategies
 
@@ -1030,13 +986,13 @@ What to notice:
 **Definition — Compaction.** The background merge of sorted runs in an LSM tree that removes overwritten values and tombstones and bounds the number of runs a read must consult. A **compaction strategy** decides which runs to merge and when; it sets the engine's read, write and space amplification.
 :::
 
-Every byte written to an LSM tree is rewritten by compaction several times on its way to the last level. Merge eagerly and reads are cheap but writes are expensive; merge lazily and the reverse holds. Three families exist.
+Every byte is rewritten by compaction several times on its way down. Merging eagerly makes reads cheap and writes expensive; merging lazily does the reverse.
 
-**Size-tiered (tiering).** Wait until about $T$ runs of similar size exist (Cassandra's default `min_threshold` is 4), then merge them into one run of the next tier. Each byte is rewritten roughly once per tier, so writes are cheap, but up to $T - 1$ runs per tier may hold versions of the same key, so reads probe more runs and obsolete data lingers. Merging the largest runs needs free space equal to their size. Used by Cassandra's STCS and RocksDB's **universal** compaction.
+**Size-tiered (tiering).** When about $T$ runs of similar size exist (Cassandra's default `min_threshold` is 4), merge them into one run of the next tier. Each byte is rewritten about once per tier, but up to $T - 1$ runs per tier may hold versions of a key, and merging the largest runs needs equal free space. Used by Cassandra STCS and RocksDB **universal** compaction.
 
-**Leveled (leveling).** Each level is a single sorted run split into small non-overlapping files, $T$ times larger than the level above. When a level exceeds its target, one file is picked and merged into the *overlapping* files of the next level. Reads probe at most one file per level and obsolete data is bounded, but each byte entering a level is merged with about $T$ times its size of existing data, so writes cost more. Used by LevelDB, RocksDB's default, and Cassandra's LCS.
+**Leveled (leveling).** Each level is one sorted run of non-overlapping files, $T$ times larger than the level above; an overflowing level pushes one file into the *overlapping* files of the next. Reads probe one file per level and obsolete data is bounded, but each byte entering a level is merged with up to $T$ times its size. Used by LevelDB, RocksDB (default) and Cassandra LCS.
 
-**Hybrids (tiered + leveled).** RocksDB's default is already a hybrid: L0 is tiered (overlapping flushes), deeper levels are leveled. **Lazy leveling** tiers every level except the last, which is leveled, because the last level holds most data and dominates space and lookup cost [Dayan and Idreos 2018]. Cassandra 5.0's Unified Compaction Strategy lets one parameter slide between tiered and leveled behavior per level (as of 2025). **Time-window** compaction groups time-series data by time window and never merges across windows, so whole expired windows can be dropped.
+**Hybrids.** RocksDB's default is already one: L0 tiered, deeper levels leveled. **Lazy leveling** tiers all levels but the last, which holds most data [Dayan and Idreos 2018]; Cassandra 5.0's Unified Compaction Strategy slides between the two per level (as of 2025). **Time-window** compaction never merges across time windows, so expired windows are dropped whole.
 
 **Figure 13.9 — Size-tiered versus leveled compaction.**
 
@@ -1054,7 +1010,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** All arrows are asynchronous background compactions (dotted); no client waits on them unless they fall far behind and trigger a write stall. In the size-tiered subgraph, four runs of similar size are merged into one run four times larger, and four of those into the next tier: each byte is copied once per tier, but up to three runs per tier coexist and may each hold a version of the same key. In the leveled subgraph, one L1 file covering keys 100–199 is merged with the roughly ten L2 files whose ranges overlap it, and those L2 files are rewritten: about ten bytes of L2 are rewritten for each byte promoted from L1. Storage boundary: all runs are SSTable files on disk; compaction reads and writes them sequentially. Failure points: tiering needs free disk equal to the runs being merged (the largest merge can briefly double the space); leveling can fall behind under sustained heavy writes because its write cost is higher. Scaling: compaction parallelizes across non-overlapping key ranges and can be throttled with a rate limiter to protect foreground latency.
+**Reading the diagram.** All arrows are asynchronous background compactions; clients wait only if a backlog triggers a write stall. Tiering copies each byte once per tier but leaves up to three runs per tier. Leveling merges one L1 file (keys 100–199) with the ~10 overlapping L2 files and rewrites them: about ten bytes rewritten per byte promoted. All runs are SSTables on disk, read and written sequentially. Failure points: tiering's largest merge briefly needs double space; leveling can fall behind under heavy writes. Scaling: compaction parallelizes across key ranges and is rate-limited to protect foreground latency.
 
 #### Mathematical foundations
 
@@ -1088,7 +1044,7 @@ $N / M = 10^{12} / 10^8 = 10^4$.
 4. **Daily device writes** if the application writes 50 GB/day: leveled $24 \times 50 = 1200$ GB; tiered $9 \times 50 = 450$ GB; lazy $10.5 \times 50 = 525$ GB.
 5. **Space amplification:** leveled $\approx 1 + 1/(T-1) = 1.11$ (upper levels together are at most a ninth of the last); tiered, in the worst case of the whole dataset being overwritten, up to $T - 1 = 3$ copies at the largest tier plus temporary space for the merge in progress; lazy leveling $\approx 1.11$, because its last level is leveled.
 
-**Interpretation.** Tiering writes 2.7× less than leveling but may probe 5× more runs and hold several copies of hot data. Bloom filters (§13.10) make the extra runs cheap for point lookups — with a 1% false-positive rate, 21 runs cost $21 \times 0.01 = 0.21$ wasted reads per absent key — but not for range scans, which must read every run. **Engineering implication.** Choose leveling for read-heavy and space-sensitive workloads on flash, tiering for write-heavy ingest, and remember that the device's own write amplification multiplies on top: 1.2 TB/day at an SSD WAF of 2 is 2.4 TB/day of flash wear (§5.6.3).
+**Interpretation.** Tiering writes 2.7× less than leveling but may probe 5× more runs. Bloom filters (§13.10) make that cheap for point lookups — 21 runs at 1% false positives cost 0.21 wasted reads — but not for range scans. **Engineering implication.** Level for read-heavy, space-sensitive flash workloads; tier for write-heavy ingest. The SSD's own WAF multiplies on top: 1.2 TB/day at WAF 2 is 2.4 TB/day of flash wear (§5.6.3).
 :::
 
 **Table 13.5 — Compaction strategies compared.**
@@ -1115,12 +1071,12 @@ $N / M = 10^{12} / 10^8 = 10^4$.
 | Deleted data reappears | Replica missed a tombstone that was purged before repair (Cassandra) | Repair or audit finds old values | Re-delete; repair | Repair within `gc_grace_seconds` |
 
 ::: mistake
-**"Compaction is housekeeping you can ignore."** Compaction *is* the cost of an LSM tree. Its write volume is often 10–30 times the application's, it competes with foreground reads for I/O, and its backlog decides whether writes stall. Capacity-plan an LSM cluster with compaction bandwidth in the budget, not just ingest bandwidth.
+**"Compaction is housekeeping you can ignore."** Compaction *is* the cost of an LSM tree: often 10–30 times the application's write volume, competing with reads for I/O, and its backlog decides whether writes stall. Budget compaction bandwidth, not just ingest.
 :::
 
 ## 13.10 Bloom filters in storage
 
-A **Bloom filter** is a compact bit array that answers "is key *k* in this set?" with either "definitely not" or "probably yes" (§17.4 gives the full treatment, including cuckoo filters). LSM engines store one per SSTable (or per block or partition) and keep them in memory, so that most SSTables that do not contain a key are skipped without any I/O.
+A **Bloom filter** is a compact bit array answering "definitely not" or "probably yes" to set membership (full treatment in §17.4). LSM engines keep one per SSTable in memory, so most files lacking a key are skipped without I/O.
 
 ::: formula
 **Bloom filter false-positive rate (summary of §17.4)**
@@ -1143,7 +1099,7 @@ $$p \approx \left(1 - e^{-kn/m}\right)^k, \qquad k_{opt} = \frac{m}{n}\ln 2, \qq
 3. A lookup for an absent key in a tree with 4 L0 files and 5 levels would otherwise read one data block per run: 9 reads. With filters: $9 \times 0.0082 \approx 0.07$ reads.
 4. For a key that exists in the last level: 1 necessary read plus $8 \times 0.0082 \approx 0.07$ wasted reads.
 
-**Interpretation.** Filters turn the LSM tree's many runs from 9 I/Os into roughly one. **Engineering implication.** Filter memory (1.25 GB here) must stay in RAM; if the block cache evicts filter blocks, lookups regress sharply. Since about 90% of keys live in the last level, some deployments skip filters on the last level (RocksDB's `optimize_filters_for_hits`) to save most of that memory when lookups usually find their key; allocating more bits to smaller levels minimizes total lookup cost for a fixed memory budget [Dayan et al. 2017].
+**Interpretation.** Filters turn 9 I/Os into about one. **Engineering implication.** Keep filter memory (1.25 GB here) resident; evicted filter blocks make lookups regress sharply. Because ~90% of keys are in the last level, skipping its filters (RocksDB `optimize_filters_for_hits`) saves most of the memory when lookups usually succeed, and giving smaller levels more bits per key minimizes lookup cost for a fixed budget [Dayan et al. 2017].
 :::
 
 ## 13.11 Read, write and space amplification
@@ -1154,7 +1110,7 @@ $$p \approx \left(1 - e^{-kn/m}\right)^k, \qquad k_{opt} = \frac{m}{n}\ln 2, \qq
 **Definition — RUM conjecture.** For any access method, bounding two of **R**ead overhead, **U**pdate overhead and **M**emory (space) overhead forces the third to be worse: you can optimize for at most two [Athanassoulis et al. 2016].
 :::
 
-A sorted array has minimal read and space overhead but expensive inserts; an append-only log has minimal update cost but slow reads; a hash index with many empty buckets reads and writes in O(1) but wastes space. B-trees and LSM trees are two different points in the same triangle, and every tuning knob — fill factor, size ratio $T$, Bloom bits per key, cache size — moves an engine within it.
+A sorted array minimizes read and space overhead but makes inserts expensive; an append-only log minimizes update cost but reads slowly; a sparse hash table is fast both ways but wastes space. B-trees and LSM trees are two points in this triangle, and knobs such as fill factor, $T$ and Bloom bits move an engine within it.
 
 ::: formula
 **The three amplifications**
@@ -1184,11 +1140,11 @@ $$RA = \frac{\text{bytes read from storage}}{\text{bytes returned}}, \qquad WA =
 
 **Space.** B-tree at 69% fill: $SA \approx 1.45$, and page compression is limited by fixed page boundaries. Leveled LSM: $SA \approx 1.11$, and SSTables compress well because blocks are packed densely.
 
-**Interpretation.** For random small updates on large data the LSM tree writes about 14× less ($329 / 24$) and stores the data in about 25% less space; for update-skewed workloads the B-tree can write *less* than the LSM tree. **Engineering implication.** The B-tree versus LSM question is answered by key locality, update size and read mix, not by brand; measure `bytes written to disk / bytes written by the application` on your own workload before choosing.
+**Interpretation.** For random small updates on large data the LSM tree writes about 14× less ($329 / 24$) and uses about 25% less space; with skewed updates the B-tree can write *less*. **Engineering implication.** Key locality, update size and read mix decide, not brand: measure bytes written to disk per byte written by the application on your workload.
 :::
 
 ::: industry
-**Uber's move from PostgreSQL to MySQL (2016).** Uber engineers reported that in PostgreSQL an update to a row creates a new tuple version at a new physical location, so every secondary index on the table must be updated too, multiplying write volume and the WAL that replication shipped across data centers; InnoDB's secondary indexes point to the primary key instead of a physical location, so an update that does not change indexed columns touches only the clustered index. They cited write amplification and replication bandwidth among the reasons for migrating. Trade-off: InnoDB secondary-index lookups need a second B-tree traversal through the primary key, and PostgreSQL's HOT updates (§13.14.3) remove the index updates when no indexed column changes and the page has room.
+**Uber's move from PostgreSQL to MySQL (2016).** Uber engineers reported that a PostgreSQL row update writes a new tuple version at a new physical location, so every index must be updated, multiplying writes and the WAL shipped to replicas; InnoDB's secondary indexes point to the primary key, so updates to unindexed columns touch only the clustered index. Write amplification and replication bandwidth were among their reasons to migrate. Trade-off: InnoDB secondary lookups traverse two trees, and PostgreSQL HOT updates (§13.14.3) avoid index updates when no indexed column changes and the page has room.
 *Evidence: Primary* — [Klitzke 2016]
 :::
 
@@ -1392,3 +1348,170 @@ That CPU bottleneck is attacked with **vectorized execution**: operators process
 ::: mistake
 **"A column store is just a row store with column indexes."** An index helps find rows; a column store changes what is read, how it is compressed and how operators execute. The flip side is real: single-row inserts, updates and point lookups are expensive in column stores, so OLTP workloads belong in row stores, often with changes streamed into a column store for analytics (§32.6).
 :::
+
+## 13.14 Case studies: InnoDB, RocksDB and the PostgreSQL heap
+
+### 13.14.1 InnoDB: a clustered B+ tree with redo, undo and doublewrite
+
+InnoDB, MySQL's default engine, stores each table as a **clustered index**: a B+ tree keyed by the primary key whose leaf pages (16 KiB) hold the full rows. Secondary indexes store the primary-key value, not a physical address, so a secondary lookup traverses two trees, but rows can move between pages during splits without touching secondary indexes. The buffer pool uses midpoint-insertion LRU (§13.4.2) and, on Linux from MySQL 8.4, `O_DIRECT`. Durability combines the redo log, undo logs for rollback and MVCC reads (§13.5.4), and the doublewrite buffer (§13.12.3). Choose it for OLTP workloads accessed mostly by primary key, with compact, roughly increasing primary keys: random keys such as UUIDv4 cause splits all over the tree and poor page fill.
+*Evidence: Primary* — [MySQL Docs: InnoDB Architecture].
+
+### 13.14.2 RocksDB: an embeddable LSM engine
+
+RocksDB began at Facebook in 2012 as a fork of Google's LevelDB, optimized for flash and many cores. It is a library, not a server: applications embed it and get the full machinery of §13.8–§13.10 — WAL, skip-list memtables, block-based SSTables with Bloom (or the more compact Ribbon) filters, a block cache, leveled compaction by default with universal (tiered) and FIFO alternatives, and **column families** that share a WAL but have separate memtables and SSTables. It is the storage layer of many distributed databases and stream processors, including TiKV and Kafka Streams state stores.
+
+::: industry
+**MyRocks at Facebook.** Facebook built MyRocks, a MySQL storage engine on RocksDB, and migrated its main user database from compressed InnoDB to it. The motivation was space and write amplification on flash: B-tree pages were partly empty and compressed poorly at page granularity, and random page writes wore SSDs, whereas leveled LSM compaction stores data densely and writes sequentially. The authors report substantial reductions in storage and write volume, and describe the engineering needed to make LSM reads, range scans and tombstone handling competitive.
+*Evidence: Primary* — [Matsunobu et al. 2020; Dong et al. 2017]
+:::
+
+### 13.14.3 PostgreSQL heap: append-friendly pages with MVCC versions
+
+PostgreSQL stores a table as an unordered **heap** of 8 KiB slotted pages (§13.3). A row version (tuple) carries `xmin`/`xmax`, the IDs of the transactions that created and deleted it. An `UPDATE` never overwrites: it writes a new tuple version — on the same page if there is room, else elsewhere — and marks the old one deleted. All indexes are secondary and point to a tuple's physical location `(block, slot)`, the `ctid`. Two optimizations limit the cost. A **heap-only tuple (HOT)** update, possible when no indexed column changes and the new version fits on the same page, links the versions within the page and adds no index entries; a lower `fillfactor` leaves room for it. **`VACUUM`** later removes dead versions, records reusable space in the **free space map**, and marks all-visible pages in the **visibility map**, which enables index-only scans. Large values are moved out of line by TOAST. Recovery is redo-only from the WAL with full-page writes (§13.5, §13.12.3).
+*Evidence: Primary* — [PostgreSQL Docs: Database Physical Storage; Routine Vacuuming].
+
+**Table 13.8 — B-tree versus LSM storage engines.**
+
+| | B-tree (in place) | LSM tree |
+|---|---|---|
+| What it is | Pages updated in place in a balanced tree | Memtable flushed to immutable sorted runs, merged by compaction |
+| How it works | WAL + buffer pool; splits on overflow | WAL + memtable; flush; tiered or leveled compaction |
+| Advantages | One I/O point reads; fast range scans; mature locking | Sequential writes; low WA for random updates; dense, compressible storage |
+| Disadvantages | Random writes; page-sized WA; fragmentation; torn-page protection | Many runs per read; compaction debt and write stalls; tombstones |
+| Performance | Read-optimized; writes depend on key locality | Write-optimized; point reads near B-tree with Bloom filters; scans slower |
+| Operational complexity | Fill factor, checkpoints, `VACUUM` (PostgreSQL) | Compaction strategy, L0 limits, filters, rate limits: many knobs |
+| Cost | More space (SA ≈ 1.45); more flash wear for random updates | Less space (SA ≈ 1.1); compaction CPU and I/O |
+| Use cases | OLTP, relational databases, secondary-index-heavy workloads | Ingest-heavy, key-value, time series, wide-column stores |
+| Choose when | Read-heavy or locality-rich updates; latency predictability | Write-heavy or random updates on large data; space-sensitive SSD fleets |
+
+## 13.15 Summary and revision notes
+
+::: summary
+- Engines read, write, cache and log in **pages** (4–16 KiB). **Slotted pages** give records stable `(page, slot)` IDs while allowing variable lengths and in-page compaction; per-row and per-page overhead alone can make a table ~1.4× its raw data.
+- A **buffer pool** maps page IDs to frames with pin counts and dirty flags. Clock and LRU-K approximate LRU cheaply and resist scans; `O_DIRECT` avoids double buffering. The five-minute rule says that on NVMe only pages re-referenced every ~30 s are worth caching on cost.
+- **WAL** turns random page writes into sequential log appends. The WAL rule ($\text{pageLSN} \le \text{flushedLSN}$) and commit rule enable steal/no-force. **ARIES** recovers with analysis, redo (repeat history) and undo (with CLRs). Checkpoint interval trades recovery time ($W_{redo}/b_{replay}$) against full-page-image volume.
+- **B-trees** of height 3–4 index billions of rows; lookups cost about one I/O when internal pages are cached. Splits are logged atomically; latch crabbing and B-link trees provide concurrency; **COW B-trees** (LMDB) need no WAL but copy the root-to-leaf path on each commit.
+- **Log-structured** storage appends everything. **Bitcask** keeps every key in RAM for one-seek reads; **LSM trees** add sorted memtables, SSTables with sparse indexes and Bloom filters, and compaction.
+- **Compaction**: leveled $WA \approx 2 + L(T+1)/2$, few runs, $SA \approx 1.1$; tiered $WA \approx 2 + L$, many runs, more space; hybrids sit between. Compaction bandwidth must be capacity-planned.
+- **Bloom filters** at 10 bits/key give ~0.8% false positives and reduce absent-key lookups from one read per run to a few hundredths of a read.
+- **RUM**: you can bound only two of read, update and space overhead. For random small updates, LSM WA (~24) can be >10× lower than a B-tree's (~329); for skewed updates the B-tree can win.
+- **Durability** needs `fsync` plus checksums (detection) plus torn-page protection (full-page writes, doublewrite, or never overwriting).
+- **Column stores** read only needed columns, encode them (dictionary, bit-packing, RLE) and execute vectorized; Parquet brings this to files.
+:::
+
+## 13.16 Knowledge checkpoint
+
+1. Why does a slotted page store slot numbers in index entries rather than byte offsets?
+2. Compute the rows per 8 KiB page for 50-byte rows in PostgreSQL (24-byte tuple header, 8-byte alignment, 4-byte slots, 24-byte page header).
+3. What are a pin count and a dirty flag for, and what happens if a thread forgets to unpin?
+4. Explain sequential flooding and two mechanisms that prevent it.
+5. State the WAL rule and the commit rule.
+6. What do steal and no-force mean, and which one requires undo?
+7. Why does ARIES redo the changes of loser transactions before undoing them?
+8. What is a CLR and why does it make recovery safe against crashes during recovery?
+9. Calculate the height of a B+ tree with 500 million rows, 100 rows per leaf and fan-out 500.
+10. What limits Bitcask's scalability?
+11. List the steps of an LSM point lookup.
+12. For $N/M = 10^4$, compute the write amplification of leveled ($T = 10$) and tiered ($T = 4$) compaction with the chapter's model.
+13. What is a torn write and how do PostgreSQL and InnoDB each defend against it?
+14. How many bits per value does bit-packing need for a column with 1,000 distinct values?
+
+<details><summary>Answers</summary>
+
+1. So records can move within the page (updates, compaction) without changing their identifier or any index entry.
+2. Tuple $24 + 50 = 74$, aligned to 80; with slot 84 bytes. $\lfloor 8168 / 84 \rfloor = 97$ rows.
+3. Pin count prevents eviction of a page in use; dirty flag means it must be written back before reuse. A leaked pin keeps the frame unevictable forever, shrinking the pool.
+4. A large scan touches each page once and evicts the hot set under LRU. Prevent with LRU-K/2Q/midpoint insertion (one-touch pages never reach the protected list) or ring buffers for bulk scans.
+5. WAL rule: log records up to a page's LSN must be durable before the page is written. Commit rule: a commit is acknowledged only after its commit record is durable.
+6. Steal: uncommitted changes may be written to disk (requires undo). No-force: committed changes need not be written at commit (requires redo).
+7. Repeating history restores the exact pre-crash page state, so logical undo records apply correctly and fine-grained locking is supported.
+8. A compensation log record logs each undo action with `undoNextLSN`; after a crash during recovery, CLRs are redone and undo resumes where it stopped, never undoing twice.
+9. Leaves $= 5 \times 10^6$; $\log_{500} 5 \times 10^6 = 15.42/6.21 = 2.48 \to 3$ internal levels; $h = 4$.
+10. Every key must fit in the in-memory keydir; no range queries.
+11. Active and immutable memtables; each L0 file newest first; one file per deeper level; within each, Bloom filter, index block, one data block; first version found wins; tombstone means deleted.
+12. Leveled: $L = 4$, $WA = 2 + 4 \times 5.5 = 24$. Tiered: $L = 7$, $WA = 9$.
+13. A crash leaves a page part old, part new. PostgreSQL logs a full page image on first modification after a checkpoint; InnoDB writes pages to a doublewrite area and flushes before writing in place.
+14. $\lceil \log_2 1000 \rceil = 10$ bits.
+</details>
+
+## 13.17 Interview questions
+
+### Basic
+
+**Q1. What is a write-ahead log and why does it make databases fast as well as safe?**
+**Answer.** An append-only log of changes, made durable before the changed pages. Commits need one sequential append and `fsync` (shared across concurrent commits by group commit) instead of random page writes; pages are flushed later in batches. After a crash, redo restores committed changes and undo removes uncommitted ones.
+
+**Q2. When would you choose an LSM-based store over a B-tree-based one?**
+**Answer.** For write-heavy workloads with random keys on large data — event ingestion, time series, key-value at scale — and when space on SSD matters: LSM writes sequentially with lower write and space amplification. Prefer a B-tree for read-heavy OLTP, range scans and predictable latency. Then check compaction bandwidth and read amplification.
+
+### Intermediate
+
+**Q3. Your RocksDB-backed service shows periodic write latency spikes of several seconds. What is happening and what do you do?**
+**Answer.** Most likely write stalls: compaction falls behind, L0 file count or pending compaction bytes exceed thresholds, and RocksDB slows or stops writes. Confirm with stall statistics and L0 counts. Fixes: more compaction threads and I/O budget, larger memtables, a rate limiter to smooth compaction, faster disks, or a tiered strategy if writes dominate; reduce ingest bursts with backpressure (§22.10).
+
+**Q4. Why do many databases bypass the operating system page cache, and why does PostgreSQL traditionally not?**
+**Answer.** Bypassing with `O_DIRECT` avoids double caching, gives the engine control over eviction, read-ahead and write ordering, and makes memory use predictable — InnoDB's design. PostgreSQL uses buffered I/O with a moderate `shared_buffers`, letting the page cache act as a second-level cache; this is simpler and portable but double-caches some pages and cedes writeback control to the kernel. Either way durability still requires `fsync`.
+
+### Advanced
+
+**Q5. Estimate and compare write amplification for a B-tree and a leveled LSM tree on 100-byte random updates, and say when the answer flips.**
+**Answer.** B-tree: each flushed 16 KiB page, doubled by doublewrite, carries about one update when keys are random and data exceeds RAM: $32\,768/100 + 1.5 \approx 329$. Leveled LSM with $T = 10$, $L = 4$: $\approx 24$. The answer flips with locality: if each page absorbs 20+ updates before flushing, the B-tree drops below 20. Add the SSD's own WAF on top and compare `bytes written / bytes ingested` in production.
+
+**Q6. Walk through crash recovery in an ARIES-style engine after a crash during a long transaction.**
+**Answer.** Analysis from the last checkpoint rebuilds the dirty page table and finds the long transaction as a loser. Redo from the minimum `recLSN` reapplies every change whose LSN exceeds the page's `pageLSN`, including the loser's. Undo follows the loser's `prevLSN` chain backward, writing CLRs; a crash during undo is handled by redoing CLRs and continuing from `undoNextLSN`. Undo time grows with the transaction's size, which is why long transactions lengthen recovery and should be bounded.
+
+## 13.18 Practical exercises
+
+1. **Extend the toy LSM.** Replace full-merge compaction in `toy_lsm.py` with leveled compaction (L0 plus levels of non-overlapping files with $T = 4$). Measure write amplification as data grows and compare with $2 + L(T+1)/2$.
+2. **Measure Bloom filters.** Count SSTable reads per `get` with and without Bloom filters for absent keys in the toy LSM; vary bits per key from 2 to 16 and compare with $0.6185^{m/n}$.
+3. **Observe PostgreSQL pages.** With the `pageinspect` extension, insert rows into a table, run `UPDATE`s, and inspect `page_header` and `heap_page_items` before and after `VACUUM`; identify HOT chains and dead line pointers.
+4. **Checkpoint trade-off.** On a test PostgreSQL instance under `pgbench`, measure WAL volume per minute with `checkpoint_timeout` at 1 and 15 minutes, then crash it (`kill -9`) and time recovery. Compare with §13.5.3.
+
+## 13.19 Design challenges
+
+1. **Metrics ingestion store.** Design the storage engine configuration for 2 million data points per second (16 bytes each), 30-day retention and queries over the last hour. Choose B-tree, leveled, tiered or time-window compaction; estimate write amplification, daily device writes, disk size and SSD lifetime (§5.6.3); explain how expired data is deleted cheaply.
+2. **User-profile database.** 500 million profiles of 2 KB, 50,000 reads/s by user ID, 5,000 updates/s of single fields, p99 read latency under 5 ms. Compare InnoDB, PostgreSQL and RocksDB; size the buffer pool or block cache with the five-minute rule; estimate write and space amplification; describe torn-page and checksum protection.
+
+## 13.20 References
+
+1. Mohan, C., Haderle, D., Lindsay, B., Pirahesh, H., and Schwarz, P. "ARIES: A Transaction Recovery Method Supporting Fine-Granularity Locking and Partial Rollbacks Using Write-Ahead Logging." *ACM Transactions on Database Systems* 17(1), 1992.
+2. O'Neil, P., Cheng, E., Gawlick, D., and O'Neil, E. "The Log-Structured Merge-Tree (LSM-Tree)." *Acta Informatica* 33(4), 1996.
+3. Athanassoulis, M., Kester, M. S., Maas, L. M., Stoica, R., Idreos, S., Ailamaki, A., and Callaghan, M. "Designing Access Methods: The RUM Conjecture." *EDBT*, 2016.
+4. RocksDB Wiki. *Leveled Compaction*; *Universal Compaction*; *Direct IO*; *RocksDB Tuning Guide*. https://github.com/facebook/rocksdb/wiki
+5. Sheehy, J., and Smith, D. *Bitcask: A Log-Structured Hash Table for Fast Key/Value Data*. Basho Technologies, 2010.
+6. Abadi, D., Boncz, P., Harizopoulos, S., Idreos, S., and Madden, S. "The Design and Implementation of Modern Column-Oriented Database Systems." *Foundations and Trends in Databases* 5(3), 2013.
+7. Petrov, A. *Database Internals*. O'Reilly, 2019.
+8. Kleppmann, M. *Designing Data-Intensive Applications*, chapter 3 "Storage and Retrieval". O'Reilly, 2017.
+9. PostgreSQL Global Development Group. *PostgreSQL Documentation*: Database Page Layout; Database Physical Storage; Reliability and the Write-Ahead Log; WAL Configuration; Resource Consumption; Routine Vacuuming. https://www.postgresql.org/docs/current/
+10. PostgreSQL source tree. `src/backend/storage/buffer/README`; `src/backend/access/nbtree/README`. https://git.postgresql.org/
+11. Oracle. *MySQL 8.4 Reference Manual*: InnoDB Architecture; Making the Buffer Pool Scan Resistant; InnoDB Startup Options; Redo Log; Undo Logs; Doublewrite Buffer; Configuring the Merge Threshold for Index Pages. https://dev.mysql.com/doc/refman/8.4/en/
+12. O'Neil, E. J., O'Neil, P. E., and Weikum, G. "The LRU-K Page Replacement Algorithm for Database Disk Buffering." *SIGMOD*, 1993.
+13. Johnson, T., and Shasha, D. "2Q: A Low Overhead High Performance Buffer Management Replacement Algorithm." *VLDB*, 1994.
+14. Gray, J., and Putzolu, F. "The 5 Minute Rule for Trading Memory for Disc Accesses and the 10 Byte Rule for Trading Memory for CPU Time." *SIGMOD*, 1987.
+15. Gray, J., and Graefe, G. "The Five-Minute Rule Ten Years Later, and Other Computer Storage Rules of Thumb." *SIGMOD Record* 26(4), 1997.
+16. Crotty, A., Leis, V., and Pavlo, A. "Are You Sure You Want to Use MMAP in Your Database Management System?" *CIDR*, 2022.
+17. Härder, T., and Reuter, A. "Principles of Transaction-Oriented Database Recovery." *ACM Computing Surveys* 15(4), 1983.
+18. Bayer, R., and Schkolnick, M. "Concurrency of Operations on B-Trees." *Acta Informatica* 9(1), 1977.
+19. Lehman, P. L., and Yao, S. B. "Efficient Locking for Concurrent Operations on B-Trees." *ACM Transactions on Database Systems* 6(4), 1981.
+20. Yao, A. C. "On Random 2–3 Trees." *Acta Informatica* 9(2), 1978.
+21. Rodeh, O. "B-trees, Shadowing, and Clones." *ACM Transactions on Storage* 3(4), 2008.
+22. Symas Corporation. *LMDB: Lightning Memory-Mapped Database Manager documentation*. http://www.lmdb.tech/doc/
+23. Rosenblum, M., and Ousterhout, J. K. "The Design and Implementation of a Log-Structured File System." *ACM Transactions on Computer Systems* 10(1), 1992.
+24. Chang, F., et al. "Bigtable: A Distributed Storage System for Structured Data." *OSDI*, 2006.
+25. Dayan, N., Athanassoulis, M., and Idreos, S. "Monkey: Optimal Navigable Key-Value Store." *SIGMOD*, 2017.
+26. Dayan, N., and Idreos, S. "Dostoevsky: Better Space-Time Trade-Offs for LSM-Tree Based Key-Value Stores via Adaptive Removal of Superfluous Merging." *SIGMOD*, 2018.
+27. Dong, S., Callaghan, M., Galanis, L., Borthakur, D., Savor, T., and Strum, M. "Optimizing Space Amplification in RocksDB." *CIDR*, 2017.
+28. Matsunobu, Y., Dong, S., and Lee, H. "MyRocks: LSM-Tree Database Storage Engine Serving Facebook's Social Graph." *PVLDB* 13(12), 2020.
+29. Klitzke, E. "Why Uber Engineering Switched from Postgres to MySQL." Uber Engineering Blog, 2016. https://www.uber.com/blog/postgres-to-mysql-migration/
+30. Boncz, P., Zukowski, M., and Nes, N. "MonetDB/X100: Hyper-Pipelining Query Execution." *CIDR*, 2005.
+31. Apache Software Foundation. *Apache Parquet Documentation: File Format; Encodings*. https://parquet.apache.org/docs/
+
+## 13.21 Open verification items
+
+- MySQL 8.4 Linux default `innodb_flush_method = O_DIRECT` (confirmed via secondary sources and the 8.4 manual summary; primary page not fetched).
+- PostgreSQL `debug_io_direct` introduced in version 16 and the version-18 asynchronous I/O subsystem: wording and defaults.
+- PostgreSQL clock-sweep usage-count cap of 5 and ring-buffer behavior (from the buffer README; not re-read for this edition).
+- Exact storage and write reductions reported in [Matsunobu et al. 2020]; deliberately not quoted.
+- Cassandra guidance to keep ~50% free disk for STCS; Cassandra 5.0 UCS description.
+- Uber blog URL (original path may have changed).
+- The compaction formulas are a simplified average-case model, not taken verbatim from one source.

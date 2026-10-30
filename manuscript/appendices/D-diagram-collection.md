@@ -1889,3 +1889,1374 @@ flowchart LR
   VER -->|compare with signed heads| WORM
   VER -.->|alert on mismatch| SIEM[Security monitoring]
 ```
+
+## Chapter 11 — Relational Databases
+
+**Figure 11.1 — Decomposing the flat order export into BCNF tables.**
+
+```mermaid
+flowchart LR
+  F["order_lines_flat<br/>key: order_id + product_id"] -->|"split FD1: 2NF"| OW["orders_wide<br/>key: order_id"]
+  F -->|"split FD4: 2NF"| P[("products<br/>key: product_id")]
+  F -->|"keep FD5"| OL[("order_lines<br/>key: order_id + product_id")]
+  OW -->|"split FD2: 3NF"| O[("orders<br/>key: order_id")]
+  OW -->|"split FD2: 3NF"| C[("customers<br/>key: customer_id")]
+  OL -.->|"FK order_id"| O
+  OL -.->|"FK product_id"| P
+  O -.->|"FK customer_id"| C
+```
+
+**Figure 11.2 — Hash join: build on the smaller input, probe with the larger.**
+
+```mermaid
+flowchart LR
+  subgraph Build["Phase 1: build"]
+    C[(customers<br/>100k rows)] -->|"scan, hash customer_id"| H["In-memory hash table<br/>~5.7 MB"]
+  end
+  subgraph Probe["Phase 2: probe"]
+    O[(orders<br/>79k matching rows)] -->|"scan, hash customer_id"| P["Probe each row"]
+  end
+  H -->|"lookup"| P
+  P -->|"joined rows"| OUT["Parent operator<br/>HashAggregate"]
+  H -.->|"if memory exceeded: spill partitions"| D[("Temp files")]
+```
+
+**Figure 11.3 — Secondary-index lookup paths in InnoDB and PostgreSQL.**
+
+```mermaid
+flowchart LR
+  Q([Query: WHERE email = x])
+  subgraph InnoDB["MySQL InnoDB"]
+    S1["Secondary B+ tree<br/>email to customer_id"] -->|"PK value 4242"| CL[("Clustered B+ tree<br/>customer_id to full row")]
+  end
+  subgraph PG["PostgreSQL"]
+    S2["B+ tree index<br/>email to TID"] -->|"TID page 17, slot 3"| HP[("Heap pages<br/>rows in insert order")]
+  end
+  Q -->|"descend"| S1
+  Q -->|"descend"| S2
+```
+
+**Figure 11.4 — A B+ tree on `order_id` with three levels.**
+
+```mermaid
+flowchart TD
+  R["Root page<br/>separators 400 · 800"] --> I1["Internal page<br/>100 · 250"]
+  R --> I2["Internal page<br/>520 · 650"]
+  R --> I3["Internal page<br/>900 · 1100"]
+  I1 --> L1["Leaf: 1 … 99"]
+  I1 --> L2["Leaf: 100 … 249"]
+  I1 --> L3["Leaf: 250 … 399"]
+  I2 --> L4["Leaf: 400 … 519"]
+  L1 -->|"next leaf"| L2
+  L2 -->|"next leaf"| L3
+  L3 -->|"next leaf"| L4
+  L2 --> H[("Heap rows or<br/>clustered row data")]
+```
+
+**Figure 11.5 — Query processing pipeline.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|"SQL over wire protocol"| P["Parser"]
+  P -->|"parse tree"| A["Analyzer and rewriter"]
+  A -->|"query tree"| O["Planner / optimizer"]
+  CAT[("Catalog and statistics<br/>pg_class, pg_stats")] -->|"row counts, histograms"| O
+  O -->|"cheapest plan tree"| E["Executor"]
+  E -->|"page requests"| BP["Buffer pool"]
+  BP -->|"miss: read page"| D[("Data files<br/>heap and indexes")]
+  E -->|"result rows"| C
+```
+
+**Figure 11.6 — The executed plan tree for "revenue by city over the last day".**
+
+```mermaid
+flowchart BT
+  SO["Seq Scan on orders<br/>filter: last day, not cancelled<br/>78,515 rows"] -->|"rows"| HJ["Hash Join<br/>o.customer_id = c.customer_id"]
+  SC["Seq Scan on customers<br/>100,000 rows"] -->|"rows"| H["Hash<br/>build, 5.7 MB"]
+  H -->|"hash table"| HJ
+  HJ -->|"78,515 joined rows"| AG["HashAggregate<br/>group by city: 5 groups"]
+  AG -->|"5 rows"| S["Sort<br/>by revenue desc"]
+  S -->|"5 rows"| R([Client])
+```
+
+**Figure 11.7 — Non-repeatable read under READ COMMITTED.**
+
+```mermaid
+sequenceDiagram
+  participant A as Txn A - report
+  participant DB as Database
+  participant B as Txn B - restock
+  A->>DB: SELECT on_hand WHERE product 42
+  DB-->>A: 10
+  B->>DB: UPDATE on_hand = on_hand - 3
+  B->>DB: COMMIT
+  A->>DB: SELECT on_hand WHERE product 42
+  DB-->>A: 7 under READ COMMITTED
+  Note over A,DB: REPEATABLE READ returns 10 again: same snapshot
+```
+
+**Figure 11.8 — Lost update from an application-side read-modify-write.**
+
+```mermaid
+sequenceDiagram
+  participant A as Txn A - checkout 1
+  participant DB as Database
+  participant B as Txn B - checkout 2
+  A->>DB: SELECT on_hand - returns 10
+  B->>DB: SELECT on_hand - returns 10
+  A->>DB: UPDATE SET on_hand = 9
+  A->>DB: COMMIT
+  B->>DB: UPDATE SET on_hand = 9
+  Note over B,DB: READ COMMITTED: succeeds, one sale lost
+  Note over B,DB: PostgreSQL REPEATABLE READ: error, retry
+  B->>DB: COMMIT or ROLLBACK
+```
+
+**Figure 11.9 — Write skew: both doctors go off call.**
+
+```mermaid
+sequenceDiagram
+  participant A as Txn A - Alice
+  participant DB as Database
+  participant B as Txn B - Bob
+  A->>DB: SELECT count WHERE on_call - returns 2
+  B->>DB: SELECT count WHERE on_call - returns 2
+  A->>DB: UPDATE alice SET on_call = false
+  B->>DB: UPDATE bob SET on_call = false
+  A->>DB: COMMIT - ok
+  B->>DB: COMMIT
+  Note over B,DB: REPEATABLE READ: ok, nobody on call
+  Note over B,DB: SERIALIZABLE: aborted, retry sees 1
+```
+
+**Figure 11.10 — PostgreSQL version chain for product 42.**
+
+```mermaid
+flowchart LR
+  IX["B+ tree index entry<br/>product_id 42 to TID 0,1"] --> V1["lp 1: on_hand 10<br/>xmin 993, xmax 994"]
+  V1 -->|"t_ctid"| V2["lp 2: on_hand 9<br/>xmin 994, xmax 995"]
+  V2 -->|"t_ctid"| V3["lp 3: on_hand 8<br/>xmin 995, xmax 0"]
+  S1(["Snapshot taken before 994 commits"]) -.->|"sees"| V1
+  S2(["Snapshot taken after 995 commits"]) -.->|"sees"| V3
+  VAC["VACUUM"] -->|"reclaims lp 2,<br/>redirects lp 1 to lp 3"| V1
+```
+
+**Figure 11.11 — InnoDB current row and undo chain for product 42.**
+
+```mermaid
+flowchart LR
+  CI[("Clustered index leaf<br/>on_hand 8, DB_TRX_ID 995")] -->|"DB_ROLL_PTR"| U2[["Undo record<br/>on_hand 9, trx 994"]]
+  U2 -->|"roll pointer"| U1[["Undo record<br/>on_hand 10, trx 993"]]
+  RV(["Read view that cannot see 995"]) -.->|"reconstructs"| U2
+  PU["Purge thread"] -->|"discards when no read view needs"| U1
+```
+
+## Chapter 12 — NoSQL Databases
+
+**Figure 12.1 — Forces that produced NoSQL and the design responses.**
+
+```mermaid
+flowchart LR
+  P1["Data and traffic beyond<br/>one server"] --> R1["Partition by key natively<br/>no cross-partition joins"]
+  P2["Schema changes weekly"] --> R2["Self-describing records<br/>schema on read"]
+  P3["Writes must survive<br/>node and network failure"] --> R3["Replicate, relax consistency<br/>reconcile later"]
+  R1 --> F1[(Key-value)]
+  R1 --> F3[(Wide-column)]
+  R2 --> F2[(Document)]
+  R2 --> F3
+  R3 --> F1
+  R3 --> F3
+  P4["Specialized workloads<br/>graphs, metrics, text"] --> R4["Purpose-built engines"]
+  R4 --> F4[(Graph)]
+  R4 --> F5[(Time-series)]
+  R4 --> F6[(Search and vector)]
+```
+
+**Figure 12.2 — DynamoDB data model and request path.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|HTTPS| RR[Request router]
+  RR -->|partition map lookup| MD[(Partition metadata)]
+  RR -->|"hash of partition key"| L1
+  subgraph P1["Partition 1: Paxos group across 3 AZs"]
+    L1["Leader replica<br/>CUST#c42: PROFILE, ORDER#..."]
+    F1a[Replica AZ-b]
+    F1b[Replica AZ-c]
+  end
+  subgraph P2["Partition 2"]
+    L2["Leader replica<br/>ORDER#o901: #HEADER, ITEM#001.."]
+  end
+  L1 -->|replicate log, 2 of 3 ack| F1a
+  L1 -->|replicate log| F1b
+  L1 -.->|async propagation| GSI[(GSI partitions)]
+  RR -.->|eventually consistent read| F1a
+```
+
+**Figure 12.3 — Single-table design with two global secondary indexes.**
+
+```mermaid
+flowchart TB
+  subgraph Base["Base table, keyed PK + SK"]
+    A["CUST#c42 | PROFILE"]
+    B["EMAIL#ana@... | EMAIL"]
+    H["ORDER#o901 | #HEADER"]
+    I1["ORDER#o901 | ITEM#001"]
+    I2["ORDER#o901 | ITEM#002"]
+  end
+  subgraph G1["GSI1: orders by customer"]
+    G1a["CUST#c42 | ORDER#2026-10-28...#o901"]
+  end
+  subgraph G2["GSI2: sparse, unshipped by warehouse"]
+    G2a["WH#w7 | 2026-10-28T09:15#o901"]
+  end
+  H -.->|projects header| G1a
+  H -.->|only while unshipped| G2a
+  S[Order service] -->|AP3 Query| H
+  S -->|AP2 Query| G1a
+  S -->|AP5 Query| G2a
+```
+
+**Figure 12.4 — Embedding versus referencing in a document model.**
+
+```mermaid
+flowchart LR
+  subgraph Orders["orders collection"]
+    O["order o901<br/>customer_id: c42<br/>items: [ {sku, qty, price}, ... ]<br/>shipping: {street, city}"]
+  end
+  subgraph Customers["customers collection"]
+    CU["customer c42<br/>name, email"]
+  end
+  subgraph Products["products collection"]
+    PR["product SKU-1<br/>title, specs, reviews_count"]
+  end
+  O -->|reference by customer_id| CU
+  O -->|reference by sku| PR
+  App([Application]) -->|"one read: order + items"| O
+  App -.->|"second query or lookup"| PR
+```
+
+**Figure 12.5 — Bigtable data model: the Webtable example.**
+
+```mermaid
+flowchart LR
+  R["Row key<br/>com.cnn.www"] --> CF1["Family contents:"]
+  R --> CF2["Family anchor:"]
+  CF1 --> V1["contents: at t6<br/>html v3"]
+  CF1 --> V2["contents: at t5<br/>html v2"]
+  CF2 --> Q1["anchor:cnnsi.com<br/>at t9 = CNN"]
+  CF2 --> Q2["anchor:my.look.ca<br/>at t8 = CNN.com"]
+  R2["Row key<br/>com.cnn.www/sports"] -.->|next row in sort order| T[["Tablet: com.cnn.* range"]]
+  R -.-> T
+```
+
+**Figure 12.6 — Query-first modeling and partition placement in Cassandra.**
+
+```mermaid
+flowchart LR
+  Q1["Q1: sensor readings<br/>for one day"] --> T1[("readings_by_sensor_day<br/>PK sensor_id, day / CK ts")]
+  Q2["Q2: latest per site"] --> T2[("latest_by_site<br/>PK site_id / CK sensor_id")]
+  W[Ingest service] -->|CQL write, LOCAL_QUORUM| CO[Coordinator node]
+  CO -->|"token = Murmur3 of sensor_id, day"| N1[Replica 1]
+  CO --> N2[Replica 2]
+  CO -.->|hint stored if down| N3[Replica 3]
+  N1 --- T1
+  N2 --- T1
+```
+
+**Figure 12.7 — A property graph for fraud and social queries.**
+
+```mermaid
+flowchart LR
+  A(["Person: Ana"]) -->|KNOWS since 2019| B(["Person: Ben"])
+  B -->|KNOWS| C(["Person: Chen"])
+  A -->|USES| D["Device: d-77"]
+  C -->|USES| D
+  A -->|OWNS| AC1[("Account: 1001")]
+  C -->|OWNS| AC2[("Account: 2002")]
+  AC1 -->|"TRANSFER amount 900"| AC2
+  B -->|WORKS_AT| E{{"Company: Acme"}}
+```
+
+**Figure 12.8 — Prometheus TSDB write and storage path.**
+
+```mermaid
+flowchart LR
+  T([Scrape targets]) -->|HTTP pull every 15 s| S[Scraper]
+  S --> H["Head block in memory<br/>open chunks per series"]
+  S -->|append| WAL[["Write-ahead log"]]
+  H -->|"cut every 2 h"| B1[("Block 2 h<br/>chunks + index")]
+  B1 -.->|compaction| B2[("Block 6 h, then larger")]
+  B2 -.->|"older than retention: delete dir"| X{{Deleted}}
+  Q([PromQL query]) -->|label match via postings| H
+  Q --> B2
+  B2 -.->|remote write| R[(Long-term store)]
+```
+
+**Figure 12.9 — Gorilla's per-sample encoding decisions.**
+
+```mermaid
+flowchart TB
+  N[New sample t, v] --> DT{"Delta of delta D = 0?"}
+  DT -->|yes| T0["Write 0, 1 bit"]
+  DT -->|no| DR{"D within small range?"}
+  DR -->|"-63..64"| T1["Write 10 + 7 bits"]
+  DR -->|larger| T2["110 + 9, 1110 + 12<br/>or 1111 + 32 bits"]
+  N --> X{"XOR with previous v = 0?"}
+  X -->|yes| V0["Write 0, 1 bit"]
+  X -->|no| W{"Fits previous<br/>zero window?"}
+  W -->|yes| V1["10 + meaningful bits"]
+  W -->|no| V2["11 + 5-bit lead + 6-bit len<br/>+ meaningful bits"]
+```
+
+**Figure 12.10 — Database selection flowchart.**
+
+```mermaid
+flowchart TB
+  S([Start: access patterns and invariants]) --> Q1{"Multi-entity ACID or<br/>ad-hoc relational queries?"}
+  Q1 -->|yes| Q2{"Fits one primary node<br/>with replicas?"}
+  Q2 -->|yes| RDB[(Relational: PostgreSQL, MySQL)]
+  Q2 -->|no| NS[(NewSQL: Spanner, CockroachDB, TiDB)]
+  Q1 -->|no| Q3{"Dominant query shape?"}
+  Q3 -->|"lookup by key"| Q4{"Sub-ms and loss-tolerant?"}
+  Q4 -->|yes| KVM[(In-memory KV: Redis)]
+  Q4 -->|no| KVD[(Durable KV: DynamoDB)]
+  Q3 -->|"whole aggregate,<br/>varied shape"| DOC[(Document: MongoDB)]
+  Q3 -->|"huge write rate,<br/>range within a key"| WC[(Wide-column: Cassandra)]
+  Q3 -->|"multi-hop paths"| G[(Graph: Neo4j)]
+  Q3 -->|"timestamped metrics"| TS[(Time-series: Prometheus)]
+  Q3 -->|"text relevance"| SE[(Search: Elasticsearch)]
+  Q3 -->|"semantic similarity"| VEC[(Vector index)]
+```
+
+**Figure 12.11 — Polyglot persistence in an e-commerce platform.**
+
+```mermaid
+flowchart LR
+  C([Web and mobile clients]) -->|HTTPS| GW[API gateway]
+  GW --> OS[Order service]
+  GW --> CS[Catalog service]
+  GW --> SS[Search service]
+  GW --> RS[Recommendation service]
+  OS -->|SQL transactions| PG[(PostgreSQL: orders, payments)]
+  OS -->|get or set session, cart| RD[(Redis or DynamoDB: carts)]
+  CS -->|documents| MG[(MongoDB: catalog)]
+  PG -.->|CDC| K[["Kafka change log"]]
+  MG -.->|CDC| K
+  K -.->|index| ES[(Elasticsearch: search)]
+  K -.->|project edges| NG[(Neo4j: co-purchase graph)]
+  SS --> ES
+  RS --> NG
+  OS -.->|metrics| PR[(Prometheus)]
+```
+
+## Chapter 13 — Storage Engine Internals
+
+**Figure 13.1 — A slotted page.**
+
+```mermaid
+flowchart LR
+  subgraph PAGE["One 8 KiB page"]
+    direction LR
+    H["Header<br/>LSN, checksum,<br/>lower, upper"] --- S["Slot array<br/>slot 0, slot 1, slot 2<br/>grows rightward"]
+    S --- F["Free space"]
+    F --- R2["Record 2"]
+    R2 --- R1["Record 1"]
+    R1 --- R0["Record 0<br/>at end of page"]
+  end
+  IDX[(Index entry<br/>page 7, slot 1)] -->|names a slot| S
+  S -.->|offset and length| R1
+```
+
+**Figure 13.2 — Buffer pool components and the page request path.**
+
+```mermaid
+flowchart LR
+  T([Query thread]) -->|fetch page 42| PT[Page table<br/>page ID to frame]
+  PT -->|hit: pin and return| FR[Frames<br/>pin count, dirty flag]
+  PT -->|miss| RP[Replacer<br/>clock or LRU-K]
+  RP -->|victim with pin 0| FR
+  FR -->|dirty victim: flush| DM[Disk manager]
+  WAL[[WAL buffer]] -->|log flushed to page LSN first| LOGF[(WAL files)]
+  DM -->|read or write 8 KiB| DATA[(Data files)]
+  BG[Background writer] -.->|flush dirty pages early| DM
+```
+
+**Figure 13.3 — WAL, commit and checkpoint timeline.**
+
+```mermaid
+sequenceDiagram
+  participant T as Transaction
+  participant BP as Buffer pool
+  participant W as WAL file
+  participant CK as Checkpointer
+  participant D as Data files
+  T->>BP: update row on page 7
+  BP->>W: append LSN 100 update page 7
+  Note over BP: page 7 dirty, pageLSN 100
+  T->>W: append LSN 110 COMMIT
+  W->>W: fsync up to LSN 110
+  W-->>T: commit acknowledged
+  CK->>W: LSN 120 BEGIN_CHECKPOINT<br/>dirty pages: 7 recLSN 100
+  CK->>D: write page 7, WAL already durable past 100
+  CK->>W: LSN 140 END_CHECKPOINT
+  T->>BP: update page 9, LSN 150, no commit yet
+  Note over T,D: crash: page 9 change lost from RAM, LSN 150 maybe in WAL
+```
+
+**Figure 13.4 — The three ARIES passes over the log.**
+
+```mermaid
+flowchart LR
+  A["Oldest record of<br/>a loser transaction"] --- B["Smallest recLSN<br/>in dirty page table"]
+  B --- C["Last checkpoint<br/>BEGIN, END"]
+  C --- E["End of log<br/>crash point"]
+  C ==>|1 Analysis forward| E
+  B ==>|2 Redo forward, repeat history| E
+  E -.->|3 Undo backward, write CLRs| A
+```
+
+**Figure 13.5 — A leaf page split propagating a separator to the parent.**
+
+```mermaid
+flowchart TB
+  subgraph BEFORE["Before: insert key 35 into a full leaf"]
+    P1["Parent: 30, 60"] --> L1["Leaf A: 30 32 34 36 38<br/>full"]
+  end
+  subgraph AFTER["After the split"]
+    P2["Parent: 30, 34, 60"] --> L2["Leaf A: 30 32 34"]
+    P2 --> L3["New leaf B: 35 36 38"]
+    L2 -->|sibling link| L3
+  end
+  BEFORE ==>|allocate page, move upper half,<br/>add separator, log as one action| AFTER
+```
+
+**Figure 13.6 — Bitcask: an in-memory hash index over append-only files.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|put k3 v9| ACT[[Active file<br/>append only]]
+  C -->|get k1| KD[Keydir in RAM<br/>key to file, offset, size]
+  KD -->|one positioned read| F1[(Immutable file 1)]
+  ACT -->|after append: update entry| KD
+  M[Merge process] -.->|copy live records| NEW[(Merged file<br/>plus hint file)]
+  F1 -.->|read| M
+  F2[(Immutable file 2)] -.->|read| M
+```
+
+**Figure 13.7 — LSM tree write path and levels.**
+
+```mermaid
+flowchart TB
+  C([Client write]) -->|1 append| WAL[[WAL]]
+  C -->|2 insert| MT[Active memtable<br/>skip list in RAM]
+  MT -->|3 full: freeze| IMM[Immutable memtable]
+  IMM -.->|4 flush: one sequential write| L0[(L0: SSTables<br/>key ranges overlap)]
+  L0 -.->|5 compaction| L1[(L1: 256 MB<br/>non-overlapping files)]
+  L1 -.->|compaction| L2[(L2: 2.56 GB)]
+  L2 -.->|compaction| LN[(Last level: about 90%<br/>of all data)]
+```
+
+**Figure 13.8 — LSM point-lookup read path.**
+
+```mermaid
+flowchart TB
+  Q([Get key k]) --> MEM{In memtables?}
+  MEM -->|yes| R([Return value or tombstone])
+  MEM -->|no| L0{Next L0 file:<br/>Bloom filter says maybe?}
+  L0 -->|no, skip file| L0
+  L0 -->|maybe| BLK[Index block, then data block<br/>block cache or disk]
+  BLK -->|found| R
+  BLK -->|false positive| L0
+  L0 -->|L0 exhausted| LV{Level i: file covering k,<br/>Bloom says maybe?}
+  LV -->|no: next level| LV
+  LV -->|maybe| BLK2[Read one data block]
+  BLK2 -->|found| R
+  BLK2 -->|not found: next level| LV
+  LV -->|all levels checked| NF([Not found])
+```
+
+**Figure 13.9 — Size-tiered versus leveled compaction.**
+
+```mermaid
+flowchart LR
+  subgraph TIER["Size-tiered, T = 4"]
+    direction TB
+    A1[(64 MB)] & A2[(64 MB)] & A3[(64 MB)] & A4[(64 MB)] -.->|merge 4 similar runs| B1[(256 MB run)]
+    B1 & B2[(256 MB)] & B3[(256 MB)] & B4[(256 MB)] -.->|merge 4 runs| C1[(1 GB run)]
+  end
+  subgraph LEVEL["Leveled, T = 10"]
+    direction TB
+    X1[(L1 file<br/>keys 100 to 199)] -.->|merge with overlapping<br/>about 10 files| Y1[(L2 files<br/>keys 100 to 199)]
+    Y1 -.->|rewrite merged range| Y2[(New L2 files<br/>same key range)]
+  end
+```
+
+**Figure 13.10 — InnoDB doublewrite protecting against a torn page.**
+
+```mermaid
+sequenceDiagram
+  participant BP as Buffer pool
+  participant DW as Doublewrite area
+  participant TS as Tablespace files
+  participant R as Crash recovery
+  BP->>DW: write batch of dirty pages sequentially
+  DW->>DW: fsync
+  BP->>TS: write each page to its home location
+  Note over TS: crash: page 7 torn, half old and half new
+  R->>TS: read page 7, checksum fails
+  R->>DW: fetch intact copy of page 7
+  R->>TS: restore page 7, then apply redo log
+```
+
+**Figure 13.11 — Row-oriented versus column-oriented layout of the same table.**
+
+```mermaid
+flowchart TB
+  subgraph ROW["Row store: one page holds whole rows"]
+    R1["1, IN, 250, 2025-01-03"] --- R2["2, US, 120, 2025-01-03"] --- R3["3, IN, 75, 2025-01-04"]
+  end
+  subgraph COL["Column store: one file or chunk per column"]
+    C1["id: 1, 2, 3"]
+    C2["country: IN, US, IN<br/>dictionary + bit-packed"]
+    C3["amount: 250, 120, 75"]
+    C4["date: run-length encoded"]
+  end
+  Q([SUM amount WHERE country = IN]) -->|row store reads all fields| ROW
+  Q -->|column store reads 2 of 4 columns| C2
+  Q --> C3
+```
+
+## Chapter 14 — Database Scaling: Replication, Partitioning and Sharding
+
+**Figure 14.1 — Primary–replica architecture with read/write splitting.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|HTTPS| APP[App service]
+  APP -->|SQL| PX["Proxy or driver<br/>read/write split"]
+  PX -->|"writes and<br/>fresh reads"| P[(Primary)]
+  PX -->|"reads"| R1[(Replica 1)]
+  PX -->|"reads"| R2[(Replica 2)]
+  P -.->|"WAL or binlog stream"| R1
+  P -.->|"WAL or binlog stream"| R2
+  R2 -.->|cascade| R3[(Replica 3<br/>other region)]
+  MON[Lag monitor] -.->|poll positions| R1
+  MON -.->|poll positions| R2
+```
+
+**Figure 14.2 — Commit paths under asynchronous, semi-synchronous and synchronous replication.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant P as Primary
+  participant R as Replica
+  Note over C,R: Asynchronous
+  C->>P: COMMIT
+  P->>P: write and flush local log
+  P-->>C: OK
+  P-)R: ship log records later
+  Note over C,R: Semi-synchronous, MySQL AFTER_SYNC
+  C->>P: COMMIT
+  P->>P: write and flush binlog
+  P->>R: send events
+  R->>R: write relay log
+  R-->>P: ACK received
+  P->>P: commit in storage engine
+  P-->>C: OK
+  Note over C,R: Synchronous, PostgreSQL remote_apply
+  C->>P: COMMIT
+  P->>P: flush local WAL
+  P->>R: stream WAL
+  R->>R: flush and apply
+  R-->>P: applied up to LSN
+  P-->>C: OK
+```
+
+**Figure 14.3 — Two lag anomalies: lost own write and time going backwards.**
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant P as Primary
+  participant R1 as Replica 1, lag 0.1 s
+  participant R2 as Replica 2, lag 5 s
+  U->>P: update display name to Ada
+  P-->>U: OK
+  U->>R2: read profile
+  R2-->>U: old name, own write missing
+  Note over U,R2: violates read-your-writes
+  U->>R1: read comment count
+  R1-->>U: 12 comments
+  U->>R2: refresh
+  R2-->>U: 9 comments
+  Note over U,R2: violates monotonic reads
+```
+
+**Figure 14.4 — Two-region multi-primary replication and a write conflict.**
+
+```mermaid
+flowchart LR
+  subgraph US["Region us-east"]
+    CU([US users]) -->|SQL writes| PU[(Primary US)]
+  end
+  subgraph EU["Region eu-west"]
+    CE([EU users]) -->|SQL writes| PE[(Primary EU)]
+  end
+  PU -.->|"async changes,<br/>~80 ms RTT"| PE
+  PE -.->|"async changes"| PU
+  PU --> CR{"Same row changed<br/>on both sides?"}
+  PE --> CR
+  CR -->|no| AP[Apply change]
+  CR -->|yes| RS["Resolve: LWW,<br/>merge or CRDT"]
+```
+
+**Figure 14.5 — Four ways to answer "which partition holds this key?".**
+
+```mermaid
+flowchart TB
+  K([Key or row]) --> D{Scheme}
+  D -->|range| RB["Sorted boundaries<br/>binary search"]
+  D -->|hash| HF["h of key<br/>then hash range or mod P"]
+  D -->|list| LT["Value to partition<br/>lookup table"]
+  D -->|directory| DS[Directory service]
+  DS --- DC[(Directory store<br/>replicated)]
+  RB --> PM["Partition map:<br/>partition to node"]
+  HF --> PM
+  LT --> PM
+  DS --> PM
+  PM -->|SQL or KV request| N1[(Node A)]
+  PM -->|SQL or KV request| N2[(Node B)]
+  PM -->|SQL or KV request| N3[(Node C)]
+```
+
+**Figure 14.6 — Multi-tenant sharding with logical shards and a tenant directory.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|HTTPS with tenant token| API[API service]
+  API -->|tenant_id| RT["Shard router<br/>cached map"]
+  DIR[(Tenant directory<br/>overrides plus map)] -.->|change notifications| RT
+  RT -->|"hash to logical shard<br/>0 to 4095"| MAP{"Override for<br/>this tenant?"}
+  MAP -->|no| SC["Shared cluster k<br/>owns many logical shards"]
+  MAP -->|yes| DC["Dedicated cluster<br/>for one large tenant"]
+  subgraph SC_G["Shared cluster k"]
+    SC --> PK[(Primary)]
+    PK -.->|async| RK[(Replica)]
+  end
+  subgraph DC_G["Dedicated cluster"]
+    DC --> PD[(Primary)]
+    PD -.->|async| RD[(Replica)]
+  end
+```
+
+**Figure 14.7 — A ring with three nodes and two vnodes each.**
+
+```mermaid
+flowchart LR
+  A1["A vn0<br/>pos 0.05"] --> B1["B vn0<br/>pos 0.22"]
+  B1 --> C1["C vn0<br/>pos 0.31"]
+  C1 --> A2["A vn1<br/>pos 0.48"]
+  A2 --> C2["C vn1<br/>pos 0.63"]
+  C2 --> B2["B vn1<br/>pos 0.86"]
+  B2 -->|wraps past 1.0| A1
+  K1(["key x<br/>h = 0.40"]) -.->|walk clockwise| A2
+  K2(["key y<br/>h = 0.95"]) -.->|walk clockwise, wrap| A1
+  K3(["key z<br/>h = 0.70"]) -.->|walk clockwise| B2
+```
+
+**Figure 14.8 — Online resharding as a state machine.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Provisioned
+  Provisioned --> Capturing: start CDC or dual writes
+  Capturing --> Backfilling: snapshot at position P
+  Backfilling --> CatchingUp: copy done
+  CatchingUp --> Verifying: lag below threshold
+  Verifying --> CatchingUp: mismatch found and fixed
+  Verifying --> ReadsSwitched: checksums match
+  ReadsSwitched --> WritesSwitched: brief write freeze and fence source
+  ReadsSwitched --> Verifying: errors, roll reads back
+  WritesSwitched --> Provisioned: rollback via reverse stream
+  WritesSwitched --> CleanedUp: rollback window over
+  CleanedUp --> [*]
+```
+
+**Figure 14.9 — Salting a hot counter across partitions.**
+
+```mermaid
+flowchart LR
+  W1([Like events]) -->|"increment, random suffix"| SW[Write path]
+  SW -->|"post:991 suffix 0"| P0[(Partition 0)]
+  SW -->|"post:991 suffix 1"| P1[(Partition 1)]
+  SW -->|"post:991 suffix s-1"| PS[(Partition s-1)]
+  R1([Viewers]) -->|read count| CA[(Cache, TTL 1 s)]
+  CA -->|"miss: sum s sub-keys"| AG[Aggregator]
+  AG -->|parallel reads| P0
+  AG -->|parallel reads| P1
+  AG -->|parallel reads| PS
+```
+
+**Figure 14.10 — Local versus global secondary index for a query on `status`.**
+
+```mermaid
+flowchart TB
+  subgraph LOCAL["Local index: scatter-gather"]
+    QL([Query status = open]) --> CO[Coordinator]
+    CO -->|query| L1[(Partition 1<br/>rows plus local index)]
+    CO -->|query| L2[(Partition 2<br/>rows plus local index)]
+    CO -->|query| L3[(Partition 3<br/>rows plus local index)]
+  end
+  subgraph GLOBAL["Global index: targeted read, async maintenance"]
+    QG([Query status = open]) --> IX[(Index partition<br/>for values a to m)]
+    IX -->|"primary keys"| FE[Fetch rows]
+    FE --> D1[(Data partition 1)]
+    FE --> D3[(Data partition 3)]
+    D1 -.->|async index update| IX
+    D3 -.->|async index update| IX
+  end
+```
+
+**Figure 14.11 — Two-phase commit across two shards (preview of Chapter 28).**
+
+```mermaid
+sequenceDiagram
+  participant A as App
+  participant T as Coordinator
+  participant S1 as Shard 1
+  participant S2 as Shard 2
+  A->>T: transfer 100 from acct 7 to acct 9
+  T->>S1: PREPARE debit acct 7
+  T->>S2: PREPARE credit acct 9
+  S1-->>T: vote YES, locks held
+  S2-->>T: vote YES, locks held
+  T->>T: durably log COMMIT decision
+  T->>S1: COMMIT
+  T->>S2: COMMIT
+  S1-->>T: done
+  S2-->>T: done
+  T-->>A: committed
+  Note over T,S2: if the coordinator dies after PREPARE, shards wait holding locks
+```
+
+**Figure 14.12 — PgBouncer in transaction-pooling mode.**
+
+```mermaid
+flowchart LR
+  subgraph APPS["300 app pods, pools of 20"]
+    A1[Pod 1]
+    A2[Pod 2]
+    AN[Pod 300]
+  end
+  A1 -->|"20 client conns"| PB["PgBouncer<br/>pool_mode=transaction"]
+  A2 -->|"20 client conns"| PB
+  AN -->|"20 client conns"| PB
+  PB -->|"about 60 server conns"| PG[(PostgreSQL primary)]
+  PB -.->|"queue when pool busy"| WQ[[Waiting clients]]
+```
+
+**Figure 14.13 — Vitess architecture.**
+
+```mermaid
+flowchart LR
+  APP([Application]) -->|"MySQL protocol or gRPC"| VG["VTGate<br/>stateless router"]
+  TOPO[("Topology service<br/>etcd, ZooKeeper or Consul")] -.->|"keyspaces, shards, tablets"| VG
+  subgraph S1["Shard -80"]
+    VT1["VTTablet"] --> M1[(MySQL primary)]
+    VT1R["VTTablet"] --> M1R[(MySQL replica)]
+    M1 -.->|binlog replication| M1R
+  end
+  subgraph S2["Shard 80-"]
+    VT2["VTTablet"] --> M2[(MySQL primary)]
+    VT2R["VTTablet"] --> M2R[(MySQL replica)]
+    M2 -.->|binlog replication| M2R
+  end
+  VG -->|gRPC| VT1
+  VG -->|gRPC| VT1R
+  VG -->|gRPC| VT2
+  VG -->|gRPC| VT2R
+  CTL["vtctld and VTOrc<br/>admin and failover"] -.-> TOPO
+  CTL -.-> VT1
+  CTL -.-> VT2
+```
+
+## Chapter 15 — Object, Block and File Storage
+
+**Figure 15.1 — Three storage interfaces over shared disks.**
+
+```mermaid
+flowchart LR
+  subgraph Host["Application host"]
+    DBE[Database engine] --> FS[Local file system]
+    APP2[Batch job]
+    APP3[Web service]
+  end
+  FS -->|NVMe or iSCSI blocks| BV[("Block volume<br/>one zone")]
+  APP2 -->|NFS ops on paths| NAS[File server]
+  NAS --> FSD[("Shared file system")]
+  APP3 -->|HTTPS PUT GET| OBJ[Object store front end]
+  OBJ --> OBD[("Objects<br/>multi-zone")]
+```
+
+**Figure 15.2 — Generic S3-style object store (illustrative).**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|HTTPS signed request| FE[Front end<br/>auth and routing]
+  FE -->|key lookup or commit| IDX[Metadata index<br/>partitioned by key range]
+  IDX --> MDB[(Index partitions<br/>replicated)]
+  FE -->|where to write| PL[Placement service]
+  SN -.->|capacity and health| PL
+  FE -->|stream fragments| SN[(Storage nodes<br/>disks across zones)]
+  BG[[Background: repair,<br/>scrub, GC, lifecycle]] -.-> SN
+  BG -.-> IDX
+```
+
+**Figure 15.3 — PUT then GET in an S3-style store (illustrative).**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant FE as Front end
+  participant PL as Placement
+  participant SN as Storage nodes
+  participant IX as Index partition
+  C->>FE: PUT /b/k body
+  FE->>PL: choose nodes for 14 fragments
+  PL-->>FE: node list across zones
+  FE->>SN: write fragments in parallel
+  SN-->>FE: durable acks
+  FE->>IX: commit k to version v2
+  IX-->>FE: committed
+  FE-->>C: 200 OK ETag
+  C->>FE: GET /b/k
+  FE->>IX: lookup k
+  IX-->>FE: v2 and fragment map
+  FE->>SN: read any 10 fragments
+  SN-->>FE: fragment data
+  FE-->>C: 200 OK body
+```
+
+**Figure 15.4 — GFS write with a lease-holding primary.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant M as Master
+  participant P as Primary
+  participant S1 as Secondary A
+  participant S2 as Secondary B
+  C->>M: which replicas hold chunk 7, who has the lease
+  M-->>C: primary P, secondaries A and B
+  C->>S1: push data
+  S1->>P: forward data
+  P->>S2: forward data
+  C->>P: write request
+  P->>P: assign serial number, apply
+  P->>S1: apply in serial order
+  P->>S2: apply in serial order
+  S1-->>P: done
+  S2-->>P: done
+  P-->>C: success or error
+```
+
+**Figure 15.5 — HDFS with NameNode high availability.**
+
+```mermaid
+flowchart TB
+  C([Client]) -->|metadata RPC| ANN[Active NameNode]
+  ANN -->|write edits| JN[[JournalNode quorum<br/>3 or 5 nodes]]
+  JN -.->|tail edits| SNN[Standby NameNode]
+  ZK[(ZooKeeper)] -.->|election and fencing| ANN
+  ZK -.-> SNN
+  C -->|read and write blocks| DN[(DataNodes<br/>128 MB blocks x3)]
+  DN -.->|heartbeats and block reports| ANN
+  DN -.-> SNN
+```
+
+**Figure 15.6 — An RS(10,4) stripe across 14 failure domains.**
+
+```mermaid
+flowchart LR
+  OBJ([Object block 640 MB]) --> ENC[Encoder RS 10,4]
+  subgraph Data["10 data fragments, 64 MB each"]
+    D1[(D1 rack 1)]
+    D2[(D2 rack 2)]
+    DX[("D3 to D9<br/>racks 3 to 9")]
+    D10[(D10 rack 10)]
+  end
+  subgraph Parity["4 parity fragments"]
+    P1[(P1 rack 11)]
+    P2[(P2 rack 12)]
+    P3[(P3 rack 13)]
+    P4[(P4 rack 14)]
+  end
+  ENC --> Data
+  ENC --> Parity
+```
+
+**Figure 15.7 — Azure-style LRC(12,2,2) stripe.**
+
+```mermaid
+flowchart TB
+  subgraph G1["Local group 1"]
+    X1[(x1 to x6)] --> PX[(local parity px)]
+  end
+  subgraph G2["Local group 2"]
+    Y1[(y1 to y6)] --> PY[(local parity py)]
+  end
+  X1 --> GP[(global parities p1 p2)]
+  Y1 --> GP
+```
+
+**Figure 15.8 — Layered, partitioned file-system metadata (after Tectonic).**
+
+```mermaid
+flowchart LR
+  C([Client library]) -->|resolve path| MS[Stateless metadata service]
+  MS --> NL[(Name layer<br/>dir ID + name to ID)]
+  MS --> FL[(File layer<br/>file ID to blocks)]
+  MS --> BL[(Block layer<br/>block to chunk locations)]
+  C -->|read and write chunks| CS[(Chunk store nodes)]
+```
+
+**Figure 15.9 — Multipart upload sequence.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant API as Object store API
+  participant SN as Storage nodes
+  C->>API: CreateMultipartUpload b/k
+  API-->>C: uploadId
+  par parallel parts
+    C->>API: UploadPart 1 with uploadId
+    API->>SN: store part 1
+    API-->>C: ETag 1
+  and
+    C->>API: UploadPart 2 with uploadId
+    API->>SN: store part 2
+    API-->>C: ETag 2
+  end
+  C->>API: CompleteMultipartUpload list of parts and ETags
+  API-->>C: 200 OK object visible
+```
+
+**Figure 15.10 — A lifecycle policy for log objects.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Hot : PUT
+  Hot --> Warm : age 30 days
+  Warm --> Archive : age 90 days
+  Archive --> Expired : age 365 days
+  Archive --> Hot : restore request, hours
+  Expired --> [*]
+```
+
+## Chapter 16 — Search Systems
+
+**Figure 16.1 — The two paths of a search system.**
+
+```mermaid
+flowchart LR
+  subgraph Indexing path
+    SRC[(Product database)] -.->|CDC events| K[[Kafka topic]]
+    K -.->|consume| IX[Indexer service]
+    IX -->|analyze + bulk write| IDX[(Inverted index segments)]
+  end
+  subgraph Query path
+    U([Shopper]) -->|HTTPS query| API[Search API]
+    API -->|analyze query| QP[Query planner]
+    QP -->|postings lookup| IDX
+    IDX -->|candidate docs| RK[BM25 ranker + top-k]
+    RK -->|ranked IDs + snippets| API
+  end
+```
+
+**Figure 16.2 — Dictionary, postings lists and positions.**
+
+```mermaid
+flowchart LR
+  subgraph Dictionary
+    T1["cancelling<br/>df=2"]
+    T2["headphone<br/>df=6"]
+    T3["noise<br/>df=3"]
+    T4["wireless<br/>df=4"]
+  end
+  subgraph Postings lists
+    P1["1 → pos 7<br/>4 → pos 5"]
+    P2["1, 2, 3, 5, 7, 8<br/>with tf and positions"]
+    P3["1 → pos 6<br/>4 → pos 4<br/>7 → pos 10"]
+    P4["1, 3, 4, 6<br/>with tf and positions"]
+  end
+  T1 --> P1
+  T2 --> P2
+  T3 --> P3
+  T4 --> P4
+  P1 -.->|docID| DS[(Stored documents)]
+  P3 -.->|docID| DS
+```
+
+**Figure 16.3 — An analysis chain applied at index time and at query time.**
+
+```mermaid
+flowchart LR
+  D(["Doc: Noise-Cancelling<br/>Headphones and Earbuds"]) --> CF[Char filters<br/>strip HTML, map chars]
+  Q(["Query: noise cancelling<br/>headphone"]) --> CF2[Same char filters]
+  CF --> TK[Tokenizer<br/>Unicode word boundaries]
+  CF2 --> TK2[Same tokenizer]
+  TK --> TF[Token filters<br/>lowercase, stop, stem]
+  TK2 --> TF2[Same token filters<br/>+ query synonyms]
+  TF -->|terms + positions| IDX[(Inverted index)]
+  TF2 -->|term lookups| IDX
+```
+
+**Figure 16.4 — Ranked query pipeline inside one shard.**
+
+```mermaid
+flowchart LR
+  Q([Analyzed query terms]) --> IT[Postings iterators<br/>one per term]
+  IT -->|advance with<br/>block max scores| WAND{Can doc beat<br/>k-th best score?}
+  WAND -->|no: skip block| IT
+  WAND -->|yes| SC[Compute BM25<br/>+ field boosts]
+  SC --> HEAP[(Top-k min-heap)]
+  HEAP -->|k best docIDs| RR[Optional rescoring<br/>of top candidates]
+  RR --> OUT([Shard result])
+```
+
+**Figure 16.5 — Lifecycle of a Lucene segment.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Buffered: index document
+  Buffered --> Searchable: refresh writes segment
+  Searchable --> Committed: commit fsyncs files
+  Searchable --> Merging: selected by merge policy
+  Committed --> Merging: selected by merge policy
+  Merging --> Deleted: merged segment replaces it
+  Deleted --> [*]: files removed when unreferenced
+```
+
+**Figure 16.6 — Document partitioning versus term partitioning.**
+
+```mermaid
+flowchart TB
+  subgraph DP[Document partitioning]
+    C1([Query: noise headphones]) -->|fan out to all| S1[Shard A<br/>docs 1 to 4M<br/>all terms]
+    C1 -->|fan out to all| S2[Shard B<br/>docs 4M to 8M<br/>all terms]
+    S1 -->|local top-k| M1[Merge top-k]
+    S2 -->|local top-k| M1
+  end
+  subgraph TP[Term partitioning]
+    C2([Query: noise headphones]) -->|terms a to m| T1[Shard X<br/>headphone postings<br/>all docs]
+    C2 -->|terms n to z| T2[Shard Y<br/>noise postings<br/>all docs]
+    T1 -->|full postings list| J[Intersect and score]
+    T2 -->|full postings list| J
+  end
+```
+
+**Figure 16.7 — Query-then-fetch across three shards.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant CO as Coordinating node
+  participant A as Shard A copy
+  participant B as Shard B copy
+  participant D as Shard C copy
+  C->>CO: search q, from 0, size 10
+  par Query phase
+    CO->>A: query q, top 10
+    CO->>B: query q, top 10
+    CO->>D: query q, top 10
+  end
+  A-->>CO: 10 docIDs and scores
+  B-->>CO: 10 docIDs and scores
+  D-->>CO: 10 docIDs and scores
+  CO->>CO: merge 30 entries, keep global top 10
+  par Fetch phase
+    CO->>A: fetch docs 3 and 17
+    CO->>D: fetch docs 5, 8 and others
+  end
+  A-->>CO: stored fields and highlights
+  D-->>CO: stored fields and highlights
+  CO-->>C: 10 ranked results
+```
+
+**Figure 16.8 — A three-zone Elasticsearch cluster with two primaries and one replica each.**
+
+```mermaid
+flowchart TB
+  C([Search API service]) -->|HTTPS REST| CO[Coordinating nodes]
+  subgraph Zone A
+    M1[Master-eligible 1]
+    D1[(Data node 1<br/>P0, R1)]
+  end
+  subgraph Zone B
+    M2[Master-eligible 2<br/>elected master]
+    D2[(Data node 2<br/>P1)]
+  end
+  subgraph Zone C
+    M3[Master-eligible 3]
+    D3[(Data node 3<br/>R0)]
+  end
+  CO -->|transport RPC| D1
+  CO -->|transport RPC| D2
+  CO -->|transport RPC| D3
+  M2 -.->|publish cluster state| D1
+  M2 -.->|publish cluster state| D3
+  M2 -.->|publish cluster state| M1
+  M2 -.->|publish cluster state| M3
+```
+
+**Figure 16.9 — Indexing one document with one replica.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant CO as Coordinating node
+  participant P as Primary shard
+  participant R as Replica shard
+  C->>CO: index doc 42
+  CO->>CO: shard = hash of routing mod primaries
+  CO->>P: forward request
+  P->>P: validate, assign seq no, add to Lucene buffer
+  P->>P: append to translog, fsync
+  P->>R: replicate operation with seq no
+  R->>R: add to Lucene buffer, append translog, fsync
+  R-->>P: ack
+  P-->>CO: success on all in-sync copies
+  CO-->>C: 201 Created
+  Note over P,R: searchable only after the next refresh
+```
+
+**Figure 16.10 — A trie with top-2 completions stored at each node.**
+
+```mermaid
+flowchart TB
+  R((root)) -->|h| H["h<br/>top: headphones 9200,<br/>hdmi cable 5300"]
+  H -->|e| HE["he<br/>top: headphones 9200,<br/>headphones wireless 4100"]
+  H -->|d| HD["hd<br/>top: hdmi cable 5300"]
+  H -->|a| HA["ha<br/>top: hair dryer 4800,<br/>hard drive 3900"]
+  HE -->|a| HEA["hea<br/>top: headphones 9200,<br/>headphones wireless 4100"]
+  HEA -->|t| HEAT["heat<br/>top: heated blanket 2100"]
+```
+
+**Figure 16.11 — Autocomplete: offline build and online serving.**
+
+```mermaid
+flowchart LR
+  subgraph Offline
+    LOG[[Query log stream]] -.->|hourly batch| AGG[Aggregate and filter<br/>counts, decay, blocklist]
+    AGG -.->|build| BLD[Trie or FST builder]
+    BLD -.->|versioned snapshot| OBJ[(Object storage)]
+  end
+  subgraph Online
+    U([User typing]) -->|HTTPS prefix| CDN{{CDN cache<br/>short prefixes}}
+    CDN -->|miss| SVC[Suggest service<br/>in-memory index]
+    OBJ -.->|load and swap| SVC
+  end
+  U -.->|selected or submitted query| LOG
+```
+
+**Figure 16.12 — Near-real-time indexing pipeline with CDC and Kafka.**
+
+```mermaid
+flowchart LR
+  APP[Catalog service] -->|SQL transaction| DB[(PostgreSQL)]
+  DB -.->|WAL via logical decoding| CDC[Debezium CDC]
+  CDC -.->|keyed by product ID| K[[Kafka topic<br/>product changes]]
+  K -.->|consume in order<br/>per partition| IDXR[Indexer service]
+  IDXR -->|lookup prices, stock| ENR[(Enrichment stores)]
+  IDXR -->|bulk API,<br/>external version| ALIAS{{Alias products}}
+  ALIAS --> V2[(Index products_v2)]
+  K -.->|replay from offset 0| REB[Rebuild job]
+  REB -.->|bulk load| V3[(Index products_v3)]
+```
+
+**Figure 16.13 — Hybrid retrieval (preview of Chapters 74–75).**
+
+```mermaid
+flowchart LR
+  Q([Query]) --> BM[BM25 over<br/>inverted index]
+  Q --> EMB[Embedding model]
+  EMB --> ANN[ANN search over<br/>vector index]
+  BM -->|top 100 by score| RRF[Reciprocal rank fusion]
+  ANN -->|top 100 by similarity| RRF
+  RRF -->|top 50| RER[Cross-encoder reranker]
+  RER --> OUT([Top 10 results])
+```
+
+## Chapter 17 — Data Structures and Algorithms for Scale
+
+**Figure 17.1 — Uniform hashing versus hash flooding.**
+
+```mermaid
+flowchart LR
+  subgraph Normal["Ordinary keys"]
+    K1([user:1]) --> H1[MurmurHash3]
+    K2([user:2]) --> H1
+    K3([user:3]) --> H1
+  end
+  H1 -->|h mod B = 17| B17[(Bucket 17)]
+  H1 -->|h mod B = 803| B803[(Bucket 803)]
+  H1 -->|h mod B = 412| B412[(Bucket 412)]
+  subgraph Flood["Attacker-chosen keys"]
+    A1([crafted key 1]) --> H2[Unkeyed hash]
+    A2([crafted key 2]) --> H2
+    A3([crafted key n]) --> H2
+  end
+  H2 -->|all collide| B5[(Bucket 5: chain of n keys)]
+  B5 --> CPU{{CPU cost grows as n squared}}
+```
+
+**Figure 17.2 — Inserting and querying a Bloom filter with k = 3.**
+
+```mermaid
+flowchart LR
+  I([insert alice]) --> HI["k = 3 hashes<br/>positions 2, 7, 13"]
+  HI -->|set bits| BA[("Bit array, m = 16<br/>1 at 2, 5, 7, 9, 13")]
+  Q1([query bob]) --> HQ1["positions 5, 9, 13"]
+  HQ1 -->|read bits| BA
+  BA --> D1{All k bits = 1?}
+  D1 -->|yes| MAYBE["Probably present<br/>confirm in database"]
+  Q2([query carol]) --> HQ2["positions 1, 7, 9"]
+  HQ2 -->|read bits| BA
+  D1 -->|no| NO["Definitely absent<br/>skip the lookup"]
+  MAYBE --> DB[(Authoritative store)]
+```
+
+**Figure 17.3 — Bloom filters on the read path of an LSM-tree storage engine.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant E as Storage engine
+  participant M as Memtable
+  participant F as Bloom filters in RAM
+  participant D as SSTables on disk
+  C->>E: GET user:42
+  E->>M: lookup user:42
+  M-->>E: not found
+  E->>F: test SSTable 1 to 10
+  F-->>E: 9 say absent, SSTable 7 says maybe
+  E->>D: read index block and data block of SSTable 7
+  D-->>E: row found
+  E-->>C: value
+```
+
+**Figure 17.4 — Inserting into a full cuckoo filter by relocation.**
+
+```mermaid
+flowchart LR
+  X([insert x]) --> FP["fingerprint fp_x<br/>i1 = 12, i2 = 12 XOR h of fp_x = 40"]
+  FP --> D1{Free slot in<br/>bucket 12 or 40?}
+  D1 -->|yes| ST[(Store fp_x)]
+  D1 -->|no| K1["Evict fp_y from bucket 40<br/>put fp_x in its slot"]
+  K1 --> K2["Move fp_y to its alternate:<br/>40 XOR h of fp_y = 7"]
+  K2 --> D2{Free slot<br/>in bucket 7?}
+  D2 -->|yes| ST
+  D2 -->|no, kick again| K1
+  K2 -.->|after 500 kicks| FULL{{Table full: resize or reject}}
+```
+
+**Figure 17.5 — The HyperLogLog update and estimate path.**
+
+```mermaid
+flowchart LR
+  X([item: user-81723]) --> H["64-bit hash"]
+  H --> SPLIT{"Split bits"}
+  SPLIT -->|first p bits| J["register index j<br/>0 to m - 1"]
+  SPLIT -->|remaining bits| R["rho = position<br/>of first 1-bit"]
+  J --> UPD["M j = max of M j and rho"]
+  R --> UPD
+  UPD --> REG[("m registers<br/>6 bits each")]
+  REG -->|harmonic mean| EST["E = alpha m^2 / sum 2^-M j"]
+  REG2[("Sketch from server 2")] -.->|register-wise max| REG
+  EST --> OUT([Estimated distinct count])
+```
+
+**Figure 17.6 — A Count-Min sketch with d = 3 rows.**
+
+```mermaid
+flowchart LR
+  X([update: /page/42 +1]) --> H1["h1 gives column 5"]
+  X --> H2["h2 gives column 1"]
+  X --> H3["h3 gives column 9"]
+  H1 -->|increment| R1[("Row 1: w counters")]
+  H2 -->|increment| R2[("Row 2: w counters")]
+  H3 -->|increment| R3[("Row 3: w counters")]
+  Q([query: /page/42]) -.->|read 3 counters| R1
+  Q -.->|read| R2
+  Q -.->|read| R3
+  R1 --> MIN["estimate = min of 3 counters"]
+  R2 --> MIN
+  R3 --> MIN
+```
+
+**Figure 17.7 — A distributed top-k pipeline.**
+
+```mermaid
+flowchart LR
+  E([Click events]) -->|produce| K[[Event log, 32 partitions]]
+  K -->|consume| W1["Worker 1: CMS + top-k heap"]
+  K -->|consume| W2["Worker 2: CMS + top-k heap"]
+  K -->|consume| W3["Worker n: CMS + top-k heap"]
+  W1 -.->|every 10 s: sketch + candidates| AGG["Aggregator: add sketches,<br/>re-rank union of candidates"]
+  W2 -.->|every 10 s| AGG
+  W3 -.->|every 10 s| AGG
+  AGG -->|write top 100| ST[(Trending store)]
+  API([Trending API]) -->|read| ST
+```
+
+**Figure 17.8 — A skip list with three levels; searching for 40.**
+
+```mermaid
+flowchart LR
+  subgraph L3["Level 3"]
+    H3[head] --> N30c[30] --> E3[end]
+  end
+  subgraph L2["Level 2"]
+    H2[head] --> N10b[10] --> N30b[30] --> N50b[50] --> E2[end]
+  end
+  subgraph L1["Level 1: every node"]
+    H1[head] --> N10[10] --> N20[20] --> N30[30] --> N40[40] --> N50[50] --> E1[end]
+  end
+  N30c -.->|down| N30b
+  N30b -.->|down| N30
+```
+
+**Figure 17.9 — A Merkle tree over four records and the inclusion proof for record C.**
+
+```mermaid
+flowchart TD
+  ROOT["Root = H of H_AB and H_CD"] --> HAB["H_AB = H of H_A and H_B"]
+  ROOT --> HCD["H_CD = H of H_C and H_D"]
+  HAB --> HA["H_A = H of record A"]
+  HAB --> HB["H_B = H of record B"]
+  HCD --> HC["H_C = H of record C"]
+  HCD --> HD["H_D = H of record D"]
+  HC --> RC[(Record C)]
+  HD -.->|proof item 1| HC
+  HAB -.->|proof item 2| HCD
+```
+
+**Figure 17.10 — Merkle-tree anti-entropy between two replicas.**
+
+```mermaid
+sequenceDiagram
+  participant A as Replica A
+  participant B as Replica B
+  A->>B: root hash for token range 0 to 2^20
+  B-->>A: mismatch, my children are X and Y
+  A->>A: left child equals X, right child differs from Y
+  A->>B: compare children of right subtree
+  B-->>A: hashes for next level
+  Note over A,B: repeat for about 20 levels, only along differing paths
+  A->>B: leaf 777777 differs
+  B-->>A: stream rows in leaf range 777777
+  A->>A: apply newer versions by timestamp
+```

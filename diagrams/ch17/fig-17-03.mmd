@@ -1,0 +1,15 @@
+%% Figure 17.3 — Bloom filters on the read path of an LSM-tree storage engine
+sequenceDiagram
+  participant C as Client
+  participant E as Storage engine
+  participant M as Memtable
+  participant F as Bloom filters in RAM
+  participant D as SSTables on disk
+  C->>E: GET user:42
+  E->>M: lookup user:42
+  M-->>E: not found
+  E->>F: test SSTable 1 to 10
+  F-->>E: 9 say absent, SSTable 7 says maybe
+  E->>D: read index block and data block of SSTable 7
+  D-->>E: row found
+  E-->>C: value
