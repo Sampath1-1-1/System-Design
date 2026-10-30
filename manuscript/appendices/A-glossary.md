@@ -4,6 +4,8 @@
 
 ## A
 
+**Access-control model** — A rule system that answers "may subject *S* perform action *A* on resource *R* (in context *C*)?" The three models in common use differ in what the rules are written in terms of: **roles** (RBAC), **attributes** (ABAC) or **relationships** (ReBAC). *(§8.12.1)*
+
 **Active recall** — Deliberately retrieving information from memory without looking at the source, for example by answering a question, drawing a diagram or explaining aloud. Its measured benefit for later retention is called the **testing effect**. *(§3.4.2)*
 
 **Address space** — The range of memory addresses a process can use. On Linux x86-64 with 4-level page tables, user space spans 2⁴⁷ bytes = 128 TiB of *virtual* addresses; the kernel occupies the upper half and is not accessible from user mode. *(§6.3.2)*
@@ -21,6 +23,8 @@
 **Audit log** — An append-only record of security-relevant events — who (actor), did what (action), to which resource, when, from where, and with what result — retained so that actions can be investigated and attributed. A log is **tamper-evident** if any modification, deletion or reordering of past entries can be detected. *(§10.12)*
 
 **Authenticated encryption with associated data (AEAD)** — A symmetric scheme that provides confidentiality for the plaintext *and* integrity for both the ciphertext and optional unencrypted **associated data** (AAD), producing an authentication **tag** that decryption checks before releasing any plaintext. AES-GCM and ChaCha20-Poly1305 are AEAD schemes. *(§10.4.2)*
+
+**Authentication (AuthN)** — Verifying *who* a client is. **Authorization (AuthZ)** is deciding *what* that verified identity may do (§8.12). AuthN failures return `401`; AuthZ failures return `403`. *(§8.11)*
 
 **Availability** — The fraction of time (or of requests) for which a system serves correctly: $A = \text{uptime}/(\text{uptime} + \text{downtime})$, or, request-based, $A = \text{successful requests} / \text{valid requests}$. It is commonly quoted in "nines": 99.9% is "three nines". *(§4.14.1)*
 
@@ -68,6 +72,8 @@
 
 **Congestion window (cwnd)** — A sender-side limit, in bytes or segments, on unacknowledged data in flight, based on the sender's estimate of what the network path can absorb. The sender may have at most $\min(\text{cwnd}, \text{rwnd})$ bytes outstanding. *(§7.7.7)*
 
+**Connection gateway** — A dedicated, thin service tier whose only job is to terminate long-lived client connections (WebSocket, SSE, long polling), authenticate them, track which user and topics each connection belongs to, and move messages between those connections and back-end services through a messaging layer. It contains no business logic. *(§9.9.1)*
+
 **Consistent hashing** — A way of assigning keys to nodes so that, when a node is added or removed, only about $K/N$ of the $K$ keys change owner, where $N$ is the number of nodes. Both keys and nodes are hashed onto the same circular number space (the **ring**). Each key belongs to the first node found by moving clockwise from the key's position [Karger et al. 1997]. *(§3.3.2)*
 
 **Context diagram** — A diagram that shows the whole system as a single box, surrounded by the people (actors) and external systems that interact with it, with each interaction labeled. Context diagrams come from structured analysis [DeMarco 1979] and are Level 1 of the C4 model [Brown C4]. *(§2.4.1)*
@@ -112,11 +118,15 @@
 
 **DRAM (dynamic random-access memory)** — The technology used for main memory. Each bit is stored as charge in a tiny capacitor that leaks and must be **refreshed** every few tens of milliseconds. DRAM is **volatile**: its contents are lost when power is removed. *(§5.5.1)*
 
+**Durability** — The probability that data, once acknowledged as written, is not lost over a given period (usually a year). It is quoted in nines like availability: "eleven nines of durability" means an annual loss probability of $10^{-11}$ per object. *(§4.16.1)*
+
 ## E
 
 **Encapsulation** — The process by which each layer of the stack prepends its own header (and sometimes appends a trailer) to the data unit handed down by the layer above, treating that data unit as an opaque payload. **Decapsulation** is the reverse at the receiver. *(§7.3.1)*
 
 **Envelope encryption** — Encrypting data with a **data-encryption key (DEK)** generated for that data, then encrypting ("wrapping") the DEK with a KEK held in a KMS, and storing the wrapped DEK alongside the ciphertext [AWS Docs: KMS concepts]. *(§10.9.2)*
+
+**Event loop** — A single thread that repeatedly waits for events (ready sockets, expired timers, completed tasks) using an I/O multiplexing call, and dispatches each event to a short, non-blocking handler. *(§6.13.4)*
 
 **Expected value** — The probability-weighted average outcome of a random quantity $X$: $E[X] = \sum_i x_i \, P(X = x_i)$. It is the long-run average over many repetitions. *(§4.6.3)*
 
@@ -144,6 +154,8 @@
 
 **High-level design (HLD)** — A description of a system as a set of major components (services, data stores, queues, caches, external dependencies), their responsibilities, the interfaces and protocols between them, data flows, and deployment topology — at a level of detail where each component is a box whose internals are not yet specified. *(§1.5.1)*
 
+**HTTP cookie** — A small name–value pair that a server asks the browser to store, via the `Set-Cookie` response header, and that the browser automatically returns in the `Cookie` request header on later requests to matching URLs [RFC 6265]. *(§8.10.1)*
+
 ## I
 
 **Idempotent method** — A method for which the intended effect on the server of sending the same request $N > 0$ times is the same as sending it once [RFC 9110 §9.2.2]. The *response* may differ (a second `DELETE` may return 404); the *state* does not. *(§8.6.3)*
@@ -157,6 +169,10 @@
 **IOPS** — Input/output operations per second: the number of independent read or write requests a device completes per second, quoted for a stated request size (usually 4 KiB) and **queue depth** (number of requests outstanding at once). *(§5.6.5)*
 
 **IP address** — A numeric identifier assigned to a network interface that the Internet Protocol uses to deliver packets. An **IPv4** address is 32 bits, written as four decimal octets (`203.0.113.25`) [RFC 791]. An **IPv6** address is 128 bits, written as eight groups of four hexadecimal digits separated by colons (`2001:db8:0:1::25`) [RFC 8200]. *(§7.4.1)*
+
+## J
+
+**JSON Web Token (JWT)** — A compact, URL-safe string representing a set of **claims** (statements about a subject) as a JSON object, digitally signed (JWS) or encrypted (JWE) so its integrity can be verified [RFC 7519]. This section covers the signed form, which is by far the most common. *(§8.13.1)*
 
 ## K
 
@@ -202,6 +218,10 @@
 
 ## O
 
+**OAuth 2.0** — An authorization framework that lets a third-party application obtain *limited* access to an HTTP service on behalf of a resource owner, by obtaining an **access token** from an authorization server instead of using the owner's credentials [RFC 6749]. *(§8.14.1)*
+
+**OpenAPI Specification (OAS)** — A vendor-neutral, machine-readable format (YAML or JSON) for describing HTTP APIs: paths, operations, parameters, request and response bodies (as JSON Schema), status codes and security schemes [OpenAPI Specification]. It grew out of Swagger and is maintained by the OpenAPI Initiative; version 3.1 aligned its schemas with JSON Schema, and version 3.2.0 was released in September 2025. *(§8.16)*
+
 **Operating system (OS)** — The software layer that manages a computer's hardware (CPU, memory, storage, network) and provides running programs with safe, shared, abstract access to it. The privileged core of the OS that runs with full hardware access is the **kernel**. *(§6.3.1)*
 
 **Order of magnitude** — A factor of ten. Two quantities differ by *k* orders of magnitude when their ratio is about $10^k$. Reasoning in orders of magnitude means estimating only the *power of ten* of a quantity (is it 10, 1,000 or 1,000,000 requests per second?) because that, not the exact value, decides the architecture. *(§2.10.1)*
@@ -217,6 +237,8 @@
 **Percentile** — The $q$-th percentile of a set of measurements is the value at or below which $q$% of the measurements fall. Latency percentiles are written **p50** (the median), **p95**, **p99** and **p99.9** (also written p999): the 50th, 95th, 99th and 99.9th percentiles. *(§4.8.1)*
 
 **Percentile latency (p50, p95, p99, p99.9)** — The latency value below which the given percentage of requests fall. If p99 latency is 300 ms, 99% of requests completed in 300 ms or less and 1% took longer. p50 is the median. *(§1.7.1)*
+
+**PKCE (Proof Key for Code Exchange, "pixy")** — An extension in which the client creates a random secret, the **code verifier**, sends only its SHA-256 hash, the **code challenge**, with the authorization request, and must present the verifier when redeeming the authorization code. An attacker who intercepts the code cannot redeem it without the verifier [RFC 7636]. *(§8.14.3)*
 
 **Priority inversion** — A situation in which a high-priority thread is blocked waiting for a lock held by a low-priority thread, while a medium-priority thread, which needs no lock, preempts the low-priority one, so the high-priority thread effectively runs at the lowest priority. *(§6.11.5)*
 
@@ -244,6 +266,8 @@
 
 **Register** — A tiny, extremely fast storage slot inside a core, typically 64 bits wide for general-purpose registers. x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A (AArch64) exposes 31. Reading a register costs essentially nothing beyond the instruction that uses it. *(§5.3.2)*
 
+**Reliability, MTBF, MTTR and failure rate** — **Reliability** $R(t)$ is the probability that a component operates without failure for a period of length $t$. The **mean time between failures (MTBF)** is the average operating time from the end of one repair to the next failure (for non-repairable parts the same quantity is called **MTTF**, mean time to failure). The **mean time to repair (MTTR)** is the average time from failure to restored service, including detection, diagnosis and repair. The **failure rate** $\lambda$ is the average number of failures per unit of operating time. *(§4.15.1)*
+
 **Remote procedure call (RPC)** — A mechanism that lets a program call a function in another process, usually on another machine, with syntax that resembles a local function call. Generated **stubs** serialize the arguments, send them over the network, and deserialize the result [Birrell and Nelson 1984]. *(§8.8.1)*
 
 **Request–response lifecycle** — The complete sequence of network and processing steps between a client issuing a request and receiving the full response, including name resolution, connection establishment, routing through intermediaries, application processing, data access and the return path. *(§8.5.1)*
@@ -269,6 +293,8 @@
 **Server-Sent Events (SSE)** — A W3C/WHATWG-standardized mechanism in which a client opens one long-lived HTTP request and the server streams a sequence of UTF-8 text events down the response body using the `text/event-stream` format; browsers expose it through the `EventSource` API, which parses events and reconnects automatically, resuming from the last received event ID [WHATWG HTML §9.2]. *(§9.5.1)*
 
 **Server-side rendering (SSR)** — The server produces complete HTML for each request; the browser displays it immediately and then loads JavaScript to make it interactive (**hydration**). *(§8.4.2)*
+
+**Session** — Server-recognized state that links a series of requests to one authenticated user (or anonymous visitor) over time, typically identified by a cookie. *(§8.10.2)*
 
 **Set-associative cache** — A cache divided into $S$ sets of $W$ slots (**ways**). A line at a given address may be stored in any of the $W$ ways of exactly one set. $W = 1$ is a **direct-mapped** cache; a cache with a single set holding every line is **fully associative**. *(§5.4.4)*
 

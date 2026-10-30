@@ -1,0 +1,13 @@
+%% Figure 7.9 — WebSocket opening handshake and framing
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant S as Server
+    B->>S: GET /chat HTTP/1.1, Upgrade websocket, Connection Upgrade
+    Note right of B: Sec-WebSocket-Key dGhlIHNhbXBsZSBub25jZQ== and Version 13
+    S-->>B: HTTP/1.1 101 Switching Protocols
+    Note left of S: Sec-WebSocket-Accept s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+    B->>S: masked text frame - hello
+    S-->>B: text frame - welcome
+    S-->>B: text frame - server push, unrequested
+    B->>S: ping or close frame

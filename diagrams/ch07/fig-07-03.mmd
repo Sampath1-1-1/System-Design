@@ -1,0 +1,20 @@
+%% Figure 7.3 — DNS resolution of www.example.com with an empty cache
+sequenceDiagram
+    autonumber
+    participant App as Browser
+    participant Stub as OS stub resolver
+    participant Rec as Recursive resolver
+    participant Root as Root server
+    participant TLD as .com TLD server
+    participant Auth as example.com authoritative
+    App->>Stub: getaddrinfo www.example.com
+    Stub->>Rec: recursive query A www.example.com
+    Rec->>Root: iterative query A www.example.com
+    Root-->>Rec: referral - NS records for .com plus glue
+    Rec->>TLD: iterative query A www.example.com
+    TLD-->>Rec: referral - NS records for example.com plus glue
+    Rec->>Auth: iterative query A www.example.com
+    Auth-->>Rec: answer A 192.0.2.10 TTL 300
+    Rec-->>Stub: answer A 192.0.2.10 TTL 300
+    Stub-->>App: address list
+    Note over Rec: caches every record for its TTL

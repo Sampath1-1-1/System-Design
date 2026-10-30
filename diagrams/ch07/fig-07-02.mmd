@@ -1,0 +1,11 @@
+%% Figure 7.2 — BGP routing between autonomous systems, with an anycast prefix announced from two sites
+flowchart LR
+  U1([User in Paris]) --> ISP1[ISP AS 64500]
+  U2([User in Tokyo]) --> ISP2[ISP AS 64501]
+  ISP1 -->|BGP peering| T1[Transit AS 64510]
+  ISP2 -->|BGP peering| T2[Transit AS 64511]
+  T1 --- T2
+  T1 -->|best path| E1["Edge site Frankfurt<br/>announces 198.51.100.0/24"]
+  T2 -->|best path| E2["Edge site Osaka<br/>announces 198.51.100.0/24"]
+  E1 --> O[(Origin datacenter)]
+  E2 --> O

@@ -1,0 +1,18 @@
+%% Figure 10.5 — Registration and login with salted Argon2id and a pepper
+sequenceDiagram
+  participant U as User
+  participant A as Auth service
+  participant K as KMS or HSM
+  participant D as Credential DB
+  U->>A: Register over TLS with username and password
+  A->>A: Reject if in breached list or too short
+  A->>K: HMAC password with pepper key
+  K-->>A: Peppered value
+  A->>A: Generate 16-byte salt and run Argon2id
+  A->>D: Store algorithm, params, salt, hash
+  U->>A: Login with username and password
+  A->>D: Fetch algorithm, params, salt, hash
+  A->>K: HMAC password with pepper key
+  K-->>A: Peppered value
+  A->>A: Recompute Argon2id and constant-time compare
+  A-->>U: Session token on success, generic error on failure

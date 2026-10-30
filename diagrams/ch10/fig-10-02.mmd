@@ -1,0 +1,13 @@
+%% Figure 10.2 — Simplified TLS 1.3 handshake: ephemeral key exchange plus signature
+sequenceDiagram
+  participant C as Client
+  participant S as Server
+  C->>S: ClientHello with ephemeral public key aG
+  S->>C: ServerHello with ephemeral public key bG
+  Note over C,S: Both compute shared secret abG and derive keys with HKDF
+  S->>C: Certificate chain, encrypted
+  S->>C: CertificateVerify, signature over transcript
+  S->>C: Finished, MAC over transcript
+  C->>C: Validate chain to trusted root and verify signature
+  C->>S: Finished, MAC over transcript
+  C->>S: Application data under AES-GCM session keys

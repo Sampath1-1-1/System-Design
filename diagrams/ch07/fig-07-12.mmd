@@ -1,0 +1,29 @@
+%% Figure 7.12 — A leaf–spine fabric with ECMP
+flowchart TB
+  subgraph Spine["Spine layer"]
+    SP1[Spine 1]
+    SP2[Spine 2]
+    SP3[Spine 3]
+    SP4[Spine 4]
+  end
+  subgraph Leaf["Leaf layer - top of rack"]
+    L1[Leaf 1]
+    L2[Leaf 2]
+    L3[Leaf 3]
+  end
+  L1 --- SP1
+  L1 --- SP2
+  L1 --- SP3
+  L1 --- SP4
+  L2 --- SP1
+  L2 --- SP2
+  L2 --- SP3
+  L2 --- SP4
+  L3 --- SP1
+  L3 --- SP2
+  L3 --- SP3
+  L3 --- SP4
+  R1([Rack 1 servers]) --- L1
+  R2([Rack 2 servers]) --- L2
+  R3([Rack 3 servers]) --- L3
+  L3 ---|uplink| EDGE{{Border routers to WAN}}

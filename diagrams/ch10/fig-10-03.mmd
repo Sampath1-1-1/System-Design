@@ -1,0 +1,13 @@
+%% Figure 10.3 — HMAC request signing with replay protection
+sequenceDiagram
+  participant Cl as Client
+  participant GW as API service
+  participant NS as Nonce store
+  Cl->>Cl: Build canonical request: method, path, timestamp, nonce, body hash
+  Cl->>Cl: signature = HMAC-SHA256 of canonical request with shared key
+  Cl->>GW: HTTPS request plus key ID, timestamp, nonce, signature
+  GW->>GW: Look up key by key ID and check timestamp within 5 minutes
+  GW->>GW: Recompute HMAC and compare in constant time
+  GW->>NS: Insert nonce if absent, TTL 10 minutes
+  NS-->>GW: Inserted or already present
+  GW-->>Cl: 200 if new nonce, 401 if bad signature or replay

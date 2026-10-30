@@ -547,6 +547,44 @@ flowchart LR
   R1 -->|replicate| R3
 ```
 
+**Figure 4.7 — The up–down cycle of a repairable component.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Up
+  Up --> Down : failure at rate 1/MTBF
+  Down --> Up : repair at rate 1/MTTR
+```
+
+**Figure 4.8 — The replica-loss race for three-way replication.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> ThreeCopies
+  ThreeCopies --> TwoCopies : any of 3 fails, rate 3λ
+  TwoCopies --> ThreeCopies : re-replicated within T
+  TwoCopies --> OneCopy : any of 2 fails, rate 2λ
+  OneCopy --> TwoCopies : re-replicated within T
+  OneCopy --> Lost : last copy fails, rate λ
+  Lost --> [*]
+```
+
+**Figure 4.9 — Six recurring quantitative relationships.**
+
+```mermaid
+flowchart LR
+  U[Utilization] -->|raises| TP[Throughput]
+  U -->|raises sharply| LAT[Latency]
+  B[Batch size] -->|raises| TP
+  B -->|raises| LAT
+  REP[Replica count] -->|raises| DUR[Durability]
+  REP -->|raises| COST[Cost]
+  MTTR[Repair time] -->|lowers| AV[Availability]
+  MTTR -->|lowers| DUR
+  ACC[Accuracy target] -->|raises| LAT
+  ACC -->|raises| COST
+```
+
 ## Chapter 5 — Computer Architecture
 
 **Figure 5.1 — Inside a single-socket server.**
@@ -856,6 +894,52 @@ sequenceDiagram
   Note over L: L cannot run, so cannot unlock
   W-->>H: H missed its deadline
   W-->>W: declare fault, reset whole spacecraft
+```
+
+**Figure 6.10 — An event loop on epoll.**
+
+```mermaid
+flowchart TB
+  S([Start]) --> REG[Register listening socket<br/>with epoll]
+  REG --> WAIT[epoll_wait: sleep until<br/>a socket is ready or timer due]
+  WAIT --> READY{Which event?}
+  READY -->|listening socket| ACC[accept new connection<br/>register it with epoll]
+  READY -->|client readable| RD[read bytes, parse,<br/>compute small response]
+  READY -->|client writable| WR[write pending bytes]
+  READY -->|timer due| TM[run timer callback]
+  RD --> SLOW{Slow or blocking<br/>work needed?}
+  SLOW -->|no| WR
+  SLOW -->|yes| POOL[[Worker thread pool]]
+  POOL -.->|completion event| WAIT
+  ACC --> WAIT
+  WR --> WAIT
+  TM --> WAIT
+```
+
+**Figure 6.11 — io_uring submission and completion rings.**
+
+```mermaid
+sequenceDiagram
+  participant App as Application thread
+  participant SQ as Submission ring, shared memory
+  participant K as Kernel
+  participant CQ as Completion ring, shared memory
+  App->>SQ: write 32 request entries, no syscall
+  App->>K: io_uring_enter once, submit 32
+  K->>SQ: consume entries
+  K-->>CQ: post completions as I/O finishes
+  App->>CQ: read completion entries, no syscall
+```
+
+**Figure 6.12 — The write path from application to stable storage.**
+
+```mermaid
+flowchart LR
+  APP[Application] -->|write| PC[Page cache<br/>dirty pages in RAM]
+  PC -.->|background writeback<br/>about 30 s later| DC[Drive write cache<br/>often volatile]
+  APP -->|fsync| PC
+  PC -->|fsync forces write<br/>plus cache flush| DC
+  DC --> MEDIA[(Stable media:<br/>NAND flash or platter)]
 ```
 
 ## Chapter 7 — Networking Fundamentals
@@ -1283,6 +1367,98 @@ flowchart LR
   Q -.-> C2
 ```
 
+**Figure 8.8 — Server-side session lookup.**
+
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant A as App server
+  participant S as Session store
+  participant D as Database
+  B->>A: POST /login with username and password
+  A->>D: Fetch user and password hash
+  D-->>A: User row
+  A->>S: SET sess:8f2c with uid 42, TTL 3600 s
+  A-->>B: 200 and Set-Cookie sid=8f2c, Secure, HttpOnly
+  B->>A: GET /orders with Cookie sid=8f2c
+  A->>S: GET sess:8f2c
+  S-->>A: uid 42, roles
+  A-->>B: 200 with the user's orders
+  B->>A: POST /logout
+  A->>S: DEL sess:8f2c
+```
+
+**Figure 8.9 — Relationship graph for a Zanzibar-style check.**
+
+```mermaid
+flowchart LR
+  carol([user carol]) -->|member| sre[group sre]
+  sre -->|member| eng[group eng]
+  bob([user bob]) -->|member| eng
+  eng -->|viewer| folder[folder eng]
+  folder -->|parent of| doc[doc readme]
+  alice([user alice]) -->|owner| doc
+  doc --> D{"check: carol viewer of doc?"}
+```
+
+**Figure 8.10 — JWT validation pipeline.**
+
+```mermaid
+flowchart TD
+  T([Bearer token]) --> P{"Three base64url parts?"}
+  P -->|no| R1["401 invalid_token"]
+  P -->|yes| A{"alg in allow-list?"}
+  A -->|no| R1
+  A -->|yes| K{"kid found in JWKS cache?"}
+  K -->|no| F[Refresh JWKS from issuer]
+  F --> K2{"kid found now?"}
+  K2 -->|no| R1
+  K2 -->|yes| S{"Signature valid?"}
+  K -->|yes| S
+  S -->|no| R1
+  S -->|yes| C{"exp, nbf, iss, aud OK?"}
+  C -->|no| R1
+  C -->|yes| Z{"Required scope present?"}
+  Z -->|no| R2["403 insufficient_scope"]
+  Z -->|yes| OK[Call handler with claims]
+```
+
+**Figure 8.11 — OAuth 2.0 authorization code flow with PKCE.**
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as User
+  participant C as Client app
+  participant AS as Authorization server
+  participant RS as Resource server API
+  U->>C: Click Connect photos
+  C->>C: Make code_verifier and S256 code_challenge, random state
+  C->>AS: Redirect browser to /authorize with client_id, redirect_uri, scope, state, code_challenge
+  AS->>U: Login page and consent screen
+  U->>AS: Authenticate and approve scope photos.read
+  AS->>C: Redirect to redirect_uri with code and state
+  C->>C: Check state matches
+  C->>AS: POST /token with code, redirect_uri, code_verifier
+  AS->>AS: Verify SHA-256 of verifier equals stored challenge
+  AS-->>C: access_token, refresh_token, expires_in
+  C->>RS: GET /photos with Authorization Bearer token
+  RS->>RS: Validate token, check scope
+  RS-->>C: 200 photos
+```
+
+**Figure 8.12 — Lifecycle of an API version.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Preview
+  Preview --> Stable: contract frozen
+  Stable --> Deprecated: successor GA, Deprecation header sent
+  Deprecated --> Sunset: Sunset date reached
+  Sunset --> [*]: returns 410 Gone
+  Deprecated --> Stable: deprecation withdrawn
+```
+
 ## Chapter 9 — Real-Time Communication
 
 **Figure 9.1 — Short polling.**
@@ -1456,6 +1632,47 @@ flowchart LR
     APNS -.->|410 Unregistered| NS
     FCM -.->|404 UNREGISTERED| NS
     APP -->|7 on open, sync from cursor| API
+```
+
+**Figure 9.9 — Architecture of a connection gateway fleet.**
+
+```mermaid
+flowchart LR
+    C1([Web client]) -->|wss| LB
+    C2([Mobile client]) -->|wss| LB
+    LB["L4 Load Balancer<br/>least connections"] --> G1[Gateway 1]
+    LB --> G2[Gateway 2]
+    LB --> G3[Gateway N]
+    G1 -->|validate token| AUTH[Auth Service]
+    G1 -->|set user to gateway, TTL| REG[(Session and Presence<br/>Redis)]
+    G2 --> REG
+    G3 --> REG
+    BUS[["Pub/Sub Backplane<br/>Redis sharded pub/sub"]] -.->|room and user topics| G1
+    BUS -.-> G2
+    BUS -.-> G3
+    G1 -->|client commands, gRPC| CHAT[Chat Service]
+    CHAT --> MSG[(Message Store)]
+    CHAT -.->|publish room 7| BUS
+    CHAT -.->|recipient offline| PUSH[Push Service]
+    PUSH -.-> PROV{{APNs and FCM}}
+```
+
+**Figure 9.10 — Decision flowchart for choosing a real-time technique.**
+
+```mermaid
+flowchart TD
+    A{App in foreground<br/>with a live connection?} -->|No| PUSH[Mobile or web push<br/>plus sync on open]
+    A -->|Yes| B{Audio, video or<br/>peer-to-peer data?}
+    B -->|Yes| RTC[WebRTC<br/>plus SFU for groups]
+    B -->|No| C{Is staleness of<br/>T seconds acceptable<br/>and N/T affordable?}
+    C -->|Yes| SP[Short polling<br/>with jitter and caching]
+    C -->|No| D{Does the client send<br/>frequent low-latency<br/>messages too?}
+    D -->|No| E{Do streaming responses<br/>survive your network path?}
+    E -->|Yes| SSE[Server-Sent Events]
+    E -->|No| LP[Long polling]
+    D -->|Yes| F{Are WebSockets allowed<br/>end to end?}
+    F -->|Yes| WS[WebSockets over wss]
+    F -->|No| LP
 ```
 
 ## Chapter 10 — Security Fundamentals for System Designers

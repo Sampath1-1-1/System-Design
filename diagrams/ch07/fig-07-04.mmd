@@ -1,0 +1,14 @@
+%% Figure 7.4 — TCP three-way handshake followed by the first request
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant S as Server
+    Note over S: LISTEN on port 443
+    C->>S: SYN seq=x, options MSS, WScale, SACK-permitted
+    Note over C: SYN_SENT
+    S-->>C: SYN-ACK seq=y ack=x+1, server options
+    Note over S: SYN_RECEIVED, half-open queue
+    C->>S: ACK seq=x+1 ack=y+1
+    Note over C,S: ESTABLISHED after 1 RTT for the client
+    C->>S: data - first request bytes
+    S-->>C: data - response bytes, ack

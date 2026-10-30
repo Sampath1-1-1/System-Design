@@ -1,0 +1,16 @@
+%% Figure 7.5 — TCP four-way close and the TIME_WAIT state
+sequenceDiagram
+    autonumber
+    participant A as Active closer
+    participant P as Passive closer
+    A->>P: FIN seq=u
+    Note over A: FIN_WAIT_1
+    P-->>A: ACK ack=u+1
+    Note over P: CLOSE_WAIT - app may still send
+    Note over A: FIN_WAIT_2
+    P->>A: FIN seq=v
+    Note over P: LAST_ACK
+    A-->>P: ACK ack=v+1
+    Note over A: TIME_WAIT for 2 x MSL
+    Note over P: CLOSED
+    Note over A: CLOSED after timer

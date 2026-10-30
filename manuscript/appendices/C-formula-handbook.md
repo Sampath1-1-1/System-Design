@@ -556,6 +556,89 @@ $$A_{\text{series}} = \prod_{i=1}^{n} A_i \qquad A_{\text{parallel}} = 1 - \prod
 | $A$ | Availability of each identical component (k-of-n case) | dimensionless |
 :::
 
+*From §4.15.1*
+
+::: formula
+**Reliability and availability from MTBF and MTTR**
+
+$$\lambda = \frac{1}{\text{MTBF}} \qquad R(t) = e^{-\lambda t} \qquad A = \frac{\text{MTBF}}{\text{MTBF} + \text{MTTR}} \qquad \text{AFR} = 1 - e^{-8760/\text{MTTF}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| MTBF | Mean operating time between failures | hours |
+| MTTR | Mean time to repair (detect + diagnose + fix + restore) | hours |
+| MTTF | Mean time to failure of a non-repairable part | hours |
+| $\lambda$ | Constant failure rate | failures/hour |
+| $t$ | Mission time: the period we need it to survive | hours |
+| $R(t)$ | Probability of no failure during $t$ | dimensionless |
+| $A$ | Steady-state availability | dimensionless |
+| AFR | Annualized failure rate: probability a part fails within a year (8,760 h) | dimensionless (often %) |
+:::
+
+*From §4.16.1*
+
+::: formula
+**Approximate annual probability of losing an $n$-way replicated item**
+
+$$P_{\text{loss/yr}} \approx n!\;\lambda^{n}\;T^{\,n-1} \times H \qquad \text{valid when } \lambda T \ll 1$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of replicas | count |
+| $\lambda$ | Per-replica failure rate (AFR / 8,760 for small AFR) | failures/hour |
+| $T$ | Mean time to detect and re-replicate a lost copy | hours |
+| $H$ | Hours per year (8,760) | hours/year |
+| $P_{\text{loss/yr}}$ | Annual probability that all $n$ replicas are lost | dimensionless |
+:::
+
+*From §4.18.4*
+
+::: formula
+**Standard error of a sample mean**
+
+$$\text{SE} = \frac{\sigma}{\sqrt{n}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\sigma$ | Standard deviation of the quantity being measured | units of the quantity |
+| $n$ | Number of independent samples | count |
+| SE | Typical error of the estimated mean | units of the quantity |
+:::
+
+*From §4.18.5*
+
+::: formula
+**Compute-bound token throughput**
+
+$$X_{\text{tokens}} = \frac{\text{MFU} \times F_{\text{peak}}}{2P}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $F_{\text{peak}}$ | Peak accelerator throughput at the precision used | FLOP/s |
+| MFU | Model FLOPs utilization | dimensionless (0–1) |
+| $P$ | Model parameters | count |
+| $2P$ | Forward-pass FLOPs per token (approximation) | FLOP/token |
+| $X_{\text{tokens}}$ | Tokens processed per second per accelerator | tokens/s |
+:::
+
+*From §4.18.6*
+
+::: formula
+**Batching model**
+
+$$T(B) = t_0 + B\,t_1 \qquad X(B) = \frac{B}{t_0 + B\,t_1} \qquad W_{\text{fill}} \approx \frac{B - 1}{2\lambda}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $B$ | Batch size | items |
+| $t_0$ | Fixed cost per batch | seconds |
+| $t_1$ | Marginal cost per item | seconds/item |
+| $T(B)$ | Time to process one batch | seconds |
+| $X(B)$ | Throughput | items/second |
+| $\lambda$ | Arrival rate of items | items/second |
+| $W_{\text{fill}}$ | Average time an item waits for its batch to fill | seconds |
+:::
+
 ## Chapter 5 — Computer Architecture
 
 *From §5.3.2*
@@ -790,6 +873,52 @@ $$\text{EAT} = (1 - p) \times t_{\text{mem}} + p \times t_{\text{fault}}$$
 | $p$ | Probability that an access causes a major page fault | dimensionless (0–1) |
 | $t_{\text{mem}}$ | Time for an access with no fault | ns |
 | $t_{\text{fault}}$ | Time to service a major fault, including the disk read | ns |
+:::
+
+*From §6.14.3*
+
+::: formula
+**Group-commit throughput**
+
+$$X = \frac{B}{t_{\text{fsync}}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $X$ | Maximum durable commits per second on one log | commits/s |
+| $B$ | Commits made durable by one `fsync` (batch size) | commits |
+| $t_{\text{fsync}}$ | Latency of one `fsync` | s |
+:::
+
+*From §6.15.6*
+
+::: formula
+**Memory for concurrent connections**
+
+$$M_{\text{total}} = N \times (m_{\text{unit}} + m_{\text{conn}})$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M_{\text{total}}$ | Memory needed for concurrency overhead | bytes |
+| $N$ | Concurrent connections (or in-flight requests) | connections |
+| $m_{\text{unit}}$ | Resident memory per concurrency unit (thread stack + kernel task, or coroutine) | bytes |
+| $m_{\text{conn}}$ | Per-connection buffers (socket buffers, TLS state, request object) | bytes |
+:::
+
+*From §6.15.6*
+
+::: formula
+**Thread-pool sizing**
+
+$$N_{\text{threads}} = \lambda \times W \qquad \text{and, for mixed CPU/I/O work,} \qquad N_{\text{threads}} \approx N_{\text{cpu}} \times U \times \left(1 + \frac{T_{\text{wait}}}{T_{\text{cpu}}}\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N_{\text{threads}}$ | Threads needed to sustain the load | threads |
+| $\lambda$ | Request arrival rate | requests/s |
+| $W$ | Time a request occupies a thread | s |
+| $N_{\text{cpu}}$ | Available cores | cores |
+| $U$ | Target CPU utilization | dimensionless (0–1) |
+| $T_{\text{wait}}$, $T_{\text{cpu}}$ | Per-request time spent waiting and computing | ms |
 :::
 
 ## Chapter 7 — Networking Fundamentals
@@ -1070,6 +1199,53 @@ $$H = 2 + L_{\text{ext}} + 4m, \qquad L_{\text{ext}} = \begin{cases} 0 & n \le 1
 |---|---|---|
 | $N$ | Participants in the call | participants |
 | $b$ | Bitrate of one participant's stream | Mbit/s |
+:::
+
+*From §9.9.2*
+
+::: formula
+**Gateway fleet sizing**
+
+$$n_{\text{conn,max}} = \min\left(\frac{f \cdot M}{m},\; c_{\text{blast}}\right) \qquad S = Z \cdot \left\lceil \frac{C}{(Z - 1)\, n_{\text{conn,max}}} \right\rceil$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M$ | RAM per gateway server | bytes |
+| $f$ | Fraction of RAM budgeted for connections | dimensionless |
+| $m$ | Memory per connection | bytes/connection |
+| $c_{\text{blast}}$ | Maximum connections you accept losing in one server failure | connections |
+| $n_{\text{conn,max}}$ | Design ceiling of connections per server | connections |
+| $C$ | Peak concurrent connections | connections |
+| $Z$ | Availability zones; the fleet must survive loss of one | zones |
+| $S$ | Total gateway servers | servers |
+:::
+
+*From §9.9.3*
+
+::: formula
+**Fan-out load**
+
+$$D = \mu \times \bar{r}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $D$ | Message deliveries written to sockets | deliveries/second |
+| $\mu$ | Messages published | messages/second |
+| $\bar{r}$ | Average number of *online* recipients per message | recipients/message |
+:::
+
+*From §9.9.6*
+
+::: formula
+**Reconnect arrival rate with uniform jitter**
+
+$$\lambda_{\text{reconnect}} \approx \frac{n_{\text{lost}}}{W}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda_{\text{reconnect}}$ | Peak reconnect (handshake) rate | connections/second |
+| $n_{\text{lost}}$ | Connections dropped by the failure | connections |
+| $W$ | Width of the random delay window for the first reconnect attempt | seconds |
 :::
 
 ## Chapter 10 — Security Fundamentals for System Designers

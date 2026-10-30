@@ -1,0 +1,9 @@
+%% Figure 7.6 — Loss-based TCP congestion control states (Reno-style)
+stateDiagram-v2
+    [*] --> SlowStart
+    SlowStart --> CongestionAvoidance: cwnd reaches ssthresh
+    SlowStart --> FastRecovery: 3 duplicate ACKs
+    CongestionAvoidance --> FastRecovery: 3 duplicate ACKs, halve cwnd
+    FastRecovery --> CongestionAvoidance: lost data acknowledged
+    CongestionAvoidance --> SlowStart: RTO timeout, cwnd = 1
+    FastRecovery --> SlowStart: RTO timeout, cwnd = 1

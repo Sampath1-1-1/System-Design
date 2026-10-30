@@ -1,0 +1,14 @@
+%% Figure 7.10 — Forward proxy versus reverse proxy
+flowchart LR
+  subgraph Corp["Client side network"]
+    C1([Employee laptop]) -->|HTTP CONNECT| FP[Forward proxy]
+    C2([Employee laptop]) -->|HTTP CONNECT| FP
+  end
+  FP -->|HTTPS| INET{{Internet sites}}
+  U([Internet user]) -->|HTTPS| RP["Reverse proxy<br/>TLS termination, routing"]
+  subgraph DC["Server side network"]
+    RP -->|HTTP or gRPC| S1[App server 1]
+    RP -->|HTTP or gRPC| S2[App server 2]
+    S1 --> DB[(Database)]
+    S2 --> DB
+  end

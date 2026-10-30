@@ -1,0 +1,13 @@
+%% Figure 5.4 — MESI state transitions for one cache line in one core's cache
+stateDiagram-v2
+  [*] --> I
+  I --> E: local read, no other copies
+  I --> S: local read, other copies exist
+  I --> M: local write, others invalidated
+  E --> M: local write, no bus traffic
+  E --> S: another core reads
+  E --> I: another core writes
+  S --> M: local write, others invalidated
+  S --> I: another core writes
+  M --> S: another core reads, write back first
+  M --> I: another core writes, write back first

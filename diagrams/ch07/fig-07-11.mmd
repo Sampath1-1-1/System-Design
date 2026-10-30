@@ -1,0 +1,12 @@
+%% Figure 7.11 — Source NAT for an outbound connection
+sequenceDiagram
+    autonumber
+    participant H as Host 10.0.1.5
+    participant N as NAT gateway 203.0.113.7
+    participant W as Web server 198.51.100.20
+    H->>N: src 10.0.1.5 port 51000, dst 198.51.100.20 port 443
+    Note over N: create mapping 10.0.1.5 port 51000 to public port 40001
+    N->>W: src 203.0.113.7 port 40001, dst 198.51.100.20 port 443
+    W-->>N: src 198.51.100.20 port 443, dst 203.0.113.7 port 40001
+    Note over N: look up port 40001 in table
+    N-->>H: src 198.51.100.20 port 443, dst 10.0.1.5 port 51000

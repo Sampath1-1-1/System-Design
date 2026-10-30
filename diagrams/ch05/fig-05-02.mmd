@@ -1,0 +1,10 @@
+%% Figure 5.2 — A pipelined core with a branch predictor
+flowchart LR
+  BP{Branch predictor} -->|predicted next PC| IF[Fetch]
+  IF --> ID[Decode]
+  ID --> EX[Execute]
+  EX --> MEM["Memory access"]
+  MEM --> WB["Write back"]
+  ICACHE[(L1 instruction cache)] --> IF
+  DCACHE[(L1 data cache)] <--> MEM
+  EX -.->|mispredict: flush and refetch| BP

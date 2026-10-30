@@ -1,0 +1,17 @@
+%% Figure 10.4 — Certificate chain of trust and Certificate Transparency
+flowchart TB
+  ROOT["Root CA certificate<br/>in OS or browser trust store"]
+  INT["Intermediate CA certificate"]
+  LEAF["Leaf certificate<br/>api.example.com"]
+  SRV[Web server holding leaf private key]
+  CL([Client])
+  CT[(Certificate Transparency logs)]
+  MON[Domain owner monitor]
+  ROOT -->|signs| INT
+  INT -->|signs| LEAF
+  LEAF -->|installed on| SRV
+  SRV -->|TLS sends leaf and intermediate| CL
+  CL -->|validates chain up to| ROOT
+  INT -.->|submits precertificate| CT
+  CT -.->|returns signed timestamp in leaf| LEAF
+  MON -.->|watches for unexpected names| CT

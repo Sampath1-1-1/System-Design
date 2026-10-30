@@ -1,0 +1,18 @@
+%% Figure 10.6 — A workload obtaining dynamic database credentials from a vault
+sequenceDiagram
+  participant W as Service pod
+  participant P as Platform identity
+  participant V as Secrets vault
+  participant DB as Database
+  participant L as Audit log
+  P-->>W: Signed workload identity token
+  W->>V: Authenticate with identity token
+  V->>P: Verify token signature and claims
+  V-->>W: Vault token scoped to policy orders-db-read
+  W->>V: Request credentials for orders-db-read
+  V->>DB: CREATE ROLE unique user with 1-hour expiry
+  V-->>W: Username, password, lease 1 hour
+  V-.->L: Record who requested which credential
+  W->>DB: Connect with unique credentials
+  W->>V: Renew lease before expiry
+  V->>DB: At lease end revoke and drop user
