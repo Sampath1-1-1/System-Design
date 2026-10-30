@@ -37,15 +37,15 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 27 | Replication and Fault Tolerance | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,941 | 13 | 5 | 0 |
 | 28 | Distributed Transactions | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,954 | 15 | 7 | 0 |
 | 29 | Distributed Data Processing | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,977 | 15 | 3 | 0 |
-| 30 | Messaging Fundamentals | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 31 | Kafka Deep Dive | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 32 | Event-Driven Architecture Patterns | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 33 | Architecture Patterns | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 34 | Microservices | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 35 | Object-Oriented Design | 1-2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 36 | SOLID Principles | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 37 | Design Patterns | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 38 | UML and Low-Level Design | 2-3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 30 | Messaging Fundamentals | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 31 | Kafka Deep Dive | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 32 | Event-Driven Architecture Patterns | 3-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 33 | Architecture Patterns | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 34 | Microservices | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 35 | Object-Oriented Design | 1-2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 36 | SOLID Principles | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 37 | Design Patterns | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 38 | UML and Low-Level Design | 2-3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 39 | Reliability and Resilience | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 40 | Observability | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 41 | Cloud Computing | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
