@@ -1,0 +1,20 @@
+%% Figure 8.11 — OAuth 2.0 authorization code flow with PKCE
+sequenceDiagram
+  autonumber
+  actor U as User
+  participant C as Client app
+  participant AS as Authorization server
+  participant RS as Resource server API
+  U->>C: Click Connect photos
+  C->>C: Make code_verifier and S256 code_challenge, random state
+  C->>AS: Redirect browser to /authorize with client_id, redirect_uri, scope, state, code_challenge
+  AS->>U: Login page and consent screen
+  U->>AS: Authenticate and approve scope photos.read
+  AS->>C: Redirect to redirect_uri with code and state
+  C->>C: Check state matches
+  C->>AS: POST /token with code, redirect_uri, code_verifier
+  AS->>AS: Verify SHA-256 of verifier equals stored challenge
+  AS-->>C: access_token, refresh_token, expires_in
+  C->>RS: GET /photos with Authorization Bearer token
+  RS->>RS: Validate token, check scope
+  RS-->>C: 200 photos

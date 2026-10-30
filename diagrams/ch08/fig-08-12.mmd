@@ -1,0 +1,8 @@
+%% Figure 8.12 — Lifecycle of an API version
+stateDiagram-v2
+  [*] --> Preview
+  Preview --> Stable: contract frozen
+  Stable --> Deprecated: successor GA, Deprecation header sent
+  Deprecated --> Sunset: Sunset date reached
+  Sunset --> [*]: returns 410 Gone
+  Deprecated --> Stable: deprecation withdrawn

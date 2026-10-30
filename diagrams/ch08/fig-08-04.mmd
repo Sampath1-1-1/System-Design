@@ -1,0 +1,18 @@
+%% Figure 8.4 — N+1 resolution versus DataLoader batching
+sequenceDiagram
+  participant G as GraphQL executor
+  participant L as DataLoader
+  participant D as Database
+  Note over G,D: Without batching
+  G->>D: SELECT posts LIMIT 4
+  G->>D: SELECT user WHERE id = 1
+  G->>D: SELECT user WHERE id = 2
+  G->>D: SELECT user WHERE id = 1
+  G->>D: SELECT user WHERE id = 3
+  Note over G,D: With DataLoader
+  G->>D: SELECT posts LIMIT 4
+  G->>L: load 1, load 2, load 1, load 3
+  L->>L: Wait one tick, dedupe keys
+  L->>D: SELECT users WHERE id IN 1, 2, 3
+  D-->>L: 3 rows
+  L-->>G: Resolve 4 promises

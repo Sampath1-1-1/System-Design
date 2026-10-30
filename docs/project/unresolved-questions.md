@@ -45,3 +45,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-038 | 10 | GPU password-guessing rates are order-of-magnitude estimates | Accepted | Labeled as estimates |
 | UQ-039 | 10 | AWS KMS quotas and pricing "as of 2026"; LinkedIn 2012 and Capital One 2019 breach figures from press reporting | Open | |
 | UQ-040 | 10 | Exact URLs for BeyondCorp papers (;login:) and AWS KMS envelope-encryption docs | Open | |
+| UQ-041 | 8 | Zanzibar request rate ("millions per second") — confirm exact figure in Pang et al. 2019 | Open | |
+| UQ-042 | 8 | Browser default SameSite behavior and RFC 6265bis status | Open | Time-sensitive |
+| UQ-043 | 8 | OAuth 2.1 draft revision at publication (-16 as of Sept 2026) | Open | Time-sensitive |
+| UQ-044 | 8 / 10 | Whether NIST SP 800-63B-4 supersedes the 2017 revision cited in Ch 8; align with Ch 10 | Open | Merge with UQ-036 |
+| UQ-045 | 8 | URLs: Byron 2015 GraphQL post; GitHub GraphQL rate-limit docs | Open | |
+| UQ-046 | 8 | Table 8.3 latency ranges vs Appendix F; ~100 ms scrypt figure from a single measurement | Open | |

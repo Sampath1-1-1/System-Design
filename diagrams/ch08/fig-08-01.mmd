@@ -1,0 +1,26 @@
+%% Figure 8.1 — Three-tier client–server architecture
+flowchart LR
+  subgraph Clients
+    B([Browser])
+    M([Mobile app])
+  end
+  subgraph Edge
+    LB["Load balancer (L7)"]
+  end
+  subgraph AppTier["Application tier - stateless"]
+    A1[App server 1]
+    A2[App server 2]
+    A3[App server 3]
+  end
+  subgraph DataTier["Data tier - stateful"]
+    C[(Cache)]
+    DB[(Primary database)]
+  end
+  B -->|HTTPS| LB
+  M -->|HTTPS| LB
+  LB -->|HTTP| A1
+  LB -->|HTTP| A2
+  LB -->|HTTP| A3
+  A1 -->|TCP| C
+  A2 -->|TCP| DB
+  A3 -->|TCP| DB

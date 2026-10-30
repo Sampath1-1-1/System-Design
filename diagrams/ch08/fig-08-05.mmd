@@ -1,0 +1,20 @@
+%% Figure 8.5 — gRPC call mapped onto an HTTP/2 connection
+flowchart LR
+  subgraph ClientProcess["Client process"]
+    APP[Application code] --> STUB[Generated stub]
+  end
+  subgraph Conn["One HTTP/2 connection over TLS"]
+    S1[["Stream 1: GetOrder"]]
+    S3[["Stream 3: WatchOrderStatus"]]
+    S5[["Stream 5: GetOrder"]]
+  end
+  subgraph ServerProcess["Server process"]
+    SRV[gRPC server runtime] --> IMPL[Service implementation]
+  end
+  STUB -->|HEADERS + DATA frames| S1
+  STUB --> S3
+  STUB --> S5
+  S1 -->|length-prefixed protobuf| SRV
+  S3 --> SRV
+  S5 --> SRV
+  IMPL --> DB[(Orders DB)]
