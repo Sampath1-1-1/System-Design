@@ -70,3 +70,10 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-063 | 6 | Erlang process initial size; Python 3.14 free-threading status | Open | Merge with UQ-028 |
 | UQ-064 | 6 | Banker's algorithm source memo (EWD 108 vs EWD 123) | Open | |
 | UQ-065 | 6 | MySQL docs page title cited; TLB entry counts per core | Open | |
+| UQ-066 | 15 | S3 maximum object size (AWS pages say both "50 TB" and 48.8 TiB) | Open | Time-sensitive |
+| UQ-067 | 15 | Dates S3 added conditional writes (If-None-Match, If-Match) | Open | |
+| UQ-068 | 15 | S3 storage/transition/retrieval prices as of 2026 | Open | Time-sensitive |
+| UQ-069 | 15 | Exact title/URL of the Google Cloud blog post on Colossus | Open | |
+| UQ-070 | 15 | Primary source for ~150 bytes per HDFS NameNode object rule of thumb | Open | |
+| UQ-071 | 15 | Recovery-traffic figure from Rashmi et al. (2013) | Open | |
+| UQ-072 | 15 | Typical object-store first-byte latency range (Table 15.1) | Open | Coordinate with Appendix F |
