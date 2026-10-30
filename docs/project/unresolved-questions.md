@@ -33,3 +33,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-026 | 5 | Branch-mispredict penalty (15–20 cycles) and outstanding misses per core (10–20) vs vendor optimization manuals | Open | |
 | UQ-027 | 5 | TLC NAND 1,000–3,000 P/E cycles is a commonly cited range, not a vendor spec | Accepted | Stated as typical range |
 | UQ-028 | 5 | Free-threaded CPython status (PEP 703) as of writing | Open | Time-sensitive |
+| UQ-029 | 7 | RIPE NCC 2008 YouTube prefix-hijack case study: title, URL, "about two hours" duration | Open | |
+| UQ-030 | 7 | AWS VPC docs URL; 5 reserved addresses per subnet (as of 2025) | Open | Time-sensitive |
+| UQ-031 | 7 | CA/Browser Forum certificate-lifetime reduction schedule | Open | Left unquantified in text |
+| UQ-032 | 7 | New York–London measured RTT "often around 70 ms" | Open | Coordinate with Appendix F |
+| UQ-033 | 7 | Jacobson 1988 congestion-collapse figure (32 kbps → 40 bps) and BBR 2–25× gain on B4 vs primary papers | Open | |
+| UQ-034 | 7 | Linux default values quoted (TIME_WAIT, min RTO, delayed ACK, ephemeral port range, keepalive) | Open | Kernel-version dependent |
