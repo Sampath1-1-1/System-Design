@@ -172,6 +172,7 @@ A — Glossary</a>
 <li><a href="#u" id="toc-u">U</a></li>
 <li><a href="#v" id="toc-v">V</a></li>
 <li><a href="#w" id="toc-w">W</a></li>
+<li><a href="#x" id="toc-x">X</a></li>
 <li><a href="#z" id="toc-z">Z</a></li>
 </ul></li>
 </ul>
@@ -227,6 +228,12 @@ filters</strong> (modify, remove or add tokens). <em>(§16.4.1)</em></p>
 prefix is announced via BGP from many locations at once. Each client’s
 packets are routed to whichever announcing location is “closest”
 according to BGP path selection. <em>(§7.5.3)</em></p>
+<p><strong>Apache Flink</strong> — An open-source distributed engine
+that executes dataflow programs as a graph of long-running, pipelined
+operators, treating batch as a bounded special case of streaming. It
+provides event-time processing with watermarks, large keyed state, and
+exactly-once state consistency through asynchronous distributed
+snapshots [Carbone et al. 2015a]. <em>(§29.9.1)</em></p>
 <p><strong>Architectural decision</strong> — A design choice that
 addresses an architecturally significant requirement — one that affects
 structure, quality attributes, interfaces or technology in a way that is
@@ -251,6 +258,15 @@ using a mathematically linked <strong>key pair</strong>: a
 does, only the other can undo or verify. Security rests on problems
 believed hard to invert: factoring large integers (RSA) or computing
 discrete logarithms on elliptic curves (ECC). <em>(§10.4.3)</em></p>
+<p><strong>Atomic commitment</strong> — A protocol by which a set of
+<strong>participants</strong> (nodes that each executed part of a
+transaction) reach a single outcome, commit or abort, such that: (1) all
+participants that decide reach the same decision; (2) a participant
+cannot reverse a decision once made; (3) commit is decided only if every
+participant voted yes; (4) if there are no failures and every
+participant voted yes, the decision is commit; and (5) once failures are
+repaired and no new ones occur for long enough, every participant
+eventually decides [Bernstein et al. 1987]. <em>(§28.3.1)</em></p>
 <p><strong>Audit log</strong> — An append-only record of
 security-relevant events — who (actor), did what (action), to which
 resource, when, from where, and with what result — retained so that
@@ -304,6 +320,13 @@ in unbounded buffers. <em>(§22.10)</em></p>
 written by older code. <strong>Forward compatibility</strong>: older
 code can read data written by newer code [Kleppmann 2017, ch. 4].
 <em>(§8.9.3)</em></p>
+<p><strong>Batch processing</strong> — Running a computation over a
+<strong>bounded</strong> dataset (one whose size is known when the job
+starts, such as “yesterday’s logs”) that reads immutable input files,
+writes new output files, and is judged mainly by
+<strong>throughput</strong> (bytes or records processed per second) and
+total completion time rather than by the latency of individual records.
+<em>(§29.3.1)</em></p>
 <p><strong>BGP</strong> — A <strong>path-vector</strong> routing
 protocol in which neighboring routers (peers) exchange, over a TCP
 session on port 179, announcements of the form “prefix P is reachable
@@ -454,6 +477,24 @@ forecasting demand, translating it into the resources needed to serve it
 within the service-level objective with stated headroom and redundancy,
 and acquiring those resources before they are needed, allowing for the
 lead time to obtain them. <em>(§18.11.1)</em></p>
+<p><strong>CAP theorem (Gilbert and Lynch)</strong> — In an asynchronous
+network model, where messages may be delayed arbitrarily and there are
+no clocks, it is impossible to implement a read/write data object that
+guarantees both of the following in all fair executions, including those
+in which messages are lost: <strong>Consistency (C):</strong> the object
+is <strong>atomic</strong>, that is, linearizable (§25.3).
+<strong>Availability (A):</strong> every request received by a
+non-failing node must eventually result in a response. <strong>Partition
+tolerance (P)</strong> is not a property the system chooses; it is the
+assumption that the network may lose arbitrarily many messages between
+nodes. <em>(§25.8.1)</em></p>
+<p><strong>Causal consistency</strong> — Writes that are
+<strong>causally related</strong> must be seen by every client in their
+causal order; writes that are <strong>concurrent</strong> (neither
+happens before the other) may be seen in different orders by different
+clients. Formally, each client’s view must be a legal sequential history
+that respects the causal order induced by program order and reads-from
+[Ahamad et al. 1995]. <em>(§25.5.1)</em></p>
 <p><strong>Central processing unit (CPU)</strong> — The hardware that
 executes a program’s <strong>instructions</strong>: simple operations
 such as “add these two numbers”, “load a value from memory address X”,
@@ -464,6 +505,18 @@ execute its own stream of instructions. <em>(§5.3.1)</em></p>
 append-only, Merkle-tree-based logs into which CAs record every
 certificate they issue, so that mis-issued certificates become publicly
 detectable [RFC 6962]. <em>(§10.5)</em></p>
+<p><strong>Chain replication</strong> — Replicas are arranged in a
+linear <strong>chain</strong>. Every update enters at the
+<strong>head</strong> and is forwarded node by node to the
+<strong>tail</strong>; the tail replies to the client. Every query is
+answered by the tail. A separate, fault-tolerant <strong>master</strong>
+service detects failures and reconfigures the chain [van Renesse and
+Schneider 2004]. <em>(§27.5.1)</em></p>
+<p><strong>Chubby</strong> — Google’s lock service, providing
+coarse-grained advisory locks and small files in a file-system-like
+namespace, replicated across a five-node <strong>cell</strong> with
+Paxos, and used chiefly for leader election, naming and storing small
+amounts of configuration [Burrows 2006]. <em>(§26.14.1)</em></p>
 <p><strong>CIDR block</strong> — An address range written as
 <code>address/prefix-length</code>, for example
 <code>192.168.10.64/26</code>. The prefix length
@@ -555,6 +608,12 @@ a mutex. <code>wait</code> atomically releases the mutex and sleeps;
 <code>notify</code> (<code>signal</code>) wakes one waiter and
 <code>notify_all</code> (<code>broadcast</code>) wakes all.
 <em>(§6.10.3)</em></p>
+<p><strong>Conflict-free replicated data type (CRDT)</strong> — A data
+type whose replicas can be updated independently and concurrently
+without coordination and are guaranteed to converge to the same state
+once they have received the same updates, a property called
+<strong>strong eventual consistency</strong> [Shapiro et al. 2011a].
+<em>(§27.14.3)</em></p>
 <p><strong>Congestion window (cwnd)</strong> — A sender-side limit, in
 bytes or segments, on unacknowledged data in flight, based on the
 sender’s estimate of what the network path can absorb. The sender may
@@ -571,6 +630,13 @@ logic. <em>(§9.9.1)</em></p>
 open database connections and lends them to many clients per session,
 transaction or statement, either inside the application or as a shared
 proxy. <em>(§14.13.1)</em></p>
+<p><strong>Consensus</strong> — A set of processes, each of which may
+<strong>propose</strong> a value, must <strong>decide</strong> on a
+single value such that: <strong>agreement</strong> — no two correct
+processes decide differently; <strong>validity</strong> (integrity) —
+the decided value was proposed by some process;
+<strong>termination</strong> — every correct process eventually decides.
+Once decided, a value never changes. <em>(§26.3.1)</em></p>
 <p><strong>Consistent hashing</strong> — A way of assigning keys to
 nodes so that, when a node is added or removed, only about
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>/</mi><mi>N</mi></mrow><annotation encoding="application/x-tex">K/N</annotation></semantics></math>
@@ -680,6 +746,21 @@ hash) in one of two candidate buckets. Membership checks two buckets for
 a matching fingerprint; deletion removes one copy of the fingerprint.
 <em>(§17.4.7)</em></p>
 <h2 id="d">D</h2>
+<p><strong>DataFrame, Dataset and Catalyst</strong> — A
+<strong>DataFrame</strong> is a distributed table with a known schema
+(named, typed columns), manipulated with relational operators or SQL. A
+<strong>Dataset</strong> (Scala and Java) adds compile-time types to the
+same abstraction; in Python and R, every DataFrame is untyped at compile
+time. <strong>Catalyst</strong> is Spark SQL’s extensible query
+optimizer, which turns DataFrame or SQL queries into an optimized
+physical plan using rule-based and cost-based transformations of trees
+[Armbrust et al. 2015]. <em>(§29.5.4)</em></p>
+<p><strong>Data locality</strong> — Scheduling a task on or near the
+node that stores its input, so that the input is read from local disk or
+memory instead of over the network. Schedulers rank placements as
+<strong>process-local</strong> (data cached in the same executor),
+<strong>node-local</strong>, <strong>rack-local</strong> and
+<strong>off-rack</strong> (any). <em>(§29.7)</em></p>
 <p><strong>Deadline</strong> — An absolute point in time by which a
 client needs an RPC to complete. gRPC transmits it as a remaining
 timeout; when it passes, the client stops waiting with
@@ -720,6 +801,12 @@ component and dependency, the design states what happens when it is
 slow, returns errors or disappears, and makes sure the <strong>blast
 radius</strong> (the set of users and features affected) is as small as
 possible. <em>(§2.9.1)</em></p>
+<p><strong>Deterministic database</strong> — A database in which
+replicas and partitions first agree on a global order of transaction
+<em>inputs</em>, then execute transactions so that the outcome depends
+only on that order and the initial state. Every node that executes the
+same log reaches the same state, so no node needs to ask another whether
+to commit [Thomson et al. 2012]. <em>(§28.9.1)</em></p>
 <p><strong>Digital signature</strong> — A scheme with three algorithms:
 key generation, <strong>sign</strong> (using the private key, produces a
 signature over a message) and <strong>verify</strong> (using the public
@@ -748,6 +835,13 @@ namespace and data are spread across many machines, so that files can be
 larger than any one disk and throughput can grow with the number of
 machines, while clients still use file-like operations (create, open,
 read, write or append, delete). <em>(§15.5.1)</em></p>
+<p><strong>Distributed system</strong> — A set of independent computers
+(<strong>nodes</strong>) that have no shared memory and no shared clock,
+communicate only by exchanging messages over a network, and cooperate to
+provide a service. Van Steen and Tanenbaum describe it from the user’s
+side as “a collection of autonomous computing elements that appears to
+its users as a single coherent system” [van Steen and Tanenbaum 2017].
+<em>(§24.3.1)</em></p>
 <p><strong>DNS time to live (TTL)</strong> — A per-record value, in
 seconds, that tells any cache how long it may reuse the record before
 asking again. <strong>Negative caching</strong> stores “this name does
@@ -822,6 +916,14 @@ fragments are the unmodified data, so healthy reads need no decoding.
 for events (ready sockets, expired timers, completed tasks) using an I/O
 multiplexing call, and dispatches each event to a short, non-blocking
 handler. <em>(§6.13.4)</em></p>
+<p><strong>Eventual consistency</strong> — If no new updates are made to
+an object, eventually all reads return the last updated value [Vogels
+2009]. Equivalently, replicas that have received the same set of updates
+<strong>converge</strong> to the same state. <strong>Strong eventual
+consistency</strong> strengthens this: replicas that have received the
+same updates are in the same state immediately, with no further
+coordination, which is what conflict-free replicated data types (CRDTs)
+guarantee (§27.14). <em>(§25.7.1)</em></p>
 <p><strong>Expected value</strong> — The probability-weighted average
 outcome of a random quantity
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>:
@@ -840,12 +942,41 @@ is the <strong>exponent</strong> (or power). By convention
 and
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>b</mi><mrow><mo>−</mo><mi>n</mi></mrow></msup><mo>=</mo><mn>1</mn><mi>/</mi><msup><mi>b</mi><mi>n</mi></msup></mrow><annotation encoding="application/x-tex">b^{-n} = 1/b^n</annotation></semantics></math>.
 <em>(§4.3.1)</em></p>
+<p><strong>External consistency</strong> — If transaction
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>1</mn></msub><annotation encoding="application/x-tex">T_1</annotation></semantics></math>
+commits before
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>2</mn></msub><annotation encoding="application/x-tex">T_2</annotation></semantics></math>
+starts, in absolute (wall-clock) time, then
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>1</mn></msub><annotation encoding="application/x-tex">T_1</annotation></semantics></math>’s
+commit timestamp is smaller than
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>2</mn></msub><annotation encoding="application/x-tex">T_2</annotation></semantics></math>’s.
+Combined with serializability, this is <strong>strict
+serializability</strong>: the serial order respects real-time order, as
+linearizability does for single objects (§25.3). <em>(§28.8.3)</em></p>
 <h2 id="f">F</h2>
+<p><strong>Failover</strong> — The sequence that replaces a failed node
+in a role: <strong>detection</strong>, <strong>election</strong> of a
+replacement, <strong>reconfiguration</strong> (making the replacement
+consistent and fencing the old node) and <strong>client
+redirection</strong>. <em>(§27.11.1)</em></p>
+<p><strong>Failure detector</strong> — A component that outputs, for
+each monitored process, whether it currently <strong>suspects</strong>
+that process has crashed. It is <strong>complete</strong> if every
+crashed process is eventually suspected and <strong>accurate</strong> if
+live processes are not suspected. In an asynchronous network no detector
+can be both perfectly complete and perfectly accurate, because a slow
+process is indistinguishable from a dead one [Chandra and Toueg 1996].
+<em>(§27.10.1)</em></p>
 <p><strong>False sharing</strong> — A performance problem in which
 threads on different cores write to <em>different</em> variables that
 happen to sit in the <em>same</em> cache line, so the coherence protocol
 bounces the line between cores as if they were sharing data.
 <em>(§5.4.7)</em></p>
+<p><strong>Fencing token</strong> — A number, increasing with every
+grant of a lock or lease, that the holder attaches to every request to
+the protected resource. The resource remembers the highest token it has
+accepted and rejects any request carrying a lower one.
+<em>(§26.13)</em></p>
 <p><strong>Firewall</strong> — A device or software function that
 permits or denies traffic according to rules. A
 <strong>stateless</strong> (packet-filter) firewall evaluates each
@@ -862,6 +993,12 @@ into aligned windows of length
 and admits a request if the current window’s counter is below the limit
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>L</mi><annotation encoding="application/x-tex">L</annotation></semantics></math>.
 The counter resets at each window boundary. <em>(§22.6.1)</em></p>
+<p><strong>FLP impossibility</strong> — In a fully asynchronous
+message-passing system with reliable links, no <em>deterministic</em>
+protocol can solve <strong>consensus</strong> (all correct processes
+decide the same value, the value was proposed by some process, and every
+correct process eventually decides) if even one process may crash-stop
+[Fischer et al. 1985]. <em>(§24.13.1)</em></p>
 <p><strong>Forward secrecy</strong> — A property of a key-exchange
 protocol whereby compromise of a party’s long-term private key does not
 reveal session keys from past sessions. It is achieved by using fresh
@@ -920,6 +1057,16 @@ bits (longitude first) and writing every 5 bits as one base-32 character
 [Niemeyer 2008]. Each additional character subdivides the cell into 32
 smaller cells, so a geohash that is a prefix of another names a cell
 containing it. <em>(§17.9.2)</em></p>
+<p><strong>Gossip protocol</strong> — A protocol in which, every round,
+each node exchanges state with
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math>
+randomly chosen peers (the <strong>fanout</strong>). In
+<strong>push</strong> gossip informed nodes send updates; in
+<strong>pull</strong> gossip nodes ask peers for news;
+<strong>push–pull</strong> does both. <strong>Anti-entropy</strong>
+gossip exchanges full state; <strong>rumor mongering</strong> spreads
+only recent updates and stops after a while [Demers et al. 1987].
+<em>(§27.10.3)</em></p>
 <p><strong>Graph database</strong> — A database whose data model is a
 graph of <strong>vertices</strong> (nodes) and <strong>edges</strong>
 (relationships), optimized for traversing edges. In the <strong>property
@@ -933,11 +1080,44 @@ for executing those queries against a strongly typed
 <strong>schema</strong>. The client sends a document describing exactly
 the fields it wants; the server returns JSON of the same shape [GraphQL
 Spec]. <em>(§8.7.1)</em></p>
+<p><strong>Gray failure</strong> — A component failure that is
+<em>differentially observable</em>: some observers (often the system’s
+own failure detector) consider the component healthy, while others
+(often the applications using it) experience it as failed or badly
+degraded. <em>(§24.8.2)</em></p>
 <p><strong>gRPC</strong> — An open-source RPC framework, originally
 developed at Google and released in 2015, that uses Protocol Buffers as
 its interface definition language and message format and HTTP/2 as its
 transport [gRPC Docs]. <em>(§8.8.2)</em></p>
 <h2 id="h">H</h2>
+<p><strong>Happened-before (→)</strong> — The smallest relation on
+events such that: (1) if
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>a</mi><annotation encoding="application/x-tex">a</annotation></semantics></math>
+and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
+occur in the same process and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>a</mi><annotation encoding="application/x-tex">a</annotation></semantics></math>
+comes first,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>a</mi><mo>→</mo><mi>b</mi></mrow><annotation encoding="application/x-tex">a \to b</annotation></semantics></math>;
+(2) if
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>a</mi><annotation encoding="application/x-tex">a</annotation></semantics></math>
+is the sending of a message and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
+its receipt,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>a</mi><mo>→</mo><mi>b</mi></mrow><annotation encoding="application/x-tex">a \to b</annotation></semantics></math>;
+(3) if
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>a</mi><mo>→</mo><mi>b</mi></mrow><annotation encoding="application/x-tex">a \to b</annotation></semantics></math>
+and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mo>→</mo><mi>c</mi></mrow><annotation encoding="application/x-tex">b \to c</annotation></semantics></math>,
+then
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>a</mi><mo>→</mo><mi>c</mi></mrow><annotation encoding="application/x-tex">a \to c</annotation></semantics></math>.
+Two distinct events are <strong>concurrent</strong>
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>a</mi><mo>∥</mo><mi>b</mi></mrow><annotation encoding="application/x-tex">a \parallel b</annotation></semantics></math>)
+if neither
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>a</mi><mo>→</mo><mi>b</mi></mrow><annotation encoding="application/x-tex">a \to b</annotation></semantics></math>
+nor
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>b</mi><mo>→</mo><mi>a</mi></mrow><annotation encoding="application/x-tex">b \to a</annotation></semantics></math>.
+<em>(§24.10.1)</em></p>
 <p><strong>Hard disk drive (HDD)</strong> — A storage device that
 records data magnetically on spinning platters, read and written by
 heads mounted on a moving arm (the <strong>actuator</strong>). Data is
@@ -1003,6 +1183,20 @@ asks the browser to store, via the <code>Set-Cookie</code> response
 header, and that the browser automatically returns in the
 <code>Cookie</code> request header on later requests to matching URLs
 [RFC 6265]. <em>(§8.10.1)</em></p>
+<p><strong>Hybrid logical clock</strong> — A timestamp
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">(</mo><mi>l</mi><mo>,</mo><mi>c</mi><mo stretchy="true" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">(l, c)</annotation></semantics></math>
+where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>l</mi><annotation encoding="application/x-tex">l</annotation></semantics></math>
+is the largest physical clock value the node has seen (from its own
+clock or from any message) and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>c</mi><annotation encoding="application/x-tex">c</annotation></semantics></math>
+is a logical counter that orders events sharing the same
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>l</mi><annotation encoding="application/x-tex">l</annotation></semantics></math>.
+Timestamps compare lexicographically: first by
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>l</mi><annotation encoding="application/x-tex">l</annotation></semantics></math>,
+then by
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>c</mi><annotation encoding="application/x-tex">c</annotation></semantics></math>.
+<em>(§24.12.1)</em></p>
 <p><strong>HyperLogLog (HLL)</strong> — A probabilistic algorithm that
 estimates the number of distinct items (the
 <strong>cardinality</strong>) in a multiset using
@@ -1032,6 +1226,10 @@ so that rows can be found without scanning the whole table. Most
 relational indexes are B+ trees (§11.8); others include hash, GiST, GIN
 and BRIN indexes in PostgreSQL and full-text and spatial indexes in
 MySQL. <em>(§11.7.1)</em></p>
+<p><strong>In-doubt (blocked) transaction</strong> — A transaction at a
+participant that has voted yes but has not learned the outcome. It must
+hold its locks and cannot decide until the coordinator, or another
+participant that knows the outcome, answers. <em>(§28.4.3)</em></p>
 <p><strong>Instruction pipeline</strong> — A technique in which the core
 splits instruction execution into stages and works on different stages
 of several consecutive instructions at the same time, like an assembly
@@ -1111,6 +1309,38 @@ is <code>get(key)</code>, <code>put(key, value)</code> and
 has a small set of built-in types. The key alone determines where the
 value lives. <em>(§12.4.1)</em></p>
 <h2 id="l">L</h2>
+<p><strong>Lambda and Kappa architectures</strong> — The <strong>Lambda
+architecture</strong> runs two parallel paths over the same immutable
+master dataset: a <strong>batch layer</strong> that periodically
+recomputes complete, accurate views from all history, and a
+<strong>speed layer</strong> that processes recent data incrementally
+with low latency; a <strong>serving layer</strong> merges the two at
+query time [Marz and Warren 2015]. The <strong>Kappa
+architecture</strong> uses a single stream-processing path over a
+replayable log; to change logic or fix a bug, it reprocesses history by
+replaying the log through a new version of the job [Kreps 2014].
+<em>(§29.10)</em></p>
+<p><strong>Lamport clock</strong> — Each process
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>P</mi><mi>i</mi></msub><annotation encoding="application/x-tex">P_i</annotation></semantics></math>
+keeps an integer counter
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mi>i</mi></msub><annotation encoding="application/x-tex">C_i</annotation></semantics></math>,
+initially 0. <strong>Rule 1:</strong> before each event (local, send or
+receive),
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mi>i</mi></msub><mo>←</mo><msub><mi>C</mi><mi>i</mi></msub><mo>+</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">C_i \leftarrow C_i + 1</annotation></semantics></math>;
+a send attaches the new
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mi>i</mi></msub><annotation encoding="application/x-tex">C_i</annotation></semantics></math>
+to the message. <strong>Rule 2:</strong> on receiving a message with
+timestamp
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mi>m</mi></msub><annotation encoding="application/x-tex">t_m</annotation></semantics></math>,
+set
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>C</mi><mi>i</mi></msub><mo>←</mo><mo>max</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>C</mi><mi>i</mi></msub><mo>,</mo><msub><mi>t</mi><mi>m</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">C_i \leftarrow \max(C_i, t_m)</annotation></semantics></math>,
+then apply rule 1. The event’s timestamp is the resulting
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mi>i</mi></msub><annotation encoding="application/x-tex">C_i</annotation></semantics></math>.
+<em>(§24.10.2)</em></p>
+<p><strong>Last-writer-wins (LWW)</strong> — Each write carries a
+timestamp, and when replicas hold different values for an item, the one
+with the greatest timestamp is kept and the others are discarded.
+<em>(§27.14.1)</em></p>
 <p><strong>Latency and bandwidth (hardware)</strong> —
 <strong>Latency</strong> is the time from issuing one request to
 receiving its first byte (for example, ~100 ns for a DRAM load).
@@ -1127,6 +1357,18 @@ balancer</strong> terminates the client connection, parses the
 application protocol (usually HTTP), and balances
 <strong>requests</strong>: two requests on one connection may go to
 different backends. <em>(§19.3.1)</em></p>
+<p><strong>Leader election</strong> — A protocol by which the nodes of a
+group choose one node, the <strong>leader</strong>, to coordinate some
+activity (ordering writes, running a scheduler, owning a partition), and
+choose a replacement when it fails. The goal is <em>at most one</em>
+leader at a time (safety) and <em>eventually some</em> leader
+(liveness). <em>(§26.5.1)</em></p>
+<p><strong>Leaderless replication</strong> — Any replica of a key may
+accept reads and writes; the client, or a <strong>coordinator</strong>
+node acting for it, sends each request to several replicas in parallel
+and treats it as successful once enough of them respond. There is no
+failover because there is no leader [DeCandia et al. 2007].
+<em>(§27.7.1)</em></p>
 <p><strong>Leaf–spine (folded Clos) network</strong> — A two-tier
 topology in which every <strong>leaf</strong> (top-of-rack) switch
 connects to every <strong>spine</strong> switch, and servers attach only
@@ -1147,6 +1389,11 @@ increases by one per admitted request and leaks at rate
 a request that would overflow capacity is rejected immediately. The
 meter form makes the same admit/reject decisions as a token bucket with
 the same rate and capacity. <em>(§22.5.1)</em></p>
+<p><strong>Lease</strong> — A time-bounded grant of a right (to cache
+data, to act as leader, to hold a lock) from a grantor to a holder.
+Within the term the holder may act without consulting the grantor; after
+the term, the right lapses automatically, even if the holder has crashed
+or is unreachable [Gray and Cheriton 1989]. <em>(§26.11.1)</em></p>
 <p><strong>Least connections</strong> — Send each new connection or
 request to the backend with the fewest <strong>active</strong>
 (in-flight) connections or requests, as counted by the balancer.
@@ -1159,6 +1406,24 @@ lowest recent latency, usually an <strong>exponentially weighted moving
 average (EWMA)</strong> of observed response times, often multiplied by
 the in-flight count so that both queue length and speed count.
 <em>(§19.4.3)</em></p>
+<p><strong>Linearizability</strong> — A history is
+<strong>linearizable</strong> if each operation can be assigned a single
+instant, its <strong>linearization point</strong>, somewhere between its
+invocation and its response, such that (1) the operations, ordered by
+these points, form a <strong>legal sequential history</strong> of the
+object (every read returns the value of the most recent preceding
+write), and (2) therefore whenever
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>a</mi><annotation encoding="application/x-tex">a</annotation></semantics></math>
+precedes
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
+in real time,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>a</mi><annotation encoding="application/x-tex">a</annotation></semantics></math>
+comes before
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
+in that order. Pending operations may be either included (with a
+linearization point after their invocation) or dropped. An object is
+linearizable if all its histories are [Herlihy &amp; Wing 1990].
+<em>(§25.3.2)</em></p>
 <p><strong>Little’s Law</strong> — For any stable system observed over a
 long period, the average number of items in the system equals the
 average arrival rate multiplied by the average time each item spends in
@@ -1202,6 +1467,10 @@ if
 then
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>y</mi><mo>=</mo><msub><mo>log</mo><mi>b</mi></msub><mi>x</mi></mrow><annotation encoding="application/x-tex">y = \log_b x</annotation></semantics></math>.
 <em>(§4.4.1)</em></p>
+<p><strong>Log matching property</strong> — If two logs contain an entry
+with the same index and term, then (1) the entries store the same
+command, and (2) the logs are identical in all preceding entries.
+<em>(§26.7.4)</em></p>
 <p><strong>Log-structured merge tree (LSM tree)</strong> — A storage
 structure that buffers writes in a sorted in-memory table (the
 <strong>memtable</strong>), periodically writes it out as an immutable
@@ -1237,6 +1506,13 @@ positions; backends take turns claiming their next preferred empty
 position until the table is full. A packet’s backend is
 <code>table[hash(5-tuple) mod M]</code>: one array read [Eisenbud et
 al. 2016]. <em>(§19.4.8)</em></p>
+<p><strong>MapReduce</strong> — A programming model and execution system
+in which the user writes two functions: <strong>map</strong>, which
+turns one input record into zero or more intermediate key–value pairs,
+and <strong>reduce</strong>, which receives one intermediate key with
+<em>all</em> values emitted for it and produces output. The system
+handles splitting, scheduling, regrouping by key, and failures [Dean and
+Ghemawat 2004]. <em>(§29.4.1)</em></p>
 <p><strong>Matrix</strong> — A rectangular grid of numbers with
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
 rows and
@@ -1322,6 +1598,14 @@ committed when the snapshot was taken. Readers therefore never block
 writers and writers never block readers; only writers of the same row
 wait for each other. <em>(§11.14.1)</em></p>
 <h2 id="n">N</h2>
+<p><strong>Narrow and wide dependencies</strong> — A <strong>narrow
+dependency</strong> exists when each partition of the parent RDD is used
+by at most one partition of the child (<code>map</code>,
+<code>filter</code>, <code>union</code>, a join of co-partitioned
+inputs). A <strong>wide (shuffle) dependency</strong> exists when a
+child partition may depend on many or all parent partitions
+(<code>groupByKey</code>, <code>reduceByKey</code>, a join of
+unpartitioned inputs), which requires a shuffle. <em>(§29.5.2)</em></p>
 <p><strong>Natural and surrogate keys</strong> — A <strong>natural
 key</strong> is a candidate key with business meaning (email address,
 ISBN, country code). A <strong>surrogate key</strong> is a meaningless
@@ -1340,6 +1624,11 @@ rewritten back. The most common form, <strong>source NAT with port
 translation</strong> (NAPT, often just “NAT”), lets many hosts with
 private addresses share one public address [RFC 3022].
 <em>(§7.13)</em></p>
+<p><strong>Network partition</strong> — A network fault after which some
+nodes that are running correctly cannot exchange messages with some
+other running nodes for a period of time. (This book reserves
+“partition” alone for a subset of data, §14.6; a network fault is always
+a <strong>network partition</strong>.) <em>(§24.7.1)</em></p>
 <p><strong>NewSQL (distributed SQL)</strong> — Relational databases that
 keep SQL and ACID transactions with serializable or strong isolation
 while scaling horizontally across nodes and regions, by partitioning
@@ -1419,6 +1708,18 @@ manages a computer’s hardware (CPU, memory, storage, network) and
 provides running programs with safe, shared, abstract access to it. The
 privileged core of the OS that runs with full hardware access is the
 <strong>kernel</strong>. <em>(§6.3.1)</em></p>
+<p><strong>Operation, history</strong> — An <strong>operation</strong>
+is one call by a client on a shared object, such as
+<code>write(x, 1)</code> or <code>read(x)</code>. It has an
+<strong>invocation</strong> event (the client sends the request, at real
+time
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mtext mathvariant="normal">inv</mtext></msub><annotation encoding="application/x-tex">t_{\text{inv}}</annotation></semantics></math>)
+and, if the client hears back, a <strong>response</strong> event (at
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mtext mathvariant="normal">resp</mtext></msub><annotation encoding="application/x-tex">t_{\text{resp}}</annotation></semantics></math>,
+carrying the return value). A <strong>history</strong> is the sequence
+of invocation and response events observed in one execution. An
+operation without a response is <strong>pending</strong>: it may or may
+not have taken effect. <em>(§25.3.1)</em></p>
 <p><strong>Order of magnitude</strong> — A factor of ten. Two quantities
 differ by <em>k</em> orders of magnitude when their ratio is about
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mi>k</mi></msup><annotation encoding="application/x-tex">10^k</annotation></semantics></math>.
@@ -1445,6 +1746,12 @@ folds SSRF into it, and adds categories for software supply-chain
 failures and mishandling of exceptional conditions, so the architectural
 controls below remain applicable. <em>(§10.7)</em></p>
 <h2 id="p">P</h2>
+<p><strong>PACELC</strong> — If there is a <strong>P</strong>artition,
+how does the system trade off <strong>A</strong>vailability and
+<strong>C</strong>onsistency; <strong>E</strong>lse, when the system is
+running normally, how does it trade off <strong>L</strong>atency and
+<strong>C</strong>onsistency? A system is labeled by its two choices,
+for example PA/EL or PC/EC. <em>(§25.9.1)</em></p>
 <p><strong>Page</strong> — The fixed-size unit (typically 4–16 KiB) in
 which a storage engine reads, writes, caches and logs data. A page on
 disk is sometimes called a <strong>block</strong>; the engine keeps a
@@ -1455,6 +1762,11 @@ contents, organized in pages. Reads are served from it when possible;
 writes normally modify pages in it (marking them <strong>dirty</strong>)
 and return immediately, with the kernel writing them back to storage
 later. <em>(§6.6.6)</em></p>
+<p><strong>Partial failure</strong> — A state in which some components
+of a system have failed while others continue to work, so that an
+operation may be applied in some places and not others, and the working
+components cannot reliably tell which components failed.
+<em>(§24.8.1)</em></p>
 <p><strong>Partition key, sort key and item collection</strong> — In
 DynamoDB every <strong>item</strong> (a record of up to 400 KB, as of
 2026) has a primary key made of a <strong>partition key</strong> and,
@@ -1472,6 +1784,14 @@ interchangeably and reserves <strong>network partition</strong> for
 network splits (§24.7). The columns that choose a row’s partition form
 the <strong>partition key</strong> (or <strong>shard key</strong>).
 <em>(§14.6.1)</em></p>
+<p><strong>Partition skew and salting</strong> — <strong>Skew</strong>
+is an uneven distribution of records across partitions, usually caused
+by a few very frequent keys (a celebrity user, a null or default value,
+a bot). <strong>Salting</strong> appends a random suffix from a small
+range to hot keys so their records spread over several partitions, then
+removes the suffix in a second, much smaller aggregation (or, for joins,
+replicates the matching rows of the other side once per salt value).
+<em>(§29.6.3)</em></p>
 <p><strong>Percentile</strong> — The
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math>-th
 percentile of a set of measurements is the value at or below which
@@ -1484,6 +1804,13 @@ of the measurements fall. Latency percentiles are written
 latency value below which the given percentage of requests fall. If p99
 latency is 300 ms, 99% of requests completed in 300 ms or less and 1%
 took longer. p50 is the median. <em>(§1.7.1)</em></p>
+<p><strong>Percolator transaction</strong> — A snapshot-isolated,
+multi-row, multi-table transaction built entirely by a client library on
+top of a store that offers only single-row atomic updates and multiple
+timestamped versions per cell. Ordering comes from a central
+<strong>timestamp oracle</strong>; atomicity comes from making one row’s
+lock, the <strong>primary lock</strong>, the commit point for the whole
+transaction [Peng and Dabek 2010]. <em>(§28.7.1)</em></p>
 <p><strong>Performance engineering</strong> — The practice of measuring,
 explaining and improving the <strong>latency</strong>,
 <strong>throughput</strong> and <strong>resource efficiency</strong> of
@@ -1512,6 +1839,17 @@ pattern it serves best, rather than forcing all data into one database
 <strong>two</strong> backends uniformly at random and send the request
 to the less loaded of the two (by in-flight count, EWMA latency or
 another load signal). <em>(§19.4.4)</em></p>
+<p><strong>Presumed abort (PA)</strong> — A 2PC variant in which a
+coordinator that has no information about a transaction answers
+inquiries with “abort”. Aborts therefore need no forced coordinator
+record, no forced participant record and no acknowledgments.
+<em>(§28.4.5)</em></p>
+<p><strong>Primary–backup replication</strong> — One replica, the
+<strong>primary</strong>, receives all requests, executes them and
+propagates the result to one or more <strong>backups</strong>. If the
+primary fails, a backup is <strong>promoted</strong> to primary. It is
+also called <strong>passive replication</strong> [Alsberg and Day 1976;
+Budhiraja et al. 1993]. <em>(§27.4.1)</em></p>
 <p><strong>Primary key in CQL</strong> — In Cassandra Query Language,
 <code>PRIMARY KEY ((a, b), c, d)</code> declares <code>(a, b)</code> as
 the <strong>partition key</strong> — hashed to choose the replicas and
@@ -1587,6 +1925,14 @@ is the average number of jobs one server can complete per second when it
 is never idle, so the average <strong>service time</strong> is
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi><mo>=</mo><mn>1</mn><mi>/</mi><mi>μ</mi></mrow><annotation encoding="application/x-tex">S = 1/\mu</annotation></semantics></math>.
 <em>(§4.10.1)</em></p>
+<p><strong>Quorum</strong> — A set of nodes whose agreement is
+sufficient for an operation to take effect. A <strong>majority
+quorum</strong> in a cluster of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
+voting nodes is any set of more than
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mi>/</mi><mn>2</mn></mrow><annotation encoding="application/x-tex">N/2</annotation></semantics></math>
+nodes. The essential <strong>intersection property</strong>: any two
+majority quorums share at least one node. <em>(§26.4.1)</em></p>
 <h2 id="r">R</h2>
 <p><strong>Race condition</strong> — A bug in which the result of a
 program depends on the relative timing or interleaving of concurrent
@@ -1594,12 +1940,26 @@ operations on shared state. A <strong>data race</strong> is the specific
 case where two threads access the same memory location concurrently, at
 least one access is a write, and nothing orders them.
 <em>(§6.9)</em></p>
+<p><strong>Raft term</strong> — A logical clock that divides time into
+consecutive, numbered periods. Each term begins with an election; if a
+candidate wins, it is the <strong>leader</strong> for the rest of the
+term, and there is at most one leader per term. Every RPC carries the
+sender’s term; a node that sees a higher term immediately adopts it and
+becomes a follower; a request with a lower term is rejected.
+<em>(§26.7.1)</em></p>
 <p><strong>Rate limiting</strong> — Enforcing an upper bound on how many
 requests (or how much work) a given <strong>client identity</strong> may
 submit to a resource over time. Requests beyond the bound are rejected
 (or, less often, delayed). The bound is usually stated as a
 <strong>rate</strong> (for example 100 requests per minute) plus a
 <strong>burst</strong> allowance. <em>(§22.3.1)</em></p>
+<p><strong>Read repair and anti-entropy</strong> — <strong>Read
+repair</strong> fixes stale replicas discovered while serving a read:
+the coordinator writes the newest version back to replicas that returned
+older ones. <strong>Anti-entropy</strong> is a background process that
+compares whole replicas, typically with Merkle trees, and copies the
+differences [DeCandia et al. 2007; Demers et al. 1987].
+<em>(§27.13.1)</em></p>
 <p><strong>Read-through</strong> — The application asks only the cache;
 on a miss the <em>cache</em> loads the value from the database through a
 configured loader, stores it and returns it. <em>(§20.7.3)</em></p>
@@ -1617,6 +1977,14 @@ monitor <strong>R</strong>ate (requests per second),
 histogram from which percentiles are read). Tom Wilkie proposed it while
 at Weaveworks as a service-level complement to USE [Wilkie 2018].
 <em>(§23.3.3)</em></p>
+<p><strong>Reduce-side (sort-merge) join and broadcast (map-side)
+join</strong> — In a <strong>reduce-side join</strong>, both inputs are
+mapped to <code>(join key, tagged record)</code>, shuffled so that all
+records with the same key meet at one reducer, sorted, and combined
+there. In a <strong>broadcast join</strong>, the smaller input is copied
+in full to every map task, loaded into an in-memory hash table, and each
+record of the larger input is joined locally by lookup, with no shuffle
+of the larger input. <em>(§29.4.4)</em></p>
 <p><strong>Register</strong> — A tiny, extremely fast storage slot
 inside a core, typically 64 bits wide for general-purpose registers.
 x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A
@@ -1657,6 +2025,18 @@ machine, with syntax that resembles a local function call. Generated
 <strong>stubs</strong> serialize the arguments, send them over the
 network, and deserialize the result [Birrell and Nelson 1984].
 <em>(§8.8.1)</em></p>
+<p><strong>Replica recovery</strong> — Returning a replica to full
+membership after a crash or replacement, by <strong>log
+catch-up</strong> (replaying missed log entries), <strong>snapshot plus
+log</strong> (installing a copy of the state, then replaying from the
+snapshot’s position) or <strong>rebuild</strong> (copying all data from
+peers). <em>(§27.12.1)</em></p>
+<p><strong>Replicated state machine (RSM)</strong> — A service
+implemented as a deterministic state machine that is copied onto several
+nodes. Each node applies the same sequence of commands, taken from a
+replicated <strong>log</strong>, in the same order, so every node passes
+through the same sequence of states and produces the same outputs
+[Schneider 1990]. <em>(§26.3.2)</em></p>
 <p><strong>Replication</strong> — Keeping a copy of the same data on
 more than one node. Each copy is a <strong>replica</strong>. In
 <strong>primary–replica replication</strong>, exactly one node, the
@@ -1681,6 +2061,17 @@ local commit and ships the change afterwards. <strong>Semi-synchronous
 replication</strong>, MySQL’s middle ground, waits until a replica has
 <em>received and logged</em> the change and falls back to asynchronous
 mode after a timeout. <em>(§14.4.1)</em></p>
+<p><strong>Replication strategy</strong> — The rule that decides
+<em>which</em> replicas may accept a write, <em>in what order</em> the
+replicas apply writes, and <em>when</em> a write counts as done. The
+five families are <strong>primary–backup</strong>, <strong>chain
+replication</strong>, <strong>multi-leader</strong>,
+<strong>leaderless</strong> and <strong>consensus-based</strong>
+replication. <em>(§27.3.1)</em></p>
+<p><strong>Replication topology</strong> — The graph along which leaders
+forward writes to each other: a <strong>circular</strong> ring, a
+<strong>star</strong> with a hub, or <strong>all-to-all</strong>.
+<em>(§27.6.1)</em></p>
 <p><strong>Request–response lifecycle</strong> — The complete sequence
 of network and processing steps between a client issuing a request and
 receiving the full response, including name resolution, connection
@@ -1704,6 +2095,14 @@ memory and a single pass: after any number of items, every item seen so
 far is in the sample with probability
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mi>/</mi><mi>n</mi></mrow><annotation encoding="application/x-tex">k/n</annotation></semantics></math>
 [Vitter 1985]. <em>(§17.12.1)</em></p>
+<p><strong>Resilient Distributed Dataset (RDD)</strong> — A read-only,
+partitioned collection of records that can be created only by
+deterministic operations (<strong>transformations</strong> such as
+<code>map</code>, <code>filter</code>, <code>join</code>) on stable
+storage or on other RDDs. Each RDD records its <strong>lineage</strong>,
+the graph of transformations that produced it, so a lost partition can
+be recomputed from its parents instead of being restored from a replica
+[Zaharia et al. 2012]. <em>(§29.5.1)</em></p>
 <p><strong>REST (Representational State Transfer)</strong> — An
 architectural style for distributed hypermedia systems, defined by Roy
 Fielding in his 2000 doctoral dissertation as a set of constraints on
@@ -1738,6 +2137,18 @@ you can optimize for at most two [Athanassoulis et al. 2016].
 read-only: the client does not request, and does not expect, any state
 change on the server [RFC 9110 §9.2.1]. Logging or metrics side effects
 are allowed. <em>(§8.6.3)</em></p>
+<p><strong>Saga</strong> — A long-lived transaction written as a
+sequence of local transactions
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mn>1</mn></msub><mo>,</mo><msub><mi>T</mi><mn>2</mn></msub><mo>,</mo><mi>…</mi><mo>,</mo><msub><mi>T</mi><mi>n</mi></msub></mrow><annotation encoding="application/x-tex">T_1, T_2, \dots, T_n</annotation></semantics></math>,
+each committed independently, where each
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mi>i</mi></msub><annotation encoding="application/x-tex">T_i</annotation></semantics></math>
+has a <strong>compensating transaction</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>C</mi><mi>i</mi></msub><annotation encoding="application/x-tex">C_i</annotation></semantics></math>
+that semantically undoes it. Either
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mn>1</mn></msub><mi>…</mi><msub><mi>T</mi><mi>n</mi></msub></mrow><annotation encoding="application/x-tex">T_1 \dots T_n</annotation></semantics></math>
+all complete, or
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mn>1</mn></msub><mi>…</mi><msub><mi>T</mi><mi>j</mi></msub><mo>,</mo><msub><mi>C</mi><mi>j</mi></msub><mi>…</mi><msub><mi>C</mi><mn>1</mn></msub></mrow><annotation encoding="application/x-tex">T_1 \dots T_j, C_j \dots C_1</annotation></semantics></math>
+run [Garcia-Molina and Salem 1987]. <em>(§28.6)</em></p>
 <p><strong>Scalability</strong> — The ability of a system to handle a
 growing workload by adding resources, with throughput rising roughly in
 proportion to the resources added and latency staying within its
@@ -1792,6 +2203,15 @@ operations introduced by Dijkstra: <strong>wait</strong> (P, or
 <em>acquire</em>) decrements it and blocks if the result would be
 negative; <strong>signal</strong> (V, or <em>release</em>) increments it
 and wakes a waiter [Dijkstra 1965]. <em>(§6.10.2)</em></p>
+<p><strong>Sequential consistency</strong> — A history is
+<strong>sequentially consistent</strong> if there is a single total
+order of all operations that is a legal sequential history of the
+objects and that respects each client’s <strong>program order</strong>
+(the order in which that client issued its own operations). In Lamport’s
+words, “the result of any execution is the same as if the operations of
+all the processors were executed in some sequential order, and the
+operations of each individual processor appear in this sequence in the
+order specified by its program” [Lamport 1979]. <em>(§25.4.1)</em></p>
 <p><strong>Serialization (encoding)</strong> — Translating an in-memory
 data structure into a sequence of bytes for storage or transmission;
 <strong>deserialization (decoding)</strong> is the reverse [Kleppmann
@@ -1814,6 +2234,26 @@ time, typically identified by a cookie. <em>(§8.10.2)</em></p>
 policy that sends all requests of one client session to the same
 backend, identified by a cookie, the client’s IP address or a request
 key. <em>(§19.6)</em></p>
+<p><strong>Session guarantees</strong> — <strong>Read-your-writes
+(RYW):</strong> if a session writes
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>w</mi><annotation encoding="application/x-tex">w</annotation></semantics></math>
+and later reads, the read reflects
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>w</mi><annotation encoding="application/x-tex">w</annotation></semantics></math>
+(or a later write). <strong>Monotonic reads (MR):</strong> if a session
+reads a value reflecting a set of writes, later reads reflect at least
+that set; the session never sees time go backwards. <strong>Monotonic
+writes (MW):</strong> a session’s writes are applied at every replica in
+the order the session issued them. <strong>Writes-follow-reads
+(WFR):</strong> if a session reads a value produced by write
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>w</mi><mn>1</mn></msub><annotation encoding="application/x-tex">w_1</annotation></semantics></math>
+and then writes
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>w</mi><mn>2</mn></msub><annotation encoding="application/x-tex">w_2</annotation></semantics></math>,
+every replica applies
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>w</mi><mn>1</mn></msub><annotation encoding="application/x-tex">w_1</annotation></semantics></math>
+before
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>w</mi><mn>2</mn></msub><annotation encoding="application/x-tex">w_2</annotation></semantics></math>
+(the new write is ordered after what the session saw).
+<em>(§25.6.1)</em></p>
 <p><strong>Set-associative cache</strong> — A cache divided into
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>S</mi><annotation encoding="application/x-tex">S</annotation></semantics></math>
 sets of
@@ -1831,6 +2271,12 @@ sends an ordinary HTTP request at a fixed interval <em>T</em> to ask
 whether new data exists; the server answers immediately, either with the
 new data or with an empty response, and the connection’s request ends.
 <em>(§9.3.1)</em></p>
+<p><strong>Shuffle</strong> — The all-to-all redistribution of
+intermediate data between two stages, in which every task of the
+producing stage writes its output partitioned by key and every task of
+the consuming stage reads its partition from every producer. It costs
+serialization, local disk writes and reads, and network transfer, and it
+is a barrier between stages. <em>(§29.6.2)</em></p>
 <p><strong>SIMD (single instruction, multiple data)</strong> — CPU
 instructions that apply the same operation to several data elements
 packed into one wide <strong>vector register</strong> at once — for
@@ -1843,6 +2289,14 @@ markets its implementation as <strong>Hyper-Threading
 Technology</strong>. Each stream appears to the operating system as a
 separate <strong>logical CPU</strong> (or <strong>hardware
 thread</strong>). <em>(§5.3.6)</em></p>
+<p><strong>Single-decree (basic) Paxos</strong> — A consensus algorithm
+in which <strong>proposers</strong> suggest values,
+<strong>acceptors</strong> vote on them and <strong>learners</strong>
+find out the decided value. A value is <strong>chosen</strong> when a
+majority of acceptors has accepted it with the same proposal number.
+Paxos guarantees safety under any message delays, loss or reordering,
+and makes progress whenever one proposer can run both phases without
+interference from another. <em>(§26.6.1)</em></p>
 <p><strong>Single-page application (SPA) / client-side rendering
 (CSR)</strong> — The server sends a nearly empty HTML shell plus a
 JavaScript bundle; the JavaScript calls JSON APIs and builds the page in
@@ -1872,6 +2326,17 @@ only if fewer than
 timestamps fall in the interval
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>t</mi><mo>−</mo><mi>W</mi><mo>,</mo><mi>t</mi><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">(t - W, t]</annotation></semantics></math>.
 <em>(§22.7.1)</em></p>
+<p><strong>Sloppy quorum and hinted handoff</strong> — In a
+<strong>sloppy quorum</strong>, a write that cannot reach
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math>
+of a key’s
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
+home replicas is accepted by the next healthy nodes on the ring instead,
+and still counts toward
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math>.
+Each stand-in stores the write with a <strong>hint</strong> naming the
+intended home replica and <strong>hands it off</strong> when that
+replica recovers [DeCandia et al. 2007]. <em>(§27.9.1)</em></p>
 <p><strong>Slotted page</strong> — A page layout in which a
 <strong>header</strong> is followed by an array of
 <strong>slots</strong> (also called line pointers or item IDs) that
@@ -1902,6 +2367,10 @@ processor (or node) to the time it takes on
 Perfect, <strong>linear</strong> speedup is
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>N</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">S(N) = N</annotation></semantics></math>.
 <em>(§4.12.1)</em></p>
+<p><strong>Split brain</strong> — A failure in which two or more parts
+of a cluster each believe they are the authoritative primary (or leader)
+and accept conflicting writes, so the system’s state diverges.
+<em>(§26.12.1)</em></p>
 <p><strong>SQL</strong> — The Structured Query Language, standardized by
 ANSI/ISO, with sublanguages for defining schema (DDL:
 <code>CREATE</code>, <code>ALTER</code>, <code>DROP</code>),
@@ -1932,6 +2401,15 @@ retrieval) and <strong>archive</strong> (cheapest storage, retrieval in
 hours). A <strong>lifecycle policy</strong> is a set of rules, usually
 by prefix, tag or age, that automatically transitions objects between
 tiers and expires (deletes) them. <em>(§15.9)</em></p>
+<p><strong>Stream processing, event time and processing time</strong> —
+<strong>Stream processing</strong> runs a long-lived computation over an
+<strong>unbounded</strong> dataset, one that grows forever, producing
+results incrementally. Each record has an <strong>event time</strong>,
+when the event actually happened (stamped by the device or service that
+produced it), and a <strong>processing time</strong>, when the system
+observes it. The difference is the record’s <strong>event-time
+skew</strong>, which is variable and unbounded in the worst case.
+<em>(§29.8.1)</em></p>
 <p><strong>STRIDE</strong> — A mnemonic for six threat categories,
 developed at Microsoft in 1999 by Loren Kohnfelder and Praerit Garg and
 popularized by Shostack [Shostack 2014]: <strong>S</strong>poofing,
@@ -1979,6 +2457,11 @@ example, “design a photo-sharing service”) in conversation with an
 interviewer, who evaluates the candidate’s process, technical judgment
 and communication rather than a single correct answer.
 <em>(§1.11.1)</em></p>
+<p><strong>System model</strong> — A precise statement of what a
+distributed algorithm may assume about (1) <strong>timing</strong>:
+bounds on message delay, processing speed and clock drift, and (2)
+<strong>faults</strong>: how nodes and links may misbehave. Proofs of
+correctness hold only within the stated model. <em>(§24.6.1)</em></p>
 <h2 id="t">T</h2>
 <p><strong>TCP</strong> — A connection-oriented transport protocol that
 provides a reliable, ordered, full-duplex <strong>byte stream</strong>
@@ -1997,6 +2480,23 @@ the <strong>assets</strong> in it that are worth protecting, the
 the <strong>threats</strong> (ways a security property could be
 violated), and the <strong>mitigations</strong> chosen for each threat
 [Shostack 2014]. <em>(§10.3.2)</em></p>
+<p><strong>Three-phase commit (3PC)</strong> — A commit protocol that
+inserts a <strong>pre-commit</strong> phase between voting and
+committing, so that no participant can commit until every operational
+participant knows that all voted yes. Under a synchronous system model
+with reliable failure detection and no network partitions, it lets the
+surviving participants always reach a decision without the failed
+coordinator [Skeen 1981]. <em>(§28.5.1)</em></p>
+<p><strong>Time-of-day clock and monotonic clock</strong> — A
+<strong>time-of-day</strong> (wall-clock) clock returns the current date
+and time, for example as seconds since the Unix epoch (Linux
+<code>CLOCK_REALTIME</code>, Python <code>time.time()</code>). It is
+synchronized with other machines and <em>can jump</em> forward or
+backward when corrected. A <strong>monotonic</strong> clock (Linux
+<code>CLOCK_MONOTONIC</code>, Python <code>time.monotonic()</code>) only
+moves forward at a steady rate from an arbitrary starting point. It is
+meaningless across machines but correct for measuring durations on one
+machine. <em>(§24.9.1)</em></p>
 <p><strong>Timeout and deadline</strong> — A <strong>timeout</strong> is
 a relative duration after which a caller stops waiting for one operation
 (for example 300 ms). A <strong>deadline</strong> is an absolute point
@@ -2070,12 +2570,41 @@ takes
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>L</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">O(L)</annotation></semantics></math>
 steps, independent of how many keys are stored [Fredkin 1960].
 <em>(§17.11.1)</em></p>
+<p><strong>TrueTime</strong> — Google’s clock API that returns time as
+an interval with a guaranteed error bound instead of a single value.
+<code>TT.now()</code> returns
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><mtext mathvariant="italic">𝑒𝑎𝑟𝑙𝑖𝑒𝑠𝑡</mtext><mo>,</mo><mtext mathvariant="italic">𝑙𝑎𝑡𝑒𝑠𝑡</mtext><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[\textit{earliest}, \textit{latest}]</annotation></semantics></math>,
+guaranteed to contain the absolute time at which it was called;
+<code>TT.after(t)</code> is true if
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math>
+has definitely passed, and <code>TT.before(t)</code> is true if
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math>
+has definitely not arrived. The half-width of the interval is the
+<strong>uncertainty</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ε</mi><annotation encoding="application/x-tex">\varepsilon</annotation></semantics></math>
+[Corbett et al. 2012]. <em>(§28.8.1)</em></p>
 <p><strong>Trust boundary</strong> — A line in a system where the level
 of trust changes: data or requests crossing it come from a party that
 the receiving side does not fully control or trust. Examples: the
 internet-to-load-balancer edge, the browser-to-server connection, a
 service calling a third-party API, a tenant’s code running on shared
 infrastructure. <em>(§10.3.2)</em></p>
+<p><strong>Two generals problem</strong> — Two armies camped on opposite
+hills must attack a city in the valley at the same time; either
+attacking alone is defeated. Their generals can communicate only by
+messengers who cross the valley and may be captured. The problem is to
+design a messaging protocol after which both generals are
+<em>certain</em> that they will attack together. No such protocol with a
+finite number of messages exists. <em>(§24.3.3)</em></p>
+<p><strong>Two-phase commit (2PC)</strong> — An atomic commitment
+protocol in which one node, the <strong>coordinator</strong> (also
+called the transaction manager), first asks every participant (resource
+manager) to <strong>prepare</strong>, that is, to make its part of the
+transaction durable while keeping it invisible and to promise to commit
+on request; and then, only if every participant voted yes, durably
+records a <strong>commit</strong> decision and tells all participants to
+commit. Any no vote or timeout leads to abort [Gray 1978; Bernstein et
+al. 1987]. <em>(§28.4.1)</em></p>
 <p><strong>Two-phase locking (2PL)</strong> — A protocol in which each
 transaction acquires locks (shared <strong>S</strong> for reading,
 exclusive <strong>X</strong> for writing) before accessing data and,
@@ -2118,6 +2647,28 @@ from the origin to a point in
 space; its <strong>length</strong> (or norm) is
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">∥</mo><mi>𝐚</mi><mo stretchy="false" form="postfix">∥</mo><mo>=</mo><msqrt><mrow><msubsup><mi>a</mi><mn>1</mn><mn>2</mn></msubsup><mo>+</mo><mi>⋯</mi><mo>+</mo><msubsup><mi>a</mi><mi>d</mi><mn>2</mn></msubsup></mrow></msqrt></mrow><annotation encoding="application/x-tex">\lVert \mathbf{a} \rVert = \sqrt{a_1^2 + \cdots + a_d^2}</annotation></semantics></math>.
 <em>(§4.9.1)</em></p>
+<p><strong>Vector clock</strong> — With
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+processes, each process
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>P</mi><mi>i</mi></msub><annotation encoding="application/x-tex">P_i</annotation></semantics></math>
+keeps a vector
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mi>i</mi></msub><mrow><mo stretchy="true" form="prefix">[</mo><mn>1</mn><mi>.</mi><mi>.</mi><mi>n</mi><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">V_i[1..n]</annotation></semantics></math>,
+initially all zeros. Before each event,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>P</mi><mi>i</mi></msub><annotation encoding="application/x-tex">P_i</annotation></semantics></math>
+increments
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mi>i</mi></msub><mrow><mo stretchy="true" form="prefix">[</mo><mi>i</mi><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">V_i[i]</annotation></semantics></math>;
+a send attaches a copy of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mi>i</mi></msub><annotation encoding="application/x-tex">V_i</annotation></semantics></math>.
+On receiving a message carrying
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mi>m</mi></msub><annotation encoding="application/x-tex">V_m</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>P</mi><mi>i</mi></msub><annotation encoding="application/x-tex">P_i</annotation></semantics></math>
+sets
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mi>i</mi></msub><mrow><mo stretchy="true" form="prefix">[</mo><mi>k</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo>←</mo><mo>max</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>V</mi><mi>i</mi></msub><mrow><mo stretchy="true" form="prefix">[</mo><mi>k</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><msub><mi>V</mi><mi>m</mi></msub><mrow><mo stretchy="true" form="prefix">[</mo><mi>k</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">V_i[k] \leftarrow \max(V_i[k], V_m[k])</annotation></semantics></math>
+for every
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>,
+then increments
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mi>i</mi></msub><mrow><mo stretchy="true" form="prefix">[</mo><mi>i</mi><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">V_i[i]</annotation></semantics></math>.
+<em>(§24.11.1)</em></p>
 <p><strong>Vector database</strong> — A data store that indexes
 high-dimensional numeric vectors (<strong>embeddings</strong> produced
 by machine-learning models) and answers <strong>approximate nearest
@@ -2145,6 +2696,20 @@ interface — <code>open()</code>, <code>next()</code> and
 from the operator’s children on demand [Graefe 1994].
 <em>(§11.9.2)</em></p>
 <h2 id="w">W</h2>
+<p><strong>Watermark</strong> — A watermark with value
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math>
+is a statement flowing through the stream: “no more events with event
+time
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>≤</mo><mi>t</mi></mrow><annotation encoding="application/x-tex">\le t</annotation></semantics></math>
+are expected.” It lets event-time operators decide that a window is
+complete. A <strong>perfect</strong> watermark is possible only with
+full knowledge of the sources; real systems use
+<strong>heuristic</strong> watermarks, such as the maximum event time
+seen minus a bound
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>δ</mi><annotation encoding="application/x-tex">\delta</annotation></semantics></math>
+on out-of-orderness, which can be wrong. Events that arrive with event
+time behind the watermark are <strong>late data</strong>.
+<em>(§29.8.3)</em></p>
 <p><strong>WebRTC</strong> — A set of IETF protocols (overview in RFC
 8825 [Alvestrand 2021]) and a W3C browser API [W3C WebRTC] for real-time
 audio, video and arbitrary data directly between peers. Media travels
@@ -2182,6 +2747,16 @@ delay. <em>(§20.7.5)</em></p>
 synchronously writes it to the database before acknowledging; the cache
 is updated and the database is updated as one client-visible operation.
 <em>(§20.7.4)</em></p>
+<h2 id="x">X</h2>
+<p><strong>XA</strong> — The X/Open Distributed Transaction Processing
+standard interface between a <strong>transaction manager</strong> (TM,
+the coordinator) and <strong>resource managers</strong> (RMs: databases,
+message brokers), with an <strong>application program</strong> (AP)
+demarcating transactions. Its main calls are <code>xa_start</code> and
+<code>xa_end</code> (associate work with a global transaction ID, the
+XID), <code>xa_prepare</code>, <code>xa_commit</code>,
+<code>xa_rollback</code> and <code>xa_recover</code> (list in-doubt XIDs
+after a crash) [X/Open 1991]. <em>(§28.4.6)</em></p>
 <h2 id="z">Z</h2>
 <p><strong>Zero trust</strong> — A security model in which network
 location confers no trust: every request is authenticated, authorized
@@ -2201,5 +2776,12 @@ is the <strong>skew exponent</strong>. Breslau et al. found that
 requests to web proxies follow a Zipf-like law with an exponent below 1
 and that, as a consequence, hit ratio grows roughly logarithmically with
 cache size [Breslau et al. 1999]. <em>(§20.3.3)</em></p>
+<p><strong>ZooKeeper</strong> — A replicated coordination service that
+exposes a small, file-system-like tree of data nodes
+(<strong>znodes</strong>) with linearizable writes, FIFO per-client
+ordering, ephemeral and sequential nodes, and change notifications
+(<strong>watches</strong>). Applications build locks, leader election,
+barriers and configuration management on top of these primitives [Hunt
+et al. 2010]. <em>(§26.8.1)</em></p>
 </body>
 </html>

@@ -866,7 +866,7 @@ sequenceDiagram
 
 ### 24.11.2 Version vectors
 
-A **version vector** applies the same idea to *replicas of a data item* rather than to events in processes [Parker et al. 1983]. Each replica that accepts writes for a key has an entry counting the updates it has issued to that key. When two versions of a key have incomparable version vectors, they were written concurrently and are kept as **siblings** for the application (or a merge function) to reconcile; when one dominates, it replaces the other. The client passes the version vector it read (its **context**) with each write, so the store knows which versions the client had seen.
+A **version vector** applies the same idea to *replicas of a data item* rather than to events in processes [Parker et al. 1983]. Each replica that accepts writes for a key has an entry counting the updates it has issued to that key. When two versions of a key have incomparable version vectors, they were written concurrently and are kept as **siblings** for the application (or a merge function) to reconcile; when one dominates, it replaces the other. The client passes the version vector it read (its **context**) with each write, so the store knows which versions the client had seen. This section introduces the mechanism only; how replicated stores use siblings in practice (the Dynamo cart walk-through, Riak's causal contexts, merge functions and their pitfalls) is in §27.14.2.
 
 **Figure 24.12 — Version vectors detect a concurrent shopping-cart update.**
 

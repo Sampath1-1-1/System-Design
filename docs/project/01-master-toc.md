@@ -99,22 +99,22 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part V — Distributed Systems
 
 **Ch 24 — Distributed Systems Fundamentals** (L2–L3, A)
-24.3 What is a distributed system? · 24.4 Why distributed systems exist · 24.5 The fallacies of distributed computing · 24.6 System models: synchrony, failure models (crash-stop, crash-recovery, omission, Byzantine) · 24.7 Network partitions · 24.8 Partial failures · 24.9 Physical clocks, NTP, PTP, clock skew · 24.10 Logical clocks: Lamport clocks · 24.11 Vector clocks and version vectors · 24.12 Hybrid logical clocks · 24.13 FLP impossibility (intuition) · 24.14 End-to-end argument
+24.3 What is a distributed system? · 24.4 Why distributed systems exist · 24.5 The eight fallacies of distributed computing · 24.6 System models: timing and failures · 24.7 Network partitions · 24.8 Partial failures, gray failures and timeouts · 24.9 Physical clocks: drift, NTP, PTP and skew · 24.10 Logical clocks: Lamport clocks · 24.11 Vector clocks and version vectors · 24.12 Hybrid logical clocks · 24.13 The FLP impossibility result · 24.14 The end-to-end argument
 
 **Ch 25 — Consistency and Availability** (L3, A)
-25.3 Linearizability (strong consistency) · 25.4 Sequential consistency · 25.5 Causal consistency · 25.6 Session guarantees: read-your-writes, monotonic reads, monotonic writes, writes-follow-reads · 25.7 Eventual consistency · 25.8 CAP theorem (precise statement and misreadings) · 25.9 PACELC · 25.10 Consistency trade-offs in real databases · 25.11 Jepsen-style testing
+25.3 Linearizability · 25.4 Sequential consistency · 25.5 Causal consistency · 25.6 Session guarantees · 25.7 Eventual consistency · 25.8 The CAP theorem · 25.9 PACELC · 25.10 Consistency trade-offs in real databases · 25.11 Jepsen-style testing
 
 **Ch 26 — Consensus and Coordination** (L3–L4, A)
-26.3 The consensus problem · 26.4 Quorums · 26.5 Leader election · 26.6 Paxos (single-decree and Multi-Paxos) · 26.7 Raft (election, log replication, safety, membership changes) · 26.8 ZooKeeper and ZAB · 26.9 etcd · 26.10 Distributed locks · 26.11 Leases · 26.12 Split brain · 26.13 Fencing tokens · 26.14 Coordination services in practice (Chubby)
+26.3 The consensus problem · 26.4 Quorums · 26.5 Leader election · 26.6 Paxos · 26.7 Raft · 26.8 ZooKeeper and ZAB · 26.9 etcd · 26.10 Distributed locks · 26.11 Leases · 26.12 Split brain · 26.13 Fencing tokens · 26.14 Coordination services in practice
 
 **Ch 27 — Replication and Fault Tolerance** (L3, A)
-27.3 Replication strategies overview · 27.4 Primary–backup · 27.5 Chain replication · 27.6 Multi-leader · 27.7 Leaderless replication (Dynamo-style) · 27.8 Read and write quorums (R + W > N) · 27.9 Sloppy quorums and hinted handoff · 27.10 Failure detection (heartbeats, phi-accrual, gossip/SWIM) · 27.11 Failover · 27.12 Recovery · 27.13 Anti-entropy and read repair · 27.14 Conflict resolution: LWW, vector clocks, CRDTs
+27.3 Replication strategies overview · 27.4 Primary–backup replication · 27.5 Chain replication · 27.6 Multi-leader replication · 27.7 Leaderless replication · 27.8 Read and write quorums: R + W > N · 27.9 Sloppy quorums and hinted handoff · 27.10 Failure detection · 27.11 Failover · 27.12 Recovery · 27.13 Anti-entropy and read repair · 27.14 Conflict resolution: LWW, version vectors and CRDTs
 
 **Ch 28 — Distributed Transactions** (L4, A)
-28.3 Why distributed transactions are hard · 28.4 Two-phase commit · 28.5 Three-phase commit · 28.6 Sagas (preview; deep dive Ch 32) · 28.7 Percolator-style transactions · 28.8 Spanner and TrueTime · 28.9 Calvin and deterministic databases · 28.10 Distributed SQL (CockroachDB, YugabyteDB, TiDB) · 28.11 Choosing a transaction strategy
+28.3 Why distributed transactions are hard · 28.4 Two-phase commit · 28.5 Three-phase commit · 28.6 Sagas: a preview · 28.7 Percolator-style transactions · 28.8 Spanner and TrueTime · 28.9 Calvin and deterministic databases · 28.10 Distributed SQL: CockroachDB, YugabyteDB and TiDB · 28.11 Choosing a transaction strategy
 
 **Ch 29 — Distributed Data Processing** (L3, A/B)
-29.3 Batch processing concepts · 29.4 MapReduce · 29.5 Apache Spark (RDDs, DataFrames, DAG scheduler, Catalyst) · 29.6 Partitioning and shuffle · 29.7 Data locality · 29.8 Stream processing concepts (event time, watermarks, windows) · 29.9 Apache Flink · 29.10 Lambda and Kappa architectures · 29.11 Batch vs stream; Spark vs Flink
+29.3 Batch processing concepts · 29.4 MapReduce · 29.5 Apache Spark · 29.6 Partitioning and shuffle · 29.7 Data locality · 29.8 Stream processing concepts · 29.9 Apache Flink · 29.10 Lambda and Kappa architectures · 29.11 Batch versus stream; Spark versus Flink
 
 ## Part VI — Messaging and Event-Driven Systems
 

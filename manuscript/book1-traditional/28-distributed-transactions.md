@@ -250,7 +250,7 @@ $$w \approx \text{RTT} + t_{f,c} \qquad P_{\text{doubt}} = 1 - e^{-\lambda w} \a
 | $\lambda$ | Coordinator crash rate | crashes/second |
 | $P_{\text{doubt}}$ | Probability a given transaction is caught in doubt by a coordinator crash | dimensionless |
 | $X$ | Rate of distributed transactions through this coordinator | transactions/second |
-| $N_{\text{doubt}}$ | Expected number of transactions left in doubt by one crash (Little's Law, §4.10) | transactions |
+| $N_{\text{doubt}}$ | Expected number of transactions left in doubt by one crash (Little's Law, §4.11) | transactions |
 :::
 
 ::: example
@@ -1194,7 +1194,7 @@ $$T_{\text{wait}} \approx 2\,\bar{\varepsilon} \qquad T_{\text{commit}} \approx 
 2. Multi-region configuration, quorum RTT 50 ms: $T_{\text{commit}} = \max(50, 8) = 50$ ms: commit wait is hidden entirely.
 3. Clock trouble widens $\bar{\varepsilon}$ to 100 ms: $T_{\text{wait}} = 200$ ms in both configurations, and hot-row throughput under locking falls to at most $1/0.2 = 5$ commits/s.
 
-**Interpretation.** Spanner converts clock uncertainty directly into commit latency, so the quality of the time infrastructure is a performance parameter. **Engineering implication.** Commodity NTP with tens to hundreds of milliseconds of worst-case error (§24.9) would make commit wait unacceptable; this is why systems without TrueTime-class clocks use HLCs and uncertainty intervals instead (§28.10).
+**Interpretation.** Spanner converts clock uncertainty directly into commit latency, so the quality of the time infrastructure is a performance parameter. **Engineering implication.** Commodity NTP is usually accurate to milliseconds but gives no guaranteed bound (§24.9), so a safe configured bound must be hundreds of milliseconds (CockroachDB's default maximum offset is 500 ms, §28.10.1), which would make commit wait unacceptable; this is why systems without TrueTime-class clocks use HLCs and uncertainty intervals instead (§28.10).
 :::
 
 ### 28.8.3 External consistency: a proof sketch

@@ -1052,7 +1052,7 @@ $$T_{\text{holder}} = T(1 - \rho) - d_{\max} \qquad T_{\text{grantor}} = T(1 + \
 1. Holder: $T(1 - \rho) = 10 \times 0.9999 = 9.999$ s; minus $d_{\max}$: $9.999 - 0.5 = 9.499$ s.
 2. Grantor: $T(1 + \rho) = 10 \times 1.0001 = 10.001$ s.
 3. Real-time gap: the holder stops at most $9.499/(1-\rho) + 0.5 \approx 10.0$ s after its request was sent; the grantor reassigns no earlier than $10.001/(1+\rho) = 10.0$ s after granting, which is later than the request was sent. The intervals do not overlap.
-4. Renewal: renew at about $T/3$ to $T/2$ (3.3–5 s), so two consecutive renewals can fail before the lease lapses.
+4. Renewal: renew about every $T/3$ (3.3 s), so two consecutive renewals can fail before the lease lapses at 9.5 s; renewing every $T/2$ (5 s) tolerates only one.
 
 **Interpretation.** Clock drift contributes only about 1 ms of margin over 10 s; the 500 ms action budget dominates. **Engineering implication.** The real enemy is not drift but **unbounded pauses**: a 15 s GC pause between the validity check and the write blows through any margin. That is why leases need fencing tokens (§26.13) whenever the action has effects outside the holder's process, and why clock *steps* (an NTP correction that jumps time) must be prevented on lease holders.
 :::

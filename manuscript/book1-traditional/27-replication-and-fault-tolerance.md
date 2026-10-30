@@ -279,11 +279,11 @@ $$T_{\text{write}} \approx (n + 1)\,d + n\,s \qquad X_{\text{read}}^{\text{CR}} 
 :::
 
 ::: example
-**Worked example — Chain versus primary–backup in one datacenter.** Take $d = 0.25$ ms, $s = 0.05$ ms, $c = 50{,}000$ reads/s, 4 KB updates and 10 Gb/s network interfaces (1.25 GB/s each way).
+**Worked example — Chain versus primary–backup in one datacenter.** Take $d = 0.25$ ms, $s = 0.05$ ms, $c = 50{,}000$ reads/s, 4 KiB updates and 10 Gb/s network interfaces (1.25 GB/s each way).
 
 1. Chain of 3: $T_{\text{write}} = 4 \times 0.25 + 3 \times 0.05 = 1.15$ ms. Chain of 5: $6 \times 0.25 + 5 \times 0.05 = 1.75$ ms.
 2. Primary–backup with parallel fan-out: client → primary → backups → primary → client is 4 one-way hops regardless of $n$, so $4 \times 0.25 + 2 \times 0.05 = 1.1$ ms.
-3. Write throughput limit from the busiest outbound link, $n = 5$: the primary sends $4 \times 4$ KB = 16 KB per write, so $1.25 \times 10^9 / 16{,}384 \approx 76{,}000$ writes/s. In a chain each node sends each update once: $1.25 \times 10^9 / 4{,}096 \approx 305{,}000$ writes/s.
+3. Write throughput limit from the busiest outbound link, $n = 5$: the primary sends $4 \times 4$ KiB = 16 KiB per write, so $1.25 \times 10^9 / 16{,}384 \approx 76{,}000$ writes/s. In a chain each node sends each update once: $1.25 \times 10^9 / 4{,}096 \approx 305{,}000$ writes/s.
 4. Reads with $n = 3$: chain replication serves 50,000 reads/s at the tail; CRAQ serves up to about $3 \times 50{,}000 = 150{,}000$ reads/s if most reads find clean objects.
 
 **Interpretation.** Chains trade latency that grows linearly with length for throughput that does not depend on length. **Engineering implication.** Keep chains short (3 is typical) and inside one datacenter; use CRAQ or many independent chains when reads dominate.
@@ -1060,7 +1060,7 @@ $$T_{\text{fo}} = T_{\text{detect}} + T_{\text{elect}} + T_{\text{reconfig}} + T
 3. With $\nu = 6$ failovers a year (crashes, kernel patches, zone events): $6 \times 40 = 240$ s versus $6 \times 11 = 66$ s.
 4. Against a 99.99% target (52.6 min = 3,156 s per year, §4.14): DNS failovers use 7.6% of the budget, the proxy 2.1%. Against a monthly budget of 4.32 min, one DNS failover uses 15%.
 
-**Interpretation.** Redirection, not detection, is often the largest term. **Engineering implication.** Put a proxy, a virtual IP or a topology-aware client in front of a replicated primary, and measure each term in game days rather than assuming it.
+**Interpretation.** Redirection, not detection, is often the largest term. Consensus-replicated systems shrink detection and election together to about 0.16–1.2 s (§26.7.2), which leaves redirection even more dominant. **Engineering implication.** Put a proxy, a virtual IP or a topology-aware client in front of a replicated primary, and measure each term in game days rather than assuming it.
 :::
 
 #### Dangers
@@ -1184,7 +1184,7 @@ sequenceDiagram
 **Definition — Last-writer-wins (LWW).** Each write carries a timestamp, and when replicas hold different values for an item, the one with the greatest timestamp is kept and the others are discarded.
 :::
 
-LWW is simple, needs no application code and always converges, which is why Cassandra and DynamoDB global tables use it. Its cost is **silent data loss**: of two concurrent writes, one is discarded even though both were acknowledged. Worse, "last" is decided by clocks that can disagree by milliseconds or more (§24.9), so a write that happened *later* in real time can lose to one whose node's clock runs fast.
+LWW is simple, needs no application code and always converges, which is why Cassandra and DynamoDB global tables use it. Its cost is **silent data loss**: of two concurrent writes, one is discarded even though both were acknowledged. Worse, "last" is decided by clocks that can disagree by milliseconds or more (§24.9; §24.9.6 derives the danger window), so a write that happened *later* in real time can lose to one whose node's clock runs fast.
 
 ::: example
 **Worked example — Losing a later write to clock skew.** Node A's clock runs 5 ms fast. At real time 98 ms a client removes "milk" from a list through A, stamped 103. At real time 100 ms another client re-adds "milk" through B, stamped 100.
@@ -1198,7 +1198,7 @@ LWW is simple, needs no application code and always converges, which is why Cass
 
 ### 27.14.2 Version vectors and siblings
 
-Instead of picking a winner, a store can **detect** concurrency and keep every concurrent value as a **sibling**, letting the application merge. Detection uses **version vectors** (§24.11): a map from replica ID to a counter of writes coordinated by that replica.
+Instead of picking a winner, a store can **detect** concurrency and keep every concurrent value as a **sibling**, letting the application merge. Detection uses **version vectors** (§24.11.2; the runnable example of §24.11.3 also shows the same-replica flaw that dotted version vectors, §24.11.5, fix): a map from replica ID to a counter of writes coordinated by that replica.
 
 ::: formula
 **Comparing version vectors**
@@ -1241,7 +1241,7 @@ flowchart LR
 **Reading the diagram.** Boxes are versions of one key, labeled with their version vectors; arrows mean "descends from". D3 and D4 are written through different coordinators from the same parent, so their vectors are incomparable and the store keeps both. A read returns both siblings with their combined context; the client's merged write dominates both and replaces them. Storage holds every sibling until a merge, so a key with many unmerged concurrent writers grows. The failure point is the merge function: a union resurrects "eggs". Dynamo truncated vectors beyond a threshold of about 10 entries, which can cause false conflicts.
 
 ::: industry
-**Riak siblings.** With `allow_mult` enabled, Riak keeps concurrent writes as siblings and returns them with a causal context that the client sends back with its resolved write; Riak 2.0 added dotted version vectors to avoid sibling explosion when many clients write through the same node, and built-in CRDT data types (counters, sets, maps, registers, flags) that merge automatically.
+**Riak siblings.** With `allow_mult` enabled, Riak keeps concurrent writes as siblings and returns them with a causal context that the client sends back with its resolved write; Riak 2.0 added dotted version vectors (§24.11.5) to avoid sibling explosion and lost updates when many clients write through the same node, and built-in CRDT data types (counters, sets, maps, registers, flags) that merge automatically.
 *Evidence: Primary* — [Riak KV Docs: Conflict Resolution; Riak KV Docs: Data Types; Preguiça et al. 2010]
 :::
 
@@ -1562,7 +1562,7 @@ What to notice:
 14. Das, A., Gupta, I., Motivala, A. *SWIM: Scalable Weakly-consistent Infection-style Process Group Membership Protocol*. IEEE/IFIP DSN, 2002.
 15. DeCandia, G., Hastorun, D., Jampani, M., Kakulapati, G., Lakshman, A., Pilchin, A., Sivasubramanian, S., Vosshall, P., Vogels, W. *Dynamo: Amazon's Highly Available Key-value Store*. ACM SOSP, 2007.
 16. Demers, A., Greene, D., Hauser, C., Irish, W., Larson, J., Shenker, S., Sturgis, H., Swinehart, D., Terry, D. *Epidemic Algorithms for Replicated Database Maintenance*. ACM PODC, 1987.
-17. GitHub. *October 21 post-incident analysis*. GitHub Blog, 2018. https://github.blog/2018-10-30-oct21-post-incident-analysis/
+17. GitHub. *October 21 post-incident analysis*. GitHub Blog, 2018. https://github.blog/news-insights/company-news/oct21-post-incident-analysis/
 18. Hayashibara, N., Défago, X., Yared, R., Katayama, T. *The φ Accrual Failure Detector*. IEEE SRDS, 2004.
 19. Karp, R., Schindelhauer, C., Shenker, S., Vöcking, B. *Randomized Rumor Spreading*. IEEE FOCS, 2000.
 20. Kleppmann, M. *Designing Data-Intensive Applications*, ch. 5 "Replication". O'Reilly, 2017.

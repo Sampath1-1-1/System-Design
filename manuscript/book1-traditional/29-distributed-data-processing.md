@@ -26,7 +26,7 @@ After this chapter you should be able to:
 - Partitioning, hash and range — §14.6 and hot partitions §14.10 (the shuffle is partitioning on the fly).
 - Datacenter networking and oversubscription — §7.17 (shuffle time is a network problem).
 - Probability and Amdahl's Law — §4.6 and §4.12 (stragglers and the serial parts of a job).
-- Clocks and logical time — §24.9–§24.10 (event time; Chandy–Lamport snapshots).
+- Clocks and logical time — §24.9–§24.10 (event time; the happens-before reasoning behind the Chandy–Lamport snapshots of §29.9.2).
 - Backpressure and idempotency — §22.10 and §22.15 (streaming operators slow their sources; sinks must tolerate replays).
 - Units: **MB/GB/TB** are powers of ten; network speeds are in bits per second (Gb/s), so 25 Gb/s = 3.125 GB/s.
 
@@ -813,7 +813,7 @@ $$T_{\text{shuffle}} \approx \max\!\left( \frac{V (N-1)/N}{N \, \eta B_{\text{NI
 4. Lower bound: $\max(45, 102, 100) \approx 102$ s, about 1.7 minutes; serialization, compression and stragglers typically add 2–3× in practice.
 5. Block count: with 128 MB input splits from 10 TB of input, $M \approx 78{,}000$ map tasks; with $R = 2{,}000$ reducers there are $1.56 \times 10^{8}$ shuffle blocks averaging $10^{13} / 1.56 \times 10^{8} = 64$ KB each.
 
-**Interpretation.** Moving 10 TB is dominated by oversubscribed uplinks and local disks, not NICs; and tens of millions of 64 KB random reads would cripple hard disks. **Engineering implication.** Shrink $V$ first (filter and project before the shuffle, pre-aggregate, compress), then avoid it (broadcast joins, co-partitioned or bucketed inputs), and keep partitions around 100–200 MB so blocks stay large.
+**Interpretation.** Moving 10 TB is dominated by oversubscribed uplinks and local disks, not NICs; and over a hundred million 64 KB random reads would cripple hard disks. **Engineering implication.** Shrink $V$ first (filter and project before the shuffle, pre-aggregate, compress), then avoid it (broadcast joins, co-partitioned or bucketed inputs), and keep partitions around 100–200 MB so blocks stay large.
 :::
 
 ::: industry
@@ -953,7 +953,7 @@ Two changes reduced locality's importance. Networks moved to 25–100 Gb/s NICs 
 **Interpretation.** Locality shrank from an 8× factor to 2×, which elasticity usually outweighs. **Engineering implication.** Keep columnar tables in object storage, cache hot data on local SSDs, and tune shuffle and skew instead; the shuffle remains node-to-node.
 :::
 
-Object stores bring their own limits: per-prefix request rates (Amazon S3 documents at least 3,500 writes and 5,500 reads per second per prefix, as of 2026), slow listing, and rename-as-copy. Table formats such as Apache Iceberg, Delta Lake and Apache Hudi therefore track files in metadata and commit by swapping a metadata pointer (Chapters 61–62).
+Object stores bring their own limits: per-prefix request rates (Amazon S3 documents at least 3,500 writes and 5,500 reads per second per prefix, as of 2026), slow listing, and rename-as-copy. Table formats such as Apache Iceberg, Delta Lake and Apache Hudi therefore track files in metadata and commit by swapping a metadata pointer (Chapter 61).
 
 ## 29.8 Stream processing concepts
 

@@ -192,6 +192,18 @@ Delivery Networks</a></li>
 Traffic Management</a></li>
 <li><a href="#chapter-23-performance-engineering" id="toc-chapter-23-performance-engineering">Chapter 23 — Performance
 Engineering</a></li>
+<li><a href="#chapter-24-distributed-systems-fundamentals" id="toc-chapter-24-distributed-systems-fundamentals">Chapter 24 —
+Distributed Systems Fundamentals</a></li>
+<li><a href="#chapter-25-consistency-and-availability" id="toc-chapter-25-consistency-and-availability">Chapter 25 —
+Consistency and Availability</a></li>
+<li><a href="#chapter-26-consensus-and-coordination" id="toc-chapter-26-consensus-and-coordination">Chapter 26 — Consensus
+and Coordination</a></li>
+<li><a href="#chapter-27-replication-and-fault-tolerance" id="toc-chapter-27-replication-and-fault-tolerance">Chapter 27 —
+Replication and Fault Tolerance</a></li>
+<li><a href="#chapter-28-distributed-transactions" id="toc-chapter-28-distributed-transactions">Chapter 28 — Distributed
+Transactions</a></li>
+<li><a href="#chapter-29-distributed-data-processing" id="toc-chapter-29-distributed-data-processing">Chapter 29 — Distributed
+Data Processing</a></li>
 </ul></li>
 </ul>
 </nav>
@@ -10060,6 +10072,2299 @@ at peak (headroom for queueing and variance)</td>
 <td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Z</mi><annotation encoding="application/x-tex">Z</annotation></semantics></math></td>
 <td>Number of availability zones, sized to survive the loss of one</td>
 <td>count</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="chapter-24-distributed-systems-fundamentals">Chapter 24 —
+Distributed Systems Fundamentals</h2>
+<p><em>From §24.4.1</em></p>
+<div class="formula">
+<p><strong>Availability of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+independent replicas, and the chance that something in a fleet
+fails</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mi>k</mi></msub><mo>=</mo><mn>1</mn><mo>−</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>a</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>k</mi></msup><mspace width="2.0em"></mspace><mspace width="2.0em"></mspace><msub><mi>P</mi><mtext mathvariant="normal">any</mtext></msub><mo>=</mo><mn>1</mn><mo>−</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>n</mi></msup></mrow><annotation encoding="application/x-tex">A_k = 1 - (1 - a)^k \qquad\qquad P_{\text{any}} = 1 - (1 - p)^n</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>a</mi><annotation encoding="application/x-tex">a</annotation></semantics></math></td>
+<td>Availability of one replica (fraction of time it can serve)</td>
+<td>dimensionless, 0–1</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math></td>
+<td>Number of replicas, any one of which can serve a request</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>A</mi><mi>k</mi></msub><annotation encoding="application/x-tex">A_k</annotation></semantics></math></td>
+<td>Availability of the replicated service, assuming independent
+failures and instant failover</td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>p</mi><annotation encoding="application/x-tex">p</annotation></semantics></math></td>
+<td>Probability that one node fails during a given period</td>
+<td>dimensionless</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Number of nodes in the fleet</td>
+<td>count</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>P</mi><mtext mathvariant="normal">any</mtext></msub><annotation encoding="application/x-tex">P_{\text{any}}</annotation></semantics></math></td>
+<td>Probability that at least one node fails in that period</td>
+<td>dimensionless</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §24.6.3</em></p>
+<div class="formula">
+<p><strong>Minimum replicas for consensus in the partially synchronous
+model</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>n</mi><mtext mathvariant="normal">crash</mtext></msub><mo>≥</mo><mn>2</mn><mi>f</mi><mo>+</mo><mn>1</mn><mspace width="2.0em"></mspace><mspace width="2.0em"></mspace><msub><mi>n</mi><mtext mathvariant="normal">Byz</mtext></msub><mo>≥</mo><mn>3</mn><mi>f</mi><mo>+</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">n_{\text{crash}} \ge 2f + 1 \qquad\qquad n_{\text{Byz}} \ge 3f + 1</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math></td>
+<td>Maximum number of nodes that may be faulty at once</td>
+<td>count</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>n</mi><mtext mathvariant="normal">crash</mtext></msub><annotation encoding="application/x-tex">n_{\text{crash}}</annotation></semantics></math></td>
+<td>Nodes needed when faults are crashes or omissions</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>n</mi><mtext mathvariant="normal">Byz</mtext></msub><annotation encoding="application/x-tex">n_{\text{Byz}}</annotation></semantics></math></td>
+<td>Nodes needed when faults may be arbitrary</td>
+<td>count</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §24.8.3</em></p>
+<div class="formula">
+<p><strong>Timeout from bounded delays, and its practical percentile
+form</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>T</mi><mo>=</mo><mn>2</mn><mi>d</mi><mo>+</mo><mi>r</mi><mspace width="2.0em"></mspace><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">practical</mtext></msub><mo>=</mo><msub><mtext mathvariant="normal">RTT</mtext><mrow><mi>p</mi><mn>99.9</mn></mrow></msub><mo>+</mo><msub><mi>r</mi><mrow><mi>p</mi><mn>99.9</mn></mrow></msub><mo>+</mo><mi>m</mi></mrow><annotation encoding="application/x-tex">T = 2d + r \qquad\qquad T_{\text{practical}} = \text{RTT}_{p99.9} + r_{p99.9} + m</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math></td>
+<td>Upper bound on one-way network delay</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>r</mi><annotation encoding="application/x-tex">r</annotation></semantics></math></td>
+<td>Upper bound on the time the remote node takes to process the
+request</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>T</mi><annotation encoding="application/x-tex">T</annotation></semantics></math></td>
+<td>Timeout after which the absence of a reply proves a fault (only if
+the bounds are real)</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mtext mathvariant="normal">RTT</mtext><mrow><mi>p</mi><mn>99.9</mn></mrow></msub><annotation encoding="application/x-tex">\text{RTT}_{p99.9}</annotation></semantics></math></td>
+<td>Measured 99.9th-percentile round-trip time</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>r</mi><mrow><mi>p</mi><mn>99.9</mn></mrow></msub><annotation encoding="application/x-tex">r_{p99.9}</annotation></semantics></math></td>
+<td>Measured 99.9th-percentile processing time</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math></td>
+<td>Safety margin for pauses (garbage collection, scheduling)</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §24.9.2</em></p>
+<div class="formula">
+<p><strong>Clock drift and the resynchronization interval</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Δ</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mi>ρ</mi><mspace width="0.167em"></mspace><mi>t</mi><mspace width="2.0em"></mspace><mspace width="2.0em"></mspace><msub><mi>Δ</mi><mrow><mi>A</mi><mi>B</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>≤</mo><mn>2</mn><mi>ρ</mi><mspace width="0.167em"></mspace><mi>t</mi><mspace width="2.0em"></mspace><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">sync</mtext></msub><mo>≤</mo><mfrac><mi>ε</mi><mrow><mn>2</mn><mi>ρ</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">\Delta(t) = \rho\, t \qquad\qquad \Delta_{AB}(t) \le 2\rho\, t \qquad\qquad T_{\text{sync}} \le \frac{\varepsilon}{2\rho}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ρ</mi><annotation encoding="application/x-tex">\rho</annotation></semantics></math></td>
+<td>Maximum drift rate of one clock</td>
+<td>ppm (1 ppm =
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mo>−</mo><mn>6</mn></mrow></msup><annotation encoding="application/x-tex">10^{-6}</annotation></semantics></math>
+s/s)</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math></td>
+<td>Time since the clock was last synchronized</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>Δ</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\Delta(t)</annotation></semantics></math></td>
+<td>Worst-case error of one clock relative to true time</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>Δ</mi><mrow><mi>A</mi><mi>B</mi></mrow></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\Delta_{AB}(t)</annotation></semantics></math></td>
+<td>Worst-case skew between two clocks drifting in opposite
+directions</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ε</mi><annotation encoding="application/x-tex">\varepsilon</annotation></semantics></math></td>
+<td>Largest skew you can tolerate between any two clocks</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">sync</mtext></msub><annotation encoding="application/x-tex">T_{\text{sync}}</annotation></semantics></math></td>
+<td>Longest interval between synchronizations that keeps skew within
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ε</mi><annotation encoding="application/x-tex">\varepsilon</annotation></semantics></math></td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §24.9.3</em></p>
+<div class="formula">
+<p><strong>NTP offset, round-trip delay and error bound (RFC
+5905)</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>θ</mi><mo>=</mo><mfrac><mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>T</mi><mn>2</mn></msub><mo>−</mo><msub><mi>T</mi><mn>1</mn></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>T</mi><mn>3</mn></msub><mo>−</mo><msub><mi>T</mi><mn>4</mn></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><mn>2</mn></mfrac><mspace width="2.0em"></mspace><mi>δ</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>T</mi><mn>4</mn></msub><mo>−</mo><msub><mi>T</mi><mn>1</mn></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>−</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>T</mi><mn>3</mn></msub><mo>−</mo><msub><mi>T</mi><mn>2</mn></msub><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="2.0em"></mspace><mrow><mo stretchy="true" form="prefix">|</mo><mi>θ</mi><mo>−</mo><msub><mi>θ</mi><mtext mathvariant="normal">true</mtext></msub><mo stretchy="true" form="postfix">|</mo></mrow><mo>≤</mo><mfrac><mi>δ</mi><mn>2</mn></mfrac></mrow><annotation encoding="application/x-tex">\theta = \frac{(T_2 - T_1) + (T_3 - T_4)}{2} \qquad \delta = (T_4 - T_1) - (T_3 - T_2) \qquad |\theta - \theta_{\text{true}}| \le \frac{\delta}{2}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>1</mn></msub><annotation encoding="application/x-tex">T_1</annotation></semantics></math></td>
+<td>Client clock when the request is sent</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>2</mn></msub><annotation encoding="application/x-tex">T_2</annotation></semantics></math></td>
+<td>Server clock when the request arrives</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>3</mn></msub><annotation encoding="application/x-tex">T_3</annotation></semantics></math></td>
+<td>Server clock when the reply is sent</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>4</mn></msub><annotation encoding="application/x-tex">T_4</annotation></semantics></math></td>
+<td>Client clock when the reply arrives</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>θ</mi><annotation encoding="application/x-tex">\theta</annotation></semantics></math></td>
+<td>Estimated offset: server clock minus client clock; the client adds
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>θ</mi><annotation encoding="application/x-tex">\theta</annotation></semantics></math>
+to correct itself</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>δ</mi><annotation encoding="application/x-tex">\delta</annotation></semantics></math></td>
+<td>Round-trip network delay, excluding the server’s processing
+time</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>θ</mi><mtext mathvariant="normal">true</mtext></msub><annotation encoding="application/x-tex">\theta_{\text{true}}</annotation></semantics></math></td>
+<td>Actual offset</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §24.9.5</em></p>
+<div class="formula">
+<p><strong>Leap-smear rate</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>r</mi><mtext mathvariant="normal">smear</mtext></msub><mo>=</mo><mfrac><mrow><mn>1</mn><mspace width="0.222em"></mspace><mtext mathvariant="normal">s</mtext></mrow><mi>W</mi></mfrac><mspace width="2.0em"></mspace><mspace width="2.0em"></mspace><msub><mi>e</mi><mo>max</mo></msub><mo>=</mo><mn>0.5</mn><mspace width="0.222em"></mspace><mtext mathvariant="normal">s</mtext><mspace width="0.222em"></mspace><mtext mathvariant="normal">(midpoint offset from UTC)</mtext></mrow><annotation encoding="application/x-tex">r_{\text{smear}} = \frac{1\ \text{s}}{W} \qquad\qquad e_{\max} = 0.5\ \text{s}\ \text{(midpoint offset from UTC)}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math></td>
+<td>Smear window</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>r</mi><mtext mathvariant="normal">smear</mtext></msub><annotation encoding="application/x-tex">r_{\text{smear}}</annotation></semantics></math></td>
+<td>Rate by which smeared clocks run slow during the window</td>
+<td>ppm</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>e</mi><mo>max</mo></msub><annotation encoding="application/x-tex">e_{\max}</annotation></semantics></math></td>
+<td>Offset between a smeared clock and true UTC at the leap second
+instant</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §24.11.4</em></p>
+<div class="formula">
+<p><strong>Vector clock metadata size</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi><mo>=</mo><mi>n</mi><mspace width="0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>b</mi><mtext mathvariant="normal">id</mtext></msub><mo>+</mo><msub><mi>b</mi><mtext mathvariant="normal">ctr</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="2.0em"></mspace><mspace width="2.0em"></mspace><mi>M</mi><mo>=</mo><mi>K</mi><mo>⋅</mo><mi>S</mi></mrow><annotation encoding="application/x-tex">S = n\,(b_{\text{id}} + b_{\text{ctr}}) \qquad\qquad M = K \cdot S</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Number of entries (processes, replicas or clients that have
+written)</td>
+<td>count</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>b</mi><mtext mathvariant="normal">id</mtext></msub><annotation encoding="application/x-tex">b_{\text{id}}</annotation></semantics></math></td>
+<td>Bytes to identify an entry’s owner</td>
+<td>bytes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>b</mi><mtext mathvariant="normal">ctr</mtext></msub><annotation encoding="application/x-tex">b_{\text{ctr}}</annotation></semantics></math></td>
+<td>Bytes per counter</td>
+<td>bytes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>S</mi><annotation encoding="application/x-tex">S</annotation></semantics></math></td>
+<td>Metadata per version</td>
+<td>bytes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>K</mi><annotation encoding="application/x-tex">K</annotation></semantics></math></td>
+<td>Number of keys stored</td>
+<td>count</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>M</mi><annotation encoding="application/x-tex">M</annotation></semantics></math></td>
+<td>Total version metadata</td>
+<td>bytes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §24.12.4</em></p>
+<div class="formula">
+<p><strong>Read uncertainty interval</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>t</mi><mi>r</mi></msub><mo>&lt;</mo><msub><mi>t</mi><mi>w</mi></msub><mo>≤</mo><msub><mi>t</mi><mi>r</mi></msub><mo>+</mo><msub><mi>ε</mi><mo>max</mo></msub><mspace width="0.278em"></mspace><mo>⇒</mo><mspace width="0.278em"></mspace><mrow><mtext mathvariant="normal">restart the read at </mtext><mspace width="0.333em"></mspace></mrow><msub><mi>t</mi><mi>w</mi></msub></mrow><annotation encoding="application/x-tex">t_r &lt; t_w \le t_r + \varepsilon_{\max} \;\Rightarrow\; \text{restart the read at } t_w</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mi>r</mi></msub><annotation encoding="application/x-tex">t_r</annotation></semantics></math></td>
+<td>The reading transaction’s HLC timestamp</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mi>w</mi></msub><annotation encoding="application/x-tex">t_w</annotation></semantics></math></td>
+<td>Commit timestamp of a value found by the read</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>ε</mi><mo>max</mo></msub><annotation encoding="application/x-tex">\varepsilon_{\max}</annotation></semantics></math></td>
+<td>Configured maximum clock offset between any two nodes</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §24.14.1</em></p>
+<div class="formula">
+<p><strong>Undetected-corruption probability over many
+transfers</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>P</mi><mtext mathvariant="normal">bad</mtext></msub><mo>=</mo><mn>1</mn><mo>−</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>q</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>N</mi></msup></mrow><annotation encoding="application/x-tex">P_{\text{bad}} = 1 - (1 - q)^N</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math></td>
+<td>Probability that one transfer suffers corruption no lower layer
+catches</td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Number of transfers</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>P</mi><mtext mathvariant="normal">bad</mtext></msub><annotation encoding="application/x-tex">P_{\text{bad}}</annotation></semantics></math></td>
+<td>Probability that at least one transfer is silently corrupted</td>
+<td>dimensionless</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="chapter-25-consistency-and-availability">Chapter 25 —
+Consistency and Availability</h2>
+<p><em>From §25.3.4</em></p>
+<div class="formula">
+<p><strong>Latency of a quorum operation</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">op</mtext></msub><mo>≈</mo><mi>k</mi><mo>×</mo><msub><mtext mathvariant="normal">RTT</mtext><mrow><mo stretchy="true" form="prefix">(</mo><mi>q</mi><mo stretchy="true" form="postfix">)</mo></mrow></msub><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">proc</mtext></msub><mo>,</mo><mspace width="2.0em"></mspace><mi>q</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">⌊</mo><mi>N</mi><mi>/</mi><mn>2</mn><mo stretchy="true" form="postfix">⌋</mo></mrow><mo>+</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">T_{\text{op}} \approx k \times \text{RTT}_{(q)} + T_{\text{proc}}, \qquad q = \left\lfloor N/2 \right\rfloor + 1</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">op</mtext></msub><annotation encoding="application/x-tex">T_{\text{op}}</annotation></semantics></math></td>
+<td>Latency of one linearizable read or write as seen by the client</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math></td>
+<td>Sequential round trips the protocol needs (ABD read: 2; ABD
+single-writer write: 1; Raft write via leader: 1 to the followers plus
+the client-to-leader trip)</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mtext mathvariant="normal">RTT</mtext><mrow><mo stretchy="true" form="prefix">(</mo><mi>q</mi><mo stretchy="true" form="postfix">)</mo></mrow></msub><annotation encoding="application/x-tex">\text{RTT}_{(q)}</annotation></semantics></math></td>
+<td>Round-trip time to the
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math>-th
+closest replica, counting the coordinator itself if it holds a
+replica</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math></td>
+<td>Majority quorum size for
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
+replicas</td>
+<td>replicas</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Number of replicas</td>
+<td>replicas</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">proc</mtext></msub><annotation encoding="application/x-tex">T_{\text{proc}}</annotation></semantics></math></td>
+<td>Processing and disk flush time</td>
+<td>ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §25.3.4</em></p>
+<div class="formula">
+<p><strong>Lower bound for sequentially consistent and linearizable
+registers</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>t</mi><mtext mathvariant="normal">read</mtext></msub><mo>+</mo><msub><mi>t</mi><mtext mathvariant="normal">write</mtext></msub><mspace width="0.222em"></mspace><mo>≥</mo><mspace width="0.222em"></mspace><mi>d</mi></mrow><annotation encoding="application/x-tex">t_{\text{read}} + t_{\text{write}} \ \ge\ d</annotation></semantics></math></p>
+<table>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mtext mathvariant="normal">read</mtext></msub><annotation encoding="application/x-tex">t_{\text{read}}</annotation></semantics></math></td>
+<td>Worst-case time for a read to return</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mtext mathvariant="normal">write</mtext></msub><annotation encoding="application/x-tex">t_{\text{write}}</annotation></semantics></math></td>
+<td>Worst-case time for a write to return</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math></td>
+<td>Maximum one-way message delay between replicas</td>
+<td>ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §25.7.2</em></p>
+<div class="formula">
+<p><strong>Probability that a partial-quorum read misses the latest
+write</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>p</mi><mi>s</mi></msub><mo>=</mo><mfrac><mrow><mo stretchy="true" form="prefix">(</mo><mfrac linethickness="0"><mrow><mi>N</mi><mo>−</mo><mi>W</mi></mrow><mi>R</mi></mfrac><mo stretchy="true" form="postfix">)</mo></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mfrac linethickness="0"><mi>N</mi><mi>R</mi></mfrac><mo stretchy="true" form="postfix">)</mo></mrow></mfrac><mo>,</mo><mspace width="2.0em"></mspace><mi>P</mi><mrow><mo stretchy="true" form="prefix">(</mo><mrow><mtext mathvariant="normal">older than all </mtext><mspace width="0.333em"></mspace></mrow><mi>k</mi><mrow><mspace width="0.333em"></mspace><mtext mathvariant="normal"> most recent versions</mtext></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><msubsup><mi>p</mi><mi>s</mi><mrow><mspace width="0.167em"></mspace><mi>k</mi></mrow></msubsup></mrow><annotation encoding="application/x-tex">p_s = \frac{\binom{N-W}{R}}{\binom{N}{R}}, \qquad P(\text{older than all } k \text{ most recent versions}) = p_s^{\,k}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>p</mi><mi>s</mi></msub><annotation encoding="application/x-tex">p_s</annotation></semantics></math></td>
+<td>Probability that all
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>R</mi><annotation encoding="application/x-tex">R</annotation></semantics></math>
+replicas read hold none of the latest write’s
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math>
+copies</td>
+<td>probability</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Replication factor</td>
+<td>replicas</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math></td>
+<td>Replicas that acknowledged the write when it committed</td>
+<td>replicas</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>R</mi><annotation encoding="application/x-tex">R</annotation></semantics></math></td>
+<td>Replicas whose responses the read waits for</td>
+<td>replicas</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math></td>
+<td>Number of most recent versions, any one of which counts as fresh
+enough (the read may miss
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mo>−</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">k - 1</annotation></semantics></math>
+of them)</td>
+<td>versions</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §25.9.2</em></p>
+<div class="formula">
+<p><strong>DynamoDB read capacity for a read rate</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">RCU</mtext><mo>=</mo><mi>r</mi><mo>×</mo><mrow><mo stretchy="true" form="prefix">⌈</mo><mfrac><mi>s</mi><mrow><mn>4</mn><mspace width="0.222em"></mspace><mtext mathvariant="normal">KB</mtext></mrow></mfrac><mo stretchy="true" form="postfix">⌉</mo></mrow><mo>×</mo><mi>f</mi><mo>,</mo><mspace width="2.0em"></mspace><mi>f</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><mn>1</mn></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">strongly consistent</mtext></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><mn>0.5</mn></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">eventually consistent</mtext></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">\text{RCU} = r \times \left\lceil \frac{s}{4\ \text{KB}} \right\rceil \times f, \qquad f = \begin{cases} 1 &amp; \text{strongly consistent} \\ 0.5 &amp; \text{eventually consistent} \end{cases}</annotation></semantics></math></p>
+<table>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mtext mathvariant="normal">RCU</mtext><annotation encoding="application/x-tex">\text{RCU}</annotation></semantics></math></td>
+<td>Provisioned read capacity needed</td>
+<td>RCU</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>r</mi><annotation encoding="application/x-tex">r</annotation></semantics></math></td>
+<td>Read rate</td>
+<td>reads/s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>s</mi><annotation encoding="application/x-tex">s</annotation></semantics></math></td>
+<td>Item size</td>
+<td>KB</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math></td>
+<td>Consistency factor</td>
+<td>RCU per 4 KB read</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="chapter-26-consensus-and-coordination">Chapter 26 — Consensus
+and Coordination</h2>
+<p><em>From §26.4.1</em></p>
+<div class="formula">
+<p><strong>Majority quorum size and fault tolerance</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>q</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">⌊</mo><mfrac><mi>N</mi><mn>2</mn></mfrac><mo stretchy="true" form="postfix">⌋</mo></mrow><mo>+</mo><mn>1</mn><mspace width="2.0em"></mspace><mi>f</mi><mo>=</mo><mi>N</mi><mo>−</mo><mi>q</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">⌊</mo><mfrac><mrow><mi>N</mi><mo>−</mo><mn>1</mn></mrow><mn>2</mn></mfrac><mo stretchy="true" form="postfix">⌋</mo></mrow><mspace width="2.0em"></mspace><mo>⇔</mo><mspace width="2.0em"></mspace><mi>N</mi><mo>=</mo><mn>2</mn><mi>f</mi><mo>+</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">q = \left\lfloor \frac{N}{2} \right\rfloor + 1 \qquad f = N - q = \left\lfloor \frac{N-1}{2} \right\rfloor \qquad \Longleftrightarrow \qquad N = 2f + 1</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Number of voting nodes</td>
+<td>nodes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math></td>
+<td>Majority quorum size</td>
+<td>nodes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math></td>
+<td>Crash failures tolerated while still able to form a quorum</td>
+<td>nodes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §26.4.1</em></p>
+<div class="formula">
+<p><strong>Availability of a majority-quorum cluster (independent
+failures)</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mtext mathvariant="normal">cluster</mtext></msub><mo>=</mo><munderover><mo>∑</mo><mrow><mi>k</mi><mo>=</mo><mi>q</mi></mrow><mi>N</mi></munderover><mrow><mo stretchy="true" form="prefix">(</mo><mfrac linethickness="0"><mi>N</mi><mi>k</mi></mfrac><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.167em"></mspace><msup><mi>a</mi><mi>k</mi></msup><msup><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>a</mi><mo stretchy="true" form="postfix">)</mo></mrow><mrow><mi>N</mi><mo>−</mo><mi>k</mi></mrow></msup></mrow><annotation encoding="application/x-tex">A_{\text{cluster}} = \sum_{k=q}^{N} \binom{N}{k}\, a^{k} (1-a)^{N-k}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>A</mi><mtext mathvariant="normal">cluster</mtext></msub><annotation encoding="application/x-tex">A_{\text{cluster}}</annotation></semantics></math></td>
+<td>Probability that a quorum of nodes is up</td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>a</mi><annotation encoding="application/x-tex">a</annotation></semantics></math></td>
+<td>Availability of one node</td>
+<td>dimensionless</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math></td>
+<td>Cluster size and quorum size</td>
+<td>nodes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">(</mo><mfrac linethickness="0"><mi>N</mi><mi>k</mi></mfrac><mo stretchy="true" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\binom{N}{k}</annotation></semantics></math></td>
+<td>Number of ways to choose which
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+nodes are up</td>
+<td>count</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §26.4.2</em></p>
+<div class="formula">
+<p><strong>Quorum commit latency</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mtext mathvariant="normal">commit</mtext></msub><mo>≈</mo><msub><mi>t</mi><mtext mathvariant="normal">fsync</mtext></msub><mo>+</mo><msub><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">T</mi><mi mathvariant="normal">T</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mi>q</mi><mo>−</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></msub></mrow><annotation encoding="application/x-tex">L_{\text{commit}} \approx t_{\text{fsync}} + \mathrm{RTT}_{(q-1)}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>L</mi><mtext mathvariant="normal">commit</mtext></msub><annotation encoding="application/x-tex">L_{\text{commit}}</annotation></semantics></math></td>
+<td>Time from the leader receiving a write to the entry being
+committed</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mtext mathvariant="normal">fsync</mtext></msub><annotation encoding="application/x-tex">t_{\text{fsync}}</annotation></semantics></math></td>
+<td>Time to flush the entry to durable storage (leader and followers
+flush in parallel)</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">T</mi><mi mathvariant="normal">T</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mi>k</mi><mo stretchy="true" form="postfix">)</mo></mrow></msub><annotation encoding="application/x-tex">\mathrm{RTT}_{(k)}</annotation></semantics></math></td>
+<td>The
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>-th
+smallest round-trip time from the leader to its followers, including the
+followers’ flush</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math></td>
+<td>Quorum size</td>
+<td>nodes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §26.4.3</em></p>
+<div class="formula">
+<p><strong>Flexible Paxos quorum condition</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">|</mo><msub><mi>Q</mi><mn>1</mn></msub><mo stretchy="true" form="postfix">|</mo></mrow><mo>+</mo><mrow><mo stretchy="true" form="prefix">|</mo><msub><mi>Q</mi><mn>2</mn></msub><mo stretchy="true" form="postfix">|</mo></mrow><mo>&gt;</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">|Q_1| + |Q_2| &gt; N</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">|</mo><msub><mi>Q</mi><mn>1</mn></msub><mo stretchy="false" form="postfix">|</mo></mrow><annotation encoding="application/x-tex">\lvert Q_1 \rvert</annotation></semantics></math></td>
+<td>Size of a leader-election (phase-1) quorum</td>
+<td>nodes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">|</mo><msub><mi>Q</mi><mn>2</mn></msub><mo stretchy="false" form="postfix">|</mo></mrow><annotation encoding="application/x-tex">\lvert Q_2 \rvert</annotation></semantics></math></td>
+<td>Size of a replication (phase-2) quorum</td>
+<td>nodes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Number of acceptors</td>
+<td>nodes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §26.7.2</em></p>
+<div class="formula">
+<p><strong>Raft election timing and expected failover time</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>h</mi><mo>≈</mo><msub><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">T</mi><mi mathvariant="normal">T</mi></mrow><mtext mathvariant="normal">typ</mtext></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>T</mi><mo>min</mo></msub><mo>≥</mo><mn>10</mn><mo>×</mo><msub><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">T</mi><mi mathvariant="normal">T</mi></mrow><mtext mathvariant="normal">typ</mtext></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">failover</mtext></msub><mo>≈</mo><msub><mi>T</mi><mo>min</mo></msub><mo>+</mo><mfrac><mi>W</mi><mrow><mi>n</mi><mo>+</mo><mn>1</mn></mrow></mfrac><mo>−</mo><mfrac><mi>h</mi><mn>2</mn></mfrac><mo>+</mo><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">T</mi><mi mathvariant="normal">T</mi></mrow><mo>+</mo><msub><mi>t</mi><mtext mathvariant="normal">fsync</mtext></msub></mrow><annotation encoding="application/x-tex">h \approx \mathrm{RTT}_{\text{typ}}, \qquad T_{\min} \ge 10 \times \mathrm{RTT}_{\text{typ}}, \qquad T_{\text{failover}} \approx T_{\min} + \frac{W}{n+1} - \frac{h}{2} + \mathrm{RTT} + t_{\text{fsync}}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>h</mi><annotation encoding="application/x-tex">h</annotation></semantics></math></td>
+<td>Heartbeat interval</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mrow><mi mathvariant="normal">R</mi><mi mathvariant="normal">T</mi><mi mathvariant="normal">T</mi></mrow><mtext mathvariant="normal">typ</mtext></msub><annotation encoding="application/x-tex">\mathrm{RTT}_{\text{typ}}</annotation></semantics></math></td>
+<td>Typical round-trip time between members</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mo>min</mo></msub><annotation encoding="application/x-tex">T_{\min}</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math></td>
+<td>Election timeout is drawn uniformly from
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>T</mi><mo>min</mo></msub><mo>,</mo><msub><mi>T</mi><mo>min</mo></msub><mo>+</mo><mi>W</mi><mo stretchy="true" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">[T_{\min}, T_{\min} + W]</annotation></semantics></math></td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Followers still alive after the leader fails</td>
+<td>nodes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">failover</mtext></msub><annotation encoding="application/x-tex">T_{\text{failover}}</annotation></semantics></math></td>
+<td>Expected time from leader crash to a new leader</td>
+<td>ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §26.7.2</em></p>
+<div class="formula">
+<p><strong>Probability that a second candidate starts before the first’s
+votes arrive</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>P</mi><mtext mathvariant="normal">contend</mtext></msub><mo>=</mo><mn>1</mn><mo>−</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mfrac><mi>δ</mi><mi>W</mi></mfrac><mo stretchy="true" form="postfix">)</mo></mrow><mi>n</mi></msup></mrow><annotation encoding="application/x-tex">P_{\text{contend}} = 1 - \left(1 - \frac{\delta}{W}\right)^{n}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>δ</mi><annotation encoding="application/x-tex">\delta</annotation></semantics></math></td>
+<td>Time for the first candidate’s RequestVote to reach the others
+(one-way delay plus flush)</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math></td>
+<td>Width of the randomized timeout range</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Number of followers whose timers are running</td>
+<td>nodes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>P</mi><mtext mathvariant="normal">contend</mtext></msub><annotation encoding="application/x-tex">P_{\text{contend}}</annotation></semantics></math></td>
+<td>Probability that the gap between the first two timeouts is below
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>δ</mi><annotation encoding="application/x-tex">\delta</annotation></semantics></math></td>
+<td>dimensionless</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §26.11.1</em></p>
+<div class="formula">
+<p><strong>Lease safety margin</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">holder</mtext></msub><mo>=</mo><mi>T</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>ρ</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>−</mo><msub><mi>d</mi><mo>max</mo></msub><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">grantor</mtext></msub><mo>=</mo><mi>T</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>+</mo><mi>ρ</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">T_{\text{holder}} = T(1 - \rho) - d_{\max} \qquad T_{\text{grantor}} = T(1 + \rho)</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>T</mi><annotation encoding="application/x-tex">T</annotation></semantics></math></td>
+<td>Nominal lease duration</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ρ</mi><annotation encoding="application/x-tex">\rho</annotation></semantics></math></td>
+<td>Maximum clock rate error relative to real time (drift bound)</td>
+<td>dimensionless
+(e.g. <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mo>−</mo><mn>4</mn></mrow></msup><annotation encoding="application/x-tex">10^{-4}</annotation></semantics></math>
+= 100 ppm)</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>d</mi><mo>max</mo></msub><annotation encoding="application/x-tex">d_{\max}</annotation></semantics></math></td>
+<td>Maximum time between the holder checking validity and its action
+taking effect (processing, network, budgeted pause)</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">holder</mtext></msub><annotation encoding="application/x-tex">T_{\text{holder}}</annotation></semantics></math></td>
+<td>Local elapsed time after which the holder must stop acting</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">grantor</mtext></msub><annotation encoding="application/x-tex">T_{\text{grantor}}</annotation></semantics></math></td>
+<td>Local elapsed time after grant before the grantor may grant the
+right to someone else</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="chapter-27-replication-and-fault-tolerance">Chapter 27 —
+Replication and Fault Tolerance</h2>
+<p><em>From §27.4.1</em></p>
+<div class="formula">
+<p><strong>Writes lost in an asynchronous failover</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mo>=</mo><msub><mi>r</mi><mi>w</mi></msub><mo>×</mo><mo>ℓ</mo></mrow><annotation encoding="application/x-tex">L = r_w \times \ell</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>L</mi><annotation encoding="application/x-tex">L</annotation></semantics></math></td>
+<td>Acknowledged writes lost when the most up-to-date backup is
+promoted</td>
+<td>writes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>r</mi><mi>w</mi></msub><annotation encoding="application/x-tex">r_w</annotation></semantics></math></td>
+<td>Write rate on the primary just before the crash</td>
+<td>writes/s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mo>ℓ</mo><annotation encoding="application/x-tex">\ell</annotation></semantics></math></td>
+<td>Replication lag of the promoted backup at the moment of the
+crash</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.5.2</em></p>
+<div class="formula">
+<p><strong>Chain write latency and read capacity</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">write</mtext></msub><mo>≈</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>n</mi><mo>+</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.167em"></mspace><mi>d</mi><mo>+</mo><mi>n</mi><mspace width="0.167em"></mspace><mi>s</mi><mspace width="2.0em"></mspace><msubsup><mi>X</mi><mtext mathvariant="normal">read</mtext><mtext mathvariant="normal">CR</mtext></msubsup><mo>=</mo><mi>c</mi><mspace width="2.0em"></mspace><msubsup><mi>X</mi><mtext mathvariant="normal">read</mtext><mtext mathvariant="normal">CRAQ</mtext></msubsup><mo>≈</mo><mi>n</mi><mspace width="0.167em"></mspace><mi>c</mi><mspace width="0.278em"></mspace><mtext mathvariant="normal">(clean reads)</mtext></mrow><annotation encoding="application/x-tex">T_{\text{write}} \approx (n + 1)\,d + n\,s \qquad X_{\text{read}}^{\text{CR}} = c \qquad X_{\text{read}}^{\text{CRAQ}} \approx n\,c \;\text{(clean reads)}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Number of nodes in the chain</td>
+<td>nodes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math></td>
+<td>One-way network delay per hop</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>s</mi><annotation encoding="application/x-tex">s</annotation></semantics></math></td>
+<td>Processing time per node for an update</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>c</mi><annotation encoding="application/x-tex">c</annotation></semantics></math></td>
+<td>Read capacity of one node</td>
+<td>reads/s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">write</mtext></msub><annotation encoding="application/x-tex">T_{\text{write}}</annotation></semantics></math></td>
+<td>Client-observed write latency (client → head → … → tail →
+client)</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>X</mi><mtext mathvariant="normal">read</mtext></msub><annotation encoding="application/x-tex">X_{\text{read}}</annotation></semantics></math></td>
+<td>Read capacity of one chain</td>
+<td>reads/s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.6.1</em></p>
+<div class="formula">
+<p><strong>Conflict rate for one item written at two
+leaders</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>κ</mi><mo>≈</mo><mn>2</mn><mspace width="0.167em"></mspace><msub><mi>λ</mi><mi>A</mi></msub><mspace width="0.167em"></mspace><msub><mi>λ</mi><mi>B</mi></msub><mspace width="0.167em"></mspace><mi>Δ</mi><mspace width="2.0em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>λ</mi><mi>A</mi></msub><mi>Δ</mi><mo>≪</mo><mn>1</mn><mo>,</mo><mspace width="0.222em"></mspace><msub><mi>λ</mi><mi>B</mi></msub><mi>Δ</mi><mo>≪</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\kappa \approx 2\,\lambda_A\,\lambda_B\,\Delta \qquad (\lambda_A \Delta \ll 1,\ \lambda_B \Delta \ll 1)</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>κ</mi><annotation encoding="application/x-tex">\kappa</annotation></semantics></math></td>
+<td>Expected conflicts per second for the item</td>
+<td>conflicts/s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>λ</mi><mi>A</mi></msub><mo>,</mo><msub><mi>λ</mi><mi>B</mi></msub></mrow><annotation encoding="application/x-tex">\lambda_A, \lambda_B</annotation></semantics></math></td>
+<td>Write rate to the item at leaders A and B</td>
+<td>writes/s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Δ</mi><annotation encoding="application/x-tex">\Delta</annotation></semantics></math></td>
+<td>Replication delay between the leaders</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.8.1</em></p>
+<div class="formula">
+<p><strong>Quorum overlap and fault tolerance</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">|</mo><msub><mi>S</mi><mi>R</mi></msub><mo>∩</mo><msub><mi>S</mi><mi>W</mi></msub><mo stretchy="true" form="postfix">|</mo></mrow><mspace width="0.278em"></mspace><mo>≥</mo><mspace width="0.278em"></mspace><mi>R</mi><mo>+</mo><mi>W</mi><mo>−</mo><mi>N</mi><mspace width="2.0em"></mspace><msub><mi>f</mi><mtext mathvariant="normal">read</mtext></msub><mo>=</mo><mi>N</mi><mo>−</mo><mi>R</mi><mspace width="2.0em"></mspace><msub><mi>f</mi><mtext mathvariant="normal">write</mtext></msub><mo>=</mo><mi>N</mi><mo>−</mo><mi>W</mi></mrow><annotation encoding="application/x-tex">|S_R \cap S_W| \;\ge\; R + W - N \qquad f_{\text{read}} = N - R \qquad f_{\text{write}} = N - W</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Replicas per key (replication factor)</td>
+<td>replicas</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>R</mi><annotation encoding="application/x-tex">R</annotation></semantics></math></td>
+<td>Responses a read waits for</td>
+<td>replicas</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math></td>
+<td>Acknowledgments a write waits for</td>
+<td>replicas</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>S</mi><mi>R</mi></msub><mo>,</mo><msub><mi>S</mi><mi>W</mi></msub></mrow><annotation encoding="application/x-tex">S_R, S_W</annotation></semantics></math></td>
+<td>The sets of replicas that answered a read and acknowledged a
+write</td>
+<td>sets</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>f</mi><mtext mathvariant="normal">read</mtext></msub><mo>,</mo><msub><mi>f</mi><mtext mathvariant="normal">write</mtext></msub></mrow><annotation encoding="application/x-tex">f_{\text{read}}, f_{\text{write}}</annotation></semantics></math></td>
+<td>Unavailable replicas a read or write can tolerate</td>
+<td>replicas</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.8.3</em></p>
+<div class="formula">
+<p><strong>Latency of the k-th fastest of N replicas (independent,
+identically distributed)</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">(</mo><msub><mi>T</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>k</mi><mo stretchy="true" form="postfix">)</mo></mrow></msub><mo>&gt;</mo><mi>t</mi><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">)</mo><mo>=</mo><munderover><mo>∑</mo><mrow><mi>j</mi><mo>=</mo><mn>0</mn></mrow><mrow><mi>k</mi><mo>−</mo><mn>1</mn></mrow></munderover><mrow><mo stretchy="true" form="prefix">(</mo><mfrac linethickness="0"><mi>N</mi><mi>j</mi></mfrac><mo stretchy="true" form="postfix">)</mo></mrow><mi>F</mi><msup><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>j</mi></msup><mspace width="0.167em"></mspace><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>F</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow><msup><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">)</mo><mrow><mi>N</mi><mo>−</mo><mi>j</mi></mrow></msup><mspace width="2.0em"></mspace><mi>𝔼</mi><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">[</mo><msub><mi>T</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>k</mi><mo stretchy="true" form="postfix">)</mo></mrow></msub><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">]</mo><mo>=</mo><mi>μ</mi><munderover><mo>∑</mo><mrow><mi>i</mi><mo>=</mo><mi>N</mi><mo>−</mo><mi>k</mi><mo>+</mo><mn>1</mn></mrow><mi>N</mi></munderover><mfrac><mn>1</mn><mi>i</mi></mfrac><mspace width="0.278em"></mspace><mspace width="0.278em"></mspace><mtext mathvariant="normal">(exponential)</mtext></mrow><annotation encoding="application/x-tex">P\big(T_{(k)} &gt; t\big) = \sum_{j=0}^{k-1} \binom{N}{j} F(t)^{j}\,\big(1 - F(t)\big)^{N-j} \qquad \mathbb{E}\big[T_{(k)}\big] = \mu \sum_{i=N-k+1}^{N} \frac{1}{i}\;\;\text{(exponential)}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>k</mi><mo stretchy="true" form="postfix">)</mo></mrow></msub><annotation encoding="application/x-tex">T_{(k)}</annotation></semantics></math></td>
+<td>Time until the
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>-th
+reply arrives</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>F</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">F(t)</annotation></semantics></math></td>
+<td>Probability that one replica replies within
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math></td>
+<td>dimensionless</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math></td>
+<td>Replicas contacted; replies required</td>
+<td>count</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>j</mi><annotation encoding="application/x-tex">j</annotation></semantics></math></td>
+<td>Number of replicas that replied within
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math>
+(summation index)</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>μ</mi><annotation encoding="application/x-tex">\mu</annotation></semantics></math></td>
+<td>Mean latency of one replica, if exponentially distributed</td>
+<td>ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.9.1</em></p>
+<div class="formula">
+<p><strong>Hint volume during an outage</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mi>h</mi></msub><mo>=</mo><mfrac><mrow><msub><mi>r</mi><mi>w</mi></msub><mo>⋅</mo><mi>N</mi></mrow><mi>n</mi></mfrac><mo>⋅</mo><msub><mi>T</mi><mtext mathvariant="normal">down</mtext></msub><mo>⋅</mo><mi>s</mi></mrow><annotation encoding="application/x-tex">V_h = \frac{r_w \cdot N}{n} \cdot T_{\text{down}} \cdot s</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>V</mi><mi>h</mi></msub><annotation encoding="application/x-tex">V_h</annotation></semantics></math></td>
+<td>Total hints accumulated for the failed node across the cluster</td>
+<td>bytes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>r</mi><mi>w</mi></msub><annotation encoding="application/x-tex">r_w</annotation></semantics></math></td>
+<td>Cluster-wide client write rate</td>
+<td>writes/s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Replication factor</td>
+<td>replicas</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Nodes in the cluster</td>
+<td>nodes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">down</mtext></msub><annotation encoding="application/x-tex">T_{\text{down}}</annotation></semantics></math></td>
+<td>Time the node is down (capped by the hint window)</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>s</mi><annotation encoding="application/x-tex">s</annotation></semantics></math></td>
+<td>Size of one write including overhead</td>
+<td>bytes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.10.2</em></p>
+<div class="formula">
+<p><strong>Phi-accrual suspicion level (normal model)</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>φ</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>t</mi><mtext mathvariant="normal">now</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mo>−</mo><msub><mo>log</mo><mn>10</mn></msub><mo minsize="1.8" maxsize="1.8" stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>F</mi><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">(</mo><msub><mi>t</mi><mtext mathvariant="normal">now</mtext></msub><mo>−</mo><msub><mi>t</mi><mtext mathvariant="normal">last</mtext></msub><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">)</mo><mo minsize="1.8" maxsize="1.8" stretchy="false" form="postfix">)</mo><mo>,</mo><mspace width="2.0em"></mspace><mi>F</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>δ</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mi>Φ</mi><mspace width="-0.167em"></mspace><mo minsize="1.8" maxsize="1.8" stretchy="false" form="prefix">(</mo><mfrac><mrow><mi>δ</mi><mo>−</mo><mi>μ</mi></mrow><mi>σ</mi></mfrac><mo minsize="1.8" maxsize="1.8" stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\varphi(t_{\text{now}}) = -\log_{10}\Big(1 - F\big(t_{\text{now}} - t_{\text{last}}\big)\Big), \qquad F(\delta) = \Phi\!\Big(\frac{\delta - \mu}{\sigma}\Big)</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>φ</mi><annotation encoding="application/x-tex">\varphi</annotation></semantics></math></td>
+<td>Suspicion level; the detector’s false-suspicion probability is about
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mo>−</mo><mi>φ</mi></mrow></msup><annotation encoding="application/x-tex">10^{-\varphi}</annotation></semantics></math></td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>t</mi><mtext mathvariant="normal">now</mtext></msub><mo>−</mo><msub><mi>t</mi><mtext mathvariant="normal">last</mtext></msub></mrow><annotation encoding="application/x-tex">t_{\text{now}} - t_{\text{last}}</annotation></semantics></math></td>
+<td>Time since the last heartbeat arrived,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>δ</mi><annotation encoding="application/x-tex">\delta</annotation></semantics></math></td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>μ</mi><mo>,</mo><mi>σ</mi></mrow><annotation encoding="application/x-tex">\mu, \sigma</annotation></semantics></math></td>
+<td>Mean and standard deviation of recent inter-arrival times (sliding
+window)</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>F</mi><annotation encoding="application/x-tex">F</annotation></semantics></math></td>
+<td>Estimated cumulative distribution of inter-arrival times</td>
+<td>dimensionless</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Φ</mi><annotation encoding="application/x-tex">\Phi</annotation></semantics></math></td>
+<td>Standard normal cumulative distribution function</td>
+<td>dimensionless</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.10.3</em></p>
+<div class="formula">
+<p><strong>Rounds for push gossip to reach every node</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">rounds</mtext></msub><mo>≈</mo><msub><mo>log</mo><mrow><mn>1</mn><mo>+</mo><mi>f</mi></mrow></msub><mi>n</mi><mo>+</mo><mfrac><mrow><mo>ln</mo><mi>n</mi></mrow><mi>f</mi></mfrac><mspace width="2.0em"></mspace><mrow><mtext mathvariant="normal">(for </mtext><mspace width="0.333em"></mspace></mrow><mi>f</mi><mo>=</mo><mn>1</mn><mrow><mtext mathvariant="normal">: </mtext><mspace width="0.333em"></mspace></mrow><msub><mo>log</mo><mn>2</mn></msub><mi>n</mi><mo>+</mo><mo>ln</mo><mi>n</mi><mo>+</mo><mi>O</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow><mtext mathvariant="normal">)</mtext></mrow><annotation encoding="application/x-tex">T_{\text{rounds}} \approx \log_{1+f} n + \frac{\ln n}{f} \qquad \text{(for } f = 1\text{: } \log_2 n + \ln n + O(1)\text{)}</annotation></semantics></math></p>
+<table>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">rounds</mtext></msub><annotation encoding="application/x-tex">T_{\text{rounds}}</annotation></semantics></math></td>
+<td>Rounds until every node is informed</td>
+<td>rounds</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Number of nodes</td>
+<td>nodes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math></td>
+<td>Peers contacted per node per round</td>
+<td>peers/round</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.10.3</em></p>
+<div class="formula">
+<p><strong>SWIM expected time to first detection</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>𝔼</mi><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>T</mi><mtext mathvariant="normal">detect</mtext></msub><mo stretchy="true" form="postfix">]</mo></mrow><mo>=</mo><mfrac><mrow><mi>T</mi><mi>′</mi></mrow><mrow><mn>1</mn><mo>−</mo><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">(</mo><mn>1</mn><mo>−</mo><mfrac><mn>1</mn><mrow><mi>n</mi><mo>−</mo><mn>1</mn></mrow></mfrac><msup><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">)</mo><mrow><mi>n</mi><mo>−</mo><mn>1</mn></mrow></msup></mrow></mfrac><mspace width="0.278em"></mspace><mover><mo>→</mo><mrow><mspace width="0.278em"></mspace><mi>n</mi><mo>→</mo><mi>∞</mi><mspace width="0.278em"></mspace></mrow></mover><mspace width="0.278em"></mspace><mi>T</mi><mi>′</mi><mo>⋅</mo><mfrac><mi>e</mi><mrow><mi>e</mi><mo>−</mo><mn>1</mn></mrow></mfrac><mo>≈</mo><mn>1.58</mn><mspace width="0.167em"></mspace><mi>T</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">\mathbb{E}[T_{\text{detect}}] = \frac{T&#39;}{1 - \big(1 - \frac{1}{n-1}\big)^{n-1}} \;\xrightarrow{\;n \to \infty\;}\; T&#39; \cdot \frac{e}{e-1} \approx 1.58\,T&#39;</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>T</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">T&#39;</annotation></semantics></math></td>
+<td>Protocol period</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Group size</td>
+<td>members</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>𝔼</mi><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>T</mi><mtext mathvariant="normal">detect</mtext></msub><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">\mathbb{E}[T_{\text{detect}}]</annotation></semantics></math></td>
+<td>Expected time until some member first probes the failed member</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.11.1</em></p>
+<div class="formula">
+<p><strong>Failover time budget</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">fo</mtext></msub><mo>=</mo><msub><mi>T</mi><mtext mathvariant="normal">detect</mtext></msub><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">elect</mtext></msub><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">reconfig</mtext></msub><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">redirect</mtext></msub><mspace width="2.0em"></mspace><msub><mi>D</mi><mtext mathvariant="normal">yr</mtext></msub><mo>=</mo><mi>ν</mi><mo>⋅</mo><msub><mi>T</mi><mtext mathvariant="normal">fo</mtext></msub></mrow><annotation encoding="application/x-tex">T_{\text{fo}} = T_{\text{detect}} + T_{\text{elect}} + T_{\text{reconfig}} + T_{\text{redirect}} \qquad D_{\text{yr}} = \nu \cdot T_{\text{fo}}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">fo</mtext></msub><annotation encoding="application/x-tex">T_{\text{fo}}</annotation></semantics></math></td>
+<td>Time from crash until clients write successfully again</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">detect</mtext></msub><annotation encoding="application/x-tex">T_{\text{detect}}</annotation></semantics></math></td>
+<td>Time to suspect the failure</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">elect</mtext></msub><annotation encoding="application/x-tex">T_{\text{elect}}</annotation></semantics></math></td>
+<td>Time to choose a replacement</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">reconfig</mtext></msub><annotation encoding="application/x-tex">T_{\text{reconfig}}</annotation></semantics></math></td>
+<td>Time to fence, catch up and promote</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">redirect</mtext></msub><annotation encoding="application/x-tex">T_{\text{redirect}}</annotation></semantics></math></td>
+<td>Time until clients reach the replacement</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ν</mi><annotation encoding="application/x-tex">\nu</annotation></semantics></math></td>
+<td>Failovers per year</td>
+<td>1/year</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>D</mi><mtext mathvariant="normal">yr</mtext></msub><annotation encoding="application/x-tex">D_{\text{yr}}</annotation></semantics></math></td>
+<td>Write downtime per year from failovers</td>
+<td>s/year</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.12.1</em></p>
+<div class="formula">
+<p><strong>Recovery time for snapshot plus log</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">rec</mtext></msub><mo>=</mo><mfrac><mi>D</mi><msub><mi>B</mi><mtext mathvariant="normal">eff</mtext></msub></mfrac><mo>+</mo><mfrac><mrow><msub><mi>r</mi><mtext mathvariant="normal">in</mtext></msub><mo>⋅</mo><mi>D</mi><mi>/</mi><msub><mi>B</mi><mtext mathvariant="normal">eff</mtext></msub></mrow><mrow><msub><mi>r</mi><mtext mathvariant="normal">apply</mtext></msub><mo>−</mo><msub><mi>r</mi><mtext mathvariant="normal">in</mtext></msub></mrow></mfrac><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>B</mi><mtext mathvariant="normal">eff</mtext></msub><mo>=</mo><mo>min</mo><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">(</mo><munder><mo>∑</mo><mi>i</mi></munder><msub><mi>B</mi><mrow><mtext mathvariant="normal">src</mtext><mo>,</mo><mi>i</mi></mrow></msub><mo>,</mo><mspace width="0.278em"></mspace><msub><mi>B</mi><mtext mathvariant="normal">dst</mtext></msub><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">T_{\text{rec}} = \frac{D}{B_{\text{eff}}} + \frac{r_{\text{in}} \cdot D / B_{\text{eff}}}{r_{\text{apply}} - r_{\text{in}}}, \qquad B_{\text{eff}} = \min\big(\textstyle\sum_i B_{\text{src},i},\; B_{\text{dst}}\big)</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">rec</mtext></msub><annotation encoding="application/x-tex">T_{\text{rec}}</annotation></semantics></math></td>
+<td>Time until the replica is current</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>D</mi><annotation encoding="application/x-tex">D</annotation></semantics></math></td>
+<td>Size of the snapshot or data to copy</td>
+<td>bytes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>B</mi><mtext mathvariant="normal">eff</mtext></msub><annotation encoding="application/x-tex">B_{\text{eff}}</annotation></semantics></math></td>
+<td>Effective copy bandwidth</td>
+<td>bytes/s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>B</mi><mrow><mtext mathvariant="normal">src</mtext><mo>,</mo><mi>i</mi></mrow></msub><annotation encoding="application/x-tex">B_{\text{src},i}</annotation></semantics></math></td>
+<td>Throttled send rate of source
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math></td>
+<td>bytes/s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>B</mi><mtext mathvariant="normal">dst</mtext></msub><annotation encoding="application/x-tex">B_{\text{dst}}</annotation></semantics></math></td>
+<td>Receiver limit: NIC or disk write rate</td>
+<td>bytes/s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>r</mi><mtext mathvariant="normal">in</mtext></msub><annotation encoding="application/x-tex">r_{\text{in}}</annotation></semantics></math></td>
+<td>Rate of new log entries during the copy</td>
+<td>entries/s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>r</mi><mtext mathvariant="normal">apply</mtext></msub><annotation encoding="application/x-tex">r_{\text{apply}}</annotation></semantics></math></td>
+<td>Rate at which the replica replays entries</td>
+<td>entries/s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §27.14.2</em></p>
+<div class="formula">
+<p><strong>Comparing version vectors</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mo>≤</mo><mi>V</mi><mi>′</mi><mo>⇔</mo><mo>∀</mo><mi>i</mi><mo>:</mo><mspace width="0.222em"></mspace><mi>V</mi><mrow><mo stretchy="true" form="prefix">[</mo><mi>i</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo>≤</mo><mi>V</mi><mi>′</mi><mrow><mo stretchy="true" form="prefix">[</mo><mi>i</mi><mo stretchy="true" form="postfix">]</mo></mrow><mspace width="2.0em"></mspace><mi>V</mi><mo>∥</mo><mi>V</mi><mi>′</mi><mo>⇔</mo><mi>V</mi><mo>≰</mo><mi>V</mi><mi>′</mi><mspace width="0.167em"></mspace><mo>∧</mo><mspace width="0.167em"></mspace><mi>V</mi><mi>′</mi><mo>≰</mo><mi>V</mi><mspace width="2.0em"></mspace><mrow><mtext mathvariant="normal">merge: </mtext><mspace width="0.333em"></mspace></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mi>V</mi><mo>⊔</mo><mi>V</mi><mi>′</mi><mo stretchy="true" form="postfix">)</mo></mrow><mrow><mo stretchy="true" form="prefix">[</mo><mi>i</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo>=</mo><mo>max</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>V</mi><mrow><mo stretchy="true" form="prefix">[</mo><mi>i</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo>,</mo><mi>V</mi><mi>′</mi><mrow><mo stretchy="true" form="prefix">[</mo><mi>i</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">V \le V&#39; \iff \forall i:\ V[i] \le V&#39;[i] \qquad V \parallel V&#39; \iff V \not\le V&#39; \,\wedge\, V&#39; \not\le V \qquad \text{merge: } (V \sqcup V&#39;)[i] = \max(V[i], V&#39;[i])</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mo>,</mo><mi>V</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">V, V&#39;</annotation></semantics></math></td>
+<td>Version vectors of two versions of the same item</td>
+<td>counters per replica</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mrow><mo stretchy="true" form="prefix">[</mo><mi>i</mi><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">V[i]</annotation></semantics></math></td>
+<td>Number of writes to the item coordinated by replica
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>
+that this version has seen</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mo>≤</mo><mi>V</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">V \le V&#39;</annotation></semantics></math></td>
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">V&#39;</annotation></semantics></math>
+descends from
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>V</mi><annotation encoding="application/x-tex">V</annotation></semantics></math>,
+so
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>V</mi><annotation encoding="application/x-tex">V</annotation></semantics></math>
+can be discarded</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mo>∥</mo><mi>V</mi><mi>′</mi></mrow><annotation encoding="application/x-tex">V \parallel V&#39;</annotation></semantics></math></td>
+<td>The versions are concurrent: keep both as siblings</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mo>⊔</mo><annotation encoding="application/x-tex">\sqcup</annotation></semantics></math></td>
+<td>Element-wise maximum, the vector of a merged version</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="chapter-28-distributed-transactions">Chapter 28 — Distributed
+Transactions</h2>
+<p><em>From §28.4.3</em></p>
+<div class="formula">
+<p><strong>Exposure to in-doubt blocking</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>w</mi><mo>≈</mo><mtext mathvariant="normal">RTT</mtext><mo>+</mo><msub><mi>t</mi><mrow><mi>f</mi><mo>,</mo><mi>c</mi></mrow></msub><mspace width="2.0em"></mspace><msub><mi>P</mi><mtext mathvariant="normal">doubt</mtext></msub><mo>=</mo><mn>1</mn><mo>−</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>λ</mi><mi>w</mi></mrow></msup><mo>≈</mo><mi>λ</mi><mi>w</mi><mspace width="2.0em"></mspace><msub><mi>N</mi><mtext mathvariant="normal">doubt</mtext></msub><mo>=</mo><mi>X</mi><mspace width="0.167em"></mspace><mi>w</mi></mrow><annotation encoding="application/x-tex">w \approx \text{RTT} + t_{f,c} \qquad P_{\text{doubt}} = 1 - e^{-\lambda w} \approx \lambda w \qquad N_{\text{doubt}} = X\,w</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>w</mi><annotation encoding="application/x-tex">w</annotation></semantics></math></td>
+<td>Window from the first YES vote reaching the coordinator’s path until
+all participants hold the decision: half an RTT for votes, the
+coordinator’s forced write, half an RTT for decisions</td>
+<td>seconds</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mtext mathvariant="normal">RTT</mtext><annotation encoding="application/x-tex">\text{RTT}</annotation></semantics></math></td>
+<td>Network round-trip time between coordinator and participants</td>
+<td>seconds</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mrow><mi>f</mi><mo>,</mo><mi>c</mi></mrow></msub><annotation encoding="application/x-tex">t_{f,c}</annotation></semantics></math></td>
+<td>Time of the coordinator’s forced log write</td>
+<td>seconds</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>λ</mi><annotation encoding="application/x-tex">\lambda</annotation></semantics></math></td>
+<td>Coordinator crash rate</td>
+<td>crashes/second</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>P</mi><mtext mathvariant="normal">doubt</mtext></msub><annotation encoding="application/x-tex">P_{\text{doubt}}</annotation></semantics></math></td>
+<td>Probability a given transaction is caught in doubt by a coordinator
+crash</td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math></td>
+<td>Rate of distributed transactions through this coordinator</td>
+<td>transactions/second</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>N</mi><mtext mathvariant="normal">doubt</mtext></msub><annotation encoding="application/x-tex">N_{\text{doubt}}</annotation></semantics></math></td>
+<td>Expected number of transactions left in doubt by one crash (Little’s
+Law, §4.11)</td>
+<td>transactions</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §28.4.4</em></p>
+<div class="formula">
+<p><strong>Two-phase commit latency and participant lock hold
+time</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">2PC</mtext></msub><mo>≈</mo><mn>2</mn><mspace width="0.167em"></mspace><mtext mathvariant="normal">RTT</mtext><mo>+</mo><msub><mi>t</mi><mrow><mi>f</mi><mo>,</mo><mi>p</mi></mrow></msub><mo>+</mo><msub><mi>t</mi><mrow><mi>f</mi><mo>,</mo><mi>c</mi></mrow></msub><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">hold</mtext></msub><mo>≈</mo><msub><mi>t</mi><mrow><mi>f</mi><mo>,</mo><mi>p</mi></mrow></msub><mo>+</mo><mtext mathvariant="normal">RTT</mtext><mo>+</mo><msub><mi>t</mi><mrow><mi>f</mi><mo>,</mo><mi>c</mi></mrow></msub></mrow><annotation encoding="application/x-tex">T_{\text{2PC}} \approx 2\,\text{RTT} + t_{f,p} + t_{f,c} \qquad T_{\text{hold}} \approx t_{f,p} + \text{RTT} + t_{f,c}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">2PC</mtext></msub><annotation encoding="application/x-tex">T_{\text{2PC}}</annotation></semantics></math></td>
+<td>Commit latency until every participant has received the
+decision</td>
+<td>seconds</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mtext mathvariant="normal">RTT</mtext><annotation encoding="application/x-tex">\text{RTT}</annotation></semantics></math></td>
+<td>Round trip between coordinator and the slowest participant</td>
+<td>seconds</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mrow><mi>f</mi><mo>,</mo><mi>p</mi></mrow></msub><annotation encoding="application/x-tex">t_{f,p}</annotation></semantics></math></td>
+<td>Slowest participant’s forced write of its PREPARED record (writes
+happen in parallel)</td>
+<td>seconds</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mrow><mi>f</mi><mo>,</mo><mi>c</mi></mrow></msub><annotation encoding="application/x-tex">t_{f,c}</annotation></semantics></math></td>
+<td>Coordinator’s forced write of the COMMIT record</td>
+<td>seconds</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">hold</mtext></msub><annotation encoding="application/x-tex">T_{\text{hold}}</annotation></semantics></math></td>
+<td>Extra time a participant holds locks during commit, from forcing
+PREPARED until the decision arrives</td>
+<td>seconds</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §28.4.4</em></p>
+<div class="formula">
+<p><strong>Availability of a transaction spanning
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>
+partitions</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mtext mathvariant="normal">txn</mtext></msub><mo>=</mo><msub><mi>A</mi><mi>c</mi></msub><munderover><mo>∏</mo><mrow><mi>i</mi><mo>=</mo><mn>1</mn></mrow><mi>k</mi></munderover><msub><mi>A</mi><mi>i</mi></msub><mspace width="0.278em"></mspace><mo>≈</mo><mspace width="0.278em"></mspace><msup><mi>A</mi><mi>k</mi></msup><mspace width="1.0em"></mspace><mtext mathvariant="normal">(equal partitions, coordinator co-located with one of them)</mtext></mrow><annotation encoding="application/x-tex">A_{\text{txn}} = A_c \prod_{i=1}^{k} A_i \;\approx\; A^{k} \quad \text{(equal partitions, coordinator co-located with one of them)}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>A</mi><mtext mathvariant="normal">txn</mtext></msub><annotation encoding="application/x-tex">A_{\text{txn}}</annotation></semantics></math></td>
+<td>Probability that the transaction can commit at a random moment</td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>A</mi><mi>c</mi></msub><annotation encoding="application/x-tex">A_c</annotation></semantics></math></td>
+<td>Availability of the coordinator and its log</td>
+<td>dimensionless</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>A</mi><mi>i</mi></msub><annotation encoding="application/x-tex">A_i</annotation></semantics></math></td>
+<td>Availability of partition
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math></td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math></td>
+<td>Number of partitions the transaction touches</td>
+<td>count</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §28.7.3</em></p>
+<div class="formula">
+<p><strong>Percolator commit latency</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">perc</mtext></msub><mo>≈</mo><mn>2</mn><mspace width="0.167em"></mspace><msub><mtext mathvariant="normal">RTT</mtext><mtext mathvariant="normal">TSO</mtext></msub><mo>+</mo><mn>2</mn><mspace width="0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">RTT</mtext><mo>+</mo><msub><mi>t</mi><mi>w</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">async</mtext></msub><mo>≈</mo><msub><mtext mathvariant="normal">RTT</mtext><mtext mathvariant="normal">TSO</mtext></msub><mo>+</mo><mtext mathvariant="normal">RTT</mtext><mo>+</mo><msub><mi>t</mi><mi>w</mi></msub></mrow><annotation encoding="application/x-tex">T_{\text{perc}} \approx 2\,\text{RTT}_{\text{TSO}} + 2\,(\text{RTT} + t_w) \qquad T_{\text{async}} \approx \text{RTT}_{\text{TSO}} + \text{RTT} + t_w</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">perc</mtext></msub><annotation encoding="application/x-tex">T_{\text{perc}}</annotation></semantics></math></td>
+<td>Timestamp and commit overhead of a classic Percolator transaction
+(start and commit timestamps, prewrite, primary commit)</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">async</mtext></msub><annotation encoding="application/x-tex">T_{\text{async}}</annotation></semantics></math></td>
+<td>The same with async commit (no commit timestamp fetch, no wait for
+the primary commit)</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mtext mathvariant="normal">RTT</mtext><mtext mathvariant="normal">TSO</mtext></msub><annotation encoding="application/x-tex">\text{RTT}_{\text{TSO}}</annotation></semantics></math></td>
+<td>Round trip to the timestamp oracle</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mtext mathvariant="normal">RTT</mtext><annotation encoding="application/x-tex">\text{RTT}</annotation></semantics></math></td>
+<td>Round trip from the client to the storage node</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>t</mi><mi>w</mi></msub><annotation encoding="application/x-tex">t_w</annotation></semantics></math></td>
+<td>Durable, replicated write on the storage node (Raft quorum plus
+<code>fsync</code>)</td>
+<td>ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §28.8.2</em></p>
+<div class="formula">
+<p><strong>Commit wait</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">wait</mtext></msub><mo>≈</mo><mn>2</mn><mspace width="0.167em"></mspace><mover><mi>ε</mi><mo accent="true">‾</mo></mover><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">commit</mtext></msub><mo>≈</mo><mo>max</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>T</mi><mtext mathvariant="normal">Paxos</mtext></msub><mo>,</mo><mspace width="0.278em"></mspace><mn>2</mn><mspace width="0.167em"></mspace><mover><mi>ε</mi><mo accent="true">‾</mo></mover><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">T_{\text{wait}} \approx 2\,\bar{\varepsilon} \qquad T_{\text{commit}} \approx \max\left(T_{\text{Paxos}},\; 2\,\bar{\varepsilon}\right)</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">wait</mtext></msub><annotation encoding="application/x-tex">T_{\text{wait}}</annotation></semantics></math></td>
+<td>Time from choosing
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>s</mi><annotation encoding="application/x-tex">s</annotation></semantics></math>
+= <code>TT.now().latest</code> until <code>TT.after(s)</code> holds</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>ε</mi><mo accent="true">‾</mo></mover><annotation encoding="application/x-tex">\bar{\varepsilon}</annotation></semantics></math></td>
+<td>Average TrueTime uncertainty (half-width) during the wait</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">Paxos</mtext></msub><annotation encoding="application/x-tex">T_{\text{Paxos}}</annotation></semantics></math></td>
+<td>Time to replicate the commit record to a quorum</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">commit</mtext></msub><annotation encoding="application/x-tex">T_{\text{commit}}</annotation></semantics></math></td>
+<td>Commit latency at the coordinator leader, ignoring 2PC phase 1</td>
+<td>ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §28.9.1</em></p>
+<div class="formula">
+<p><strong>Calvin transaction latency</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">Calvin</mtext></msub><mo>≈</mo><mfrac><mi>e</mi><mn>2</mn></mfrac><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">rep</mtext></msub><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">exec</mtext></msub></mrow><annotation encoding="application/x-tex">T_{\text{Calvin}} \approx \frac{e}{2} + T_{\text{rep}} + T_{\text{exec}}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>e</mi><annotation encoding="application/x-tex">e</annotation></semantics></math></td>
+<td>Epoch length; a request waits on average half an epoch to be
+batched</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">rep</mtext></msub><annotation encoding="application/x-tex">T_{\text{rep}}</annotation></semantics></math></td>
+<td>Time to replicate the batch (Paxos round, or 0 for
+asynchronous)</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">exec</mtext></msub><annotation encoding="application/x-tex">T_{\text{exec}}</annotation></semantics></math></td>
+<td>Lock wait, read forwarding and execution</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">Calvin</mtext></msub><annotation encoding="application/x-tex">T_{\text{Calvin}}</annotation></semantics></math></td>
+<td>Expected time from request to result</td>
+<td>ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §28.10.1</em></p>
+<div class="formula">
+<p><strong>Commit latency in consensus rounds</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">serial</mtext></msub><mo>≈</mo><mn>2</mn><mspace width="0.167em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">c</mtext></msub><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">parallel</mtext></msub><mo>≈</mo><msub><mi>T</mi><mtext mathvariant="normal">c</mtext></msub></mrow><annotation encoding="application/x-tex">T_{\text{serial}} \approx 2\,T_{\text{c}} \qquad T_{\text{parallel}} \approx T_{\text{c}}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">c</mtext></msub><annotation encoding="application/x-tex">T_{\text{c}}</annotation></semantics></math></td>
+<td>One consensus (Raft) round for the slowest range</td>
+<td>ms</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">serial</mtext></msub><annotation encoding="application/x-tex">T_{\text{serial}}</annotation></semantics></math></td>
+<td>Commit with intents then a committed record</td>
+<td>ms</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">parallel</mtext></msub><annotation encoding="application/x-tex">T_{\text{parallel}}</annotation></semantics></math></td>
+<td>Commit with parallel commits</td>
+<td>ms</td>
+</tr>
+</tbody>
+</table>
+</div>
+<h2 id="chapter-29-distributed-data-processing">Chapter 29 — Distributed
+Data Processing</h2>
+<p><em>From §29.3.1</em></p>
+<div class="formula">
+<p><strong>Scan time of a bounded dataset</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">scan</mtext></msub><mo>=</mo><mfrac><mi>D</mi><mrow><mi>N</mi><mo>⋅</mo><mi>b</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">T_{\text{scan}} = \frac{D}{N \cdot b}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">scan</mtext></msub><annotation encoding="application/x-tex">T_{\text{scan}}</annotation></semantics></math></td>
+<td>Time to read the whole input once, ignoring stragglers</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>D</mi><annotation encoding="application/x-tex">D</annotation></semantics></math></td>
+<td>Input size</td>
+<td>bytes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Number of nodes reading in parallel</td>
+<td>count</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math></td>
+<td>Sustained read-and-process rate per node</td>
+<td>bytes/s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.4.2</em></p>
+<div class="formula">
+<p><strong>MapReduce job time (first-order estimate)</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">job</mtext></msub><mo>≈</mo><msub><mi>T</mi><mn>0</mn></msub><mo>+</mo><mrow><mo stretchy="true" form="prefix">⌈</mo><mfrac><mi>M</mi><mrow><mi>N</mi><msub><mi>s</mi><mi>m</mi></msub></mrow></mfrac><mo stretchy="true" form="postfix">⌉</mo></mrow><mfrac><mi>C</mi><msub><mi>r</mi><mi>m</mi></msub></mfrac><mo>+</mo><mfrac><mrow><mi>σ</mi><mi>D</mi></mrow><mrow><mi>N</mi><mi>B</mi></mrow></mfrac><mo>+</mo><mrow><mo stretchy="true" form="prefix">⌈</mo><mfrac><mi>R</mi><mrow><mi>N</mi><msub><mi>s</mi><mi>r</mi></msub></mrow></mfrac><mo stretchy="true" form="postfix">⌉</mo></mrow><mfrac><mrow><mi>σ</mi><mi>D</mi><mi>/</mi><mi>R</mi></mrow><msub><mi>r</mi><mi>r</mi></msub></mfrac><mo>,</mo><mspace width="2.0em"></mspace><mi>M</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">⌈</mo><mfrac><mi>D</mi><mi>C</mi></mfrac><mo stretchy="true" form="postfix">⌉</mo></mrow></mrow><annotation encoding="application/x-tex">T_{\text{job}} \approx T_0 + \left\lceil \frac{M}{N s_m} \right\rceil \frac{C}{r_m} + \frac{\sigma D}{N B} + \left\lceil \frac{R}{N s_r} \right\rceil \frac{\sigma D / R}{r_r}, \qquad M = \left\lceil \frac{D}{C} \right\rceil</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mn>0</mn></msub><annotation encoding="application/x-tex">T_0</annotation></semantics></math></td>
+<td>Job start-up and commit overhead</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>D</mi><annotation encoding="application/x-tex">D</annotation></semantics></math></td>
+<td>Input size</td>
+<td>bytes</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math></td>
+<td>Split size</td>
+<td>bytes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>M</mi><mo>,</mo><mi>R</mi></mrow><annotation encoding="application/x-tex">M, R</annotation></semantics></math></td>
+<td>Number of map and reduce tasks</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Worker nodes</td>
+<td>count</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>s</mi><mi>m</mi></msub><mo>,</mo><msub><mi>s</mi><mi>r</mi></msub></mrow><annotation encoding="application/x-tex">s_m, s_r</annotation></semantics></math></td>
+<td>Map and reduce slots (concurrent tasks) per node</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>r</mi><mi>m</mi></msub><mo>,</mo><msub><mi>r</mi><mi>r</mi></msub></mrow><annotation encoding="application/x-tex">r_m, r_r</annotation></semantics></math></td>
+<td>Per-task processing rate of map and reduce</td>
+<td>bytes/s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>σ</mi><annotation encoding="application/x-tex">\sigma</annotation></semantics></math></td>
+<td>Shuffle ratio: map output bytes ÷ input bytes, after any
+combiner</td>
+<td>dimensionless</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>B</mi><annotation encoding="application/x-tex">B</annotation></semantics></math></td>
+<td>Effective per-node shuffle network bandwidth</td>
+<td>bytes/s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.4.2</em></p>
+<div class="formula">
+<p><strong>Shuffle volume with and without a combiner</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mtext mathvariant="normal">no comb</mtext></msub><mo>=</mo><msub><mi>n</mi><mtext mathvariant="normal">pairs</mtext></msub><mo>⋅</mo><msub><mi>b</mi><mtext mathvariant="normal">pair</mtext></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>V</mi><mtext mathvariant="normal">comb</mtext></msub><mo>≈</mo><mi>M</mi><mo>⋅</mo><mi>u</mi><mo>⋅</mo><msub><mi>b</mi><mtext mathvariant="normal">pair</mtext></msub></mrow><annotation encoding="application/x-tex">V_{\text{no comb}} = n_{\text{pairs}} \cdot b_{\text{pair}}, \qquad V_{\text{comb}} \approx M \cdot u \cdot b_{\text{pair}}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>V</mi><annotation encoding="application/x-tex">V</annotation></semantics></math></td>
+<td>Bytes moved across the network in the shuffle</td>
+<td>bytes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>n</mi><mtext mathvariant="normal">pairs</mtext></msub><annotation encoding="application/x-tex">n_{\text{pairs}}</annotation></semantics></math></td>
+<td>Total intermediate pairs emitted by all mappers</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>b</mi><mtext mathvariant="normal">pair</mtext></msub><annotation encoding="application/x-tex">b_{\text{pair}}</annotation></semantics></math></td>
+<td>Average serialized size of one key–value pair</td>
+<td>bytes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>M</mi><annotation encoding="application/x-tex">M</annotation></semantics></math></td>
+<td>Map tasks</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>u</mi><annotation encoding="application/x-tex">u</annotation></semantics></math></td>
+<td>Distinct keys per map task after combining
+(<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>u</mi><mo>≤</mo></mrow><annotation encoding="application/x-tex">u \le</annotation></semantics></math>
+pairs per task)</td>
+<td>count</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.4.3</em></p>
+<div class="formula">
+<p><strong>Probability that a phase contains at least one
+straggler</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">at least one straggler</mtext><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>1</mn><mo>−</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>p</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>n</mi></msup><mo>≈</mo><mn>1</mn><mo>−</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>n</mi><mi>p</mi></mrow></msup></mrow><annotation encoding="application/x-tex">P(\text{at least one straggler}) = 1 - (1 - p)^{n} \approx 1 - e^{-np}</annotation></semantics></math></p>
+<table>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>p</mi><annotation encoding="application/x-tex">p</annotation></semantics></math></td>
+<td>Probability that any one task is a straggler</td>
+<td>probability</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math></td>
+<td>Number of tasks in the phase (or in its last wave)</td>
+<td>count</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.4.4</em></p>
+<div class="formula">
+<p><strong>Network cost of a shuffle join versus a broadcast
+join</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mtext mathvariant="normal">shuffle</mtext></msub><mo>≈</mo><mrow><mo stretchy="true" form="prefix">(</mo><mrow><mo stretchy="true" form="prefix">|</mo><mi>L</mi><mo stretchy="true" form="postfix">|</mo></mrow><mo>+</mo><mrow><mo stretchy="true" form="prefix">|</mo><mi>S</mi><mo stretchy="true" form="postfix">|</mo></mrow><mo stretchy="true" form="postfix">)</mo></mrow><mo>⋅</mo><mfrac><mrow><mi>N</mi><mo>−</mo><mn>1</mn></mrow><mi>N</mi></mfrac><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>V</mi><mtext mathvariant="normal">broadcast</mtext></msub><mo>≈</mo><mrow><mo stretchy="true" form="prefix">|</mo><mi>S</mi><mo stretchy="true" form="postfix">|</mo></mrow><mo>⋅</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>N</mi><mo>−</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">V_{\text{shuffle}} \approx (|L| + |S|) \cdot \frac{N - 1}{N}, \qquad V_{\text{broadcast}} \approx |S| \cdot (N - 1)</annotation></semantics></math></p>
+<p>Broadcast is cheaper when
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">|</mo><mi>S</mi><mo stretchy="true" form="postfix">|</mo></mrow><mo>⋅</mo><mi>N</mi><mo>&lt;</mo><mrow><mo stretchy="true" form="prefix">|</mo><mi>L</mi><mo stretchy="true" form="postfix">|</mo></mrow><mo>+</mo><mrow><mo stretchy="true" form="prefix">|</mo><mi>S</mi><mo stretchy="true" form="postfix">|</mo></mrow></mrow><annotation encoding="application/x-tex">|S| \cdot N &lt; |L| + |S|</annotation></semantics></math>,
+roughly
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">|</mo><mi>S</mi><mo stretchy="true" form="postfix">|</mo></mrow><mo>&lt;</mo><mrow><mo stretchy="true" form="prefix">|</mo><mi>L</mi><mo stretchy="true" form="postfix">|</mo></mrow><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>N</mi><mo>−</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">|S| &lt; |L| / (N - 1)</annotation></semantics></math>,
+and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="true" form="prefix">|</mo><mi>S</mi><mo stretchy="true" form="postfix">|</mo></mrow><annotation encoding="application/x-tex">|S|</annotation></semantics></math>
+fits in each executor’s memory.</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">|</mo><mi>L</mi><mo stretchy="false" form="postfix">|</mo><mo>,</mo><mo stretchy="false" form="prefix">|</mo><mi>S</mi><mo stretchy="false" form="postfix">|</mo></mrow><annotation encoding="application/x-tex">\lvert L \rvert, \lvert S \rvert</annotation></semantics></math></td>
+<td>Size of the large and small input</td>
+<td>bytes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math></td>
+<td>Number of executors or nodes receiving data</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>V</mi><annotation encoding="application/x-tex">V</annotation></semantics></math></td>
+<td>Bytes sent over the network</td>
+<td>bytes</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.5.3</em></p>
+<div class="formula">
+<p><strong>Speedup from caching an iterative job</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi><mo>=</mo><mfrac><mrow><mi>k</mi><mspace width="0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>T</mi><mtext mathvariant="normal">load</mtext></msub><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">iter</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><mrow><msub><mi>T</mi><mtext mathvariant="normal">load</mtext></msub><mo>+</mo><mi>k</mi><mspace width="0.167em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">iter</mtext></msub></mrow></mfrac><mspace width="0.278em"></mspace><mover><mo>→</mo><mrow><mi>k</mi><mo>→</mo><mi>∞</mi></mrow></mover><mspace width="0.278em"></mspace><mn>1</mn><mo>+</mo><mfrac><msub><mi>T</mi><mtext mathvariant="normal">load</mtext></msub><msub><mi>T</mi><mtext mathvariant="normal">iter</mtext></msub></mfrac></mrow><annotation encoding="application/x-tex">S = \frac{k \,(T_{\text{load}} + T_{\text{iter}})}{T_{\text{load}} + k \, T_{\text{iter}}} \;\xrightarrow{k \to \infty}\; 1 + \frac{T_{\text{load}}}{T_{\text{iter}}}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>S</mi><annotation encoding="application/x-tex">S</annotation></semantics></math></td>
+<td>Speedup of the cached version over reloading every iteration</td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math></td>
+<td>Number of iterations (or repeated queries)</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">load</mtext></msub><annotation encoding="application/x-tex">T_{\text{load}}</annotation></semantics></math></td>
+<td>Time to read, parse and build the working dataset from storage</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">iter</mtext></msub><annotation encoding="application/x-tex">T_{\text{iter}}</annotation></semantics></math></td>
+<td>Compute time of one iteration over the in-memory data</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.6.2</em></p>
+<div class="formula">
+<p><strong>Shuffle time lower bound on a rack-structured
+cluster</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">shuffle</mtext></msub><mo>≈</mo><mo>max</mo><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mfrac><mrow><mi>V</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>N</mi><mo>−</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow><mi>/</mi><mi>N</mi></mrow><mrow><mi>N</mi><mspace width="0.167em"></mspace><mi>η</mi><msub><mi>B</mi><mtext mathvariant="normal">NIC</mtext></msub></mrow></mfrac><mo>,</mo><mspace width="0.278em"></mspace><mspace width="0.278em"></mspace><mfrac><mrow><mi>V</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><mo>−</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow><mi>/</mi><mi>K</mi></mrow><mrow><mi>K</mi><mspace width="0.167em"></mspace><mi>U</mi></mrow></mfrac><mo>,</mo><mspace width="0.278em"></mspace><mspace width="0.278em"></mspace><mfrac><mrow><mn>2</mn><mi>V</mi></mrow><mrow><mi>N</mi><msub><mi>B</mi><mtext mathvariant="normal">disk</mtext></msub></mrow></mfrac><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">T_{\text{shuffle}} \approx \max\!\left( \frac{V (N-1)/N}{N \, \eta B_{\text{NIC}}},\;\; \frac{V (K-1)/K}{K \, U},\;\; \frac{2V}{N B_{\text{disk}}} \right)</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>V</mi><annotation encoding="application/x-tex">V</annotation></semantics></math></td>
+<td>Shuffled data volume</td>
+<td>bytes</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>K</mi><annotation encoding="application/x-tex">K</annotation></semantics></math></td>
+<td>Nodes and racks</td>
+<td>count</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>B</mi><mtext mathvariant="normal">NIC</mtext></msub><annotation encoding="application/x-tex">B_{\text{NIC}}</annotation></semantics></math></td>
+<td>Network interface speed per node</td>
+<td>bytes/s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>η</mi><annotation encoding="application/x-tex">\eta</annotation></semantics></math></td>
+<td>Achievable fraction of line rate</td>
+<td>dimensionless</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>U</mi><annotation encoding="application/x-tex">U</annotation></semantics></math></td>
+<td>Uplink capacity per rack</td>
+<td>bytes/s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>B</mi><mtext mathvariant="normal">disk</mtext></msub><annotation encoding="application/x-tex">B_{\text{disk}}</annotation></semantics></math></td>
+<td>Local disk throughput per node (each byte written once, read
+once)</td>
+<td>bytes/s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.6.3</em></p>
+<div class="formula">
+<p><strong>Slowdown from a single hot key</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">skew</mtext><mo>=</mo><mfrac><mrow><munder><mo>max</mo><mi>i</mi></munder><msub><mi>L</mi><mi>i</mi></msub></mrow><mover><mi>L</mi><mo accent="true">‾</mo></mover></mfrac><mo>≈</mo><mi>f</mi><mi>P</mi><mo>+</mo><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>f</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo><mspace width="2.0em"></mspace><mrow><mtext mathvariant="normal">with salt </mtext><mspace width="0.333em"></mspace></mrow><mi>s</mi><mo>:</mo><mspace width="0.278em"></mspace><mtext mathvariant="normal">skew</mtext><mo>≈</mo><mfrac><mrow><mi>f</mi><mi>P</mi></mrow><mi>s</mi></mfrac><mo>+</mo><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><mi>f</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\text{skew} = \frac{\max_i L_i}{\bar{L}} \approx f P + (1 - f), \qquad \text{with salt } s:\; \text{skew} \approx \frac{f P}{s} + (1 - f)</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>L</mi><mi>i</mi></msub><annotation encoding="application/x-tex">L_i</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>L</mi><mo accent="true">‾</mo></mover><annotation encoding="application/x-tex">\bar{L}</annotation></semantics></math></td>
+<td>Records in partition
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>;
+mean records per partition</td>
+<td>records</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>f</mi><annotation encoding="application/x-tex">f</annotation></semantics></math></td>
+<td>Fraction of all records carrying the hot key</td>
+<td>dimensionless</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>P</mi><annotation encoding="application/x-tex">P</annotation></semantics></math></td>
+<td>Number of shuffle partitions</td>
+<td>count</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>s</mi><annotation encoding="application/x-tex">s</annotation></semantics></math></td>
+<td>Salt range (hot key spread over
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>s</mi><annotation encoding="application/x-tex">s</annotation></semantics></math>
+partitions),
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>s</mi><mo>≤</mo><mi>P</mi></mrow><annotation encoding="application/x-tex">s \le P</annotation></semantics></math></td>
+<td>count</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.8.3</em></p>
+<div class="formula">
+<p><strong>Fraction of events that miss their tumbling
+window</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>f</mi><mtext mathvariant="normal">late</mtext></msub><mo>≈</mo><mfrac><mi>μ</mi><mi>W</mi></mfrac><mspace width="0.167em"></mspace><msup><mi>e</mi><mrow><mo>−</mo><mi>δ</mi><mi>/</mi><mi>μ</mi></mrow></msup><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>W</mi><mi>/</mi><mi>μ</mi></mrow></msup><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="2.0em"></mspace><mtext mathvariant="normal">added output latency</mtext><mo>≈</mo><mi>δ</mi></mrow><annotation encoding="application/x-tex">f_{\text{late}} \approx \frac{\mu}{W}\, e^{-\delta/\mu} \left(1 - e^{-W/\mu}\right) \qquad \text{added output latency} \approx \delta</annotation></semantics></math></p>
+<p>Derivation: with exponentially distributed delay
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>
+(mean
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>μ</mi><annotation encoding="application/x-tex">\mu</annotation></semantics></math>)
+and the watermark close to arrival time minus
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>δ</mi><annotation encoding="application/x-tex">\delta</annotation></semantics></math>,
+an event at offset
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>u</mi><annotation encoding="application/x-tex">u</annotation></semantics></math>
+before its window’s end misses the window if
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>d</mi><mo>&gt;</mo><mi>δ</mi><mo>+</mo><mi>u</mi></mrow><annotation encoding="application/x-tex">d &gt; \delta + u</annotation></semantics></math>;
+averaging
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>e</mi><mrow><mo>−</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>δ</mi><mo>+</mo><mi>u</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>/</mi><mi>μ</mi></mrow></msup><annotation encoding="application/x-tex">e^{-(\delta+u)/\mu}</annotation></semantics></math>
+over
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>u</mi><annotation encoding="application/x-tex">u</annotation></semantics></math>
+uniform on
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">[</mo><mn>0</mn><mo>,</mo><mi>W</mi><mo stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">[0, W)</annotation></semantics></math>
+gives the formula.</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>f</mi><mtext mathvariant="normal">late</mtext></msub><annotation encoding="application/x-tex">f_{\text{late}}</annotation></semantics></math></td>
+<td>Fraction of events arriving after their window fired</td>
+<td>dimensionless</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>μ</mi><annotation encoding="application/x-tex">\mu</annotation></semantics></math></td>
+<td>Mean delay between event time and arrival</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>δ</mi><annotation encoding="application/x-tex">\delta</annotation></semantics></math></td>
+<td>Watermark delay (bounded out-of-orderness)</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math></td>
+<td>Window size</td>
+<td>s</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><em>From §29.9.2</em></p>
+<div class="formula">
+<p><strong>Checkpoint interval: overhead versus recovery</strong></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>T</mi><mtext mathvariant="normal">opt</mtext></msub><mo>≈</mo><msqrt><mrow><mn>2</mn><mspace width="0.167em"></mspace><mi>C</mi><mspace width="0.167em"></mspace><msub><mi>M</mi><mi>f</mi></msub></mrow></msqrt><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>T</mi><mtext mathvariant="normal">catch-up</mtext></msub><mo>≈</mo><mfrac><mrow><mi>λ</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>T</mi><mi>/</mi><mn>2</mn><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">restart</mtext></msub><mo>+</mo><msub><mi>T</mi><mtext mathvariant="normal">restore</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><mrow><mi>μ</mi><mo>−</mo><mi>λ</mi></mrow></mfrac></mrow><annotation encoding="application/x-tex">T_{\text{opt}} \approx \sqrt{2\, C\, M_f}, \qquad T_{\text{catch-up}} \approx \frac{\lambda \left(T/2 + T_{\text{restart}} + T_{\text{restore}}\right)}{\mu - \lambda}</annotation></semantics></math></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symbol</th>
+<th>Meaning</th>
+<th>Units</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>T</mi><annotation encoding="application/x-tex">T</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">opt</mtext></msub><annotation encoding="application/x-tex">T_{\text{opt}}</annotation></semantics></math></td>
+<td>Checkpoint interval; interval minimizing total lost time (Young’s
+approximation)</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>C</mi><annotation encoding="application/x-tex">C</annotation></semantics></math></td>
+<td>Throughput-equivalent cost of one checkpoint</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>M</mi><mi>f</mi></msub><annotation encoding="application/x-tex">M_f</annotation></semantics></math></td>
+<td>Mean time between failures of the job</td>
+<td>s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>λ</mi><annotation encoding="application/x-tex">\lambda</annotation></semantics></math></td>
+<td>Input rate</td>
+<td>events/s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>μ</mi><annotation encoding="application/x-tex">\mu</annotation></semantics></math></td>
+<td>Maximum processing rate of the job</td>
+<td>events/s</td>
+</tr>
+<tr class="even">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">restart</mtext></msub><annotation encoding="application/x-tex">T_{\text{restart}}</annotation></semantics></math>,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">restore</mtext></msub><annotation encoding="application/x-tex">T_{\text{restore}}</annotation></semantics></math></td>
+<td>Time to reschedule tasks; time to download state</td>
+<td>s</td>
+</tr>
+<tr class="odd">
+<td><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>T</mi><mtext mathvariant="normal">catch-up</mtext></msub><annotation encoding="application/x-tex">T_{\text{catch-up}}</annotation></semantics></math></td>
+<td>Time to work off the backlog after restoring</td>
+<td>s</td>
 </tr>
 </tbody>
 </table>

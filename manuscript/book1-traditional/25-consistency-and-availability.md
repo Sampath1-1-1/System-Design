@@ -134,7 +134,7 @@ sequenceDiagram
   X-->>C: 0, old value after B saw new
 ```
 
-**Reading the diagram.** In H2 the write has *completed* (acknowledged at t = 5) before B's read begins at t = 7, so real-time order forces the write before the read; a read returning 0 has no legal placement. This is the classic asynchronous-replica bug: the write was acknowledged by the primary and the read went to a lagging replica. H3 is subtler: the write is still in progress, so either value is individually allowed, but once B has returned 1 (its linearization point is after the write's), C's read, which begins after B finished, must also see 1. Returning 0 means the system "un-wrote" a value someone already observed. H3 happens in leaderless quorum stores when a write has reached one replica but not a quorum, and two readers contact different replica sets (§25.3.5).
+**Reading the diagram.** In H2 the write has *completed* (acknowledged at t = 5) before B's read begins at t = 7, so real-time order forces the write before the read; a read returning 0 has no legal placement. This is the classic asynchronous-replica bug: the write was acknowledged by the primary and the read went to a lagging replica. H3 is subtler: the write is still in progress, so either value is individually allowed, but once B has returned 1 (its linearization point is after the write's), C's read, which begins after B finished, must also see 1. Returning 0 means the system "un-wrote" a value someone already observed. H3 happens in leaderless quorum stores when a write has reached one replica but not a quorum, and two readers contact different replica sets (§25.3.4).
 
 #### Code example
 
@@ -303,7 +303,7 @@ $$T_{\text{op}} \approx k \times \text{RTT}_{(q)} + T_{\text{proc}}, \qquad q = 
 3. ABD read with write-back: $T \approx 2 \times 65 + 1 = 131$ ms.
 4. Now move the Oregon replica to a second Virginia zone (RTT 1 ms). Sorted: 0, 1, 12, 75, 90; $\text{RTT}_{(3)} = 12$ ms. Write ≈ 13 ms; read ≈ 25 ms.
 
-**Interpretation.** Quorum latency is set by the *median* replica's distance, not the nearest one. Clustering a majority close together makes linearizable operations cheap for nearby clients, at the cost of a region failure taking down the majority. **Engineering implication.** Linearizable global data pays a cross-region round trip somewhere; you choose where. Spanner and CockroachDB place leaders and voting replicas near the dominant writers for that reason (§25.10, Chapter 28).
+**Interpretation.** Quorum latency is set by the *median* replica's distance, not the nearest one (the same order statistic appears as $\mathrm{RTT}_{(q-1)}$ over followers for Raft commits in §26.4.2 and for $R$/$W$ quorums in §27.8.3). Clustering a majority close together makes linearizable operations cheap for nearby clients, at the cost of a region failure taking down the majority. **Engineering implication.** Linearizable global data pays a cross-region round trip somewhere; you choose where. Spanner and CockroachDB place leaders and voting replicas near the dominant writers for that reason (§25.10, Chapter 28).
 :::
 
 Is this cost an artifact of particular algorithms, or fundamental? Lipton and Sandberg, and later Attiya and Welch, proved lower bounds in a model where message delays are between $d - u$ and $d$ [Lipton & Sandberg 1988; Attiya & Welch 1994].
@@ -731,7 +731,7 @@ The simplest model assumes a write has reached exactly $W$ of $N$ replicas when 
 ::: formula
 **Probability that a partial-quorum read misses the latest write**
 
-$$p_s = \frac{\binom{N-W}{R}}{\binom{N}{R}}, \qquad P(\text{more than } k \text{ versions stale}) = p_s^{\,k}$$
+$$p_s = \frac{\binom{N-W}{R}}{\binom{N}{R}}, \qquad P(\text{older than all } k \text{ most recent versions}) = p_s^{\,k}$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
@@ -739,7 +739,7 @@ $$p_s = \frac{\binom{N-W}{R}}{\binom{N}{R}}, \qquad P(\text{more than } k \text{
 | $N$ | Replication factor | replicas |
 | $W$ | Replicas that acknowledged the write when it committed | replicas |
 | $R$ | Replicas whose responses the read waits for | replicas |
-| $k$ | Number of most recent versions the read is allowed to miss | versions |
+| $k$ | Number of most recent versions, any one of which counts as fresh enough (the read may miss $k - 1$ of them) | versions |
 :::
 
 ::: example
@@ -1095,7 +1095,7 @@ Azure Cosmos DB exposes five named levels, which map neatly onto this chapter's 
 
 ### 25.10.3 External consistency in Spanner
 
-Spanner provides **external consistency**, which is strict serializability for transactions: if transaction $T_1$ commits before $T_2$ starts, $T_1$'s commit timestamp is smaller [Corbett et al. 2012]. It achieves this with TrueTime, a clock API that returns an interval guaranteed to contain true time, and a **commit wait**: a transaction does not report success until its timestamp is definitely in the past everywhere. The cost is a wait proportional to clock uncertainty (single-digit milliseconds, per the paper) plus Paxos round trips. Chapter 28 (§28.8) treats the mechanism.
+Spanner provides **external consistency**, which is strict serializability for transactions: if transaction $T_1$ commits before $T_2$ starts, $T_1$'s commit timestamp is smaller [Corbett et al. 2012]. It achieves this with TrueTime, a clock API that returns an interval guaranteed to contain true time, and a **commit wait**: a transaction does not report success until its timestamp is definitely in the past everywhere. The cost is a commit wait of about twice the clock uncertainty (about 8 ms at the paper's typical uncertainty of 4 ms), which overlaps the Paxos round trip that logs the commit, so a commit takes roughly the larger of the two. Chapter 28 (§28.8.2) treats the mechanism.
 
 ::: industry
 **Amazon DynamoDB global tables with multi-Region strong consistency.** Global tables historically replicated asynchronously between regions with last-writer-wins resolution. In June 2025 AWS made a multi-Region strong consistency (MRSC) mode generally available, so that strongly consistent reads in any participating region return the latest write, with a recovery point objective of zero. The mode is selected when the table is created; writes pay cross-region replication latency.
@@ -1317,4 +1317,4 @@ Jepsen reports are public and detailed. Three examples show the range:
 - Jepsen map (Figure 25.10): re-check edges and availability colors against the current jepsen.io page (jepsen.io was unreachable from the build environment).
 - PostgreSQL 12.3: confirm the fix release (believed 12.4).
 - Cosmos DB: confirm minimum bounded-staleness $K$/$T$ values and that strong consistency is unavailable with multiple write regions.
-- Spanner commit-wait magnitude ("single-digit milliseconds"); Brewer 2012 page numbers.
+- Spanner commit-wait magnitude (about $2\bar{\varepsilon} \approx 8$ ms, as derived in §28.8.2 from the paper's average $\varepsilon$ of about 4 ms); Brewer 2012 page numbers.

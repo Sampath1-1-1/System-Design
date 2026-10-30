@@ -23,7 +23,7 @@ After this chapter you should be able to:
 - Transactions, ACID and isolation levels — §11.11–§11.13 (replication and sharding change what a transaction can guarantee).
 - Indexes and B+ trees — §11.7–§11.8 (secondary indexes become a distributed problem).
 - Write-ahead logging — §13.5 (physical replication ships the WAL).
-- Little's Law and connection pools — §4.10 and the pool-sizing examples in Chapter 4 (used again in §14.13).
+- Little's Law and connection pools — §4.11 and the pool-sizing examples in Chapter 4 (used again in §14.13).
 - Hash functions — §17.3 at an intuitive level: a hash maps any key to a well-mixed number.
 
 ## 14.3 Read replicas and primary–replica architecture
@@ -1003,7 +1003,7 @@ What to notice:
 
 ### 14.8.5 Replication on the ring
 
-On a ring, each key is stored on the first $R$ **distinct physical** nodes clockwise, its preference list. Dynamo does this, typically with three replicas, and also skips nodes in the same failure domain [DeCandia et al. 2007]. With vnodes, a failed node's replicas are spread over many nodes, so re-replication copies from all of them in parallel. Quorum reads and writes over preference lists are in §27.7–§27.9.
+On a ring, each key is stored on the first $R$ **distinct physical** nodes clockwise, its preference list ($R$ here is the replication factor, which §27.8 calls $N$ because there $R$ is the read quorum). Dynamo does this, typically with three replicas, and also skips nodes in the same failure domain [DeCandia et al. 2007]. With vnodes, a failed node's replicas are spread over many nodes, so re-replication copies from all of them in parallel. Quorum reads and writes over preference lists are in §27.7–§27.9.
 
 ::: industry
 **Amazon Dynamo.** Dynamo began with $T$ random tokens per node. The paper reports that bootstrapping a node required scanning others' data and that shifting partition boundaries complicated archiving and Merkle-tree maintenance. Dynamo moved to $Q$ equal-sized partitions with $Q/S$ assigned to each of $S$ nodes, which the paper reports gave the best load-balancing efficiency and the smallest membership metadata of the strategies compared: the fixed-partitions approach of §14.9.
