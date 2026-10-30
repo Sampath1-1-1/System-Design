@@ -31,12 +31,12 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 21 | Content Delivery Networks | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 11,726 | 10 | 7 | 0 |
 | 22 | API and Traffic Management | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,846 | 15 | 7 | 0 |
 | 23 | Performance Engineering | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,038 | 12 | 8 | 0 |
-| 24 | Distributed Systems Fundamentals | 2-3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 25 | Consistency and Availability | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 26 | Consensus and Coordination | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 27 | Replication and Fault Tolerance | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 28 | Distributed Transactions | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 29 | Distributed Data Processing | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 24 | Distributed Systems Fundamentals | 2-3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 25 | Consistency and Availability | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 26 | Consensus and Coordination | 3-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 27 | Replication and Fault Tolerance | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 28 | Distributed Transactions | 4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 29 | Distributed Data Processing | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 30 | Messaging Fundamentals | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 31 | Kafka Deep Dive | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 32 | Event-Driven Architecture Patterns | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
