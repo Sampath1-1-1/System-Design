@@ -143,3 +143,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-136 | 22 | Cloudflare rate-limiting post URL and "0.003% of 400M requests" figure | Open | |
 | UQ-137 | 22 | Stripe idempotency: key length limit, 24-hour pruning, replay of stored 500 responses (as of 2026) | Open | Time-sensitive |
 | UQ-138 | 22 | Hystrix defaults; AWS SDK retry quota; ACM Queue URLs for Nichols & Jacobson 2012 (CoDel) and Maurer 2015 (Fail at Scale) | Open | |
+| UQ-139 | 25 | Attiya–Welch and Lipton–Sandberg latency lower bounds as stated | Open | |
+| UQ-140 | 25 | Mahajan et al. (2011) real-time causal consistency result | Open | |
+| UQ-141 | 25 | Consistency-map edges and availability colors (Fig 25.10) vs jepsen.io (blocked); Jepsen findings for etcd 3.4.3, MongoDB 4.2.6, PostgreSQL 12.3 (fix believed in 12.4) checked via search only | Open | |
+| UQ-142 | 25 | Cosmos DB bounded-staleness minimums; strong consistency unavailable with multiple write regions; DynamoDB multi-Region strong consistency release date | Open | Time-sensitive |
+| UQ-143 | 25 / 28 | Spanner commit-wait duration figures; Brewer 2012 page numbers | Open | Coordinate with Ch 28 |
