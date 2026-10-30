@@ -2003,3 +2003,361 @@ flowchart LR
 ::: mistake
 **"Sequential IDs in URLs are harmless."** They reveal your growth rate and invite enumeration: anyone can try `/orders/1001`, `/orders/1002`. Authorization must stop enumeration either way (§10.7.1), but a random or opaque public ID mapped to the internal sequential key removes the information leak.
 :::
+
+## 17.11 Tries
+
+### 17.11.1 Prefix trees
+
+::: definition
+**Definition — Trie (prefix tree).** A tree in which each edge is labeled with a character and each node represents the string spelled by the path from the root; nodes that end a stored key are marked. Looking up a key or a prefix of length $L$ takes $O(L)$ steps, independent of how many keys are stored [Fredkin 1960].
+:::
+
+A trie answers the question a hash table cannot: "which stored keys *start with* this prefix?" Walk down $L$ edges to the prefix node; its subtree holds every completion. **Radix trees** (Patricia tries) compress chains of single-child nodes into one edge labeled with a string, which cuts node count and pointer overhead dramatically. Tries are used for autocomplete, longest-prefix matching in IP routing tables, and as compact sorted dictionaries; Redis uses a radix tree internally for streams [Redis Docs: Streams]. Chapter 16 (§16.9) builds a production autocomplete on tries and finite-state transducers, including precomputed top-*k* completions at each node; this section gives only the structure.
+
+**Figure 17.16 — A trie holding sync, syntax, system and scale.**
+
+```mermaid
+flowchart TD
+  R((root)) -->|s| S[s]
+  S -->|y| SY[sy]
+  S -->|c| SC["sc ... scale"]
+  SY -->|n| SYN[syn]
+  SY -->|s| SYS["sys ... system"]
+  SYN -->|c| SYNC["sync (end, weight 60)"]
+  SYN -->|t| SYNT["synt ... syntax"]
+```
+
+**Reading the diagram.** Each edge adds one character; the ellipses abbreviate chains of single-child nodes that a radix tree would store as one edge. A query for the prefix `syn` follows three edges and then enumerates the subtree: `sync` and `syntax`. All operations are in-memory pointer walks. The main failure point is memory: a naive trie with one node per character can use tens of bytes per character, so large dictionaries use radix trees, arrays of children, or succinct encodings. Tries scale by sharding on the first characters of the key, with care for skewed prefixes (many queries start with "s" and few with "x").
+
+```python
+import heapq
+
+class TrieNode:
+    __slots__ = ("children", "weight")
+    def __init__(self):
+        self.children, self.weight = {}, 0              # weight > 0 marks the end of a stored word
+
+class Trie:
+    def __init__(self):
+        self.root, self.nodes = TrieNode(), 1
+
+    def insert(self, word: str, weight: int) -> None:
+        node = self.root
+        for ch in word:
+            if ch not in node.children:
+                node.children[ch] = TrieNode()
+                self.nodes += 1
+            node = node.children[ch]
+        node.weight += weight
+
+    def top_k(self, prefix: str, k: int):
+        """Walk to the prefix node (O(len(prefix))), then collect its subtree's k heaviest words."""
+        node = self.root
+        for ch in prefix:
+            node = node.children.get(ch)
+            if node is None:
+                return []
+        found, stack = [], [(node, prefix)]
+        while stack:
+            cur, word = stack.pop()
+            if cur.weight:
+                found.append((cur.weight, word))
+            stack.extend((child, word + ch) for ch, child in cur.children.items())
+        return heapq.nlargest(k, found)
+
+t = Trie()
+for word, w in [("system", 90), ("systems", 40), ("syscall", 25), ("sync", 60),
+                ("synchronous", 30), ("syntax", 20), ("scale", 80), ("schema", 50)]:
+    t.insert(word, w)
+print(t.top_k("sy", 3))
+print(t.top_k("syn", 5))
+print("nodes:", t.nodes, "for", sum(len(w) for w in ["system", "systems", "syscall", "sync",
+      "synchronous", "syntax", "scale", "schema"]), "characters")
+```
+
+Output:
+
+```text
+[(90, 'system'), (60, 'sync'), (40, 'systems')]
+[(60, 'sync'), (30, 'synchronous'), (20, 'syntax')]
+nodes: 32 for 52 characters
+```
+
+What to notice: shared prefixes are stored once (32 nodes for 52 characters), and the cost of `top_k` is the prefix walk plus the size of the subtree. For a short prefix such as "s" in a large dictionary the subtree is huge, which is why production autocomplete stores precomputed top-*k* lists at each node (§16.9).
+
+## 17.12 Reservoir sampling and streaming algorithms
+
+### 17.12.1 Reservoir sampling
+
+::: definition
+**Definition — Reservoir sampling.** An algorithm that maintains a uniform random sample of $k$ items from a stream whose length $n$ is not known in advance, using $O(k)$ memory and a single pass: after any number of items, every item seen so far is in the sample with probability $k/n$ [Vitter 1985].
+:::
+
+#### First-principles explanation and mechanism
+
+You want 1,000 representative requests from a day of traffic for debugging, but you do not know how many requests the day will bring, and you cannot store them all. Sampling each request with a fixed probability gives the wrong sample size if traffic differs from your guess. Reservoir sampling (**Algorithm R**, which Knuth attributes to Alan Waterman) adjusts as it goes:
+
+1. Put the first $k$ items in the reservoir.
+2. For the $n$-th item ($n > k$), draw a random integer $j$ in $[0, n)$. If $j < k$, replace reservoir slot $j$ with the new item; otherwise discard it.
+
+::: formula
+**Reservoir sampling inclusion probability**
+
+$$P(\text{item } i \text{ in sample after } n \text{ items}) = \frac{k}{i} \times \prod_{j=i+1}^{n} \left(1 - \frac{1}{j}\right) = \frac{k}{i} \times \frac{i}{n} = \frac{k}{n}, \qquad \mathbb{E}[\text{replacements}] \approx k \ln \frac{n}{k}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $k$ | Reservoir size | items |
+| $n$ | Items seen so far | items |
+| $i$ | Arrival position of a particular item ($i > k$) | position |
+| $1 - 1/j$ | Probability that item $j$ does not evict this item: it is chosen with probability $k/j$ and then evicts one of $k$ slots | probability |
+:::
+
+::: example
+**Worked example — sampling traces.** A service handles 600,000 requests per minute and keeps a reservoir of $k = 1{,}000$ per minute. Each request is kept with probability $1{,}000/600{,}000 = 1/600$. The expected number of reservoir writes per minute is about $1{,}000 + 1{,}000 \times \ln(600{,}000/1{,}000) = 1{,}000 + 1{,}000 \times 6.40 = 7{,}400$, not 600,000. *Interpretation.* Late items are rarely written, so the cost is dominated by drawing a random number per item. *Engineering implication.* Vitter's Algorithm Z [Vitter 1985] and Li's Algorithm L [Li 1994] compute how many items to *skip* before the next replacement, drawing about $O(k \log(n/k))$ random numbers instead of $n$; use them when random-number generation dominates.
+:::
+
+#### Code example and measured validation
+
+```python
+import math
+import random
+from collections import Counter
+
+def reservoir_sample(stream, k, rng=random):
+    """Algorithm R: a uniform sample of k items from a stream of unknown length, in O(k) memory."""
+    reservoir = []
+    for n, item in enumerate(stream, start=1):
+        if n <= k:
+            reservoir.append(item)                     # fill the reservoir first
+        else:
+            j = rng.randrange(n)                       # uniform in [0, n)
+            if j < k:                                  # happens with probability k / n
+                reservoir[j] = item                    # evict a uniformly chosen resident
+    return reservoir
+
+def reservoir_sample_skip(stream, k, rng=random):
+    """Algorithm L (Li 1994): same distribution, but jumps over items, so it draws
+    O(k log(n/k)) random numbers instead of n."""
+    it = iter(stream)
+    reservoir = [x for _, x in zip(range(k), it)]
+    w = math.exp(math.log(rng.random()) / k)
+    while True:
+        skip = math.floor(math.log(rng.random()) / math.log(1 - w))
+        for _ in range(skip):                          # discard without drawing randomness
+            if next(it, None) is None:
+                return reservoir
+        item = next(it, None)
+        if item is None:
+            return reservoir
+        reservoir[rng.randrange(k)] = item
+        w *= math.exp(math.log(rng.random()) / k)
+
+# Validate uniformity: every one of n = 1,000 items should be chosen with probability k/n = 0.01
+n, k, trials = 1_000, 10, 50_000
+rng = random.Random(5)
+for name, fn in (("Algorithm R", reservoir_sample), ("Algorithm L", reservoir_sample_skip)):
+    counts = Counter()
+    for _ in range(trials):
+        counts.update(fn(range(n), k, rng))
+    freqs = [counts[i] / trials for i in range(n)]
+    expected = k * trials / n                          # 500 selections per item
+    chi2 = sum((counts[i] - expected) ** 2 / expected for i in range(n))
+    print(f"{name}: inclusion prob. min {min(freqs):.4f}  max {max(freqs):.4f}  "
+          f"(target {k / n:.4f}); first decile {sum(freqs[:100]) / 100:.4f}, "
+          f"last decile {sum(freqs[-100:]) / 100:.4f}; chi-square {chi2:.0f} on {n - 1} dof")
+```
+
+Output:
+
+```text
+Algorithm R: inclusion prob. min 0.0087  max 0.0115  (target 0.0100); first decile 0.0100, last decile 0.0100; chi-square 957 on 999 dof
+Algorithm L: inclusion prob. min 0.0087  max 0.0113  (target 0.0100); first decile 0.0100, last decile 0.0100; chi-square 969 on 999 dof
+```
+
+What to notice: early and late items are equally likely to be chosen (first and last deciles both 0.0100), and the chi-square statistics (957 and 969 on 999 degrees of freedom) are what a uniform sample produces. The spread from 0.0087 to 0.0115 is ordinary sampling noise over 50,000 trials. The skip-based Algorithm L produces the same distribution with far fewer random draws. (The `None` sentinel in this sketch assumes the stream contains no `None` items.)
+
+Two extensions are common. **Weighted reservoir sampling** keeps items with probability proportional to a weight, for example to oversample slow or failed requests [Efraimidis & Spirakis 2006]. **Distributed reservoir sampling** tags each item with a random key and keeps the $k$ items with the smallest keys; because "smallest $k$ keys" merges across partitions, each partition samples independently and a coordinator merges the results.
+
+### 17.12.2 The streaming toolbox
+
+Every structure in this chapter is a **streaming algorithm**: one pass, memory far smaller than the data, and an answer whose error you can state in advance. Most are also **mergeable**, which is what makes them fit distributed systems: compute per partition, combine centrally.
+
+**Table 17.10 — Streaming and probabilistic structures at a glance.**
+
+| Question | Structure | Memory | Error | Mergeable | Section |
+|---|---|---|---|---|---|
+| Have I seen $x$? | Bloom / cuckoo filter | ~10 bits per item at 1% | False positives only | Bloom: OR | §17.4 |
+| How many distinct items? | HyperLogLog | 12 KB for 0.81% | ±$1.04/\sqrt{m}$ relative | Register max | §17.5 |
+| How often did $x$ occur? | Count-Min sketch | $\lceil e/\varepsilon\rceil \times \lceil \ln(1/\delta)\rceil$ counters | $+\varepsilon N$, probability $1-\delta$ | Add arrays | §17.6 |
+| Which items are most frequent? | Space-Saving; CMS + heap | $k$ counters | $\le N/k$ | Approximately | §17.6.2 |
+| What is the p99? | HDR histogram, t-digest, KLL sketch | KBs | Bounded relative or rank error | Yes | §4.8, Chapter 40 |
+| Give me a fair sample | Reservoir sampling | $k$ items | Exact distribution | Smallest-$k$ random keys | §17.12.1 |
+| Do two replicas differ? | Merkle tree | Hash per range | Exact (with cryptographic hash) | — | §17.8 |
+
+## 17.13 Summary and revision notes
+
+::: summary
+- **Hashing.** Good non-cryptographic hashes (MurmurHash3, xxHash) are deterministic, uniform and avalanche well. Test uniformity with chi-square ($\approx B - 1$ for a good hash). Use keyed SipHash for tables filled from untrusted input (hash flooding), cryptographic hashes for integrity. Consistent hashing is in §14.8.
+- **Bloom filters.** $p \approx (1 - e^{-kn/m})^k$; optimal $k = (m/n)\ln 2$, where half the bits are set; $m/n = -\ln p/(\ln 2)^2$: 9.6 bits at 1%, +4.8 bits per 10× lower $p$. No false negatives; no deletes; OR merges. Overfilling 3× pushed a 1% filter to 44%.
+- **Deletion.** Counting Bloom filters (4-bit counters, 4× memory) or cuckoo filters (fingerprints in two buckets, ~95% load, $\varepsilon \le 2b/2^f$, smaller than Bloom below about 3% with semi-sorting).
+- **HyperLogLog.** Leading zeros of hashes estimate cardinality; $m = 2^p$ registers, SE $= 1.04/\sqrt{m}$; Redis: 12 KB, 0.81%. Merge by register-wise max; unions are accurate, intersections are not. HLL++ adds 64-bit hashing, bias correction and sparse storage.
+- **Count-Min.** $w = \lceil e/\varepsilon \rceil$, $d = \lceil \ln(1/\delta) \rceil$; never underestimates; error $\le \varepsilon N$ with probability $1-\delta$, relative to the whole stream. Heavy hitters: CMS + heap, or Space-Saving with error $\le N/k$.
+- **Skip lists.** Random levels with probability $p$; expected $O(\log n)$; $1/(1-p)$ pointers per node. Redis sorted sets ($p = 1/4$, spans for rank) and LSM memtables.
+- **Merkle trees.** Root hash summarizes data; inclusion proofs of $\lceil \log_2 n \rceil$ hashes; anti-entropy cost grows with differences × depth (Dynamo, Cassandra, Git, Certificate Transparency).
+- **Geospatial.** Map 2-D to 1-D cells. Geohash: interleaved bits, base-32, prefix = containment, boundary quirks; choose precision from radius and latitude or cover the area. Quadtrees adapt to density. S2: cube + Hilbert curve + 64-bit IDs, area $/4$ per level. H3: hexagons, aperture 7, uniform neighbors.
+- **IDs.** UUIDv4 (random, poor index locality), UUIDv7 (time-ordered, RFC 9562), Snowflake (41/10/12 bits: 4.1 M IDs/s per machine, 69.7 years), ULID, ticket servers. Time-ordered IDs are ordered only within clock skew.
+- **Streaming.** Tries answer prefix queries in $O(L)$. Reservoir sampling keeps a uniform $k$-sample with probability $k/n$ in one pass. Prefer mergeable sketches in distributed systems: compute per partition, combine centrally.
+:::
+
+## 17.14 Knowledge checkpoint
+
+1. Why does the sum-of-bytes hash perform so badly on keys such as `user:12345`?
+2. What is hash flooding, and name two defenses.
+3. A Bloom filter has $m = 8 \times 10^6$ bits, $n = 10^6$ items and $k = 6$. What is its false-positive rate?
+4. How many bits per element and how many hash functions do you need for $p = 0.1\%$?
+5. Why can you not delete from a standard Bloom filter?
+6. In a cuckoo filter, why is the alternate bucket computed as $i_1 \oplus h(\mathit{fp})$ rather than from the original item?
+7. What are the memory and standard error of a HyperLogLog with $p = 12$?
+8. Why can HyperLogLog sketches be merged without double counting?
+9. Size a Count-Min sketch for $\varepsilon = 0.0001$ and $\delta = 0.001$.
+10. With Space-Saving and $k = 500$ counters over $N = 10^7$ events, what is the maximum overestimate?
+11. What are the expected levels and pointers per node of a skip list with $p = 1/4$ and $n = 4^{10}$?
+12. How many hashes are in a Merkle inclusion proof for $10^9$ records?
+13. How large is a 6-character geohash cell at latitude 60°?
+14. Why do H3 hexagons suit neighborhood smoothing better than square cells?
+15. How long do 41-bit millisecond timestamps last, and how many IDs per second can one Snowflake machine issue?
+16. Why do random UUIDv4 primary keys slow down inserts into a large B-tree?
+17. What is the probability that the 10th item of a stream is in a reservoir of size 5 after 1,000 items?
+
+<details>
+<summary>Answers</summary>
+
+1. The sum takes fewer than 150 distinct values for these keys, so they crowd into a few buckets; there is no avalanche.
+2. An attacker sends keys that all collide in an unkeyed hash table, making inserts $O(n)$ each and total work $O(n^2)$. Defenses: a keyed hash with a secret per-process key (SipHash), tree-structured buckets (Java 8), and limits on parameter counts.
+3. $kn/m = 0.75$; $1 - e^{-0.75} = 0.5276$; $0.5276^6 = 0.0216$, about 2.2%.
+4. $6.908/0.4805 = 14.4$ bits per element; $k = 10$.
+5. A bit may have been set by several items; clearing it for one would cause false negatives for others.
+6. Because only the fingerprint is stored. XOR with the fingerprint's hash is its own inverse, so either bucket can compute the other from the fingerprint alone during relocation.
+7. $m = 4{,}096$ registers × 6 bits = 3,072 bytes; SE $= 1.04/64 = 1.63\%$.
+8. Registers keep maxima, and the maximum is idempotent and order-independent: a register-wise max equals the sketch of the combined stream.
+9. $w = \lceil 2.718/0.0001 \rceil = 27{,}183$; $d = \lceil \ln 1000 \rceil = 7$; 190,281 counters.
+10. $N/k = 10^7/500 = 20{,}000$.
+11. $\log_4 4^{10} = 10$ levels; $1/(1 - 0.25) = 1.33$ pointers per node.
+12. $\lceil \log_2 10^9 \rceil = 30$ hashes (960 bytes with SHA-256).
+13. Width $1.223 \times \cos 60^\circ = 0.61$ km; height 0.61 km, about 610 m × 610 m.
+14. All six neighbors share an edge and are equidistant from the center, so a $k$-ring is a uniform neighborhood; squares have edge and corner neighbors at different distances.
+15. $2^{41}$ ms = 69.7 years; $4{,}096 \times 1{,}000 = 4{,}096{,}000$ IDs per second.
+16. Each insert targets a random leaf page; once the index exceeds memory, most inserts need a disk read and cause page splits across the tree. Time-ordered keys append near the rightmost pages, which stay cached.
+17. $k/n = 5/1{,}000 = 0.5\%$, the same as every other item.
+
+</details>
+
+## 17.15 Interview questions
+
+### Basic
+
+**Q1. How would you check username availability for 1 billion users as the user types?**
+**Answer.** Put a Bloom filter of all usernames in memory on each API node: at 1% false positives that is 9.6 bits per name, about 1.2 GB, with $k = 7$. A "definitely absent" answer is shown immediately; a "maybe taken" answer is confirmed against the database (a unique index on the username column), which also handles races at sign-up time. Rebuild or grow the filter as the user base grows, and add new names to it on sign-up.
+
+**Q2. How would you count daily unique visitors per page for a site with 10 million pages?**
+**Answer.** One HyperLogLog per page per day (Redis `PFADD`), 12 KB dense at 0.81% error, much less for small pages thanks to the sparse encoding. Weekly and monthly uniques come from `PFMERGE`, not from summing daily counts. Exact counts are needed only for billing-grade metrics.
+
+**Q3. Why might you choose UUIDv7 over UUIDv4 for primary keys?**
+**Answer.** UUIDv7 is time-ordered, so inserts go to the right edge of the B-tree index, keeping hot pages in memory and reducing page splits; it also allows rough time-range queries and pagination by ID. UUIDv4 is better when IDs must reveal nothing, including creation time.
+
+### Intermediate
+
+**Q4. Design a "trending hashtags in the last 10 minutes" feature for 500,000 tweets per second.**
+**Answer.** Partition the stream (by hashtag, so each tag's counts land on one worker). Each worker keeps per-minute Count-Min sketches and a Space-Saving or CMS-plus-heap candidate list. Every few seconds workers send their top candidates to an aggregator, which sums the last ten one-minute windows and ranks by a velocity score (current versus baseline rate) rather than raw counts, so permanently popular tags do not dominate. With $\varepsilon = 10^{-5}$ the per-window error is $10^{-5} \times 3 \times 10^7 = 300$ mentions, small next to trending tags with tens of thousands. Discuss spam filtering and late events.
+
+**Q5. Your geohash-based "nearby restaurants" search misses results near cell edges. Why, and how do you fix it?**
+**Answer.** Points close to the query point but across a cell boundary have different prefixes, and a 3 × 3 block covers less than the radius when cells are smaller than the radius. Fix: choose precision from the radius and latitude, compute the full set of cells covering the circle's bounding box, scan all of them, then filter by exact distance. Or use S2's region coverer.
+
+**Q6. Two replicas of a 2 TB key-value store may have diverged after a network partition. How do you find and fix the differences efficiently?**
+**Answer.** Build a Merkle tree per token range on each replica, compare roots, and descend into differing subtrees; at the leaves, stream only the differing ranges and resolve conflicts with the system's rule (timestamps, vector clocks, §27.14). Cost scales with the number of differences times tree depth. Leaf granularity trades tree size against overstreaming. Throttle tree building, which requires scanning data.
+
+### Advanced
+
+**Q7. An LSM-based store's read latency for missing keys doubled after a data-size increase. What could be wrong with the Bloom filters?**
+**Answer.** Possibilities: filters sized by an outdated $n$ or a configured bits-per-key too low for the new number of SSTables (expected wasted reads = files × $p$); filter blocks evicted from the block cache because total filter memory grew (≈ 1.2 bytes per key at 1%), so filters themselves now cost disk reads; or many more levels/files after compaction changes. Check filter-useful and filter-miss metrics and block-cache hit ratio, pin filter and index blocks, lower $p$ for the deepest level, or use a partitioned filter.
+
+**Q8. Design ID generation for a multi-region payments platform producing 2 million IDs per second.**
+**Answer.** A Snowflake-style 64-bit layout with an explicit region field: for example 41 bits of milliseconds from a 2026 epoch (69.7 years), 3 bits of region, 7 bits of worker within the region, 12 bits of sequence ($2^{10}$ generators × 4.1 M/s gives ample headroom). Assign worker IDs through a lease in a coordination service so that two processes never share one, and refuse to issue IDs while a lease is lost. Handle clock steps by waiting out small ones and failing over large ones. Expose IDs externally only through opaque tokens if volume should stay private. Keep a unique constraint on storage as a final defense.
+
+**Q9. A product manager wants "users who visited both page A and page B this month" from your HyperLogLog sketches. What do you say?**
+**Answer.** HLL estimates unions well, but an intersection via inclusion–exclusion has an absolute error on the order of the errors of the large sets: with 10 M users each and a 100,000-user overlap at 0.81%, the noise exceeds the answer. Options: MinHash-based sketches (estimate the Jaccard similarity, then multiply by the union), exact computation in a batch job over the raw logs, or theta sketches that support set operations with stated error.
+
+## 17.16 Practical exercises
+
+1. **Hash uniformity.** Replace `murmur3_32` in §17.3.3 with Python's FNV-1a and with CRC32 (`zlib.crc32`). Compare chi-square values on `user:N` keys and on 100,000 random UUID strings.
+2. **Bloom filter health.** Extend the §17.4.4 program to print the fraction of 1 bits as you insert from 0 to 3× the design capacity, and plot it against the measured false-positive rate.
+3. **Scalable Bloom filter.** Implement a filter that adds a new, larger Bloom filter with a tighter $p$ each time the current one reaches capacity, so the overall false-positive rate stays below a target.
+4. **HyperLogLog bias.** Run the §17.5 program for $n$ from 100 to 200,000 with $p = 12$ and plot the relative error. Find where the raw estimator is biased and where linear counting takes over.
+5. **Conservative update.** Modify the Count-Min sketch to use conservative update and compare mean and maximum error on the Zipf stream.
+6. **Geohash versus H3.** Repeat the proximity search with H3 (`pip install h3`) at resolution 8 using `grid_disk`, and compare candidate counts with the geohash covering approach.
+
+## 17.17 Design challenges
+
+1. **Web crawler frontier.** Design deduplication of URLs for a crawler that discovers 5 billion URLs per day and keeps 100 billion known URLs. Size the filter (or filters), decide how to handle false positives (missed pages) versus false negatives (impossible by design), and explain how the filter is partitioned across crawler nodes.
+2. **Real-time analytics.** A product analytics service ingests 2 million events per second and must answer, within 5 seconds of an event: unique users per feature per hour, the top 50 features by usage, and p99 latency per endpoint. Choose a sketch for each, size it, show how per-partition sketches are merged, and state the error each answer carries.
+3. **Nearby search at global scale.** Design the location index for a delivery app with 3 million active couriers in 800 cities, updates every 5 seconds, and queries for the 20 nearest couriers within 3 km. Compare geohash, S2 and H3 for this use, choose a cell size, estimate write load and memory per shard, and describe how the system behaves when a stadium event concentrates 20,000 couriers in a few cells.
+
+## 17.18 References
+
+1. Apache Cassandra Documentation. Bloom filters; Repair; Partitioners. https://cassandra.apache.org/doc/latest/
+2. Appleby, A. *SMHasher* (MurmurHash3 reference implementation and test suite). https://github.com/aappleby/smhasher
+3. Aumasson, J.-P., Bernstein, D. J. "SipHash: A Fast Short-Input PRF." *INDOCRYPT 2012*, LNCS 7668. Springer, 2012.
+4. Bloom, B. H. "Space/Time Trade-offs in Hash Coding with Allowable Errors." *Communications of the ACM* 13(7):422–426, 1970.
+5. Bose, P., Guo, H., Kranakis, E., Maheshwari, A., Morin, P., Morrison, J., Smid, M., Tang, Y. "On the False-Positive Rate of Bloom Filters." *Information Processing Letters* 108(4):210–213, 2008.
+6. Brodsky, I. "H3: Uber's Hexagonal Hierarchical Spatial Index." Uber Engineering Blog, 2018. https://www.uber.com/blog/h3/
+7. Broder, A., Mitzenmacher, M. "Network Applications of Bloom Filters: A Survey." *Internet Mathematics* 1(4):485–509, 2004.
+8. Chacon, S., Straub, B. *Pro Git*, 2nd ed. Apress, 2014. https://git-scm.com/book
+9. Chang, F., Dean, J., Ghemawat, S., Hsieh, W. C., Wallach, D. A., Burrows, M., Chandra, T., Fikes, A., Gruber, R. E. "Bigtable: A Distributed Storage System for Structured Data." *OSDI*, 2006.
+10. Collet, Y. *xxHash*. https://github.com/Cyan4973/xxHash
+11. Cormode, G., Muthukrishnan, S. "An Improved Data Stream Summary: The Count-Min Sketch and Its Applications." *Journal of Algorithms* 55(1):58–75, 2005.
+12. Crosby, S. A., Wallach, D. S. "Denial of Service via Algorithmic Complexity Attacks." *USENIX Security Symposium*, 2003.
+13. DeCandia, G., Hastorun, D., Jampani, M., Kakulapati, G., Lakshman, A., Pilchin, A., Sivasubramanian, S., Vosshall, P., Vogels, W. "Dynamo: Amazon's Highly Available Key-Value Store." *SOSP*, 2007.
+14. Efraimidis, P. S., Spirakis, P. G. "Weighted Random Sampling with a Reservoir." *Information Processing Letters* 97(5):181–185, 2006.
+15. Fan, B., Andersen, D. G., Kaminsky, M., Mitzenmacher, M. D. "Cuckoo Filter: Practically Better Than Bloom." *ACM CoNEXT*, 2014.
+16. Fan, L., Cao, P., Almeida, J., Broder, A. Z. "Summary Cache: A Scalable Wide-Area Web Cache Sharing Protocol." *IEEE/ACM Transactions on Networking* 8(3):281–293, 2000.
+17. Finkel, R. A., Bentley, J. L. "Quad Trees: A Data Structure for Retrieval on Composite Keys." *Acta Informatica* 4(1):1–9, 1974.
+18. Flajolet, P., Fusy, É., Gandouet, O., Meunier, F. "HyperLogLog: The Analysis of a Near-Optimal Cardinality Estimation Algorithm." *Analysis of Algorithms (AofA)*, DMTCS Proceedings, 2007.
+19. Flickr Engineering. "Ticket Servers: Distributed Unique Primary Keys on the Cheap." code.flickr.net, 2010.
+20. Fredkin, E. "Trie Memory." *Communications of the ACM* 3(9):490–499, 1960.
+21. Google Cloud. *BigQuery documentation: HyperLogLog++ functions*. https://cloud.google.com/bigquery/docs/reference/standard-sql/hll_functions
+22. Graf, T. M., Lemire, D. "Xor Filters: Faster and Smaller Than Bloom and Cuckoo Filters." *ACM Journal of Experimental Algorithmics* 25, 2020.
+23. H3 Project. *H3 documentation*. https://h3geo.org/docs/
+24. Heule, S., Nunkesser, M., Hall, A. "HyperLogLog in Practice: Algorithmic Engineering of a State of the Art Cardinality Estimation Algorithm." *EDBT*, 2013.
+25. Instagram Engineering. "Sharding & IDs at Instagram." Instagram Engineering Blog, 2012.
+26. Kirsch, A., Mitzenmacher, M. "Less Hashing, Same Performance: Building a Better Bloom Filter." *European Symposium on Algorithms (ESA)*, 2006.
+27. Klink, A., Wälde, J. "Efficient Denial of Service Attacks on Web Application Platforms." *28th Chaos Communication Congress (28C3)*, 2011.
+28. Li, K.-H. "Reservoir-Sampling Algorithms of Time Complexity O(n(1 + log(N/n)))." *ACM Transactions on Mathematical Software* 20(4):481–493, 1994.
+29. Maggs, B. M., Sitaraman, R. K. "Algorithmic Nuggets in Content Delivery." *ACM SIGCOMM Computer Communication Review* 45(3), 2015.
+30. Merkle, R. C. "A Digital Signature Based on a Conventional Encryption Function." *Advances in Cryptology — CRYPTO '87*, LNCS 293. Springer, 1988.
+31. Metwally, A., Agrawal, D., El Abbadi, A. "Efficient Computation of Frequent and Top-k Elements in Data Streams." *International Conference on Database Theory (ICDT)*, 2005.
+32. Niemeyer, G. Geohash (public-domain geocoding system, geohash.org), 2008.
+33. OpenJDK. *JEP 180: Handle Frequent HashMap Collisions with Balanced Trees*. https://openjdk.org/jeps/180
+34. Python Software Foundation. *PEP 456 — Secure and Interchangeable Hash Algorithm*. https://peps.python.org/pep-0456/
+35. Pugh, W. "Skip Lists: A Probabilistic Alternative to Balanced Trees." *Communications of the ACM* 33(6):668–676, 1990.
+36. Redis Documentation. HyperLogLog; Sorted sets; Geospatial; Streams; Count-min sketch; Top-K. https://redis.io/docs/
+37. Laurie, B., Langley, A., Kasper, E. *RFC 6962: Certificate Transparency*. IETF, 2013. https://www.rfc-editor.org/rfc/rfc6962
+38. Davis, K., Peabody, B., Leach, P. *RFC 9562: Universally Unique IDentifiers (UUIDs)*. IETF, 2024. https://www.rfc-editor.org/rfc/rfc9562
+39. RocksDB Wiki. *MemTable*. https://github.com/facebook/rocksdb/wiki/MemTable
+40. S2 Geometry. *S2 Geometry Library documentation*. https://s2geometry.io/
+41. Sanfilippo, S. "Redis New Data Structure: the HyperLogLog." antirez.com, 2014.
+42. Twitter. *snowflake* (archived repository, tag `snowflake-2010`: README and `IdWorker.scala`). https://github.com/twitter-archive/snowflake
+43. Twitter. *Algebird: Abstract Algebra for Scala*. https://github.com/twitter/algebird
+44. ULID. *Universally Unique Lexicographically Sortable Identifier specification*. https://github.com/ulid/spec
+45. Vitter, J. S. "Random Sampling with a Reservoir." *ACM Transactions on Mathematical Software* 11(1):37–57, 1985.
+
+## 17.19 Open verification items
+
+- Twitter's 2010 "Announcing Snowflake" blog post (author, exact date, URL) could not be fetched; layout, epoch and requirements were verified against the archived GitHub repository (tag `snowflake-2010`) instead.
+- Flickr ticket-servers post: confirm author (believed Kay Kremerskothen) and date (February 2010).
+- Akamai one-hit-wonder share and the second-request caching rule: confirm wording in Maggs & Sitaraman (2015).
+- Counting Bloom filter overflow bound (4-bit counters suffice): confirm statement in Fan et al. (2000).
+- Redis sorted-set constants ($p = 1/4$, 32 levels) and listpack thresholds: confirm against current `t_zset.c`/`redis.conf` (as of 2025). RedisBloom bundling in Redis 8: confirm.
+- RocksDB ribbon filters and default skip-list memtable: confirm current RocksDB wiki.
+- Niemeyer (2008) geohash: no formal publication; confirm citation form.
+- xxHash versus MurmurHash3 speed claims: author benchmarks only.

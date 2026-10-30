@@ -4,14 +4,13 @@
 
 Almost every system you will design has a relational database somewhere in it. The orders in a shop, the balances in a bank, the users of a social network and the configuration of a cloud platform usually live in PostgreSQL, MySQL or a database that speaks their SQL dialect. Relational databases have been the default for fifty years because they solve three hard problems at once: they let you describe *what* data you want without saying *how* to fetch it, they keep data correct while thousands of clients change it concurrently, and they keep committed data safe through crashes.
 
-This chapter explains how they do it. We follow one running example throughout: the order system of an online shop, with customers, products, inventory, orders, order items and payments. You will learn to model that data, index it, read query plans, choose isolation levels and avoid the concurrency bugs that cost real companies money. On-disk internals (write-ahead logging, buffer pools, LSM trees) are covered in Chapter 13, and replication and sharding in Chapter 14; here we summarize them only where needed.
+This chapter explains how they do it, using one running example: the order system of an online shop. You will learn to model its data, index it, read query plans, choose isolation levels and avoid costly concurrency bugs. On-disk internals (write-ahead logging, buffer pools, LSM trees) are covered in Chapter 13, replication and sharding in Chapter 14, and distributed transactions in Chapter 28.
 
 ## 11.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Explain the relational model (relations, tuples, attributes, keys) and why Codd's separation of logical and physical data made SQL possible.
-- Choose primary keys (natural or surrogate) and foreign keys with appropriate referential actions.
+- Explain the relational model and choose primary keys (natural or surrogate) and foreign keys.
 - Normalize a schema to BCNF using functional dependencies, and justify each deliberate denormalization.
 - Write inner, outer, semi- and anti-joins, and estimate the I/O cost of nested-loop, hash and sort-merge joins.
 - Design clustered, secondary, composite, covering and partial indexes for a stated query workload.
@@ -20,8 +19,8 @@ After this chapter you should be able to:
 - Define ACID precisely and distinguish ACID consistency from consistency in distributed systems.
 - Reproduce dirty reads, non-repeatable reads, phantoms, lost updates and write skew, and state which isolation level prevents each in PostgreSQL and MySQL.
 - Explain MVCC in PostgreSQL (tuple versions, `xmin`/`xmax`, VACUUM) and InnoDB (undo logs, purge).
-- Explain two-phase locking, gap locks and deadlock detection, and design transactions that avoid deadlocks and hot-row contention.
-- Produce an end-to-end schema, DDL and core queries for an e-commerce order system.
+- Explain two-phase locking, gap locks and deadlock detection, and avoid deadlocks and hot-row contention.
+- Produce an end-to-end schema, DDL and queries for an e-commerce order system.
 
 ## 11.2 Prerequisites
 
@@ -42,18 +41,18 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-A table looks like a spreadsheet, but three differences matter. First, a relation is a *set*: rows have no inherent order, and the only way to identify a row is by its values (its key), never by "row 17". Second, every column has a fixed type, enforced by the database on every write. Third, relationships between tables are expressed by *values*: an order row stores the customer's ID, not a pointer to the customer's memory address. Those three properties are what make it possible for a program, the query optimizer, to rearrange how your question is answered without changing the answer.
+A table looks like a spreadsheet, but three differences matter. A relation is a *set*: rows have no inherent order and are identified by their values (a key), never by "row 17". Every column has a fixed type, enforced on every write. And relationships are expressed by *values*: an order row stores the customer's ID, not a pointer. These properties let the query optimizer rearrange *how* a question is answered without changing the answer.
 
 #### Why does this exist?
 
-Before 1970, databases such as IBM's IMS (hierarchical) and CODASYL systems (network) stored records linked by physical pointers. Programs *navigated*: "go to customer 42, follow the first-order pointer, follow next-order pointers until null". If the database administrator reorganized the storage, for example adding an index or changing the record order, the programs broke. Codd's paper "A Relational Model of Data for Large Shared Data Banks" proposed that users should see only relations, and that access paths should be the database's private business [Codd 1970]. This **physical data independence** is why you can add an index to a production table today and every existing query keeps working, only faster.
+Before 1970, hierarchical (IBM IMS) and network (CODASYL) databases linked records by physical pointers, and programs *navigated* them: "go to customer 42, follow the first-order pointer...". Reorganizing storage broke the programs. Codd's paper "A Relational Model of Data for Large Shared Data Banks" proposed that users should see only relations, and that access paths should be the database's private business [Codd 1970]. This **physical data independence** is why you can add an index to a production table today and every existing query keeps working, only faster.
 
 #### How it works internally
 
-1. You state *what* you want in a declarative language, SQL (originally SEQUEL, designed at IBM for System R).
-2. The database translates the statement into **relational algebra**: selection σ (filter rows), projection π (choose columns), join ⋈ (combine rows from two relations by a condition), union, difference and aggregation.
-3. Algebraic equivalences, such as "filter before joining" or "join A with B before C", let the optimizer generate many equivalent plans and pick the cheapest one (§11.10).
-4. The executor runs the chosen plan against physical structures (heap files, B+ trees) that the query text never mentions (§11.9).
+1. You state *what* you want in SQL, a declarative language first built at IBM for System R.
+2. The database translates it into **relational algebra**: selection σ (filter rows), projection π (choose columns), join ⋈, union, difference and aggregation.
+3. Algebraic equivalences ("filter before joining", "join A with B before C") let the optimizer generate equivalent plans and pick the cheapest (§11.10).
+4. The executor runs that plan against physical structures (heap files, B+ trees) that the query never mentions (§11.9).
 
 #### NULL and three-valued logic
 
@@ -73,7 +72,7 @@ SQL adds **NULL**, meaning "unknown or not applicable". Any comparison with NULL
 
 In the shop, `customers` has two candidate keys: `customer_id` and `email`. We choose `customer_id` as the primary key and declare `email` `UNIQUE`. `orders.customer_id` is a foreign key to `customers.customer_id`: the database rejects an order for a customer that does not exist, and rejects deleting a customer who still has orders unless you specify otherwise.
 
-The **referential action** says what happens to child rows when a parent is deleted or its key updated: `RESTRICT`/`NO ACTION` (reject; the default), `CASCADE` (delete or update children too), `SET NULL` or `SET DEFAULT`. Use `CASCADE` for true ownership (an order owns its order items) and the default for references to independent entities (an order item must not silently disappear because a product was deleted; products should be deactivated, not deleted).
+The **referential action** says what happens to child rows when a parent is deleted: `NO ACTION`/`RESTRICT` (reject; the default), `CASCADE`, `SET NULL` or `SET DEFAULT`. Use `CASCADE` for true ownership (an order owns its items) and the default for independent entities (deactivate products rather than delete them).
 
 #### Code example
 
@@ -112,7 +111,7 @@ What to notice:
 **Definition — Natural and surrogate keys.** A **natural key** is a candidate key with business meaning (email address, ISBN, country code). A **surrogate key** is a meaningless value generated by the system (an auto-increment integer, a UUID) whose only job is identification.
 :::
 
-Natural keys look attractive because they avoid an extra column, but business identifiers change (people change email addresses; product codes get reissued), and every foreign key that copied the old value must then change too. Surrogate keys never change, are compact and make joins cheap. The common rule: use a surrogate primary key, and enforce the natural key with a `UNIQUE` constraint so duplicates are still impossible. Use natural keys for small, stable code tables (ISO country codes, currency codes).
+Business identifiers change (people change email addresses; product codes are reissued), and every foreign key that copied the old value must change too. Surrogate keys never change, are compact and make joins cheap. The common rule: a surrogate primary key, plus a `UNIQUE` constraint on the natural key. Natural keys suit small, stable code tables (ISO country or currency codes).
 
 The *kind* of surrogate matters for B+ tree indexes (§11.8). Sequential integers always insert at the right-most leaf, so pages fill completely and stay hot in cache. Random UUIDv4 values insert into a random leaf, causing page splits, half-empty pages and a working set as large as the whole index. Time-ordered identifiers (UUIDv7, Snowflake-style IDs; §17.10) keep the insert locality of integers while being globally unique without a central counter.
 
@@ -131,7 +130,7 @@ The *kind* of surrogate matters for B+ tree indexes (§11.8). Sequential integer
 :::
 
 ::: mistake
-**Mistake — "UUIDs are slow, never use them."** The cost is randomness, not size. A UUIDv4 primary key in InnoDB, where the primary key *is* the table's storage order (§11.7), scatters inserts across the whole table; a UUIDv7 key does not. Measure insert throughput and buffer-pool hit ratio before and after, not key width.
+**Mistake — "UUIDs are slow, never use them."** The cost is randomness, not size. A UUIDv4 primary key in InnoDB, where the primary key *is* the storage order (§11.7), scatters inserts across the whole table; a UUIDv7 key does not.
 :::
 
 ## 11.5 Normalization and denormalization
@@ -140,7 +139,7 @@ The *kind* of surrogate matters for B+ tree indexes (§11.8). Sequential integer
 
 #### First-principles explanation
 
-Imagine the shop's first version kept everything in one spreadsheet: one row per order line, with the customer's email and city and the product's name and price copied into every row. Ana's email appears in all 40 of her order lines. When she changes it, someone must update 40 rows; miss one and the database now holds two "truths". That is the core problem normalization solves: **every fact should be stored exactly once**, so it can only be changed in one place.
+Imagine the shop's first version kept one spreadsheet row per order line, with the customer's email and the product's name copied into every row. When Ana changes her email, 40 rows must change; miss one and the database holds two "truths". Normalization's goal is that **every fact is stored exactly once**.
 
 Redundant designs suffer three **anomalies**:
 
@@ -221,11 +220,11 @@ flowchart LR
   O -.->|"FK customer_id"| C
 ```
 
-**Reading the diagram.** The rectangle on the left is the unnormalized input; rectangles in the middle are intermediate tables that are not yet final; cylinders are the final BCNF tables. Solid arrows are decomposition steps, labeled with the functional dependency that justified each split and the normal form it achieves. Dotted arrows are the foreign keys that tie the final tables together; they are not data flows but the join paths that make the decomposition lossless. There is no runtime component here, so there are no synchronous paths or failure points in the usual sense; the "failure" a decomposition can introduce is a lost dependency (see the BCNF trade-off below). Scaling consequence: each extra table adds a join to queries that need data from several of them, which is the cost denormalization later buys back.
+**Reading the diagram.** The rectangle on the left is the unnormalized input, middle rectangles are intermediate tables and cylinders are the final BCNF tables. Solid arrows are decomposition steps labeled with the dependency that justified them; dotted arrows are the foreign keys that make the decomposition lossless. These are join paths, not runtime flows, so there is no synchronous or asynchronous traffic here. The risk a decomposition introduces is a lost dependency (§11.5.4); the scaling cost is one more join per extra table, which denormalization later buys back.
 
 ### 11.5.4 When BCNF and 3NF disagree
 
-Most real schemas reach BCNF automatically once they are in 3NF. The exception needs overlapping candidate keys. Suppose the shop ships through local depots: each depot is operated by exactly one carrier (`depot → carrier`), and for each postal code each carrier serves it from exactly one depot (`postal_code, carrier → depot`). In `coverage(postal_code, carrier, depot)` the candidate keys are `{postal_code, carrier}` and `{postal_code, depot}`. The dependency `depot → carrier` violates BCNF (`depot` is not a superkey) but satisfies 3NF (`carrier` is part of a candidate key). Splitting into `depots(depot, carrier)` and `coverage(postal_code, depot)` reaches BCNF but loses the ability to enforce `postal_code, carrier → depot` with a simple unique constraint; you would need a trigger or application check. This is the classic trade-off: BCNF always gives a lossless decomposition, but not always a **dependency-preserving** one; 3NF always gives both [Ramakrishnan and Gehrke 2003].
+Most 3NF schemas are already in BCNF; the exception needs overlapping candidate keys. Suppose each delivery depot is run by one carrier (`depot → carrier`) and each carrier serves a postal code from one depot (`postal_code, carrier → depot`). In `coverage(postal_code, carrier, depot)` the candidate keys are `{postal_code, carrier}` and `{postal_code, depot}`, so `depot → carrier` violates BCNF but not 3NF (`carrier` is part of a key). Splitting into `depots(depot, carrier)` and `coverage(postal_code, depot)` reaches BCNF but `postal_code, carrier → depot` can no longer be enforced by a unique constraint. BCNF decomposition is always lossless but not always **dependency-preserving**; 3NF can always achieve both [Ramakrishnan and Gehrke 2003].
 
 ### 11.5.5 Denormalization
 
@@ -233,7 +232,7 @@ Most real schemas reach BCNF automatically once they are in 3NF. The exception n
 **Definition — Denormalization.** Deliberately storing a fact more than once, or storing a derived value, to make important reads cheaper, while accepting the cost of keeping the copies consistent.
 :::
 
-Normalization optimizes for correct, cheap writes. Some read paths, such as a product page that shows average rating and review count, or a dashboard of revenue by city, would need large joins or aggregations on every request. Denormalization trades write work and consistency risk for read speed. Common forms:
+Normalization optimizes for correct, cheap writes; some read paths (a product page with its review count, a revenue dashboard) would then need large joins or aggregations on every request. Common forms of denormalization:
 
 1. **Stored aggregates** — `orders.total_cents`, `products.review_count`, updated in the same transaction as the rows they summarize.
 2. **Copied columns** — `order_lines.product_name` kept so invoices render without a join (and, like the unit price, it is also a historical fact).
@@ -385,7 +384,7 @@ flowchart LR
   H -.->|"if memory exceeded: spill partitions"| D[("Temp files")]
 ```
 
-**Reading the diagram.** Cylinders are tables or temporary files on disk; rectangles are in-memory operator state. The build phase reads all of `customers` (the smaller input) and finishes before probing starts, so the hash join is *blocking* on its build side; the probe phase is *pipelined*: each `orders` row is hashed, looked up and passed upward immediately. All solid arrows are synchronous in-process data flows. The dotted arrow is the failure-and-degradation path: if the hash table exceeds the memory budget (`work_mem` in PostgreSQL), the operator partitions both inputs to temporary files and joins them one partition at a time, which turns a memory-speed join into one that reads and writes both inputs again. The sizes come from the real plan in §11.10 (100,000 customers produced a 5,712 kB hash table). Scaling: raising the memory budget, filtering the build side earlier, or parallel workers that each probe a share of the larger input.
+**Reading the diagram.** Cylinders are tables or temporary files; rectangles are in-memory operator state; every solid arrow is a synchronous in-process data flow. The build phase must finish before probing starts (blocking), while the probe phase passes each `orders` row upward immediately (pipelined). The dotted arrow is the degradation path: if the hash table exceeds the memory budget (`work_mem` in PostgreSQL), both inputs are partitioned to disk and re-read. Sizes come from the real plan in §11.10. Scaling: more memory, an earlier filter on the build side, or parallel probe workers.
 
 #### Mathematical foundations
 
@@ -473,7 +472,7 @@ flowchart LR
   Q -->|"descend"| S2
 ```
 
-**Reading the diagram.** The client's query (stadium) is answered by two different storage designs. In InnoDB the secondary index (rectangle) yields a primary-key *value*, which is used to descend the clustered index (cylinder) where the row lives: two tree descents. In PostgreSQL the index yields a *physical address* (TID), so the second step is a single heap-page read. All arrows are synchronous reads inside one database process. The trade-offs follow from the pointer type: InnoDB's logical pointer survives row moves (a page split in the clustered index does not touch secondary indexes) and range scans on the primary key read rows in order; PostgreSQL's physical pointer is faster to follow but must be updated in *every* index when an update creates a new row version on a different page (§11.14). Failure point: a long primary key in InnoDB is copied into every secondary index entry, inflating all of them. Scaling: keep InnoDB primary keys short and monotonic; in PostgreSQL leave free space in heap pages (`fillfactor`) so updates stay on the same page.
+**Reading the diagram.** The same query descends two storage designs; all arrows are synchronous reads inside one database process. InnoDB's secondary index yields a primary-key *value*, which drives a second descent of the clustered index; PostgreSQL's index yields a physical TID, followed by one heap-page read. The logical pointer survives row moves, so clustered-index splits never touch secondary indexes; the physical pointer is cheaper to follow but must be updated in every index when an update moves a row (§11.14). Failure point: a long InnoDB primary key is copied into every secondary index. Scaling: keep InnoDB keys short and monotonic; leave free space in PostgreSQL heap pages (`fillfactor`).
 
 ### 11.7.3 Composite indexes and the leftmost-prefix rule
 
@@ -631,7 +630,7 @@ flowchart TD
   L2 --> H[("Heap rows or<br/>clustered row data")]
 ```
 
-**Reading the diagram.** Each rectangle is one fixed-size page (8 KiB in PostgreSQL, 16 KiB by default in InnoDB). Downward arrows are child pointers that a search follows synchronously, one page read per level: to find `order_id` 180, the root sends it left (180 < 400), the internal page sends it to the second leaf (100 ≤ 180 < 250). The horizontal "next leaf" arrows are sibling links used by range scans such as `order_id BETWEEN 120 AND 520`, which descend once and then read leaves left to right. The cylinder marks the storage boundary below the leaves: in PostgreSQL the leaf holds a TID pointing into the heap; in an InnoDB clustered index the leaf *is* the row. Failure points are splits (several pages must change atomically, hence WAL logging) and a cold cache after restart, when every level costs a real I/O. Scaling: multiplying the data by the fan-out adds just one level.
+**Reading the diagram.** Each rectangle is one fixed-size page (8 KiB in PostgreSQL, 16 KiB in InnoDB). A search follows child pointers synchronously, one page per level: for `order_id` 180 the root goes left (180 < 400) and the internal page picks the second leaf. The "next leaf" arrows are sibling links that range scans walk. The cylinder is the storage boundary below the leaves: a heap row (PostgreSQL) or the row itself (InnoDB clustered index). Failure points: a split changes several pages atomically, hence WAL logging (§13.5), and a cold cache makes every level an I/O. Scaling: multiplying the data by the fan-out adds one level.
 
 ### 11.8.2 Fan-out, height and I/Os per lookup
 
@@ -708,28 +707,12 @@ What to notice:
 
 ### 11.9.1 From SQL text to rows
 
-Every statement passes through the same pipeline (Figure 11.5):
+Every statement passes through the same pipeline:
 
 1. **Parse** — check syntax and build a parse tree.
 2. **Analyze and rewrite** — resolve table and column names against the catalog, check permissions, expand views, and apply rewrite rules (for example, flattening a subquery into a join).
 3. **Plan (optimize)** — enumerate alternative physical plans, estimate the cost of each using table statistics, and choose the cheapest (§11.10).
 4. **Execute** — run the plan's operators against the storage engine, which reads pages through the buffer pool (§13.4).
-
-**Figure 11.5 — Query processing pipeline.**
-
-```mermaid
-flowchart LR
-  C([Client]) -->|"SQL over wire protocol"| P["Parser"]
-  P -->|"parse tree"| A["Analyzer and rewriter"]
-  A -->|"query tree"| O["Planner / optimizer"]
-  CAT[("Catalog and statistics<br/>pg_class, pg_stats")] -->|"row counts, histograms"| O
-  O -->|"cheapest plan tree"| E["Executor"]
-  E -->|"page requests"| BP["Buffer pool"]
-  BP -->|"miss: read page"| D[("Data files<br/>heap and indexes")]
-  E -->|"result rows"| C
-```
-
-**Reading the diagram.** The client sends SQL text over the database's wire protocol (TCP or a Unix socket) and waits synchronously for rows. The first three rectangles transform the query without touching data; only the planner consults the catalog (cylinder), and only through statistics gathered earlier by `ANALYZE`, not by reading the table. The executor is the only component that touches data, through the buffer pool, which crosses the storage boundary to the data files only on a cache miss. Failure points: stale statistics make the planner choose a bad plan (the most common cause of sudden slow queries); a cold buffer pool makes a good plan slow. Scaling: prepared statements skip parsing and sometimes planning on repeated execution; parallel workers split scans and joins inside the executor.
 
 ### 11.9.2 The Volcano (iterator) model
 
@@ -821,7 +804,7 @@ What to notice:
 - `HashJoin.open()` drains its build child completely (blocking); `next()` handles one probe row at a time (pipelined).
 - Every row costs several virtual function calls. Modern analytic engines reduce that overhead with **vectorized** execution (each `next()` returns a batch of about a thousand values) [Boncz et al. 2005] or by **compiling** the plan into machine code [Neumann 2011]. PostgreSQL remains a Volcano-style executor, with optional JIT compilation of expressions.
 
-**Figure 11.6 — The executed plan tree for "revenue by city over the last day".**
+**Figure 11.5 — The executed plan tree for "revenue by city over the last day".**
 
 ```mermaid
 flowchart BT
@@ -833,7 +816,7 @@ flowchart BT
   S -->|"5 rows"| R([Client])
 ```
 
-**Reading the diagram.** This is the real plan PostgreSQL 16 chose for the revenue query in §11.10, drawn bottom-up because rows flow upward while `next()` calls flow downward. Leaves are scans that read table pages; interior rectangles are operators that run in the same backend process, so every arrow is a synchronous in-memory call. Three operators are blocking: `Hash` (must see all customers before probing), `HashAggregate` (must see all rows before emitting a group total) and `Sort`. The storage boundary is at the two scans; everything above them works on in-memory rows. Failure points: the hash table or aggregate can exceed `work_mem` and spill to temporary files; a misestimated row count can make the planner choose this plan when an index-driven plan would be better. Scaling: an index on `orders(created_at)` would replace the 1-million-row scan with a range scan, and parallel workers could split the scan of `orders`.
+**Reading the diagram.** This is the real plan PostgreSQL 16 chose for the revenue query of §11.10, drawn bottom-up: rows flow upward while `next()` calls flow down, all synchronously inside one backend process. The scans are the storage boundary; `Hash`, `HashAggregate` and `Sort` are blocking and spill to temporary files if they exceed `work_mem`. The main failure point is a misestimated row count, which can make this plan win when an index-driven plan would be better. Scaling: an index on `orders(created_at)` would replace the million-row scan, and parallel workers could split it.
 
 ## 11.10 Query optimization
 
@@ -1057,7 +1040,7 @@ Perfect isolation, called **serializability**, means the result of running trans
 **Write skew:** two transactions read an overlapping set of rows, each checks an invariant, then each writes a *different* row; each write is valid alone but together they violate the invariant.
 :::
 
-**Figure 11.7 — Non-repeatable read under READ COMMITTED.**
+**Figure 11.6 — Non-repeatable read under READ COMMITTED.**
 
 ```mermaid
 sequenceDiagram
@@ -1073,9 +1056,9 @@ sequenceDiagram
   Note over A,DB: REPEATABLE READ returns 10 again: same snapshot
 ```
 
-**Reading the diagram.** Two clients hold separate connections to one database; every message is a synchronous SQL round trip, and time runs downward. Transaction A reads the stock level twice; between the reads, B decrements and commits. Under READ COMMITTED each *statement* takes a fresh snapshot, so A's second read sees 7. Under REPEATABLE READ in PostgreSQL the *transaction* keeps the snapshot taken at its first statement and sees 10 both times. Both outcomes were reproduced on PostgreSQL 16. The failure point is any logic in A that combines the two reads (for example, a report whose totals do not add up). The storage boundary is inside the database: both versions of the row exist simultaneously (§11.14).
+**Reading the diagram.** Two clients on separate connections send synchronous SQL; time runs downward. Under READ COMMITTED each *statement* takes a new snapshot, so A's second read sees B's committed change; under PostgreSQL REPEATABLE READ the *transaction* keeps its first snapshot and sees 10 twice. Both outcomes were reproduced on PostgreSQL 16. Both row versions exist inside the database at once (§11.14); the failure is any logic in A that combines the two reads, such as a report whose totals do not add up.
 
-**Figure 11.8 — Lost update from an application-side read-modify-write.**
+**Figure 11.7 — Lost update from an application-side read-modify-write.**
 
 ```mermaid
 sequenceDiagram
@@ -1092,9 +1075,9 @@ sequenceDiagram
   B->>DB: COMMIT or ROLLBACK
 ```
 
-**Reading the diagram.** Two checkouts sell the same product concurrently. Each reads 10 and computes 9 *in the application*, then writes the literal 9. Under READ COMMITTED (and under MySQL's REPEATABLE READ) B's write simply overwrites A's: two units sold, one decremented. Under PostgreSQL's REPEATABLE READ, B's `UPDATE` fails with `could not serialize access due to concurrent update`, because the row changed after B's snapshot; B must retry the whole transaction. The cure that works at every level is to let the database do the arithmetic atomically, `UPDATE inventory SET on_hand = on_hand - 1 WHERE product_id = 42 AND on_hand >= 1`, or to lock the row first with `SELECT ... FOR UPDATE`, or to use a version check (§11.15).
+**Reading the diagram.** Each checkout reads 10 and writes the literal 9 computed *in the application*. Under READ COMMITTED (and MySQL REPEATABLE READ) B silently overwrites A: two units sold, one decremented. Under PostgreSQL REPEATABLE READ, B's `UPDATE` fails with `could not serialize access due to concurrent update` and B must retry. The fix at any level is to let the database do the arithmetic, `UPDATE inventory SET on_hand = on_hand - 1 WHERE product_id = 42 AND on_hand >= 1`, or to lock first with `SELECT ... FOR UPDATE`, or to check a version (§11.15.3).
 
-**Figure 11.9 — Write skew: both doctors go off call.**
+**Figure 11.8 — Write skew: both doctors go off call.**
 
 ```mermaid
 sequenceDiagram
@@ -1111,7 +1094,7 @@ sequenceDiagram
   Note over B,DB: SERIALIZABLE: aborted, retry sees 1
 ```
 
-**Reading the diagram.** The invariant "at least one doctor on call" is checked by a read and protected by nothing: the two transactions write *different* rows, so no write–write conflict exists for snapshot isolation or row locks to detect. Under PostgreSQL REPEATABLE READ both commit and the invariant breaks. Under SERIALIZABLE, PostgreSQL tracks which rows each transaction *read* and detects the dangerous pattern of read–write dependencies; one transaction fails with `could not serialize access due to read/write dependencies among transactions` and its retry sees only one doctor on call. The same pattern appears in the shop as double-booking a limited coupon, or two admins each removing "the other" admin. Fixes below serializable: materialize the conflict (lock a shared row with `SELECT ... FOR UPDATE`) or enforce the rule with a constraint.
+**Reading the diagram.** The invariant "at least one doctor on call" is checked by a read and protected by nothing: the transactions write *different* rows, so neither snapshot isolation nor row locks see a conflict, and both commit at REPEATABLE READ. PostgreSQL SERIALIZABLE tracks what each transaction *read*, detects the dangerous dependency pattern and aborts one with `could not serialize access due to read/write dependencies among transactions`; its retry sees one doctor on call. In the shop the same pattern double-redeems a limited coupon. Below SERIALIZABLE, materialize the conflict by locking a shared row with `FOR UPDATE`.
 
 ### 11.13.2 The standard levels and what databases actually do
 
@@ -1248,7 +1231,7 @@ SELECT lp, t_xmin, t_xmax, t_ctid FROM heap_page_items(get_raw_page('stock', 0))
 --   3 |    995 |      0 | (0,3)
 ```
 
-**Figure 11.10 — PostgreSQL version chain for product 42.**
+**Figure 11.9 — PostgreSQL version chain for product 42.**
 
 ```mermaid
 flowchart LR
@@ -1260,7 +1243,7 @@ flowchart LR
   VAC["VACUUM"] -->|"reclaims lp 2,<br/>redirects lp 1 to lp 3"| V1
 ```
 
-**Reading the diagram.** All three versions live in the same 8 KiB heap page (page 0, line pointers 1–3). Because the updates changed no indexed column and the page had room, they were **heap-only tuple (HOT)** updates: the index still points only to line pointer 1, and readers follow the `t_ctid` links to the version their snapshot can see. Stadium shapes are transactions' snapshots and the dotted arrows show which version each sees; there is no messaging, only visibility rules. VACUUM later removes versions no snapshot can see: on the real page it turned line pointer 1 into a redirect to line pointer 3 and freed line pointer 2. Failure point: a long-running transaction keeps an old snapshot alive, so VACUUM cannot remove *any* version newer than it in *any* table, and tables bloat. Scaling: when an update changes an indexed column or the page is full, it is not HOT, and every index on the table gets a new entry.
+**Reading the diagram.** All three versions sit in heap page 0. The updates changed no indexed column and the page had room, so they were **heap-only tuple (HOT)** updates: the index still points to line pointer 1 and readers follow `t_ctid` links to the version their snapshot can see (dotted arrows show visibility, not messages). On the real page, VACUUM turned line pointer 1 into a redirect to 3 and freed 2. Failure point: a long-running transaction pins an old snapshot, so VACUUM cannot clean dead versions in any table and tables bloat. Scaling: an update that changes an indexed column or finds the page full is not HOT, and every index gets a new entry.
 
 **VACUUM** (run automatically by **autovacuum**) removes dead versions, records free space for reuse, updates the **visibility map** that index-only scans rely on (§11.7.4), and **freezes** old tuples. Freezing matters because transaction IDs are 32-bit counters compared with wrap-around arithmetic: only about $2^{31}$ IDs are "in the past" at any moment. A tuple must be frozen (marked as visible to everyone) before its `xmin` becomes 2 billion transactions old, or it would appear to be in the future [PostgreSQL Docs: Routine Vacuuming].
 
@@ -1295,7 +1278,7 @@ $$T_{\text{wrap}} = \frac{2^{31} - A}{\lambda_{\text{xid}}}$$
 
 InnoDB updates the row *in place* in the clustered index and writes the *previous* values to an **undo log** record. Each clustered-index record has hidden columns `DB_TRX_ID` (the last transaction to modify it, 6 bytes) and `DB_ROLL_PTR` (a pointer to the undo record holding the previous version, 7 bytes). A consistent read creates a **read view** (the set of transactions it must not see); if the current row is too new, InnoDB follows the roll pointers backwards, reconstructing older versions until it reaches a visible one. A background **purge** thread discards undo records no read view needs; the backlog appears as the **history list length** in `SHOW ENGINE INNODB STATUS` [MySQL Docs: InnoDB Multi-Versioning].
 
-**Figure 11.11 — InnoDB current row and undo chain for product 42.**
+**Figure 11.10 — InnoDB current row and undo chain for product 42.**
 
 ```mermaid
 flowchart LR
@@ -1305,7 +1288,7 @@ flowchart LR
   PU["Purge thread"] -->|"discards when no read view needs"| U1
 ```
 
-**Reading the diagram.** The cylinder is the single current version stored in the clustered index; the subroutine shapes are undo records in the undo tablespace, linked newest to oldest. A reader whose read view excludes transaction 995 starts at the current row and applies undo records backwards until it reaches a version it may see (dotted arrow: a visibility decision, not a message). Purge (solid arrow) is asynchronous background work. Failure point: a long-running transaction's read view prevents purge, so the history list grows, undo storage grows and every reader of hot rows walks longer chains, slowing queries. Scaling: undo is separate from the table, so updates do not bloat the clustered index, and secondary indexes change only if their columns change.
+**Reading the diagram.** The cylinder is the one current version in the clustered index; the subroutine shapes are undo records, linked newest to oldest. A reader whose read view excludes transaction 995 applies undo backwards until it reaches a visible version (dotted arrow: a visibility decision). Purge is asynchronous background work. Failure point: a long transaction blocks purge, the history list grows and hot-row reads walk ever-longer chains. Scaling benefit: updates do not bloat the table, and secondary indexes change only when their columns change.
 
 **Table 11.10 — MVCC in PostgreSQL and InnoDB.**
 
@@ -1343,7 +1326,7 @@ S locks are compatible with S locks; X locks conflict with everything. MVCC data
 
 A **deadlock** occurs when transactions wait for each other's locks in a cycle (§6.11). Databases detect cycles in the **wait-for graph** and abort one transaction, the **victim**. PostgreSQL checks for a cycle after a waiter has been blocked for `deadlock_timeout` (default 1 s); InnoDB detects them immediately by default (`innodb_deadlock_detect`), and otherwise relies on `innodb_lock_wait_timeout` (default 50 s) [MySQL Docs: Deadlock Detection].
 
-**Figure 11.12 — A deadlock between two checkouts, as reproduced on PostgreSQL 16.**
+**Figure 11.11 — A deadlock between two checkouts, as reproduced on PostgreSQL 16.**
 
 ```mermaid
 sequenceDiagram
@@ -1360,7 +1343,7 @@ sequenceDiagram
   DB-->>B: UPDATE 1, then COMMIT succeeds
 ```
 
-**Reading the diagram.** Each checkout decrements stock for the products in its cart, in cart order. A locks row 42, B locks row 43, then each requests the other's row: a cycle in the wait-for graph. All requests are synchronous and block. When A had waited `deadlock_timeout`, PostgreSQL ran the detector, found the cycle and aborted A with `deadlock detected` (SQLSTATE `40P01`), naming both processes; B's blocked update then succeeded. The failure is transient but costs a full transaction retry and up to a second of latency. **Prevention** is simple: acquire locks in a canonical order, for example by sorting cart lines by `product_id` before updating, as the code in §11.17 does. Scaling: deadlock rate grows quickly with concurrency and transaction length, so the fix matters more under load.
+**Reading the diagram.** Each checkout updates inventory rows in cart order with synchronous, blocking statements. A holds 42 and waits for 43; B holds 43 and waits for 42: a cycle in the wait-for graph. After A had waited `deadlock_timeout`, PostgreSQL aborted it with `deadlock detected` (SQLSTATE `40P01`) and B's update proceeded. The cost is a retried transaction and up to a second of latency, and deadlocks become more frequent as concurrency grows. **Prevention:** acquire locks in a canonical order, for example by sorting cart lines by `product_id`, as the code in §11.17 does.
 
 ### 11.15.3 Hot rows and optimistic concurrency
 
@@ -1471,7 +1454,7 @@ The shop's order service must: register customers; list products with prices; re
 4. **Invariants as constraints**: `CHECK (on_hand >= 0)` makes overselling impossible; `CHECK` on status values; foreign keys everywhere.
 5. **Indexes from queries**: one index per access path below, and no others.
 
-**Figure 11.13 — Entity–relationship diagram of the order system.**
+**Figure 11.12 — Entity–relationship diagram of the order system.**
 
 ```mermaid
 erDiagram
@@ -1521,7 +1504,7 @@ erDiagram
   }
 ```
 
-**Reading the diagram.** Each box is a table with its columns, types and key markers (PK primary key, FK foreign key, UK unique). Crow's-foot lines give cardinality: a customer places zero or more orders; an order contains one or more items; a product appears in zero or more items and has exactly one inventory row; an order has zero or more payment attempts. There are no runtime data flows here; every line is a foreign key enforced synchronously inside one database, which is the storage boundary. Failure points are the rows many transactions touch: `inventory` rows of popular products (hot rows, §11.15.3). Scaling path: read replicas for history and reports (§14.3), then partitioning `orders` and `order_items` by `customer_id`, which keeps each customer's orders together (§14.7).
+**Reading the diagram.** Each box is a table with key markers (PK, FK, UK); crow's-foot lines give cardinality: a customer places zero or more orders, an order has one or more items, a product has exactly one inventory row, an order has zero or more payment attempts. Every line is a foreign key enforced synchronously inside one database, the single storage boundary. Failure points are rows many transactions touch: the `inventory` rows of popular products (§11.15.3). Scaling: read replicas for history and reports (§14.3), then partitioning orders and items by `customer_id` (§14.7).
 
 ### 11.17.2 DDL (PostgreSQL)
 
