@@ -1,12 +1,15 @@
-%% Figure 27.6 — An all-to-all causality violation
-sequenceDiagram
-  participant A as Leader A
-  participant B as Leader B
-  participant C as Leader C
-  A->>A: insert row 9
-  A-)B: insert row 9, fast link
-  B->>B: update row 9 to paid
-  B-)C: update row 9, fast link
-  Note over C: update arrives for a row it lacks
-  A-)C: insert row 9, slow link
-  Note over C: insert arrives late
+%% Figure 27.6 — A Dynamo-style write with N = 3 and W = 2
+flowchart LR
+  C([Client]) -->|put k| CO["Coordinator<br/>node B, first in list"]
+  subgraph Ring["Preference list for key k"]
+    B[(Node B<br/>replica 1)]
+    D[(Node D<br/>replica 2)]
+    F[(Node F<br/>replica 3)]
+  end
+  CO -->|write| B
+  CO -->|write| D
+  CO -->|write| F
+  B -->|ack| CO
+  D -->|ack| CO
+  F -.->|late ack| CO
+  CO -->|"OK after 2 acks"| C

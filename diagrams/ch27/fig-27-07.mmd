@@ -1,15 +1,21 @@
-%% Figure 27.7 — A Dynamo-style write with N = 3 and W = 2
-flowchart LR
-  C([Client]) -->|put k| CO["Coordinator<br/>node B, first in list"]
-  subgraph Ring["Preference list for key k"]
-    B[(Node B<br/>replica 1)]
-    D[(Node D<br/>replica 2)]
-    F[(Node F<br/>replica 3)]
-  end
-  CO -->|write| B
-  CO -->|write| D
-  CO -->|write| F
-  B -->|ack| CO
-  D -->|ack| CO
-  F -.->|late ack| CO
-  CO -->|"OK after 2 acks"| C
+%% Figure 27.7 — R = W = 2, N = 3, and a read that goes back in time
+sequenceDiagram
+  participant W as Writer
+  participant A as Replica A
+  participant B as Replica B
+  participant C as Replica C
+  participant R1 as Reader 1
+  participant R2 as Reader 2
+  W->>A: write x = new
+  A-->>W: ack
+  Note over B,C: write to B and C still in flight
+  R1->>A: read x
+  A-->>R1: new
+  R1->>B: read x
+  B-->>R1: old
+  Note over R1: newest of two is new
+  R2->>B: read x, after reader 1 finished
+  B-->>R2: old
+  R2->>C: read x
+  C-->>R2: old
+  Note over R2: sees old, after reader 1 saw new

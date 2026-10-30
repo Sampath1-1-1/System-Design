@@ -1,16 +1,15 @@
-%% Figure 27.9 — A sloppy quorum write and later handoff
+%% Figure 27.9 — A SWIM protocol period with an indirect probe
 sequenceDiagram
-  participant CO as Coordinator B
-  participant D as Home replica D
-  participant F as Home replica F
-  participant G as Stand-in G
-  CO->>D: write k
-  D-->>CO: ack
-  CO-xF: write k, F unreachable
-  CO->>G: write k with hint for F
-  G->>G: store in hint log
-  G-->>CO: ack, counts toward W
-  Note over F: F recovers minutes later
-  G-)F: hand off write k
-  F-->>G: ack
-  G->>G: delete hint
+  participant I as Member i
+  participant J as Member j
+  participant K1 as Helper k1
+  participant K2 as Helper k2
+  I-xJ: ping, lost on congested path
+  Note over I: no ack within timeout
+  I->>K1: ping-req for j
+  I->>K2: ping-req for j
+  K1->>J: ping
+  J-->>K1: ack
+  K1-->>I: ack relayed for j
+  Note over I: j is alive, no suspicion
+  Note over I,K2: updates piggyback on all messages

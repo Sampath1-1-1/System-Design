@@ -159,3 +159,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-152 | 26 | ZooKeeper 2010 paper throughput wording; persistent watches in 3.6 | Open | |
 | UQ-153 | 26 | etcd defaults/tuning; Kubernetes leader-election defaults (15 s / 10 s / 2 s); Chubby defaults; Bigtable unavailability due to Chubby | Open | Version-dependent |
 | UQ-154 | 26 / 31 | Kafka 4.0 removal of ZooKeeper mode | Open | Believed correct (Mar 2025); verify in Ch 31 |
+| UQ-155 | 26 / 27 | GitHub Oct 2018 incident figures (43 s partition, 24 h 11 min degraded) from search summaries only | Open | Merge with UQ-150 |
+| UQ-156 | 27 | Cassandra exponential phi model and 3-hour default hint window | Open | Version-dependent |
+| UQ-157 | 27 | Dynamo (2007): 99.94% of requests see one version; ~10-entry vector-clock truncation threshold | Open | |
+| UQ-158 | 27 | DynamoDB global tables LWW wording and strong-consistency mode (as of 2026); Akka/CouchDB/Redis/Riak doc URLs | Open | Time-sensitive |
