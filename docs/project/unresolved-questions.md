@@ -25,3 +25,11 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-018 | 1 | Current revision titles of ISO/IEC 25010 and ISO/IEC/IEEE 42010 | Open | Both revised 2022–2023 |
 | UQ-019 | 1 | Barroso et al. (2018) passage on server failure frequency | Open | |
 | UQ-020 | 1 | PEP 1 author list | Open | |
+| UQ-021 | 5 | 2024 $/GB figures for DRAM and NAND (prices moved sharply 2025–26) | Open | Time-sensitive |
+| UQ-022 | 5 | URLs: Dean 2009 LADIS slides; Cole 2010; Netflix 2022 post; choose one canonical variant of Dean's latency list | Open | Coordinate with Ch 4 §4.17 and Appendix F |
+| UQ-023 | 5 | Hyper-Threading "up to ~30%" gain (Marr et al. 2002, Intel Technology Journal) | Open | |
+| UQ-024 | 5 | MySQL release that added NUMA interleave option | Open | |
+| UQ-025 | 5 | Primary source for Intel Optane wind-down announcement (2022) | Open | |
+| UQ-026 | 5 | Branch-mispredict penalty (15–20 cycles) and outstanding misses per core (10–20) vs vendor optimization manuals | Open | |
+| UQ-027 | 5 | TLC NAND 1,000–3,000 P/E cycles is a commonly cited range, not a vendor spec | Accepted | Stated as typical range |
+| UQ-028 | 5 | Free-threaded CPython status (PEP 703) as of writing | Open | Time-sensitive |
