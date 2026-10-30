@@ -153,3 +153,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-146 | 28 | Brewer (2017): share of Spanner incidents that were network-related (<8% per a secondary source) | Open | research.google unreachable |
 | UQ-147 | 28 | Calvin near-linear scaling to 100 machines; FaunaDB being Calvin-inspired | Open | |
 | UQ-148 | 28 | 2026 defaults: CockroachDB range size (512 MiB) and max clock offset (500 ms); YugabyteDB YSQL default isolation; TiDB async commit / 1PC status | Open | Version-dependent |
+| UQ-149 | 26 | Ongaro (2015) report of the single-server membership-change bug and its fix | Open | |
+| UQ-150 | 26 | GitHub October 2018 incident figures and blog URL | Open | |
+| UQ-151 | 26 | URLs: antirez "Is Redlock safe?" reply; Redis Redlock documentation | Open | |
+| UQ-152 | 26 | ZooKeeper 2010 paper throughput wording; persistent watches in 3.6 | Open | |
+| UQ-153 | 26 | etcd defaults/tuning; Kubernetes leader-election defaults (15 s / 10 s / 2 s); Chubby defaults; Bigtable unavailability due to Chubby | Open | Version-dependent |
+| UQ-154 | 26 / 31 | Kafka 4.0 removal of ZooKeeper mode | Open | Believed correct (Mar 2025); verify in Ch 31 |
