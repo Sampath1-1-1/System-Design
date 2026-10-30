@@ -191,13 +191,13 @@ The arithmetic behind three rows: 100 calls × 0.5 ms = 50 ms, but × 70 ms = 7 
 
 ### 24.6.1 Why a protocol needs a system model
 
-A protocol is only correct *relative to its assumptions*. Raft (§26.7) is correct if nodes crash and restart but never lie; it is not correct if a node can send forged messages. A clock-based lease (§26.11) is safe only if clock drift is bounded. A **system model** writes these assumptions down so that you can check whether your environment satisfies them.
+A protocol is correct only *relative to its assumptions*: Raft (§26.7) tolerates nodes that crash but not nodes that lie, and a clock-based lease (§26.11) is safe only if drift is bounded.
 
 ::: definition
 **Definition — System model.** A precise statement of what a distributed algorithm may assume about (1) **timing**: bounds on message delay, processing speed and clock drift, and (2) **faults**: how nodes and links may misbehave. Proofs of correctness hold only within the stated model.
 :::
 
-Think of a model as the rules of a game. A chess strategy proven to win under standard rules is useless if your opponent may move two pieces per turn. In the same way, a protocol proven under the crash-stop model says nothing about a node with a corrupted disk that returns garbage.
+Like a chess strategy proven under standard rules, a protocol proven for crash-stop nodes says nothing about a node that returns garbage from a corrupted disk.
 
 ### 24.6.2 Timing models
 
@@ -209,7 +209,7 @@ Think of a model as the rules of a game. A chess strategy proven to win under st
 | Partially synchronous | Bounds exist but are unknown, or known bounds hold only after an unknown **global stabilization time** (GST) | Middle | Consensus that is always safe and terminates once the system behaves | Yes: the model behind Paxos, Raft and most production systems |
 | Asynchronous | No timing bounds at all; messages are eventually delivered | Weakest | Safety-only reasoning; deterministic consensus impossible with one crash (§24.13) | Safe to assume, but too weak to build consensus on alone |
 
-The **partially synchronous** model was introduced by Dwork, Lynch and Stockmeyer [Dwork et al. 1988], and it is the model you should have in mind for real datacenters. Networks and machines are *usually* fast and predictable, but occasionally (during garbage-collection pauses, congestion or a partition) they are not, for an unknown length of time. A protocol designed for partial synchrony must never violate **safety** (nothing bad happens, such as two leaders committing different values) during bad periods, and it must make **progress** (liveness: something good eventually happens) once a good period lasts long enough.
+The **partially synchronous** model of Dwork, Lynch and Stockmeyer [Dwork et al. 1988] fits real datacenters: usually timely, occasionally not (pauses, congestion, partitions) for an unknown time. A protocol for it must never violate **safety** (nothing bad happens) in bad periods and must make progress (**liveness**) once a good period lasts long enough.
 
 ### 24.6.3 Failure models
 
@@ -223,14 +223,7 @@ The **partially synchronous** model was introduced by Dwork, Lynch and Stockmeye
 | Timing (performance) | Responds correctly but outside the assumed time bound | 30 s garbage-collection pause; fail-slow disk | Only relative to a bound | Depends on the timing model | Lease-based systems are vulnerable |
 | Byzantine (arbitrary) | Anything: wrong values, contradictory messages to different peers, forged messages | Memory corruption, software bug, malicious operator | Not in general | $3f+1$ | Blockchains, some aerospace and financial systems |
 
-A few clarifications make the table precise.
-
-- **Crash-stop versus fail-stop.** Schlichting and Schneider defined a **fail-stop** processor as one that halts *and whose halting other processors can detect* [Schlichting and Schneider 1983]. Plain crash-stop gives no such notification, which is the realistic case: a crash looks like slowness until a timeout guesses otherwise.
-- **Crash-recovery** is the model most production databases live in. Whatever a node promised before crashing (a vote, an acknowledgment) must be on stable storage before the promise is sent, or the node can "forget" it after restart and break the protocol. This is why Raft requires the current term and vote to be persisted before replying (§26.7).
-- **Timing faults** only make sense where timing is assumed. A node that pauses for 30 s while holding a lease, then resumes and writes as if it still held it, is the classic example; fencing tokens (§26.13) exist for it.
-- **Byzantine** comes from Lamport, Shostak and Pease's "Byzantine Generals" paper [Lamport et al. 1982]. It covers malice but also any arbitrary corruption, such as a bit flip that changes a message.
-
-Links have models too. Cachin, Guerraoui and Rodrigues define **fair-loss links** (a message sent infinitely often is delivered infinitely often, but any single message may be lost), **stubborn links** (built on fair-loss by retransmitting forever) and **perfect links** (every message sent is delivered exactly once, with no creation of messages) built on stubborn links by acknowledgments and duplicate suppression [Cachin et al. 2011]. TCP is a practical approximation of a perfect link only while a connection lasts.
+Clarifications: a **fail-stop** processor, as defined by Schlichting and Schneider, halts *detectably* [Schlichting and Schneider 1983]; plain crash-stop does not, which is the realistic case. Under **crash-recovery**, anything a node promised (a vote, an acknowledgment) must reach stable storage before the promise is sent, which is why Raft persists its term and vote (§26.7). The classic **timing** fault is a lease holder that pauses for 30 s and then writes as if it still held the lease; fencing tokens (§26.13) exist for it. **Byzantine** faults, named in [Lamport et al. 1982], include bit flips and bugs, not just malice. Links have models too: **fair-loss**, **stubborn** (retransmit forever) and **perfect** (exactly-once delivery, built with acknowledgments and duplicate suppression) [Cachin et al. 2011]; TCP approximates a perfect link only while a connection lasts.
 
 **Figure 24.3 — Failure models nest: each one includes the behaviors of those inside it.**
 
@@ -243,7 +236,7 @@ flowchart LR
   BZ --> COST["Cost to tolerate f faults<br/>rises from 2f+1 to 3f+1 nodes"]
 ```
 
-**Reading the diagram.** Each box is a fault model, and each arrow points to a strictly more general model: a crash is a special case of "stop sending messages" (omission), an omission is an infinitely late message (timing), and every behavior is a special case of arbitrary (Byzantine). An algorithm that tolerates a model on the right also tolerates every model to its left, but costs more. The final box shows that cost in replicas for consensus. This is a conceptual hierarchy, so there are no protocols, storage boundaries or synchronous/asynchronous paths on it; the practical failure point is choosing a model weaker than your real environment.
+**Reading the diagram.** Each arrow points to a more general model: a crash is a special omission, an omission is an infinitely late message, and everything is a special case of Byzantine. Tolerating a model on the right tolerates all to its left, at higher cost (final box). The hierarchy is conceptual, with no protocols, storage boundaries or sync/async paths; the practical failure point is assuming a model weaker than reality.
 
 #### Mathematical foundations: replicas needed per fault model
 
@@ -277,10 +270,6 @@ Interpretation: tolerating arbitrary faults costs one third more replicas for $f
 *Evidence: Primary* — [Ongaro and Ousterhout 2014]
 :::
 
-::: mistake
-**Mistake — "Byzantine faults only matter for blockchains."** Byzantine behavior also comes from bugs, misconfiguration and hardware corruption. You rarely pay for full Byzantine fault tolerance inside a company, but you should still defend against its cheapest forms: end-to-end checksums against corruption and version checks against stale or mixed-version peers.
-:::
-
 ## 24.7 Network partitions
 
 ### 24.7.1 Definition and types
@@ -289,9 +278,7 @@ Interpretation: tolerating arbitrary faults costs one third more replicas for $f
 **Definition — Network partition.** A network fault after which some nodes that are running correctly cannot exchange messages with some other running nodes for a period of time. (This book reserves "partition" alone for a subset of data, §14.6; a network fault is always a **network partition**.)
 :::
 
-From inside a node, a partition is indistinguishable from the remote nodes having crashed: messages simply stop arriving. The difference matters enormously, because the "crashed" nodes are still running, may still serve clients, and may believe that *you* have crashed.
-
-Partitions come in several shapes, and the less obvious shapes cause the worst bugs.
+From inside a node, a partition looks exactly like remote crashes, except that the "crashed" nodes keep running, may serve clients, and may believe *you* crashed. The less obvious shapes cause the worst bugs.
 
 **Figure 24.4 — Three kinds of network partition.**
 
@@ -325,27 +312,22 @@ flowchart LR
 
 ### 24.7.2 How often do networks fail?
 
-Engineers who assume partitions are rare are wrong, and there is evidence. Bailis and Kingsbury surveyed published post-mortems and studies in "The Network is Reliable" [Bailis and Kingsbury 2014]; the title is ironic. The evidence they collected includes:
+Bailis and Kingsbury's ironically titled survey "The Network is Reliable" collects the evidence [Bailis and Kingsbury 2014]:
 
 - **Microsoft datacenters.** A measurement study of several Microsoft datacenters over a year [Gill et al. 2011] reported on average 5.2 device failures and 40.8 link failures per day, with a median time to repair of about five minutes and some failures lasting much longer. It also found that network redundancy was far less effective than hoped, improving the median traffic carried during failures by only about 43%.
 - **Google clusters.** Jeff Dean's description of a typical first year of a new cluster included, among many other events, around 20 rack failures, about 5 racks that "go wonky" with half their packets lost, around 8 network maintenances of which several cause about 30 minutes of random connectivity loss, and about 3 router failures [Dean 2009].
 - **Failures in deployed software.** Alquraan et al. studied 136 failures caused by network partitions in 25 widely used systems, including databases, coordination services and message brokers [Alquraan et al. 2018]. Most had catastrophic effects such as data loss, reappearance of deleted data and broken locks; many could be triggered by isolating a single node; and *partial* partitions were a significant and previously under-studied cause.
 
-The conclusion is not that networks are bad, but that a large fleet experiences many small network faults every day. A system with thousands of nodes must assume that *some* pair of nodes cannot talk *right now*.
+A large fleet therefore sees many small network faults every day: assume *some* pair of nodes cannot talk *right now*.
 
 ::: industry
-**Cloudflare, November 2020 — a partial partition and a Raft cluster.** A network switch failed partially: some of the nodes of an etcd cluster (which uses Raft) could reach each other and some could not. The cluster repeatedly failed to keep a stable leader, and while leadership was unsettled it could not accept writes. Systems that depended on it, including the automation that manages database primaries, reacted with failovers that overloaded other databases, and Cloudflare's API and dashboard were degraded for several hours. Cloudflare titled its post-mortem "A Byzantine failure in the real world" because the partial connectivity gave different nodes contradictory views of the same cluster.
+**Cloudflare, November 2020 — a partial partition and a Raft cluster.** A partially failed switch left some members of an etcd (Raft) cluster able to reach each other and some not. The cluster could not keep a stable leader, so it could not accept writes; dependent automation that manages database primaries triggered failovers that overloaded other databases, and Cloudflare's API and dashboard were degraded for several hours. The post-mortem's title reflects that partial connectivity gave nodes contradictory views of the cluster.
 *Evidence: Primary* — [Lianza and Snook 2020]
 :::
 
 ### 24.7.3 What a partition forces you to choose
 
-During a partition, a node that receives a request for data it cannot coordinate on has two options:
-
-1. **Refuse** (or wait) until it can reach enough peers. This preserves consistency but sacrifices availability on the minority side.
-2. **Answer** with the data it has, and reconcile later. This preserves availability but allows the two sides to diverge, and the divergence must be resolved after the partition heals (version vectors, §24.11; conflict resolution, §27.14).
-
-The precise statement of this trade-off is the CAP theorem, and its latency-aware extension is PACELC; both are in §25.8–§25.9. What this chapter adds is the observation behind them: you do not get to choose *whether* partitions happen, only what your system does when one does.
+A node cut off from its peers can **refuse** (keeping consistency, losing availability on the minority side) or **answer** from local data and reconcile later (keeping availability, allowing divergence to be resolved with version vectors, §24.11, and conflict resolution, §27.14). CAP and PACELC (§25.8–§25.9) make this precise; you choose not *whether* partitions happen, only how to behave during one.
 
 **Table 24.6 — Partition failure scenarios.**
 
@@ -368,7 +350,7 @@ The precise statement of this trade-off is the CAP theorem, and its latency-awar
 **Definition — Partial failure.** A state in which some components of a system have failed while others continue to work, so that an operation may be applied in some places and not others, and the working components cannot reliably tell which components failed.
 :::
 
-On one computer, partial failure is rare enough that most programs ignore it: if memory fails, the machine crashes. In a distributed system it is the normal state (§24.4.1 showed that a 1,000-node fleet sees a failure on most days). The hard part is not the failure but the *ambiguity*: a client cannot tell which of several very different situations it is in.
+On one computer, partial failure is rare enough to ignore; in a fleet it is normal (§24.4.1). The hard part is the *ambiguity*.
 
 **Figure 24.5 — Six things that can happen to one request, all of which look the same to the client.**
 
@@ -390,7 +372,7 @@ sequenceDiagram
 
 ### 24.8.2 Gray failure
 
-Crash failures are, in a sense, the easy case: the component is clearly dead. Huang et al. observed that many serious incidents in Microsoft's cloud were caused by something subtler, which they called **gray failure** [Huang et al. 2017].
+Crashes are the easy case. Huang et al. found that many serious incidents in Microsoft's cloud came from something subtler, **gray failure** [Huang et al. 2017].
 
 ::: definition
 **Definition — Gray failure.** A component failure that is *differentially observable*: some observers (often the system's own failure detector) consider the component healthy, while others (often the applications using it) experience it as failed or badly degraded.
@@ -412,11 +394,11 @@ flowchart LR
 
 **Reading the diagram.** The failure detector probes the storage node with a cheap heartbeat that never touches the disk, so it gets fast replies and concludes "healthy". The application's synchronous read and write requests go through the slow disk and time out (dotted arrow: the response effectively never arrives in time). The storage boundary, the node's disk, is the failure point, and it is invisible to the probe. Because the detector says healthy, the load balancer keeps sending traffic and no failover happens; adding more nodes does not help, since the sick node still receives its share. The fix is to make the detector observe what the application observes.
 
-Huang et al. recommend closing the gap in observation: let detectors use signals from the applications themselves (error rates and latency measured by clients), and treat severe degradation as failure. In practice this means **health checks that exercise the real dependency path** (a health endpoint that performs a small read), **outlier detection** in load balancers (passive health checks, §19.5) that ejects a node whose error rate or latency is far worse than its peers', and treating a node that is "too slow" as down.
+Huang et al. recommend closing the observation gap: detect with what applications experience. In practice: **health checks that exercise the real dependency path**, **outlier ejection** of nodes whose client-observed errors or latency are far worse than their peers' (passive health checks, §19.5), and treating "too slow" as down.
 
 ### 24.8.3 Timeouts: the only failure detector you have
 
-In an asynchronous or partially synchronous system, there is no way to *know* that a remote node has crashed. The only evidence is the absence of a reply within some time. Every failure detector, from a simple timeout to the phi-accrual detector used by Cassandra and Akka to the SWIM gossip protocol (§27.10), is a policy for turning silence into a *suspicion*.
+Without timing bounds you cannot *know* that a node crashed; you only see silence. Every failure detector, from a timeout to phi-accrual or SWIM (§27.10), turns silence into a *suspicion*.
 
 #### Mathematical foundations: choosing a timeout
 
@@ -435,7 +417,7 @@ $$T = 2d + r \qquad\qquad T_{\text{practical}} = \text{RTT}_{p99.9} + r_{p99.9} 
 | $m$ | Safety margin for pauses (garbage collection, scheduling) | s |
 :::
 
-If a real bound $d$ existed (a synchronous system), a reply would always arrive within $2d + r$, and a later reply would prove a fault. Real networks have no such bound, so the practical form uses a high percentile of measured behavior: the timeout then *mistakes* a slow node for a dead one with a small, chosen probability.
+With real bounds, silence beyond $2d + r$ would prove a fault. Real networks have none, so the practical form accepts a small, chosen probability of mistaking slow for dead.
 
 ::: example
 **Worked example — Timeout for PhotoShare's metadata replicas.**
@@ -445,7 +427,7 @@ If a real bound $d$ existed (a synchronous system), a reply would always arrive 
 3. $T_{\text{practical}} = 4 + 20 + 200 = 224$ ms; round to 250 ms for a request timeout.
 4. For declaring a *node* dead (which triggers failover), require several consecutive misses: with heartbeats every 250 ms and 4 misses, detection takes about 1 s.
 
-Interpretation: the timeout is dominated by the pause margin, not by the network. Choose $T$ too low and normal pauses trigger false failovers, which move load and can cascade; choose it too high and real failures leave users waiting. Engineering implication: measure pause times and tail latency before setting timeouts, use different values for "retry this request" (short, §22.11) and "fail over this node" (longer, with several misses), and prefer adaptive detectors that learn the delay distribution (§27.10).
+Interpretation: the pause margin, not the network, dominates. Too low a $T$ causes false failovers that can cascade; too high leaves users waiting. Engineering implication: measure pauses and tail latency first, use a short timeout for retrying a request (§22.11) and a longer, multi-miss rule for failing over a node, and prefer adaptive detectors (§27.10).
 :::
 
 **Table 24.7 — Partial-failure scenarios.**
@@ -458,28 +440,22 @@ Interpretation: the timeout is dominated by the pause margin, not by the network
 | Cascading slowness | Callers wait the full timeout on a slow dependency | Thread pools full; latency rises everywhere | Shed load; open circuit breakers | Deadlines, bulkheads, breakers (§22.11–§22.14) |
 
 ::: mistake
-**Mistake — "If the node answered the health check, it is up."** A health check answers one narrow question. A node can pass it while failing every real request. Health is defined by what clients experience.
-:::
-
-::: tip
-**Interview tip — Saying "the request timed out" precisely.** When a design question involves a remote write, say explicitly that a timeout means *unknown outcome*, list the three possibilities (not delivered, failed, succeeded with lost reply), and name the mechanism that makes retrying safe. Interviewers listen for this.
+**Mistake — "If the node answered the health check, it is up."** A health check answers one narrow question. Health is what clients experience.
 :::
 
 ## 24.9 Physical clocks: drift, NTP, PTP and skew
 
 ### 24.9.1 Two clocks in every computer
 
-Every server has at least two clocks, and confusing them is a classic bug.
-
 ::: definition
 **Definition — Time-of-day clock and monotonic clock.** A **time-of-day** (wall-clock) clock returns the current date and time, for example as seconds since the Unix epoch (Linux `CLOCK_REALTIME`, Python `time.time()`). It is synchronized with other machines and *can jump* forward or backward when corrected. A **monotonic** clock (Linux `CLOCK_MONOTONIC`, Python `time.monotonic()`) only moves forward at a steady rate from an arbitrary starting point. It is meaningless across machines but correct for measuring durations on one machine.
 :::
 
-Use the monotonic clock for timeouts, rate-limiter refill (§22.4) and latency measurement. Use the time-of-day clock only when you need a calendar time, and never assume two machines' wall clocks agree.
+Use the monotonic clock for timeouts, rate-limiter refill (§22.4) and latency; never assume two machines' wall clocks agree.
 
 ### 24.9.2 Quartz drift
 
-A computer keeps time by counting the vibrations of a quartz crystal oscillator. The crystal's frequency depends on manufacturing tolerance, temperature and age, so it is never exactly the nominal value. The error is expressed in **parts per million (ppm)**: a clock with a drift rate of 1 ppm gains or loses 1 µs every second, which is 86.4 ms per day. Commodity server oscillators typically drift by tens of ppm, and Google's Spanner design conservatively assumes a worst case of 200 ppm [Corbett et al. 2012].
+A computer counts the vibrations of a quartz crystal whose frequency varies with manufacturing tolerance, temperature and age. The error is expressed in **parts per million (ppm)**: 1 ppm is 1 µs per second, or 86.4 ms per day. Commodity server oscillators typically drift by tens of ppm, and Google's Spanner design conservatively assumes a worst case of 200 ppm [Corbett et al. 2012].
 
 ::: formula
 **Clock drift and the resynchronization interval**
@@ -504,12 +480,12 @@ $$\Delta(t) = \rho\, t \qquad\qquad \Delta_{AB}(t) \le 2\rho\, t \qquad\qquad T_
 3. To keep them within $\varepsilon = 1$ ms: $T_{\text{sync}} \le 0.001 / (2 \times 50 \times 10^{-6}) = 10$ s.
 4. Spanner: each server polls its time masters every 30 s and assumes 200 ppm, so uncertainty grows by up to $200 \times 10^{-6} \times 30 = 6$ ms between polls. Corbett et al. describe exactly this sawtooth of 0 to 6 ms on top of about 1 ms of communication delay, giving a total uncertainty $\varepsilon$ of about 1 to 7 ms [Corbett et al. 2012].
 
-Interpretation: drift alone is small per second but unbounded over time, so clocks *must* be resynchronized continually. Engineering implication: an unsynchronized machine can be seconds off within a day. Alert on synchronization loss, not just on offset, because a host that silently stopped syncing will drift further every hour.
+Interpretation: drift is tiny per second but unbounded over time, so clocks must be resynchronized continually. Engineering implication: alert on *synchronization loss*, not just offset; a host that silently stopped syncing drifts further every hour.
 :::
 
 ### 24.9.3 NTP: synchronizing over a network
 
-The **Network Time Protocol** (NTP), designed by David Mills and currently specified as NTPv4 in RFC 5905 [Mills et al. 2010], synchronizes a client's clock with servers over an ordinary packet network. Its central idea is to measure a round trip, assume the network delay is the same in both directions, and compute the offset from four timestamps.
+The **Network Time Protocol** (NTP), designed by David Mills and specified as NTPv4 in RFC 5905 [Mills et al. 2010], measures a round trip, assumes equal delay in both directions, and computes the offset from four timestamps.
 
 **Figure 24.7 — The NTP on-wire exchange.**
 
@@ -527,7 +503,7 @@ sequenceDiagram
   Note over C: delay = (T4 - T1) - (T3 - T2)
 ```
 
-**Reading the diagram.** The client sends a UDP request (port 123) stamped with its own clock reading $T_1$; the server stamps arrival $T_2$ and departure $T_3$ with *its* clock; the client stamps arrival $T_4$ with its clock. Both arrows are one synchronous request/response. No storage is involved; the "state" is the client's clock. The failure points are asymmetric network delay (which biases the offset) and a wrong server clock (which NTP handles by querying several servers). NTP scales through a hierarchy of servers (Figure 24.8).
+**Reading the diagram.** One synchronous UDP request/response (port 123): $T_1$ and $T_4$ are read from the client's clock, $T_2$ and $T_3$ from the server's. No storage is involved. Failure points: asymmetric delay (biases the offset) and a wrong server clock (handled by querying several servers). NTP scales through a server hierarchy (Figure 24.8).
 
 ::: formula
 **NTP offset, round-trip delay and error bound (RFC 5905)**
@@ -545,7 +521,7 @@ $$\theta = \frac{(T_2 - T_1) + (T_3 - T_4)}{2} \qquad \delta = (T_4 - T_1) - (T_
 | $\theta_{\text{true}}$ | Actual offset | s |
 :::
 
-The estimate is exact when the two directions take equal time. If the request takes $d_1$ and the reply $d_2$, the error is $(d_1 - d_2)/2$, and since $d_1 + d_2 = \delta$, the error can never exceed $\delta/2$. That is why NTP prefers samples with the *smallest* round-trip delay: they have the tightest error bound.
+If the request takes $d_1$ and the reply $d_2$, the error is $(d_1 - d_2)/2$, at most $\delta/2$ because $d_1 + d_2 = \delta$; hence NTP prefers low-delay samples.
 
 ::: example
 **Worked example — One NTP exchange, symmetric and asymmetric.**
@@ -557,7 +533,7 @@ Timestamps in seconds after 10:00:00: $T_1 = 0.000$ (client), $T_2 = 0.120$ (ser
 3. Check: if each direction took 30 ms and the client was 90 ms behind, the request sent at client time 0.000 (server time 0.090) arrives at server time 0.120, and the reply sent at 0.121 arrives at server time 0.151, which is client time 0.061. Both match.
 4. Asymmetric case: suppose the request actually took 50 ms and the reply 10 ms (same $\delta = 60$ ms). NTP still computes 90 ms, but the true offset is $0.120 - 0.050 = 0.070$ s, an error of $(50 - 10)/2 = 20$ ms, within the bound $\delta/2 = 30$ ms.
 
-Interpretation: NTP's accuracy is limited by path asymmetry, which it cannot see. Engineering implication: a client 60 ms away from its server cannot be sure of its time to better than ±30 ms from a single sample. That is why datacenters run their own stratum-1 or stratum-2 servers close to their machines, where round trips are well under a millisecond and the bound shrinks accordingly.
+Interpretation: NTP cannot see path asymmetry, so one sample over a 60 ms path is good only to ±30 ms. Engineering implication: run stratum-1 or stratum-2 servers inside the datacenter, where sub-millisecond round trips shrink the bound.
 :::
 
 **Figure 24.8 — The time-distribution hierarchy: NTP strata and a PTP domain.**
@@ -574,42 +550,24 @@ flowchart TB
   BC -->|PTP| H2["Hosts with PTP NICs"]
 ```
 
-**Reading the diagram.** A **stratum** is the distance from a reference clock. Stratum 0 devices (GPS receivers, atomic clocks) are not on the network; they feed a stratum-1 server directly. Each NTP hop adds one stratum (up to 15; 16 means unsynchronized). Application servers query several stratum-2 servers so that one bad server (a **falseticker**) can be outvoted. The right-hand path is a PTP domain: a grandmaster clock distributes time through switches that participate in the protocol, to hosts whose network cards timestamp packets in hardware. All arrows are periodic request/response exchanges; the failure points are the reference (GPS antenna loss), a falseticker server, and network asymmetry. The hierarchy scales because each server serves many clients.
+**Reading the diagram.** A **stratum** is the distance from a reference clock: stratum-0 devices (GPS, atomic clocks) feed stratum-1 servers directly, and each NTP hop adds one (16 means unsynchronized). Clients query several servers so a bad one (a **falseticker**) is outvoted. The right-hand PTP domain distributes time from a grandmaster through PTP-aware switches to hosts with hardware-timestamping NICs. Arrows are periodic request/response exchanges; failure points are reference loss, falsetickers and asymmetry; the tree scales because each server serves many clients.
 
 #### How an NTP client turns samples into a clock
 
-An NTP daemon such as `ntpd` or `chrony` does much more than one exchange:
-
-1. It polls several servers repeatedly (every 64 to 1,024 s by default in `ntpd`; more often when configured).
-2. For each server it keeps recent samples and prefers those with the lowest delay $\delta$.
-3. It runs a **selection** algorithm that finds the largest group of servers whose error intervals overlap, discarding falsetickers.
-4. It combines the survivors into one offset estimate.
-5. A **clock discipline** loop adjusts the local clock. Small offsets are corrected by **slewing**: running the clock slightly fast or slow (`ntpd` limits the slew rate to 500 ppm, i.e., 0.5 ms per second). Large offsets (by default more than 128 ms in `ntpd`) are corrected by **stepping**: jumping the clock, possibly *backwards*.
-
-NTP typically keeps clocks within a few milliseconds over a good wide-area path, and within well under a millisecond on a quiet local network, but there is no hard guarantee: a congested or asymmetric path, a misconfigured server, or a virtual machine paused by its hypervisor can produce offsets of seconds.
+A daemon such as `ntpd` or `chrony` (1) polls several servers repeatedly (64–1,024 s by default in `ntpd`), (2) keeps the lowest-delay samples, (3) **selects** the largest group of servers whose error intervals overlap, discarding falsetickers, (4) combines the survivors, and (5) disciplines the clock: small offsets are **slewed** (`ntpd` runs the clock at most 500 ppm fast or slow), large ones (over 128 ms by default) are **stepped**, possibly *backwards*. Typical results are milliseconds over a good wide-area path and well under a millisecond on a quiet LAN, with no hard guarantee: congestion, asymmetry or a paused virtual machine can produce offsets of seconds.
 
 ### 24.9.4 PTP: sub-microsecond synchronization
 
-The **Precision Time Protocol** (PTP), standardized as IEEE 1588 (the 2008 version, PTPv2, and the 2019 revision) [IEEE 2008; IEEE 2019], uses the same four-timestamp idea with three changes that improve accuracy by orders of magnitude:
-
-1. **Hardware timestamping.** Network interface cards record the instant a packet crosses the wire, removing the variable delay of the operating system's network stack, which is the largest error source for software NTP.
-2. **Network participation.** Switches act as **transparent clocks**, adding the time each packet spent queued inside them to a correction field, or as **boundary clocks**, which synchronize to the upstream clock and serve time downstream. Queuing delay, the main cause of asymmetry, is thereby measured rather than guessed.
-3. **Frequent exchanges.** A grandmaster sends `Sync` messages (often many per second); hosts measure the path delay with `Delay_Req` and `Delay_Resp` messages.
-
-In a well-built datacenter network, PTP achieves sub-microsecond synchronization. The cost is hardware: PTP-capable network cards, switches that support PTP, and reference clocks with GPS receivers or atomic oscillators.
+The **Precision Time Protocol** (PTP, IEEE 1588-2008 and its 2019 revision) [IEEE 2008; IEEE 2019] uses the same four-timestamp idea with three improvements: **hardware timestamping** in the NIC removes operating-system stack jitter, the main error in software NTP; switches act as **transparent clocks** (adding their queuing time to a correction field) or **boundary clocks** (re-serving time downstream), so asymmetry is measured rather than guessed; and **frequent exchanges** (`Sync`, `Delay_Req`, `Delay_Resp`) track drift closely. A well-built network achieves sub-microsecond synchronization, at the cost of PTP-capable NICs, switches and GPS-referenced grandmasters.
 
 ::: industry
-**Precision time in public clouds and at Meta.** Meta has described replacing NTP with PTP across its datacenters, citing sub-microsecond precision as the enabler for tighter consistency in distributed systems [Obleukhov and Byagowi 2022]. AWS announced in 2023 that the Amazon Time Sync Service offers microsecond-accurate time on supported instance types, using a hardware reference clock exposed through PTP, and publishes ClockBound, an open-source daemon that returns the current time together with an *error bound* rather than a single value [AWS 2023]. Both reflect the same trend: applications increasingly ask "what is the time *and how wrong could it be*?"
+**Precision time in public clouds and at Meta.** Meta has described deploying PTP across its datacenters for sub-microsecond precision [Obleukhov and Byagowi 2022]. AWS announced microsecond-accurate time from the Amazon Time Sync Service on supported instances in 2023, and publishes ClockBound, a daemon that returns the time together with an *error bound* [AWS 2023]. Applications increasingly ask "what is the time, *and how wrong could it be*?"
 *Evidence: Primary* — [Obleukhov and Byagowi 2022; AWS 2023]
 :::
 
 ### 24.9.5 Leap seconds and smearing
 
-Atomic time (TAI) ticks uniformly. Civil time (UTC) is kept within 0.9 s of the Earth's slightly irregular rotation by inserting **leap seconds**: occasionally, the last minute of 30 June or 31 December has 61 seconds, ending `23:59:60`. Since 1972, 27 positive leap seconds have been added, the latest at the end of 31 December 2016, so TAI − UTC = 37 s. Unix time, which pretends every day has 86,400 seconds, cannot represent `23:59:60`; systems typically repeat a second, so time appears to go backwards.
-
-Leap seconds have caused real outages. The leap second of 30 June 2012 triggered a Linux kernel timer bug that left many Java and MySQL processes spinning at full CPU across the industry. At the end of 2016, Cloudflare's DNS software computed a negative duration when time stepped backwards, which caused failures in some of its DNS resolutions [Graham-Cumming 2017].
-
-The common mitigation is **leap smearing**: instead of inserting one extra second, time servers run their clocks slightly slow over a long window so that the extra second is absorbed gradually. Google's public NTP service smears linearly over the 24 hours from noon to noon UTC around the leap second [Google: Leap Smear].
+UTC is kept within 0.9 s of the Earth's irregular rotation by **leap seconds**: a minute ending `23:59:60` on 30 June or 31 December. Since 1972, 27 have been added, the latest at the end of 2016 (TAI − UTC = 37 s). Unix time cannot represent `23:59:60`, so systems typically repeat a second and time appears to go backwards. The 2012 leap second triggered a Linux kernel timer bug that left many Java and MySQL processes spinning at full CPU; at the end of 2016, Cloudflare's DNS software computed a negative duration and some resolutions failed [Graham-Cumming 2017]. The mitigation is **leap smearing**: servers run slightly slow over a long window, absorbing the second gradually. Google smears linearly over 24 hours, noon to noon UTC [Google: Leap Smear].
 
 ::: formula
 **Leap-smear rate**
@@ -630,12 +588,12 @@ $$r_{\text{smear}} = \frac{1\ \text{s}}{W} \qquad\qquad e_{\max} = 0.5\ \text{s}
 2. $r_{\text{smear}} = 1 / 86{,}400 = 1.157 \times 10^{-5}$ s/s $\approx 11.6$ ppm.
 3. At the leap second, a smeared clock is half-way through: it differs from UTC by 0.5 s.
 
-Interpretation: 11.6 ppm is within the range that NTP clients slew routinely, so no client sees a step. Engineering implication: never mix smeared and non-smeared time sources in one fleet. Near the leap second, two groups of servers would disagree by up to 0.5 s, and a client using both kinds of server would see contradictory samples. In 2022 the General Conference on Weights and Measures resolved to let the difference between UT1 and UTC grow larger by 2035, which will in effect stop leap seconds being added [BIPM 2022]; until then, systems must handle them.
+Interpretation: 11.6 ppm is an ordinary slew, so no client sees a step. Engineering implication: never mix smeared and unsmeared sources, which would disagree by up to 0.5 s. In 2022 the CGPM resolved to let UT1 − UTC grow larger by 2035, in effect ending leap seconds [BIPM 2022]; until then, systems must handle them.
 :::
 
 ### 24.9.6 Why wall-clock last-writer-wins loses data
 
-Many replicated databases resolve concurrent writes to the same key with **last-writer-wins (LWW)**: every write carries a timestamp, and the write with the higher timestamp survives (Cassandra does this per cell, §12.6; multi-primary systems often offer it, §14.5). When timestamps come from wall clocks, clock skew decides which write "wins", not the actual order of events.
+Under **last-writer-wins (LWW)**, the write with the higher timestamp survives (Cassandra per cell, §12.6; many multi-primary systems, §14.5). With wall-clock timestamps, skew rather than event order decides the winner.
 
 **Figure 24.9 — Last-writer-wins discards the later write when one clock runs fast.**
 
@@ -653,7 +611,7 @@ sequenceDiagram
   R-->>U: later reads return v1
 ```
 
-**Reading the diagram.** The user edits a PhotoShare caption through node A, then 50 ms later edits it again through node B (for example, after a load-balancer change). Both writes are synchronous to the receiving node, which replicates asynchronously to a replica (the storage boundary). Node A's clock is 150 ms fast, so its earlier write carries the larger timestamp. The replica applies LWW and silently discards v2, which the user wrote last. The failure point is node A's clock; no error is reported anywhere, and adding replicas does not help because every replica applies the same rule.
+**Reading the diagram.** A user edits a PhotoShare caption through node A, then 50 ms later through node B. Each write is synchronous to its node and replicated asynchronously to the replica (the storage boundary). A's clock is 150 ms fast, so the earlier write carries the larger stamp and v2 is silently discarded. The failure point is A's clock; more replicas do not help, since all apply the same rule.
 
 ::: example
 **Worked example — How large is the danger window?**
@@ -662,12 +620,10 @@ sequenceDiagram
 2. A write through B at true time $t$ loses to an earlier write through A at true time $t - x$ whenever A's stamp is larger: $(t - x) + 0.150 > t$, i.e., $x < 150$ ms.
 3. So any two writes to the same key through these two nodes that are less than 150 ms apart may be reordered. PhotoShare's caption edits are rare, but an inventory counter updated 50 times per second from several nodes would lose updates constantly.
 
-Interpretation: under LWW, the clock skew is the width of a window within which the database may discard *causally later* writes, without any error. Engineering implication: if you use LWW, keep skew far below the typical gap between conflicting writes, and use it only for data where losing one of two near-simultaneous writes is acceptable. Otherwise use logical clocks to capture causality (§24.10–§24.12), version vectors to detect concurrency (§24.11), conditional writes, or CRDTs that merge instead of discarding (§27.14).
+Interpretation: the skew is a window within which LWW silently discards *causally later* writes. Engineering implication: use wall-clock LWW only where losing one of two near-simultaneous writes is acceptable; otherwise use logical clocks (§24.10–§24.12), version vectors (§24.11), conditional writes, or CRDTs (§27.14).
 :::
 
 #### Code example
-
-The following program checks the NTP arithmetic, the resynchronization interval and the LWW anomaly.
 
 ```python
 """Clock arithmetic: NTP offset/delay, drift-based resync interval,
@@ -750,7 +706,7 @@ What to notice:
 | PTP with hardware timestamps | NIC and switch timestamping | Sub-microsecond in a well-built LAN | PTP-capable NICs, switches, grandmasters | Finance, telecom, databases that exploit tight bounds |
 | Bounded-uncertainty APIs | Return an interval [earliest, latest] instead of one value | Interval width of microseconds to milliseconds | Infrastructure plus discipline in using the bound | Correctness that depends on time (leases, commit wait) |
 
-The last row is the important idea for Part V. A timestamp without an error bound invites you to treat it as exact. Google's **TrueTime** API returns an interval guaranteed to contain true time; Spanner waits out the interval's width before making a commit visible, which turns bounded clock uncertainty into externally consistent transactions. That design, including **commit wait**, is covered in §28.8; AWS ClockBound (§24.9.4) provides a similar interval API.
+The last row matters most for Part V. Google's **TrueTime** returns an interval guaranteed to contain true time, and Spanner waits out its width before making a commit visible (**commit wait**), turning bounded uncertainty into externally consistent transactions (§28.8).
 
 **Table 24.9 — Clock failure scenarios.**
 
@@ -763,7 +719,7 @@ The last row is the important idea for Part V. A timestamp without an error boun
 | Leap second crash or 0.5 s disagreement | Repeated second; mixed smeared and unsmeared sources | Errors clustered at 23:59:60 UTC | Restart; fix time sources | Smear consistently across the fleet |
 
 ::: mistake
-**Mistake — "NTP keeps all our clocks in sync, so timestamps give a total order."** NTP gives you an *estimate* with an unknown error that is usually milliseconds and occasionally seconds. Two events on different machines less than the skew apart cannot be ordered by their timestamps (§17.10 makes the same point for time-ordered IDs). For ordering, use logical clocks; for real-time guarantees, use explicit uncertainty bounds.
+**Mistake — "NTP keeps all our clocks in sync, so timestamps give a total order."** NTP gives an *estimate*, usually off by milliseconds and occasionally by seconds; events closer than the skew cannot be ordered by timestamp (§17.10 makes the same point for IDs). Use logical clocks for ordering and explicit uncertainty bounds for real-time guarantees.
 :::
 
 ## 24.10 Logical clocks: Lamport clocks

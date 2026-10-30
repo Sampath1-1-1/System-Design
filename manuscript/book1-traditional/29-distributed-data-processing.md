@@ -2,7 +2,7 @@
 
 > **Level:** 3 · **Track:** Shared (A Traditional and B ML/AI) · **Estimated reading time:** 3 h
 
-Chapters 11–15 stored data; Chapters 24–28 kept copies of it consistent. This chapter is about *computing over* data that is too large for one machine: counting a month of click logs, joining two billion orders with their customers, building a search index, or keeping a live per-minute fraud score for every card. The same few ideas recur across every engine you will meet: split the input, run the same function on each piece, move records with the same key to the same place (the **shuffle**), and recover from failures by recomputing rather than by replicating everything. You will meet them in MapReduce, where every step is visible; in Apache Spark, which keeps data in memory and plans jobs as graphs; and in stream processing and Apache Flink, where the input never ends and "when is a result complete?" becomes the central question. Chapter 61 (ML data pipelines) builds directly on this chapter.
+Chapters 11–15 stored data; Chapters 24–28 kept copies of it consistent. This chapter is about *computing over* data too large for one machine: counting a month of click logs, joining two billion orders with their customers, or keeping a live per-minute fraud score for every card. The same few ideas recur in every engine: split the input, run the same function on each piece, move records with the same key to the same place (the **shuffle**), and recover from failures by recomputing rather than replicating. You will meet them in MapReduce, where every step is visible; in Apache Spark, which keeps data in memory and plans jobs as graphs; and in stream processing and Apache Flink, where the input never ends. Chapter 61 (ML data pipelines) builds directly on this chapter.
 
 ## 29.1 Learning objectives
 
@@ -81,7 +81,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** The top row is a single-machine pipeline: `awk` extracts the URL, `sort` brings equal URLs together, `uniq -c` counts them; data flows left to right through in-memory pipes and the input file is only read. The bottom row is the cluster equivalent. *Input blocks* in a distributed file system or object store feed *M map tasks* running in parallel; the *shuffle* (an asynchronous, all-to-all network transfer) plays the role of `sort` by delivering every record with the same key to one of *R reduce tasks*; reducers write *new output files*. Storage boundaries: inputs and outputs are durable and replicated; intermediate map output sits on local disks. Failure points: a dead node loses its running tasks and its local intermediate files, both recovered by rerunning tasks. Scaling: add nodes to raise M and R.
+**Reading the diagram.** The top row is a single-machine pipeline: `awk` extracts the URL, `sort` brings equal URLs together, `uniq -c` counts them, and the input file is only read. The bottom row is the cluster equivalent: *input blocks* feed *M map tasks* in parallel; the *shuffle* (asynchronous, all-to-all) plays the role of `sort`, delivering every record with one key to one of *R reduce tasks*, which write *new output files*. Storage: inputs and outputs are durable and replicated; intermediate output sits on local disks. Failure points: a dead node loses running tasks and local files, recovered by rerunning tasks. Scaling: add nodes to raise M and R.
 
 #### Mathematical foundations
 
@@ -173,7 +173,7 @@ flowchart LR
   R2 --> OUT2[("Output<br/>part-0000R")]
 ```
 
-**Reading the diagram.** The *coordinator* (dotted arrows) assigns tasks and receives heartbeats; it never touches data. Each *map task* reads one split from the replicated *input file*, partitions and sorts its output, and writes it to its node's *local disk* as R sorted partitions. Each *reduce task* fetches its own partition from every map output (the HTTP-based shuffle; solid arrows are synchronous fetches), merges, reduces, and writes one *output* file back to the distributed file system. Storage boundaries: input and output are replicated; intermediate data is local and unreplicated, so a lost node forces its map tasks to rerun. Scaling: M follows input size, R is chosen by the user, and the shuffle is $M \times R$ transfers.
+**Reading the diagram.** The *coordinator* (dotted arrows) assigns tasks and receives heartbeats; it never touches data. Each *map task* reads one split of the replicated *input* and writes R sorted partitions to *local disk*. Each *reduce task* fetches its partition from every map output (synchronous HTTP fetches), merges, reduces and writes one *output* file to the distributed file system. Storage: input and output are replicated; intermediate data is not, so a lost node forces its map tasks to rerun. Scaling: M follows input size, R is chosen by the user, and the shuffle is $M \times R$ transfers.
 
 **Figure 29.3 — Inside a map task and a reduce task.**
 
@@ -460,9 +460,9 @@ $$P(\text{at least one straggler}) = 1 - (1 - p)^{n} \approx 1 - e^{-np}$$
 
 #### How it works internally
 
-1. **Reduce-side join.** Mappers read both tables and tag each record with its source (`U` or `O` in the code above). The partitioner sends key $k$ from both tables to the same reducer. A **secondary sort** can order the user record before its orders, so the reducer holds only one user record in memory while streaming orders past it. This works for any input sizes, but shuffles *both* tables.
+1. **Reduce-side join.** Mappers tag each record with its source (`U` or `O` in the code above) and both tables are partitioned by key. A **secondary sort** can put the user record before its orders, so the reducer streams orders past one buffered user. It works for any sizes but shuffles *both* tables.
 2. **Broadcast hash join.** The small table (say 5 GB of user profiles) is shipped to every task. Each mapper streams the large table and probes the hash table. Nothing large crosses the network, and no sort is needed. It fails if the small side does not fit in a task's memory.
-3. **Partitioned (bucketed) map-side join.** If both inputs were *already* written partitioned and sorted by the join key into the same number of buckets, mapper $i$ can merge bucket $i$ of each input without a shuffle. Table formats and Spark "bucketed tables" exploit this.
+3. **Bucketed map-side join.** If both inputs were *already* written sorted into the same number of buckets by the join key, task $i$ merges bucket $i$ of each without a shuffle.
 
 **Figure 29.5 — Reduce-side join versus broadcast join.**
 
@@ -483,7 +483,7 @@ flowchart TB
   end
 ```
 
-**Reading the diagram.** In the *reduce-side join*, both *orders* and *users* pass through mappers that key them by `user_id`; the *shuffle* moves both across the network (asynchronously, all-to-all) so that matching records meet in one *reducer*. In the *broadcast join*, the *users* table is copied once to every task and built into a *hash table*; *orders* are streamed and joined in place, and only the joined *output* is written. Storage boundaries: in both cases inputs and outputs are in durable storage; the hash table lives in task memory. Failure points: a broadcast table larger than memory causes out-of-memory failures; a reduce-side join on a skewed key overloads one reducer (§29.6.3). Scaling: the broadcast cost grows with the number of tasks, the shuffle cost with the size of both inputs.
+**Reading the diagram.** In the *reduce-side join*, mappers key both tables by `user_id` and the *shuffle* (asynchronous, all-to-all) brings matching records to one *reducer*. In the *broadcast join*, *users* are copied to every task as a *hash table* and *orders* are streamed and joined in place. Storage: inputs and outputs are durable; the hash table lives in task memory. Failure points: a broadcast side larger than memory causes out-of-memory failures; a skewed key overloads one reducer (§29.6.3). Scaling: broadcast cost grows with the number of tasks, shuffle cost with both inputs.
 
 #### Mathematical foundations
 
@@ -567,7 +567,7 @@ flowchart LR
   E2 --> ST
 ```
 
-**Reading the diagram.** The *driver* runs the user's program and turns each action into a job; the *DAG scheduler* splits the job into stages and the *task scheduler* turns stages into tasks and places them, preferring executors that hold the data. The *cluster manager* (external, dotted launch arrows) starts *executors* asynchronously. Tasks are sent synchronously to executors, which read input from and write output to *durable storage*, and exchange *shuffle blocks* with one another. Storage boundaries: cached partitions and shuffle files live on executors and are not replicated; inputs and outputs are durable. Failure points: a dead executor loses its cache and shuffle files (recomputed from lineage); a dead driver loses the whole application unless it runs in cluster mode with restarts. Scaling: add executors, statically or with dynamic allocation.
+**Reading the diagram.** The *driver* turns each action into a job; the *DAG scheduler* splits it into stages and the *task scheduler* places tasks, preferring executors that hold the data. The *cluster manager* starts *executors* asynchronously (dotted). Tasks are sent synchronously; executors read and write *durable storage* and exchange *shuffle blocks*. Storage: cached partitions and shuffle files are unreplicated, on executors. Failure points: a dead executor's partitions are recomputed from lineage; a dead driver loses the application unless restarted in cluster mode. Scaling: add executors, statically or by dynamic allocation.
 
 ### 29.5.2 Narrow and wide dependencies, stages and tasks
 
@@ -575,9 +575,9 @@ flowchart LR
 **Definition — Narrow and wide dependencies.** A **narrow dependency** exists when each partition of the parent RDD is used by at most one partition of the child (`map`, `filter`, `union`, a join of co-partitioned inputs). A **wide (shuffle) dependency** exists when a child partition may depend on many or all parent partitions (`groupByKey`, `reduceByKey`, a join of unpartitioned inputs), which requires a shuffle.
 :::
 
-The distinction drives both performance and recovery. Narrow transformations can be **pipelined**: one task applies `map` then `filter` then another `map` to each record in a single pass, with no intermediate materialization. Recovering a narrow child partition needs one parent partition. A wide dependency is a barrier: every parent partition must be computed and its output written as shuffle files before any child partition can start, and losing a child partition may require recomputing many parents.
+The distinction drives both performance and recovery. Narrow transformations are **pipelined**: one task applies `map`, `filter` and `map` to each record in a single pass, and recovering a child partition needs one parent partition. A wide dependency is a barrier: all parent partitions must write shuffle files before any child starts, and losing a child may require recomputing many parents.
 
-The DAG scheduler therefore cuts the lineage graph at every wide dependency. Each piece is a **stage**: a chain of narrow transformations ending in a shuffle write (a *shuffle map stage*) or in the action's result (a *result stage*). Each stage runs as one **task** per partition. Stages whose shuffle output already exists, for example from a cached or earlier job, are skipped.
+The DAG scheduler therefore cuts the lineage graph at every wide dependency. Each piece is a **stage**: a chain of narrow transformations ending in a shuffle write (a *shuffle map stage*) or in the action's result (a *result stage*). Each stage runs as one **task** per partition. Stages whose shuffle output already exists are skipped.
 
 **Figure 29.7 — Lineage of a word-count job cut into stages at the wide dependency.**
 
@@ -595,7 +595,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** Stage 1 reads 8 input partitions; `flatMap`, `map` and the map-side partial sum are narrow, so each of the 8 tasks pipelines them record by record and ends by writing shuffle files partitioned by word. The thick arrow is the *wide* dependency: each of Stage 2's 4 tasks fetches its partition from all 8 Stage 1 outputs (asynchronous shuffle fetch). Stage 2 reduces, filters (narrow again) and writes to durable storage. Storage boundaries: the input and output are durable; shuffle files sit on executor disks between stages. Failure points: losing an executor in Stage 2 reruns only its Stage 2 tasks if the shuffle files survive, otherwise also the Stage 1 tasks that wrote them. Scaling: Stage 1 parallelism follows input partitions; Stage 2 parallelism is the shuffle partition count.
+**Reading the diagram.** Each of Stage 1's 8 tasks pipelines `flatMap`, `map` and the partial sum (all narrow) record by record and ends by writing shuffle files partitioned by word. The thick arrow is the *wide* dependency: each of Stage 2's 4 tasks fetches its partition from all 8 outputs (asynchronous fetch), then reduces, filters and writes to durable storage. Shuffle files sit on executor disks between stages. Failure points: a lost Stage 2 executor reruns only its tasks if the shuffle files survive, otherwise also the Stage 1 tasks that wrote them. Scaling: Stage 2 parallelism is the shuffle partition count.
 
 ### 29.5.3 Caching and persistence
 
@@ -644,7 +644,7 @@ An RDD of Python or Java objects is opaque: Spark cannot see that a `lambda` onl
 1. **Analysis.** The query is parsed into an unresolved logical plan; column and table names are resolved against the catalog.
 2. **Logical optimization.** Rules rewrite the tree: predicate pushdown, column pruning, constant folding, combining filters and projections.
 3. **Physical planning.** Candidate physical plans are generated (for example broadcast hash join versus sort-merge join) and one is chosen, using size statistics.
-4. **Code generation.** **Tungsten**, Spark's execution layer, stores rows in a compact off-heap binary format, manages memory explicitly, and uses **whole-stage code generation** to fuse a chain of operators into one generated function per stage, avoiding per-row virtual calls (the `*(1)` markers in the plan below).
+4. **Code generation.** **Tungsten**, Spark's execution layer, stores rows in a compact binary format and uses **whole-stage code generation** to fuse a chain of operators into one generated function (the `*(1)` markers in the plan below).
 5. **Adaptive Query Execution (AQE).** Statistics guessed before running are often wrong. With AQE (on by default since Spark 3.2), Spark re-optimizes the remaining plan at each shuffle boundary using the *actual* sizes of completed shuffle outputs. It can (a) coalesce many small shuffle partitions into fewer, right-sized ones (target 64 MB by default); (b) switch a sort-merge join to a broadcast join when one side turned out small; and (c) split skewed partitions, those over 5× the median and over 256 MB by default, into smaller tasks [Apache Spark Docs: Performance Tuning].
 
 **Figure 29.8 — Catalyst query planning with Adaptive Query Execution.**
@@ -662,7 +662,7 @@ flowchart LR
   AQE -.->|coalesce, switch join,<br/>split skew| PP
 ```
 
-**Reading the diagram.** A query enters as an *unresolved logical plan*; the *analyzer* resolves names using the *catalog*; the *optimizer* applies rewrite rules; *physical planning* picks operators using statistics; *code generation* compiles each stage to bytecode; and stages *execute* on executors. The dotted loop is AQE: after each shuffle-producing stage finishes, real partition sizes flow back (asynchronously) and the not-yet-run part of the plan is re-optimized. All planning happens in the driver; only execution touches data. Failure points: stale or missing statistics cause bad initial choices, which AQE can partly correct but only at shuffle boundaries. Scaling: planning cost is independent of data size.
+**Reading the diagram.** The *analyzer* resolves names against the *catalog*; the *optimizer* applies rewrite rules; *physical planning* picks operators using statistics; *code generation* compiles each stage; stages *execute* on executors. The dotted loop is AQE: when a shuffle-producing stage finishes, real partition sizes flow back asynchronously and the remaining plan is re-optimized. Planning happens in the driver. Failure points: stale statistics cause bad initial choices, which AQE corrects only at shuffle boundaries. Scaling: planning cost is independent of data size.
 
 #### Code example
 
@@ -751,7 +751,7 @@ What to notice:
 Every shuffle must decide which partition each key goes to. The two schemes are the same ones databases use for storage (§14.6), applied on the fly:
 
 - **Hash partitioning**, $p = \text{hash}(k) \bmod P$, spreads keys evenly regardless of their values and is the default for aggregations and joins. Keys in one partition are in no useful order.
-- **Range partitioning** assigns contiguous key ranges to partitions, so partition $i$ holds keys smaller than those in partition $i+1$. Concatenating the sorted partitions yields a globally sorted output, which is how `ORDER BY` and sort benchmarks work. The engine first **samples** the input to choose boundaries that give equal-sized ranges (Spark's `RangePartitioner` does this with an extra pass over a sample).
+- **Range partitioning** assigns contiguous key ranges to partitions, so partition $i$ holds keys smaller than those in partition $i+1$. Concatenating sorted partitions gives a globally sorted output (`ORDER BY`, sort benchmarks); the engine first **samples** the input to choose balanced boundaries.
 
 Both schemes balance *keys*, not *records*: a key with 20% of the records lands entirely in one partition under either. That is the skew problem of §29.6.3.
 
@@ -940,7 +940,7 @@ flowchart LR
 **Definition — Data locality.** Scheduling a task on or near the node that stores its input, so that the input is read from local disk or memory instead of over the network. Schedulers rank placements as **process-local** (data cached in the same executor), **node-local**, **rack-local** and **off-rack** (any).
 :::
 
-In 2004 the network was the scarcest resource: 1 Gb/s NICs (125 MB/s) shared with the shuffle, behind rack uplinks oversubscribed several times, while each node's local disks together delivered a few hundred MB/s. Moving computation to data, "compute-to-data", was therefore essential. GFS and HDFS expose block locations (§15.5), and the MapReduce coordinator tried node-local first, then rack-local; the paper reports that most input in large jobs was read locally and consumed no network bandwidth [Dean and Ghemawat 2004]. Spark's task scheduler waits a short time for a better locality level before accepting a worse one (`spark.locality.wait`, 3 s by default), an idea called **delay scheduling** that achieved near-perfect locality at small cost in fairness [Zaharia et al. 2010].
+In 2004 the network was the scarcest resource: 1 Gb/s NICs behind oversubscribed rack uplinks, while local disks delivered a few hundred MB/s per node. Moving computation to data was essential: GFS and HDFS expose block locations (§15.5), the MapReduce coordinator tried node-local then rack-local placement, and most input in large jobs was read locally [Dean and Ghemawat 2004]. Spark waits briefly for a better locality level before accepting a worse one (`spark.locality.wait`, 3 s by default), a technique called **delay scheduling** [Zaharia et al. 2010].
 
 Two changes reduced locality's importance. Networks moved to 25–100 Gb/s NICs and fabrics with low oversubscription (§7.17), so remote reads approach local NVMe speed. And cloud deployments **disaggregated storage from compute**: data lives in object stores (§15.4) or shared file systems such as Colossus or Tectonic (§15.5.3), while stateless compute clusters scale independently, even to zero. Parquet decoding often becomes the bottleneck before the network does.
 
@@ -969,7 +969,7 @@ Picture postcards from a group holiday. Each card shows the date it was written 
 
 #### Why does this exist?
 
-Many businesses need answers continuously: fraud scores within seconds of a card swipe, dashboards that update every minute, ML features that reflect the last five minutes of user behavior (Chapter 62). Rerunning a batch job every few minutes over all history is wasteful and still has hours of latency at the boundaries. Grouping by processing time is easy but wrong: a phone that reconnects after a flight delivers yesterday's events today, and a consumer that restarts reprocesses old events in a burst, so processing-time counts change with operational accidents. Correct results require grouping by **event time** while data arrives out of order.
+Fraud scores, live dashboards and ML features over the last five minutes (Chapter 62) need answers continuously, and rerunning batch jobs every few minutes is wasteful. Grouping by processing time is easy but wrong: a phone that reconnects after a flight delivers yesterday's events today, and a consumer that restarts reprocesses old events in a burst, so processing-time counts change with operational accidents. Correct results require grouping by **event time** while data arrives out of order.
 
 ### 29.8.2 Windows
 
@@ -1000,7 +1000,7 @@ gantt
   Session 2 :a2, 05, 1m
 ```
 
-**Reading the diagram.** The horizontal axis is event time in minutes. *Tumbling* windows tile the axis without overlap. *Sliding* windows of two minutes start every minute, so any instant is covered by two windows. *Session* windows belong to one key (user A): events from minute 0 to minute 3 arrived less than a minute apart and form one session, then a gap of over a minute closes it, and a new session starts at minute 5. Storage implication: the engine keeps state per key per open window, so sliding windows multiply state by $W/S$ and sessions keep state until the gap expires. Failure point: a session with no end (a bot sending every 30 s) keeps state forever unless capped.
+**Reading the diagram.** The horizontal axis is event time in minutes. *Tumbling* windows tile the axis without overlap. *Sliding* windows of two minutes start every minute, so any instant is covered by two windows. *Session* windows belong to one key (user A): events from minute 0 to minute 3 arrived less than a minute apart and form one session, then a gap of over a minute closes it, and a new session starts at minute 5. The engine keeps state per key per open window, so sliding windows multiply state by $W/S$. Failure point: a bot sending every 30 s keeps a session open forever unless capped.
 
 ### 29.8.3 Watermarks, triggers, late data and accumulation
 
@@ -1013,7 +1013,7 @@ The Dataflow Model, published by Google and the basis of Google Cloud Dataflow a
 1. **What** results are computed? The transformation: sums, joins, model features.
 2. **Where** in event time are they grouped? The windowing.
 3. **When** in processing time are results emitted? **Triggers**: at the watermark (the on-time result), optionally early (speculative results every minute before the watermark) and late (an update for each late event).
-4. **How** do successive results for the same window relate? **Accumulation mode**: *discarding* (each firing reports only new data), *accumulating* (each firing reports the full total so far) or *accumulating and retracting* (each firing also withdraws the previous value, needed when downstream consumers aggregate further).
+4. **How** do successive results for one window relate? **Accumulation mode**: *discarding* (only new data), *accumulating* (the full total so far) or *accumulating and retracting* (also withdrawing the previous value).
 
 **Allowed lateness** bounds how long a window's state is kept after the watermark passes its end. Late events within it update the result; events beyond it are dropped or sent to a **side output** for separate handling. Without such a bound, state for every window ever opened would be kept forever.
 
@@ -1037,7 +1037,7 @@ sequenceDiagram
   Op->>Out: LATE window 10-20, count 2
 ```
 
-**Reading the diagram.** This is the scenario tested by the simulator below: 10 s tumbling windows, watermark = maximum event time − 2 s, allowed lateness 5 s, accumulating mode. The *source* delivers events in arrival order. Event 13 moves the watermark to 11, past the end of window [0, 10), so the *operator* emits its on-time count. Event 9 is late but within allowed lateness, so the window still has state and emits an updated count. When the watermark reaches 21, the state for [0, 10) is purged ($21 \ge 10 + 5$), so event 7 goes to the *side output*. Emissions are asynchronous messages downstream. Failure point: a downstream system that treats every emission as a new count would double-count; with accumulating mode it must overwrite (upsert) per window.
+**Reading the diagram.** This is the scenario tested by the simulator below: 10 s tumbling windows, watermark = maximum event time − 2 s, allowed lateness 5 s, accumulating mode. Event 13 moves the watermark to 11, past the end of [0, 10), so the *operator* emits its on-time count. Event 9 is late but within allowed lateness, so it triggers an update. At watermark 21 the state for [0, 10) is purged ($21 \ge 10 + 5$), so event 7 goes to the *side output*. Emissions are asynchronous. Failure point: a consumer that adds every emission would double-count; with accumulating mode it must upsert per window.
 
 #### Mathematical foundations
 
@@ -1207,9 +1207,9 @@ What to notice:
 
 ### 29.8.4 State and exactly-once processing
 
-Windows, joins, deduplication and per-user features all need **state** that outlives individual events: counts per open window, the last event per user, a model's running statistics. State is partitioned by key exactly like a shuffle, so each key's state lives in one operator instance. If a node fails, that state must be recovered *consistently with the input position*: restoring counts from 12:00 but resuming input from 12:05 loses five minutes; resuming from 11:55 double-counts five.
+Windows, joins, deduplication and per-user features all need **state** that outlives individual events: counts per open window, the last event per user, a model's running statistics. State is partitioned by key like a shuffle. After a failure it must be recovered *consistently with the input position*: restoring counts from 12:00 but resuming input from 12:05 loses five minutes; resuming from 11:55 double-counts five.
 
-Engines achieve **exactly-once state semantics** (often called effectively-once) by periodically taking a **consistent distributed snapshot** of all operator state together with the source offsets, and on failure rolling everything back to the last snapshot and replaying the input from the recorded offsets. Events may be *processed* more than once, but each affects the state exactly once. The classic algorithm is Chandy and Lamport's: a special **marker** travels along every channel; a process records its state when the first marker arrives and records in-flight messages on channels whose markers have not yet arrived, yielding a consistent global state without stopping the system [Chandy and Lamport 1985]. Flink adapts it for dataflow graphs (§29.9.2). Results sent to external systems are exactly-once only if the sink is idempotent or transactional; see §32.9 for the limits and Chapter 31 for Kafka transactions.
+Engines achieve **exactly-once state semantics** (effectively-once) by periodically taking a **consistent distributed snapshot** of all operator state plus source offsets and, on failure, rolling back to it and replaying input from those offsets. Events may be *processed* twice, but each affects state once. The classic algorithm is Chandy and Lamport's: a **marker** travels along every channel; a process records its state at the first marker and records in-flight messages on channels whose markers have not arrived, yielding a consistent global state without stopping the system [Chandy and Lamport 1985]. Flink's adaptation is in §29.9.2. External results are exactly-once only with idempotent or transactional sinks (§32.9; Kafka transactions in Chapter 31).
 
 ::: industry
 **Google MillWheel and Cloud Dataflow.** MillWheel, Google's earlier stream processor, introduced low watermarks computed from the oldest pending work across the pipeline, per-key persistent state, and exactly-once delivery through deduplicating record IDs [Akidau et al. 2013]. The Dataflow Model paper generalized these ideas into windowing, triggers and accumulation modes, and describes them as the model behind Google Cloud Dataflow; Apache Beam is its open-source SDK [Akidau et al. 2015].
@@ -1228,11 +1228,11 @@ Engines achieve **exactly-once state semantics** (often called effectively-once)
 **Definition — Apache Flink.** An open-source distributed engine that executes dataflow programs as a graph of long-running, pipelined operators, treating batch as a bounded special case of streaming. It provides event-time processing with watermarks, large keyed state, and exactly-once state consistency through asynchronous distributed snapshots [Carbone et al. 2015a].
 :::
 
-A Flink cluster has a **JobManager**, which contains a resource manager, a dispatcher that accepts jobs, and one **JobMaster** per job that schedules tasks and coordinates checkpoints, and several **TaskManagers**, worker processes that each offer a fixed number of **task slots**. A job graph is turned into parallel subtasks; consecutive operators with the same parallelism and a one-to-one connection are **chained** into one task, so records pass between them as method calls. Unlike Spark's stage-at-a-time batch model, all stages of a streaming job run at once, and records flow continuously through network buffers between them, with **credit-based flow control** providing backpressure when a downstream task is slow (§22.10).
+A Flink cluster has a **JobManager** (a resource manager, a dispatcher, and one **JobMaster** per job that schedules tasks and coordinates checkpoints) and several **TaskManagers**, worker processes that each offer a fixed number of **task slots**. A job graph is turned into parallel subtasks; consecutive operators with the same parallelism and a one-to-one connection are **chained** into one task, so records pass between them as method calls. Unlike Spark's stage-at-a-time batch model, all stages of a streaming job run at once, and records flow continuously through network buffers between them, with **credit-based flow control** providing backpressure when a downstream task is slow (§22.10).
 
 State comes in two kinds. **Keyed state** (value, list, map state) is scoped to the current key of a `keyBy` stream and partitioned with the stream; it is organized into **key groups**, whose number equals the job's **maximum parallelism**, so rescaling moves whole key groups between subtasks without rehashing keys. **Operator state** belongs to a parallel operator instance regardless of key; the classic example is a source's partition offsets.
 
-**State backends** decide where working state lives. The **HashMapStateBackend** keeps state as objects on the JVM heap: fastest, but limited by memory and garbage-collection pressure. The **EmbeddedRocksDBStateBackend** keeps state in an embedded RocksDB LSM tree (§13.8) on local disk, serialized, so state can exceed memory by orders of magnitude at the cost of serialization on every access; it supports **incremental checkpoints** that upload only new SST files. Flink 2.0 (2025) added a disaggregated state backend, ForSt, that keeps the primary copy of state in remote storage (as of 2026). Checkpoints go to durable storage such as S3 or HDFS [Apache Flink Docs: State Backends; Carbone et al. 2017].
+**State backends** decide where working state lives. The **HashMapStateBackend** keeps state as heap objects: fastest, but bounded by memory and GC pressure. The **EmbeddedRocksDBStateBackend** keeps state in an embedded RocksDB LSM tree (§13.8) on local disk, serialized, so state can exceed memory by orders of magnitude at the cost of serialization on every access; it supports **incremental checkpoints** that upload only new SST files. Flink 2.0 (2025) added a disaggregated state backend, ForSt, that keeps the primary copy of state in remote storage (as of 2026). Checkpoints go to durable storage such as S3 or HDFS [Apache Flink Docs: State Backends; Carbone et al. 2017].
 
 **Figure 29.13 — Flink cluster architecture.**
 
@@ -1261,7 +1261,7 @@ flowchart LR
   HA[(ZooKeeper or Kubernetes<br/>leader election)] -.-> JM
 ```
 
-**Reading the diagram.** The *client* submits a job graph to the *JobManager*, whose JobMaster deploys tasks into *TaskManager* slots and runs the checkpoint coordinator. Sources read *Kafka partitions* and re-partition records by key over the network to the *window operators*, which keep keyed state in RocksDB on local disk. Data flows continuously; solid arrows are pipelined record streams with backpressure. Dotted arrows are asynchronous: state snapshots uploaded to *checkpoint storage*, and leader election for JobManager high availability. Failure points: a lost TaskManager triggers a restart of affected tasks from the last checkpoint; a lost JobManager fails over to a standby. Scaling: raise parallelism up to the maximum parallelism by restarting from a savepoint.
+**Reading the diagram.** The *client* submits a job graph to the *JobManager*, whose JobMaster deploys tasks into *TaskManager* slots and coordinates checkpoints. Sources read *Kafka partitions* and re-partition records by key to the *window operators*, which keep state in RocksDB on local disk. Solid arrows are pipelined record streams with backpressure; dotted arrows are asynchronous snapshot uploads and leader election for high availability. Failure points: a lost TaskManager restarts tasks from the last checkpoint; a lost JobManager fails over to a standby. Scaling: restart from a savepoint with higher parallelism.
 
 ### 29.9.2 Asynchronous barrier snapshotting and savepoints
 
@@ -1273,7 +1273,7 @@ Flink's checkpointing is a variant of Chandy–Lamport for directed dataflow gra
 4. Sinks acknowledge; when every task has acknowledged, the coordinator marks checkpoint $n$ complete. Transactional sinks then commit the output written during that checkpoint (two-phase commit), which is how Flink achieves end-to-end exactly-once with Kafka.
 5. On failure, all tasks restart, load their state from checkpoint $n$, and sources rewind to the recorded offsets.
 
-For acyclic graphs, aligned barriers mean in-flight channel contents need not be saved, unlike in Chandy–Lamport. Under heavy backpressure, however, barriers queue behind buffered data and checkpoints become slow; **unaligned checkpoints** (Flink 1.11+) let barriers overtake buffered records and store those in-flight buffers as part of the snapshot, closer to the original algorithm.
+For acyclic graphs, alignment means in-flight channel contents need not be saved, unlike in Chandy–Lamport. Under heavy backpressure, barriers queue behind buffered data; **unaligned checkpoints** (Flink 1.11+) let barriers overtake buffered records and save those buffers in the snapshot.
 
 **Figure 29.14 — Barrier alignment in a two-input operator.**
 
@@ -1298,7 +1298,7 @@ sequenceDiagram
 
 **Reading the diagram.** The *coordinator* triggers checkpoint 7 at both *sources*, which record their offsets and inject barriers. Barrier 7 reaches the *join operator* first from source A, so the operator pauses input A (buffering) while it keeps consuming B until B's barrier arrives. Then it snapshots state, forwards the barrier, uploads state asynchronously (dotted) to *durable storage* and acknowledges. Failure points: if any task fails before acknowledging, checkpoint 7 is abandoned and recovery uses checkpoint 6. Scaling: alignment time grows with backpressure and skew between inputs, which is what unaligned checkpoints address.
 
-A **savepoint** is a checkpoint triggered by the user, stored in a canonical format and never deleted automatically. Savepoints are used to upgrade job code, change parallelism, migrate clusters or update Flink itself: stop the job with a savepoint, deploy the new version, and resume from it. Operators need stable IDs (`uid`) so that state can be mapped to the new job graph.
+A **savepoint** is a user-triggered checkpoint in a canonical format that is never deleted automatically. To upgrade code, change parallelism or migrate clusters, stop with a savepoint, deploy the new version and resume from it; operators need stable IDs (`uid`) so state maps to the new graph.
 
 ::: formula
 **Checkpoint interval: overhead versus recovery**
@@ -1324,7 +1324,7 @@ $$T_{\text{opt}} \approx \sqrt{2\, C\, M_f}, \qquad T_{\text{catch-up}} \approx 
 3. At $T = 60$ s: backlog $= 200{,}000 \times 90 = 1.8 \times 10^{7}$; catch-up 60 s; stale for 120 s. Overhead rises to $2/60 = 3.3\%$ of throughput, from 0.3%.
 4. With a transactional sink, output becomes visible only when a checkpoint completes, so $T = 600$ s would add up to 10 minutes of end-to-end latency.
 
-**Interpretation.** Young's formula balances overhead against lost work, but streaming adds two costs it ignores: catch-up after recovery, which grows with $T$ and explodes as $\lambda \to \mu$, and sink visibility latency, which equals $T$. **Engineering implication.** Streaming jobs usually checkpoint every 10 s to a few minutes, keep $\mu$ at least 2× $\lambda$ for recovery headroom, use incremental RocksDB checkpoints and local recovery to cut $T_{\text{restore}}$, and alert when checkpoint duration approaches the interval.
+**Interpretation.** Young's formula ignores two streaming costs: catch-up, which grows with $T$ and explodes as $\lambda \to \mu$, and sink visibility latency, which equals $T$. **Engineering implication.** Checkpoint every 10 s to a few minutes, keep $\mu \ge 2\lambda$, use incremental checkpoints and local recovery to cut $T_{\text{restore}}$, and alert when checkpoint duration nears the interval.
 :::
 
 #### Failure scenarios
@@ -1342,7 +1342,7 @@ $$T_{\text{opt}} \approx \sqrt{2\, C\, M_f}, \qquad T_{\text{catch-up}} \approx 
 **Definition — Lambda and Kappa architectures.** The **Lambda architecture** runs two parallel paths over the same immutable master dataset: a **batch layer** that periodically recomputes complete, accurate views from all history, and a **speed layer** that processes recent data incrementally with low latency; a **serving layer** merges the two at query time [Marz and Warren 2015]. The **Kappa architecture** uses a single stream-processing path over a replayable log; to change logic or fix a bug, it reprocesses history by replaying the log through a new version of the job [Kreps 2014].
 :::
 
-Lambda arose when stream processors were approximate and fragile (early Storm offered at-least-once processing and no consistent state), while batch jobs were trustworthy but hours behind. Running both gave freshness from one path and correctness from the other, and the batch recomputation healed any errors the speed layer made. The cost, as Kreps argued, is maintaining **the same logic twice** in two different frameworks, and keeping them semantically identical as both evolve. Kappa removes the duplication once the stream engine is itself correct (exactly-once state, event-time windows) and the log retains enough history: to deploy version 2, start a second job reading the log from the beginning into a new output table, let it catch up, switch readers over, and delete version 1's output.
+Lambda arose when stream processors were approximate (early Storm offered at-least-once processing and no consistent state) while batch jobs were trustworthy but hours behind; batch recomputation healed the speed layer's errors. The cost, as Kreps argued, is maintaining **the same logic twice** in two frameworks and keeping them identical. Kappa removes the duplication once the stream engine is correct (exactly-once state, event time) and the log retains enough history: to deploy version 2, run a second job from the start of the log into a new table, let it catch up, switch readers, and delete version 1's output.
 
 **Figure 29.15 — Lambda versus Kappa.**
 
@@ -1364,7 +1364,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** In *Lambda*, the same *event log* feeds a *batch layer* that recomputes *batch views* from all history every few hours and a *speed layer* that maintains *realtime views* for data the last batch run has not covered; the *serving layer* answers queries by merging both. In *Kappa*, one *stream job* consumes a *replayable log*; to change logic, *job v2* replays the log from the start (dotted, asynchronous) into a new table, and readers switch once it catches up. Storage boundaries: Lambda keeps the master dataset in a distributed file system or object store; Kappa needs the log itself (Chapter 31) or tiered storage behind it to hold history. Failure points: in Lambda, divergent logic between layers; in Kappa, replay too slow to be practical. Scaling: Kappa reprocessing scales with replay parallelism, which is bounded by the log's partition count.
+**Reading the diagram.** In *Lambda*, one *event log* feeds a *batch layer* that recomputes *batch views* from all history every few hours and a *speed layer* that covers data since the last batch run; the *serving layer* merges both. In *Kappa*, one *stream job* consumes a *replayable log*; to change logic, *job v2* replays the log (dotted, asynchronous) into a new table and readers switch once it catches up. Storage: Lambda keeps history in files or objects; Kappa needs the log (Chapter 31) or tiered storage. Failure points: divergent logic (Lambda); slow replay (Kappa). Scaling: replay parallelism is bounded by the log's partition count.
 
 Replay speed decides whether Kappa is practical. Reprocessing 30 days of events at an average of 100,000 events/s means $2.6 \times 10^{11}$ events; with 200 parallel tasks at 50,000 events/s each (10 million events/s), replay takes $2.6 \times 10^{11} / 10^{7} = 26{,}000$ s, about 7.2 hours, which is acceptable for a logic change but not for an urgent fix.
 
@@ -1424,12 +1424,12 @@ The micro-batch and continuous-mode figures are from the Spark documentation [Ap
 ## 29.12 Summary and revision notes
 
 ::: summary
-- **Batch** processes bounded, immutable inputs for throughput; rerunning a task is always safe. Scan time is $D/(Nb)$: shrink $D$ (columnar, pruning) before adding nodes.
+- **Batch** processes bounded, immutable inputs for throughput; rerunning a task is safe. Scan time is $D/(Nb)$: shrink $D$ before adding nodes.
 - **MapReduce**: map → partition → sort/spill → shuffle → merge → reduce. A combiner pre-aggregates associative, commutative operations and can cut shuffle volume by 100×. Failures are handled by re-executing tasks; backup tasks tame stragglers, which appear in almost every large job ($1-(1-p)^n$).
 - **Joins**: sort-merge shuffles both sides; broadcast copies the small side to every task and wins while $|S| < |L|/(N-1)$ and $|S|$ fits in memory.
 - **Spark**: RDD lineage replaces replication; narrow dependencies pipeline within a stage, wide dependencies end it with a shuffle. Cache reused data. DataFrames let Catalyst prune, push down and choose joins; Tungsten generates code; AQE re-plans at shuffle boundaries (coalesce, switch to broadcast, split skew).
 - **Shuffle** cost is set by the tightest of NIC, rack uplink and local disk; a 10 TB shuffle on 100 nodes needs about 100 s at best. A hot key with fraction $f$ slows a stage by $fP$; salt hot keys and aggregate in two stages.
-- **Locality** mattered when networks were slow; with fast fabrics and object stores, compute and storage are disaggregated.
+- **Locality** mattered when networks were slow; today compute and storage are disaggregated.
 - **Streams**: group by event time; windows are tumbling, sliding or session; watermarks trade latency ($\delta$) against late data ($\propto e^{-\delta/\mu}$); triggers and accumulation modes say when and how results are emitted; allowed lateness bounds state.
 - **Flink**: JobManager and TaskManagers; keyed state in key groups; RocksDB for large state; asynchronous barrier snapshots give exactly-once state; savepoints enable upgrades and rescaling. Checkpoint interval trades overhead against catch-up time and sink latency.
 - **Lambda** duplicates logic for freshness plus correctness; **Kappa** reprocesses by replay. Spark leads for batch, Flink for low-latency stateful streaming; Beam provides portability.
@@ -1440,38 +1440,32 @@ The micro-batch and continuous-mode figures are from the Spark documentation [Ap
 1. Why do immutable inputs make batch fault tolerance simple?
 2. List the steps between a map function's output and a reduce function's input.
 3. When may the reduce function be used as a combiner?
-4. Why must a completed map task be rerun when its node dies, but not a completed reduce task?
-5. A phase has 2,000 tasks and each is a straggler with probability 0.0005. What is the chance of at least one straggler?
-6. Using the join-cost formula, should you broadcast a 1 GB table to 200 executors when the other side is 500 GB?
-7. What is the difference between a narrow and a wide dependency, and why does it define stage boundaries?
-8. What three things can Adaptive Query Execution change at run time?
-9. A hot key carries 10% of rows over 400 partitions. What is the skew ratio, and what is it with a salt of 20?
-10. Why did data locality matter less in 2026 than in 2004?
-11. Define event time, processing time and watermark.
-12. For $\mu = 3$ s, $W = 60$ s and $\delta = 6$ s, what fraction of events misses its window?
-13. What do allowed lateness and side outputs each protect against?
-14. Why does a two-input Flink operator align barriers, and what do unaligned checkpoints change?
-15. Why does a longer checkpoint interval increase end-to-end latency with a transactional sink?
-16. What is the main cost of Lambda that Kappa removes, and what does Kappa require instead?
+4. A phase has 2,000 tasks and each is a straggler with probability 0.0005. What is the chance of at least one straggler?
+5. Using the join-cost formula, should you broadcast a 1 GB table to 200 executors when the other side is 500 GB?
+6. What is the difference between a narrow and a wide dependency, and why does it define stage boundaries?
+7. What three things can Adaptive Query Execution change at run time?
+8. A hot key carries 10% of rows over 400 partitions. What is the skew ratio, and what is it with a salt of 20?
+9. Define event time, processing time and watermark.
+10. For $\mu = 3$ s, $W = 60$ s and $\delta = 6$ s, what fraction of events misses its window?
+11. What do allowed lateness and side outputs each protect against?
+12. Why does a two-input Flink operator align barriers, and what do unaligned checkpoints change?
+13. What is the main cost of Lambda that Kappa removes, and what does Kappa require instead?
 
 <details><summary>Answers</summary>
 
 1. A task's output depends only on its input, so rerunning it gives the same result; no undo or coordination is needed.
 2. Partitioning by key, buffering, sorting by (partition, key), optional combining, spilling and merging on the map side; fetching (shuffle) and merge-sorting on the reduce side.
 3. When the operation is associative and commutative and its input and output types match, so applying it zero or more times to partial groups does not change the result.
-4. Map output is on the node's unreplicated local disk; reduce output is committed to the replicated file system.
-5. $1 - e^{-2{,}000 \times 0.0005} = 1 - e^{-1} = 0.63$.
-6. Broadcast moves $1 \times 199 = 199$ GB; shuffle moves about $501 \times 0.995 = 499$ GB. Broadcast is cheaper if 1 GB fits comfortably in each executor's memory.
-7. Narrow: each parent partition feeds at most one child partition, so operators pipeline in one task. Wide: a child needs many parents, requiring a shuffle and a barrier, so the scheduler starts a new stage.
-8. It coalesces small shuffle partitions, converts a sort-merge join to a broadcast join, and splits skewed join partitions.
-9. $0.1 \times 400 + 0.9 = 40.9$; with salt 20: $40/20 + 0.9 = 2.9$.
-10. NIC and fabric bandwidth grew to rival local disks, and object stores decoupled storage from compute; columnar reads reduce bytes either way.
-11. Event time: when the event happened. Processing time: when the system observes it. Watermark: an assertion that no events with earlier event time are expected.
-12. $(3/60)\, e^{-2} (1 - e^{-20}) = 0.05 \times 0.135 = 0.68\%$.
-13. Allowed lateness bounds state retention while still updating results for moderately late data; side outputs keep events that arrive later still from being silently lost.
-14. So that the snapshot reflects exactly the records before the barrier on every input. Unaligned checkpoints let barriers overtake buffered records and save in-flight data, avoiding long alignment under backpressure.
-15. The sink commits its transaction only when a checkpoint completes, so output becomes visible once per interval.
-16. Lambda maintains the same logic in two systems; Kappa needs a correct stream engine and a log retaining enough history to replay fast enough.
+4. $1 - e^{-2{,}000 \times 0.0005} = 1 - e^{-1} = 0.63$.
+5. Broadcast moves $1 \times 199 = 199$ GB; shuffle moves about $501 \times 0.995 = 499$ GB. Broadcast is cheaper if 1 GB fits comfortably in each executor's memory.
+6. Narrow: each parent partition feeds at most one child partition, so operators pipeline in one task. Wide: a child needs many parents, requiring a shuffle and a barrier, so the scheduler starts a new stage.
+7. It coalesces small shuffle partitions, converts a sort-merge join to a broadcast join, and splits skewed join partitions.
+8. $0.1 \times 400 + 0.9 = 40.9$; with salt 20: $40/20 + 0.9 = 2.9$.
+9. Event time: when the event happened. Processing time: when the system observes it. Watermark: an assertion that no events with earlier event time are expected.
+10. $(3/60)\, e^{-2} (1 - e^{-20}) = 0.05 \times 0.135 = 0.68\%$.
+11. Allowed lateness bounds state retention while still updating results for moderately late data; side outputs keep events that arrive later still from being silently lost.
+12. So that the snapshot reflects exactly the records before the barrier on every input. Unaligned checkpoints let barriers overtake buffered records and save in-flight data, avoiding long alignment under backpressure.
+13. Lambda maintains the same logic in two systems; Kappa needs a correct stream engine and a log retaining enough history to replay fast enough.
 </details>
 
 ## 29.14 Interview questions
@@ -1509,17 +1503,17 @@ The micro-batch and continuous-mode figures are from the Spark documentation [Ap
 
 ## 29.17 References
 
-1. Akidau, T., Balikov, A., Bekiroğlu, K., Chernyak, S., Haberman, J., Lax, R., McVeety, S., Mills, D., Nordstrom, P., Whittle, S. "MillWheel: Fault-Tolerant Stream Processing at Internet Scale." *Proceedings of the VLDB Endowment* 6(11), 2013.
-2. Akidau, T., Bradshaw, R., Chambers, C., Chernyak, S., Fernández-Moctezuma, R. J., Lax, R., McVeety, S., Mills, D., Perry, F., Schmidt, E., Whittle, S. "The Dataflow Model: A Practical Approach to Balancing Correctness, Latency, and Cost in Massive-Scale, Unbounded, Out-of-Order Data Processing." *Proceedings of the VLDB Endowment* 8(12), 2015.
+1. Akidau, T., et al. "MillWheel: Fault-Tolerant Stream Processing at Internet Scale." *Proceedings of the VLDB Endowment* 6(11), 2013.
+2. Akidau, T., et al. "The Dataflow Model: A Practical Approach to Balancing Correctness, Latency, and Cost in Massive-Scale, Unbounded, Out-of-Order Data Processing." *Proceedings of the VLDB Endowment* 8(12), 2015.
 3. Akidau, T., Chernyak, S., Lax, R. *Streaming Systems*. O'Reilly Media, 2018.
 4. Apache Flink. *Documentation: Flink Architecture; State Backends; Checkpointing; Savepoints*. https://nightlies.apache.org/flink/
 5. Apache Spark. *Documentation: Performance Tuning (Adaptive Query Execution); Configuration; RDD Programming Guide; Structured Streaming Programming Guide*. https://spark.apache.org/docs/latest/
-6. Armbrust, M., Xin, R. S., Lian, C., Huai, Y., Liu, D., Bradley, J. K., Meng, X., Kaftan, T., Franklin, M. J., Ghodsi, A., Zaharia, M. "Spark SQL: Relational Data Processing in Spark." *ACM SIGMOD*, 2015.
-7. Armbrust, M., Das, T., Torres, J., Yavuz, B., Zhu, S., Xin, R., Ghodsi, A., Stoica, I., Zaharia, M. "Structured Streaming: A Declarative API for Real-Time Applications in Apache Spark." *ACM SIGMOD*, 2018.
-8. Boykin, O., Ritchie, S., O'Connell, I., Lin, J. "Summingbird: A Framework for Integrating Batch and Online MapReduce Computations." *Proceedings of the VLDB Endowment* 7(13), 2014.
-9. Carbone, P., Katsifodimos, A., Ewen, S., Markl, V., Haridi, S., Tzoumas, K. "Apache Flink: Stream and Batch Processing in a Single Engine." *Bulletin of the IEEE Computer Society Technical Committee on Data Engineering* 38(4), 2015. (Carbone et al. 2015a)
-10. Carbone, P., Fóra, G., Ewen, S., Haridi, S., Tzoumas, K. "Lightweight Asynchronous Snapshots for Distributed Dataflows." arXiv:1506.08603, 2015. (Carbone et al. 2015b)
-11. Carbone, P., Ewen, S., Fóra, G., Haridi, S., Richter, S., Tzoumas, K. "State Management in Apache Flink: Consistent Stateful Distributed Stream Processing." *Proceedings of the VLDB Endowment* 10(12), 2017.
+6. Armbrust, M., et al. "Spark SQL: Relational Data Processing in Spark." *ACM SIGMOD*, 2015.
+7. Armbrust, M., et al. "Structured Streaming: A Declarative API for Real-Time Applications in Apache Spark." *ACM SIGMOD*, 2018.
+8. Boykin, O., et al. "Summingbird: A Framework for Integrating Batch and Online MapReduce Computations." *Proceedings of the VLDB Endowment* 7(13), 2014.
+9. Carbone, P., et al. "Apache Flink: Stream and Batch Processing in a Single Engine." *Bulletin of the IEEE Computer Society Technical Committee on Data Engineering* 38(4), 2015. (Carbone et al. 2015a)
+10. Carbone, P., et al. "Lightweight Asynchronous Snapshots for Distributed Dataflows." arXiv:1506.08603, 2015. (Carbone et al. 2015b)
+11. Carbone, P., et al. "State Management in Apache Flink: Consistent Stateful Distributed Stream Processing." *Proceedings of the VLDB Endowment* 10(12), 2017.
 12. Chandy, K. M., Lamport, L. "Distributed Snapshots: Determining Global States of Distributed Systems." *ACM Transactions on Computer Systems* 3(1):63–75, 1985.
 13. Dean, J., Ghemawat, S. "MapReduce: Simplified Data Processing on Large Clusters." *USENIX OSDI*, 2004.
 14. Kleppmann, M. *Designing Data-Intensive Applications*, ch. 10–11. O'Reilly Media, 2017.
@@ -1528,9 +1522,9 @@ The micro-batch and continuous-mode figures are from the Spark documentation [Ap
 17. Shen, M., Zhou, Y., Singh, C. "Magnet: Push-based Shuffle Service for Large-scale Data Processing." *Proceedings of the VLDB Endowment* 13(12), 2020.
 18. Xin, R. "Apache Spark Officially Sets a New Record in Large-Scale Sorting." Databricks Blog, 2014.
 19. Young, J. W. "A First Order Approximation to the Optimum Checkpoint Interval." *Communications of the ACM* 17(9):530–531, 1974.
-20. Zaharia, M., Konwinski, A., Joseph, A. D., Katz, R., Stoica, I. "Improving MapReduce Performance in Heterogeneous Environments." *USENIX OSDI*, 2008.
-21. Zaharia, M., Borthakur, D., Sen Sarma, J., Elmeleegy, K., Shenker, S., Stoica, I. "Delay Scheduling: A Simple Technique for Achieving Locality and Fairness in Cluster Scheduling." *EuroSys*, 2010.
-22. Zaharia, M., Chowdhury, M., Das, T., Dave, A., Ma, J., McCauley, M., Franklin, M. J., Shenker, S., Stoica, I. "Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing." *USENIX NSDI*, 2012.
+20. Zaharia, M., et al. "Improving MapReduce Performance in Heterogeneous Environments." *USENIX OSDI*, 2008.
+21. Zaharia, M., et al. "Delay Scheduling: A Simple Technique for Achieving Locality and Fairness in Cluster Scheduling." *EuroSys*, 2010.
+22. Zaharia, M., et al. "Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing." *USENIX NSDI*, 2012.
 23. Amazon Web Services. *Amazon S3 User Guide: Best practices design patterns — optimizing Amazon S3 performance*. https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance.html
 
 ## 29.18 Open verification items
