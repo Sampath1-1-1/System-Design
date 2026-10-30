@@ -1,0 +1,15 @@
+%% Figure 29.5 — Reduce-side join versus broadcast join
+flowchart TB
+  subgraph RS["Reduce-side sort-merge join"]
+    O1[(Orders 2 TB)] --> MO[Map: tag O, key user_id]
+    U1[(Users 5 GB)] --> MU[Map: tag U, key user_id]
+    MO --> SHF[[Shuffle both sides by user_id]]
+    MU --> SHF
+    SHF --> RJ[Reduce: merge U and O per key]
+  end
+  subgraph BC["Broadcast hash join"]
+    U2[(Users 5 GB)] -->|copy to every task| HT[In-memory hash table]
+    O2[(Orders 2 TB)] --> MJ[Map: probe hash table]
+    HT --> MJ
+    MJ --> OUT[(Joined output)]
+  end

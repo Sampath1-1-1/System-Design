@@ -1,0 +1,17 @@
+%% Figure 29.11 — Tumbling, sliding and session windows over the same events
+gantt
+  title Windows in event time, minutes
+  dateFormat mm
+  axisFormat %M
+  section Tumbling 2 min
+  W1 :t1, 00, 2m
+  W2 :t2, 02, 2m
+  W3 :t3, 04, 2m
+  section Sliding 2 min every 1 min
+  S1 :s1, 00, 2m
+  S2 :s2, 01, 2m
+  S3 :s3, 02, 2m
+  S4 :s4, 03, 2m
+  section Session gap 1 min user A
+  Session 1 :a1, 00, 3m
+  Session 2 :a2, 05, 1m

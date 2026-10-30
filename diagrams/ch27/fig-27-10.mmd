@@ -1,0 +1,15 @@
+%% Figure 27.10 — A SWIM protocol period with an indirect probe
+sequenceDiagram
+  participant I as Member i
+  participant J as Member j
+  participant K1 as Helper k1
+  participant K2 as Helper k2
+  I-xJ: ping, lost on congested path
+  Note over I: no ack within timeout
+  I->>K1: ping-req for j
+  I->>K2: ping-req for j
+  K1->>J: ping
+  J-->>K1: ack
+  K1-->>I: ack relayed for j
+  Note over I: j is alive, no suspicion
+  Note over I,K2: updates piggyback on all messages

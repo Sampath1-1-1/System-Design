@@ -1,0 +1,7 @@
+%% Figure 24.3 — Failure models nest: each one includes the behaviors of those inside it
+flowchart LR
+  CS["Crash-stop<br/>halts forever"] --> CR["Crash-recovery<br/>halts, may restart"]
+  CR --> OM["Omission<br/>drops some messages"]
+  OM --> TM["Timing<br/>correct but late"]
+  TM --> BZ["Byzantine<br/>arbitrary behavior"]
+  BZ --> COST["Cost to tolerate f faults<br/>rises from 2f+1 to 3f+1 nodes"]

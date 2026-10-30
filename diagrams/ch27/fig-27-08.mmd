@@ -1,0 +1,21 @@
+%% Figure 27.8 — R = W = 2, N = 3, and a read that goes back in time
+sequenceDiagram
+  participant W as Writer
+  participant A as Replica A
+  participant B as Replica B
+  participant C as Replica C
+  participant R1 as Reader 1
+  participant R2 as Reader 2
+  W->>A: write x = new
+  A-->>W: ack
+  Note over B,C: write to B and C still in flight
+  R1->>A: read x
+  A-->>R1: new
+  R1->>B: read x
+  B-->>R1: old
+  Note over R1: newest of two is new
+  R2->>B: read x, after reader 1 finished
+  B-->>R2: old
+  R2->>C: read x
+  C-->>R2: old
+  Note over R2: sees old, after reader 1 saw new

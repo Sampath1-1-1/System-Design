@@ -1351,3 +1351,88 @@ $$T_{\text{opt}} \approx \sqrt{2\, C\, M_f}, \qquad T_{\text{catch-up}} \approx 
 | State grows without bound | Session windows or keys never expire | State size per checkpoint rising steadily | Restart from savepoint with state TTL | State TTL, allowed-lateness bounds |
 | Watermark stops advancing | An idle source partition emits no events | Watermark lag metric flat | Mark idle sources (`withIdleness`) | Idleness timeouts on every source |
 | Duplicates downstream after restart | Non-transactional sink replayed | Duplicate keys in sink | Deduplicate by event ID | Transactional or idempotent sink |
+
+## 29.10 Lambda and Kappa architectures
+
+::: definition
+**Definition — Lambda and Kappa architectures.** The **Lambda architecture** runs two parallel paths over the same immutable master dataset: a **batch layer** that periodically recomputes complete, accurate views from all history, and a **speed layer** that processes recent data incrementally with low latency; a **serving layer** merges the two at query time [Marz and Warren 2015]. The **Kappa architecture** uses a single stream-processing path over a replayable log; to change logic or fix a bug, it reprocesses history by replaying the log through a new version of the job [Kreps 2014].
+:::
+
+Lambda arose when stream processors were approximate and fragile (early Storm offered at-least-once processing and no consistent state), while batch jobs were trustworthy but hours behind. Running both gave freshness from one path and correctness from the other, and the batch recomputation healed any errors the speed layer made. The cost, as Kreps argued, is maintaining **the same logic twice** in two different frameworks, and keeping them semantically identical as both evolve. Kappa removes the duplication once the stream engine is itself correct (exactly-once state, event-time windows) and the log retains enough history: to deploy version 2, start a second job reading the log from the beginning into a new output table, let it catch up, switch readers over, and delete version 1's output.
+
+**Figure 29.15 — Lambda versus Kappa.**
+
+```mermaid
+flowchart LR
+  subgraph Lambda["Lambda architecture"]
+    SRC1[[Event log]] --> BATCH[Batch layer<br/>Spark over all history]
+    SRC1 --> SPEED[Speed layer<br/>stream job, recent data]
+    BATCH --> BV[(Batch views)]
+    SPEED --> RV[(Realtime views)]
+    BV --> SRV[Serving layer merge]
+    RV --> SRV
+  end
+  subgraph Kappa["Kappa architecture"]
+    SRC2[[Replayable log<br/>long retention]] --> J1[Stream job v1]
+    SRC2 -.->|replay from offset 0| J2[Stream job v2]
+    J1 --> T1[(Table v1)]
+    J2 -.-> T2[(Table v2)]
+  end
+```
+
+**Reading the diagram.** In *Lambda*, the same *event log* feeds a *batch layer* that recomputes *batch views* from all history every few hours and a *speed layer* that maintains *realtime views* for data the last batch run has not covered; the *serving layer* answers queries by merging both. In *Kappa*, one *stream job* consumes a *replayable log*; to change logic, *job v2* replays the log from the start (dotted, asynchronous) into a new table, and readers switch once it catches up. Storage boundaries: Lambda keeps the master dataset in a distributed file system or object store; Kappa needs the log itself (Chapter 31) or tiered storage behind it to hold history. Failure points: in Lambda, divergent logic between layers; in Kappa, replay too slow to be practical. Scaling: Kappa reprocessing scales with replay parallelism, which is bounded by the log's partition count.
+
+Replay speed decides whether Kappa is practical. Reprocessing 30 days of events at an average of 100,000 events/s means $2.6 \times 10^{11}$ events; with 200 parallel tasks at 50,000 events/s each (10 million events/s), replay takes $2.6 \times 10^{11} / 10^{7} = 26{,}000$ s, about 7.2 hours, which is acceptable for a logic change but not for an urgent fix.
+
+::: industry
+**Summingbird at Twitter and Kappa at LinkedIn.** Twitter built Summingbird to reduce Lambda's double implementation: one Scala program is compiled to both a Hadoop batch job and a Storm streaming job, with results merged at query time [Boykin et al. 2014]. Kreps, then at LinkedIn, proposed instead reprocessing by replaying Kafka into a new job instance, which became known as the Kappa architecture [Kreps 2014].
+*Evidence: Primary* — [Boykin et al. 2014; Kreps 2014]
+:::
+
+**Table 29.2 — Lambda and Kappa compared.**
+
+| Aspect | Lambda | Kappa |
+|---|---|---|
+| What it is | Batch layer plus speed layer, merged at serving | One stream path; reprocess by replay |
+| Code paths | Two, kept semantically equal | One |
+| Correctness source | Batch recomputation heals stream errors | Exactly-once stream engine with event time |
+| History store | Files or objects (cheap, columnar) | Log with long retention or tiered storage |
+| Reprocessing | Rerun batch job | Replay log into a new job version |
+| Operational complexity | High: two systems, merge logic | Medium: one system, replay capacity |
+| Choose when | Heavy historical recomputation; stream engine cannot be trusted | Logic fits streaming; log retains enough history |
+
+In practice many teams now run a hybrid: one engine (Spark or Flink, or Beam over either) with shared code, writing streaming results into lakehouse tables that batch jobs also read and backfill (Chapters 61–62).
+
+## 29.11 Batch versus stream; Spark versus Flink
+
+Batch and streaming are two points on one spectrum: a batch job is a stream job over a bounded input whose watermark jumps to infinity at the end. The Dataflow Model and Flink both treat them this way; Spark Structured Streaming does the reverse, running a stream as a series of small incremental batch queries [Armbrust et al. 2018].
+
+**Table 29.3 — Batch versus stream processing.**
+
+| Aspect | Batch | Stream |
+|---|---|---|
+| What it is | Computation over a bounded, complete dataset | Continuous computation over an unbounded dataset |
+| How it works | Read all input, stage by stage, write output | Long-running operators, state, watermarks, checkpoints |
+| Advantages | Simple reasoning, easy reruns, cheap per byte | Seconds of freshness, incremental cost |
+| Disadvantages | Hours of latency; recomputes unchanged data | Completeness is a heuristic; state and late data to manage |
+| Performance | Throughput-optimized, minutes to hours | Latency of milliseconds to seconds |
+| Operational complexity | Scheduler, retries, backfills | 24×7 on-call, state migrations, lag monitoring |
+| Cost | Pay per run; can use spot capacity | Always-on resources |
+| Use cases | Reports, model training sets, backfills, index builds | Fraud, alerting, live features, dashboards |
+| Choose when | Freshness of an hour or more is acceptable | Value decays within minutes |
+
+**Table 29.4 — Apache Spark versus Apache Flink (as of 2026).**
+
+| Aspect | Spark (incl. Structured Streaming) | Flink |
+|---|---|---|
+| What it is | Batch-first engine with SQL, ML and streaming | Stream-first engine; batch as bounded streams |
+| How it works | Stages of tasks; streaming as micro-batches, plus experimental continuous mode | Pipelined long-running operators; continuous record flow |
+| Advantages | Best-in-class batch SQL (Catalyst, AQE), huge ecosystem, Python support | Low latency, rich event-time and state APIs, large state on RocksDB |
+| Disadvantages | Micro-batch latency floor; less flexible custom state and timers | Smaller batch and Python ecosystem; more operational tuning |
+| Performance | Micro-batch latency of about 100 ms and up, exactly-once; continuous mode about 1 ms, at-least-once | Milliseconds, exactly-once state |
+| Operational complexity | Lower for batch; streaming state stores simpler | Higher: checkpoints, savepoints, state backends |
+| Cost | Efficient for large scans; can stop between runs | Always-on clusters sized for peak plus recovery headroom |
+| Use cases | ETL, analytics, feature backfills, ML preprocessing | Fraud, CEP, real-time features, streaming ETL |
+| Choose when | Batch dominates, latency of seconds is fine | Sub-second latency or complex event-time state |
+
+The micro-batch and continuous-mode figures are from the Spark documentation [Apache Spark Docs: Structured Streaming]. **Apache Beam** sits above both: a pipeline written once with the Dataflow Model's windowing, triggers and accumulation runs on a chosen **runner** (Google Cloud Dataflow, Flink, Spark), trading some engine-specific features for portability. Chapter 61 uses Beam and Spark for ML data pipelines.

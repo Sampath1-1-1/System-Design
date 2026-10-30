@@ -453,7 +453,7 @@ stateDiagram-v2
   Follower --> Follower: heartbeat resets timer
 ```
 
-**Reading the diagram.** Every node starts as a follower. A follower that hears nothing from a leader for its randomized election timeout increments its term and becomes a candidate. A candidate becomes leader with votes from a majority, returns to follower if it receives an AppendEntries from a legitimate leader of its term or any message with a higher term, and starts a new election (with a new term) if its timeout expires first, typically after a split vote. A leader steps down only when it sees a higher term. All transitions are local decisions made from messages and timers; there is no central coordinator. Failure point: a leader that is partitioned away stays leader in its own view, but cannot commit anything, and steps down as soon as it hears the higher term.
+**Reading the diagram.** Every node starts as a follower. A follower that hears no leader for its randomized election timeout increments its term and becomes a candidate. A candidate becomes leader with a majority of votes, reverts to follower on hearing a legitimate leader or a higher term, and starts a new term if its timeout expires first (typically after a split vote). A leader steps down only on seeing a higher term. All transitions are local decisions from messages and timers. Failure point: a leader that is partitioned away stays leader in its own view, but cannot commit anything, and steps down as soon as it hears the higher term.
 
 ### 26.7.2 Leader election
 
@@ -462,7 +462,7 @@ stateDiagram-v2
 3. A candidate with votes from a majority becomes leader and immediately sends empty `AppendEntries` heartbeats to assert authority.
 4. If two candidates split the vote, both time out and retry in a higher term. Raft makes this rare by drawing each timeout at random, for example uniformly from 150–300 ms, the range the paper recommends [Ongaro and Ousterhout 2014].
 
-Raft's timing requirement is $\text{broadcastTime} \ll \text{electionTimeout} \ll \text{MTBF}$: heartbeats must arrive well within the timeout, or followers start needless elections; the timeout must be far shorter than the mean time between failures, or the system spends a noticeable share of its life leaderless.
+Raft's timing requirement is $\text{broadcastTime} \ll \text{electionTimeout} \ll \text{MTBF}$: heartbeats must arrive well within the timeout, and the timeout must be far shorter than the mean time between failures.
 
 ::: formula
 **Raft election timing and expected failover time**
@@ -511,7 +511,7 @@ $$P_{\text{contend}} = 1 - \left(1 - \frac{\delta}{W}\right)^{n}$$
 2. $W = 1{,}000$ ms: $1 - 0.99^4 = 1 - 0.9606 = 0.039$.
 3. $W = 150$ ms but $\delta = 2$ ms (fast LAN, NVMe flush): $1 - 0.98667^4 = 0.052$.
 
-**Interpretation.** This is an upper bound on split votes: contention does not always split the vote, because one candidate may still reach a majority first. **Engineering implication.** Keep $W$ at least an order of magnitude above $\delta$. A 200,000-trial Monte Carlo check of the first case gives 0.241, matching the formula.
+**Interpretation.** This bounds split votes from above; contention does not always split the vote. **Engineering implication.** Keep $W$ at least an order of magnitude above $\delta$. A 200,000-trial Monte Carlo check of the first case gives 0.241, matching the formula.
 :::
 
 ### 26.7.3 Log replication
@@ -539,7 +539,7 @@ sequenceDiagram
   Note over F2: apply x=3
 ```
 
-**Reading the diagram.** The client's write goes synchronously to the leader, which appends entry 7 (term 4) and flushes it. AppendEntries carries `prev 6:4`: "my entry before this one is index 6 with term 4"; a follower accepts only if its own log has that entry. As soon as one follower plus the leader (a majority of three) hold the entry, the leader advances `commitIndex`, applies the command and answers the client; S3's slower reply is not needed. Followers learn the new commit index on the next AppendEntries or heartbeat (asynchronous with respect to the client) and apply the entry then. Storage boundary: every node's log is on its own disk. Failure points: if the leader crashes after committing but before replying, the client must retry, so commands should be idempotent or deduplicated by client ID and sequence number (§22.15). Scaling: leaders batch many commands per AppendEntries and pipeline requests without waiting for replies.
+**Reading the diagram.** The client's write goes synchronously to the leader, which appends entry 7 (term 4) and flushes it. AppendEntries carries `prev 6:4`: "my entry before this one is index 6 with term 4"; a follower accepts only if its own log has that entry. As soon as one follower plus the leader (a majority of three) hold the entry, the leader advances `commitIndex`, applies the command and answers the client; S3's slower reply is not needed. Followers learn the new commit index on the next AppendEntries (asynchronous to the client) and apply then. Each log is on its node's own disk. Failure points: if the leader crashes after committing but before replying, the client must retry, so commands should be idempotent or deduplicated by client ID and sequence number (§22.15). Scaling: leaders batch many commands per AppendEntries and pipeline requests without waiting for replies.
 
 ### 26.7.4 The log matching property
 
@@ -869,7 +869,7 @@ Production systems add **learners** (non-voting members in etcd, observers in Zo
 
 ### 26.7.10 Linearizable reads: ReadIndex and lease reads
 
-Serving a read from the leader's local state is *not* automatically linearizable (§25.3): a leader that has been partitioned may not yet know it was replaced, and could return a value that the new leader has already overwritten. Three remedies exist [Ongaro 2014]:
+A read from the leader's local state is *not* automatically linearizable (§25.3): a partitioned leader may not know it was replaced and return a value already overwritten. Three remedies exist [Ongaro 2014]:
 
 1. **Log reads.** Append the read to the log like a write. Correct, but costs a disk write per read.
 2. **ReadIndex.** The leader records its current `commitIndex` as the read index, confirms it is still leader by exchanging a heartbeat round with a majority, waits until its state machine has applied up to the read index, then answers locally. Cost: one round trip, no disk write. Followers can serve reads the same way by asking the leader for a read index. A new leader must first commit its no-op entry, or its `commitIndex` may be stale.
@@ -890,7 +890,7 @@ sequenceDiagram
   L-->>C: x = 3 as of index 42
 ```
 
-**Reading the diagram.** The read arrives at the leader, which notes the commit index (42) at that instant. The heartbeat round (synchronous, to a majority) proves no newer leader existed when the read started: if one had been elected, a majority would have a higher term and reject the heartbeat. The leader then waits for its state machine to apply index 42, guaranteeing the read reflects every write committed before it began, and replies from local memory. Storage boundary: nothing is written to disk. Failure point: if the heartbeat round fails, the leader aborts the read rather than risk staleness. Scaling: one heartbeat round can confirm leadership for a whole batch of pending reads.
+**Reading the diagram.** The leader notes the commit index (42) when the read arrives. The synchronous heartbeat round to a majority proves no newer leader existed then: a majority would have a higher term and reject it. The leader waits to apply index 42, so the read reflects every earlier committed write, and replies from memory. Nothing is written to disk. Failure point: if the heartbeat round fails, the leader aborts the read rather than risk staleness. Scaling: one heartbeat round can confirm leadership for a whole batch of pending reads.
 
 etcd uses ReadIndex for its default linearizable reads and also offers **serializable** reads, served from any member's local state without a round trip, which may be stale [etcd Docs: API guarantees].
 
@@ -900,11 +900,11 @@ etcd uses ReadIndex for its default linearizable reads and also offers **seriali
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Repeated elections, no stable leader | Timeout below network or GC jitter; disk `fsync` stalls delay heartbeats | Term number climbing; leader-change metrics | Raise election timeout; move logs to fast dedicated disks | Size timeouts from p99.9 RTT and flush latency (§26.7.2) |
-| Disruptive rejoining node | A partitioned node kept incrementing its term and forces the leader to step down when it returns | Term jumps after a partition heals | Automatic, after an extra election | **Pre-vote** [Ongaro 2014] plus **check quorum**: a node only becomes a candidate if a majority would vote for it |
-| Writes blocked | Quorum lost (2 of 3 nodes down, or a 3-node cluster split 1/1/1 by zones) | Commit index stops advancing | Restore nodes; if a majority is permanently lost, rebuild from a backup or a forced single-node restart, accepting possible loss | 5 voters across 3 zones; learners for catch-up |
-| Stale reads | Reads served locally by a deposed leader or follower | Jepsen-style tests (§25.11) | Switch to ReadIndex | Use ReadIndex or lease reads with a conservative margin |
-| Data loss after crash | Vote or entry acknowledged before `fsync` | Divergent committed logs | Rebuild the replica from peers | Never disable `fsync`; check disks with checksums |
+| Repeated elections | Timeout below network, GC or `fsync` jitter | Term climbing | Raise timeout; faster dedicated disks | Size timeouts from p99.9 RTT and flush latency |
+| Disruptive rejoining node | A partitioned node's inflated term forces the leader to step down | Term jumps after healing | Automatic, after an extra election | **Pre-vote** [Ongaro 2014]: campaign only if a majority would vote |
+| Writes blocked | Quorum lost | Commit index stalls | Restore nodes; else rebuild from backup, accepting loss | 5 voters across 3 zones; learners |
+| Stale reads | Local reads on a deposed leader | Jepsen-style tests (§25.11) | Switch to ReadIndex | ReadIndex, or lease reads with margin |
+| Data loss after crash | Acknowledged before `fsync` | Divergent committed logs | Rebuild replica from peers | Never disable `fsync`; checksums |
 
 ## 26.8 ZooKeeper and ZAB
 
@@ -914,7 +914,7 @@ etcd uses ReadIndex for its default linearizable reads and also offers **seriali
 **Definition — ZooKeeper.** A replicated coordination service that exposes a small, file-system-like tree of data nodes (**znodes**) with linearizable writes, FIFO per-client ordering, ephemeral and sequential nodes, and change notifications (**watches**). Applications build locks, leader election, barriers and configuration management on top of these primitives [Hunt et al. 2010].
 :::
 
-Before ZooKeeper (developed at Yahoo! and later an Apache project), each distributed system wrote its own election and membership code, usually with bugs. ZooKeeper's designers chose not to offer locks directly. Instead they offered a **wait-free** API (no operation blocks waiting on another client) from which clients compose **recipes**. The paper's title, *Wait-free coordination for Internet-scale systems*, states the philosophy.
+Before ZooKeeper (built at Yahoo!, now an Apache project), each distributed system wrote its own, usually buggy, election and membership code. ZooKeeper deliberately offers no locks; it offers a **wait-free** API (no operation blocks on another client) from which clients compose **recipes**.
 
 #### How it works internally
 
@@ -945,7 +945,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** Each client creates an ephemeral sequential child of `/locks/orders` (synchronous write through the ZooKeeper leader) and lists the children. A's node has the lowest number, so A holds the lock. B and C do not poll: each sets a watch (dotted, asynchronous notification) on the node *immediately below its own*. When A releases the lock by deleting its node, or A's session expires and ZooKeeper deletes it, only B is notified; B re-lists the children, sees it is lowest, and proceeds. Watching only the predecessor avoids the **herd effect**, in which every waiter wakes on every release. Storage boundary: the queue of waiters lives entirely inside the replicated tree. Failure point: A can be paused past its session timeout and still believe it holds the lock; the node's creation zxid should be passed to the protected resource as a fencing token (§26.13).
+**Reading the diagram.** Each client creates an ephemeral sequential child of `/locks/orders` (synchronous write through the ZooKeeper leader) and lists the children. A's node has the lowest number, so A holds the lock. B and C do not poll: each sets a watch (dotted, asynchronous notification) on the node *immediately below its own*. When A releases the lock by deleting its node, or A's session expires and ZooKeeper deletes it, only B is notified; B re-lists the children, sees it is lowest, and proceeds. Watching only the predecessor avoids the **herd effect** (every waiter waking on every release). The waiter queue lives inside the replicated tree. Failure point: A can be paused past its session timeout and still believe it holds the lock; the node's creation zxid should be passed to the protected resource as a fencing token (§26.13).
 
 - **Leader election** is the same recipe: the candidate with the lowest sequential node under `/election` is leader, and each other candidate watches its predecessor.
 - **Barrier.** Workers wait until a node `/barrier/ready` exists (watch on `exists`); the coordinator creates it to release everyone. A **double barrier** has workers register ephemeral children on entry and waits until the count reaches $k$, then waits for all to leave.
@@ -973,7 +973,7 @@ The `concurrency` package of the Go client implements election and mutexes from 
 
 ### 26.9.2 etcd in Kubernetes
 
-The Kubernetes API server is etcd's only client. Every object is stored under a key such as `/registry/pods/<namespace>/<name>`, an object's `resourceVersion` is derived from etcd's revision, and the **watch** that drives every controller ("tell me about changes to pods since version $r$") is an etcd watch multiplexed by the API server. Because etcd holds the entire desired state of the cluster, its health defines the control plane's: Kubernetes documentation recommends running an odd number of members (typically 3 or 5) on dedicated, low-latency disks [Kubernetes Docs: etcd]. etcd's default storage quota is 2 GB, and keeping the dataset small (compaction, defragmentation, not storing large blobs) is a standing operational task.
+The Kubernetes API server is etcd's only client. Every object is stored under a key such as `/registry/pods/<namespace>/<name>`, an object's `resourceVersion` is derived from etcd's revision, and the **watch** that drives every controller ("tell me about changes to pods since version $r$") is an etcd watch multiplexed by the API server. etcd's health defines the control plane's; Kubernetes documentation recommends running an odd number of members (typically 3 or 5) on dedicated, low-latency disks [Kubernetes Docs: etcd]. etcd's default storage quota is 2 GB, and keeping the dataset small (compaction, defragmentation, not storing large blobs) is a standing operational task.
 
 ::: industry
 **Kubernetes controller leader election.** `kube-controller-manager` and `kube-scheduler` run several replicas but only one acts at a time. They do not use etcd leases directly; they compete to update a `Lease` object in the `coordination.k8s.io` API group through the API server, using optimistic concurrency on `resourceVersion`. The defaults are a 15 s lease duration, a 10 s renew deadline and a 2 s retry period, so a crashed leader is replaced in roughly 15–17 s. Trade-off: this is coarse failover, chosen to avoid churn, and it relies on clocks running at similar rates.
@@ -984,7 +984,7 @@ The Kubernetes API server is etcd's only client. Every object is stored under a 
 
 ### 26.10.1 Why distributed locks are hard
 
-A lock in a single process is simple because the operating system can see every thread and the lock holder cannot vanish without the kernel knowing. A distributed lock has none of these comforts:
+A single-process lock is simple because the kernel sees every thread. A distributed lock has no such comfort:
 
 1. **The holder can fail silently.** So locks need an expiry (a lease), or a crashed client holds the lock forever.
 2. **Expiry means the holder can lose the lock without knowing.** A process paused for 20 s (garbage collection, VM migration, page faults on a swapped heap, a `SIGSTOP`) resumes believing it still holds a lock that expired 10 s ago.
@@ -1010,7 +1010,7 @@ In 2016 Martin Kleppmann published "How to do distributed locking," arguing that
 | Timing assumptions | Safety depends on bounded network delay, bounded pauses and bounded clock drift; a clock jump on one instance (for example, an NTP step) can let two clients hold a majority | Redlock needs bounded clock *rate* error, not synchronized clocks; operators should configure time sync to slew, not step |
 | What to use instead | For efficiency, a single Redis node is enough; for correctness, use a consensus system (ZooKeeper, etcd) **with fencing tokens** | If the resource can check tokens, it is already a linearizable store; Redlock with its assumptions is adequate for many uses |
 
-A fair reading: both agree that an auto-expiring lock cannot by itself protect a resource against a paused holder. They disagree about how realistic the timing failures are, and whether a lock service that depends on them should be marketed for correctness. Redlock is therefore reasonable as an efficiency lock, but one Redis instance is simpler and almost as good for that. For correctness, use a consensus-backed lock and pass a monotonic token to the resource, or make the resource itself the arbiter (a conditional write such as compare-and-set on a version).
+A fair reading: both agree an auto-expiring lock cannot alone protect a resource from a paused holder; they disagree about how realistic the timing failures are. Redlock is reasonable as an efficiency lock, though one Redis instance is simpler. For correctness, use a consensus-backed lock and pass a monotonic token to the resource, or make the resource itself the arbiter (a conditional write such as compare-and-set on a version).
 
 ::: recommendation
 **Recommendation — Choosing a lock.** (1) Can you avoid the lock? An idempotent operation, a conditional write or a single-writer partition (§14.6) is usually better. (2) If you need a lock for efficiency, a single Redis `SET NX PX` with a sensible TTL is fine. (3) If you need it for correctness, use etcd, ZooKeeper or Consul, and make the protected resource check a fencing token (§26.13). (4) Never hold a lock across an unbounded operation without renewing it and checking validity before each side effect.
@@ -1026,7 +1026,7 @@ A fair reading: both agree that an auto-expiring lock cannot by itself protect a
 
 #### First-principles explanation
 
-A lease is a library loan: you may keep the book until the due date without phoning the library each day, and if you vanish, the library does not have to find you; the loan simply ends. Gray and Cheriton introduced leases for cache consistency in the V distributed file system: a server could update a file once every client lease on it had expired, even if a client was unreachable. Leases turn "wait for an unreachable node forever" into "wait at most $T$." The price is a dependence on clocks: the holder and the grantor must agree on how long $T$ is, even though each measures it with its own oscillator.
+A lease is a library loan: you keep the book until the due date without phoning in, and if you vanish the loan simply ends. Gray and Cheriton introduced leases for cache consistency in the V file system: a server could update a file once every client lease on it expired, even if a client was unreachable. Leases turn "wait forever" into "wait at most $T$," at the price of depending on clocks: holder and grantor each measure $T$ with their own oscillator.
 
 #### Mathematical foundations
 
@@ -1076,9 +1076,9 @@ Leases appear throughout this book: GFS chunk leases (§15.5.1), Chubby sessions
 
 #### Prevention
 
-1. **Quorum.** Only a side holding a majority of votes may act. A 3-node or 5-node consensus group cannot split brain by construction; the minority side stops.
+1. **Quorum.** Only a side holding a majority may act; the minority stops.
 2. **Witness (tie-breaker).** Two-site deployments add a lightweight third vote in a third location (a file-share or cloud witness in Windows Server Failover Clustering, an arbiter in MongoDB, a third etcd member), so one site can form a majority.
-3. **STONITH ("shoot the other node in the head").** Before taking over, the survivor *forcibly* powers off or isolates the old primary through an out-of-band channel: a power distribution unit, a server management controller (IPMI), or a cloud API that stops the instance. Pacemaker clusters treat a failed fence as a failed failover. Brutal, but it converts "maybe still running" into "definitely off."
+3. **STONITH ("shoot the other node in the head").** Before taking over, the survivor *forcibly* powers off or isolates the old primary through an out-of-band channel: a power distribution unit, a server management controller (IPMI), or a cloud API that stops the instance. Brutal, but it turns "maybe still running" into "definitely off."
 4. **Resource-level fencing.** Revoke the old primary's access to shared storage (SCSI persistent reservations, revoking a volume attachment) or have the resource reject stale epochs (§26.13).
 
 ::: industry
@@ -1116,7 +1116,7 @@ sequenceDiagram
   Note over S: v2 overwritten by stale holder
 ```
 
-**Reading the diagram.** All arrows are synchronous RPCs. Client 1 holds a valid lease, then stops for 15 s; it has no way to observe its own pause. The lock service correctly expires the lease and grants it to Client 2, which writes. Client 1 resumes mid-operation and sends its write; the storage service has no information that distinguishes this write from a legitimate one, so it accepts it. Every component behaved correctly, yet Client 2's update is lost. The failure point is the gap between "checked the lock" and "write took effect," which no lock service can close from outside the client.
+**Reading the diagram.** All arrows are synchronous RPCs. Client 1 holds a valid lease, then stops for 15 s without being able to observe its pause. The lock service correctly grants the lock to Client 2, which writes. Client 1 resumes and writes; storage cannot distinguish this from a legitimate write. Every component behaved correctly, yet Client 2's update is lost. The failure point is the gap between "checked the lock" and "write took effect," which no lock service can close from outside the client.
 
 **Figure 26.14 — With fencing: the storage service rejects the stale holder.**
 
@@ -1138,7 +1138,7 @@ sequenceDiagram
   S-->>C1: REJECTED, token 33 below 34
 ```
 
-**Reading the diagram.** The lock service now hands out increasing tokens (33, then 34). Storage records the highest token it has accepted, durably and atomically with the write. Client 1's late write carries 33, which is lower than 34, so it is rejected and Client 1 learns it lost the lock. Ordering is decided at the storage boundary, where requests actually serialize. Failure points: the storage service must check and record tokens atomically (a conditional write); every path to the resource must pass the token; and if Client 1's write had arrived *before* Client 2's, it would have been accepted legitimately, which is correct because Client 2 had not yet written.
+**Reading the diagram.** The lock service now hands out increasing tokens (33, then 34). Storage records the highest token it has accepted, durably and atomically with the write. Client 1's late write carries 33, which is lower than 34, so it is rejected and Client 1 learns it lost the lock. Ordering is decided at the storage boundary, where requests serialize. Failure points: storage must check and record tokens atomically, and every path to the resource must carry the token. Had Client 1's write arrived *before* Client 2's, accepting it would be correct.
 
 Good token sources are values the consensus system already increments: a Raft or ZAB index, a ZooKeeper zxid or znode version, an etcd revision, a Chubby **sequencer**, or a Kubernetes-style generation number. If the resource cannot check tokens (a legacy file server, an external payment API), fencing is impossible and you must fall back to idempotency keys (§22.15), STONITH or long lock-delays, accepting the residual risk.
 
@@ -1154,9 +1154,9 @@ Good token sources are values the consensus system already increments: a Raft or
 **Definition — Chubby.** Google's lock service, providing coarse-grained advisory locks and small files in a file-system-like namespace, replicated across a five-node **cell** with Paxos, and used chiefly for leader election, naming and storing small amounts of configuration [Burrows 2006].
 :::
 
-Burrows chose a *lock service* rather than a consensus library deliberately: many teams' programs were not designed for high availability, and acquiring a lock and writing a file was far easier to add to existing code than embedding Paxos. Key design points:
+Burrows chose a *lock service* over a consensus library deliberately: taking a lock and writing a file was far easier to add to existing programs than embedding Paxos. Key design points:
 
-- **Coarse-grained locks**, held for hours or days (who is the master), not milliseconds. Load is therefore low and a brief Chubby outage does not stop lock holders that already hold their locks.
+- **Coarse-grained locks**, held for hours or days, not milliseconds, so load is low and brief outages do not disturb current holders.
 - **Sessions and KeepAlives.** Each client has a session with a lease. The client sends a KeepAlive RPC; the master holds it until the lease is near expiry and then replies with a new lease (12 s by default), piggybacking cache invalidations and events. If the lease lapses, the client enters **jeopardy**, disables its cache, and waits a **grace period** (45 s by default) for a new master before declaring the session lost.
 - **Master election and master leases.** Replicas elect a master through Paxos; the master holds a lease of a few seconds during which no other master can be elected, letting it serve reads locally.
 - **Consistent client caching** with invalidation: the master blocks a write until every caching client has invalidated, so reads are almost always local.
@@ -1287,8 +1287,8 @@ Two more options deserve a sentence. Many systems now **embed** Raft (via librar
 
 ## 26.20 References
 
-1. Burrows, M. "The Chubby Lock Service for Loosely-Coupled Distributed Systems." *USENIX Symposium on Operating Systems Design and Implementation (OSDI)*, 2006.
-2. Chandra, T. D., Griesemer, R., Redstone, J. "Paxos Made Live: An Engineering Perspective." *ACM Symposium on Principles of Distributed Computing (PODC)*, 2007.
+1. Burrows, M. "The Chubby Lock Service for Loosely-Coupled Distributed Systems." *USENIX OSDI*, 2006.
+2. Chandra, T. D., Griesemer, R., Redstone, J. "Paxos Made Live: An Engineering Perspective." *ACM PODC*, 2007.
 3. Chang, E., Roberts, R. "An Improved Algorithm for Decentralized Extrema-Finding in Circular Configurations of Processes." *Communications of the ACM* 22(5), 1979.
 4. Chang, F., Dean, J., Ghemawat, S., et al. "Bigtable: A Distributed Storage System for Structured Data." *USENIX OSDI*, 2006.
 5. Dwork, C., Lynch, N., Stockmeyer, L. "Consensus in the Presence of Partial Synchrony." *Journal of the ACM* 35(2), 1988.
@@ -1296,10 +1296,10 @@ Two more options deserve a sentence. Many systems now **embed** Raft (via librar
 7. Fischer, M. J., Lynch, N. A., Paterson, M. S. "Impossibility of Distributed Consensus with One Faulty Process." *Journal of the ACM* 32(2), 1985.
 8. Garcia-Molina, H. "Elections in a Distributed Computing System." *IEEE Transactions on Computers* C-31(1), 1982.
 9. GitHub. "October 21 post-incident analysis." GitHub Blog, 2018. https://github.blog/news-insights/company-news/oct21-post-incident-analysis/
-10. Gray, C. G., Cheriton, D. R. "Leases: An Efficient Fault-Tolerant Mechanism for Distributed File Cache Consistency." *ACM Symposium on Operating Systems Principles (SOSP)*, 1989.
+10. Gray, C. G., Cheriton, D. R. "Leases: An Efficient Fault-Tolerant Mechanism for Distributed File Cache Consistency." *ACM SOSP*, 1989.
 11. Howard, H., Malkhi, D., Spiegelman, A. "Flexible Paxos: Quorum Intersection Revisited." arXiv:1608.06696, 2016 (also OPODIS 2016).
-12. Hunt, P., Konar, M., Junqueira, F. P., Reed, B. "ZooKeeper: Wait-free Coordination for Internet-scale Systems." *USENIX Annual Technical Conference (ATC)*, 2010.
-13. Junqueira, F. P., Reed, B. C., Serafini, M. "Zab: High-performance Broadcast for Primary-Backup Systems." *IEEE/IFIP Conference on Dependable Systems and Networks (DSN)*, 2011.
+12. Hunt, P., Konar, M., Junqueira, F. P., Reed, B. "ZooKeeper: Wait-free Coordination for Internet-scale Systems." *USENIX ATC*, 2010.
+13. Junqueira, F. P., Reed, B. C., Serafini, M. "Zab: High-performance Broadcast for Primary-Backup Systems." *IEEE/IFIP DSN*, 2011.
 14. Kleppmann, M. "How to do distributed locking." Blog post, 8 February 2016. https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
 15. Kleppmann, M. *Designing Data-Intensive Applications*, chapters 8–9. O'Reilly Media, 2017.
 16. Kubernetes Authors. *Kubernetes Documentation*: "Leases"; "Operating etcd clusters for Kubernetes"; `kube-controller-manager` reference. https://kubernetes.io/docs/

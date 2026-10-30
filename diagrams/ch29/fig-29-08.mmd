@@ -1,0 +1,11 @@
+%% Figure 29.8 — Catalyst query planning with Adaptive Query Execution
+flowchart LR
+  Q([SQL or DataFrame]) --> UL[Unresolved<br/>logical plan]
+  CAT[(Catalog<br/>schemas, stats)] --> AN[Analyzer]
+  UL --> AN --> LP[Logical plan]
+  LP --> OPT[Rule-based optimizer<br/>pushdown, pruning]
+  OPT --> PP[Physical plans<br/>cost-based choice]
+  PP --> CG[Whole-stage<br/>code generation]
+  CG --> EX[Execute stage]
+  EX -.->|runtime shuffle stats| AQE{AQE re-plan<br/>at shuffle boundary}
+  AQE -.->|coalesce, switch join,<br/>split skew| PP

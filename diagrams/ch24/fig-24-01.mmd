@@ -1,0 +1,15 @@
+%% Figure 24.1 — One computer versus a distributed system
+flowchart LR
+  subgraph One["Single computer"]
+    P1[Process A] -->|shared memory| M[(RAM)]
+    P2[Process B] -->|shared memory| M
+    CLK1["One clock"]
+  end
+  subgraph Dist["Distributed system"]
+    N1["Node 1<br/>own clock, own RAM"] -->|messages| NET{{Network}}
+    NET -->|messages| N2["Node 2<br/>own clock, own RAM"]
+    N2 -.->|"replies,<br/>maybe lost or late"| NET
+    NET -.->|replies| N1
+    N1 --> D1[(Disk 1)]
+    N2 --> D2[(Disk 2)]
+  end

@@ -1,0 +1,14 @@
+%% Figure 24.10 — Lamport timestamps on three processes
+sequenceDiagram
+  participant P1
+  participant P2
+  participant P3
+  Note over P1: a = 1
+  Note over P2: c = 1
+  Note over P3: f = 1
+  P1->>P2: b = 2, m1 carries 2
+  Note over P2: d = max(1, 2) + 1 = 3
+  P2->>P3: e = 4, m2 carries 4
+  Note over P3: g = max(1, 4) + 1 = 5
+  P3->>P1: h = 6, m3 carries 6
+  Note over P1: i = max(2, 6) + 1 = 7

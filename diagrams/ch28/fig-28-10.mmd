@@ -1,0 +1,17 @@
+%% Figure 28.10 — A Percolator write of two cells
+sequenceDiagram
+  participant Cl as Client library
+  participant TSO as Timestamp oracle
+  participant P as Row acct7 - primary
+  participant S as Row acct9 - secondary
+  Cl->>TSO: get start_ts
+  TSO-->>Cl: 100
+  Cl->>P: prewrite data@100, lock@100 primary
+  P-->>Cl: ok - no write after 100, no lock
+  Cl->>S: prewrite data@100, lock@100 points to acct7
+  S-->>Cl: ok
+  Cl->>TSO: get commit_ts
+  TSO-->>Cl: 110
+  Cl->>P: write@110 to 100, erase lock - commit point
+  P-->>Cl: committed
+  Cl-)S: write@110 to 100, erase lock - async

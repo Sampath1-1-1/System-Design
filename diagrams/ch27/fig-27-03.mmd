@@ -1,0 +1,13 @@
+%% Figure 27.3 — Chain replication with an external master
+flowchart LR
+  CW([Writer]) -->|update| H[(Head)]
+  H -->|forward| M[(Middle)]
+  M -->|forward| T[(Tail)]
+  T -->|reply| CW
+  CR([Reader]) -->|query| T
+  T -->|reply| CR
+  T -.->|ack, trim Sent| M
+  M -.->|ack, trim Sent| H
+  MS{{"Master service<br/>consensus-replicated"}} -.->|heartbeats| H
+  MS -.->|heartbeats| M
+  MS -.->|heartbeats| T

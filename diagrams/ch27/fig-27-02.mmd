@@ -1,0 +1,18 @@
+%% Figure 27.2 — Primary–backup with a synchronous backup and the failover window
+sequenceDiagram
+  participant C as Client
+  participant P as Primary
+  participant B as Backup
+  participant D as Failure detector
+  C->>P: write x = 5
+  P->>P: execute and log entry 41
+  P->>B: entry 41
+  B->>B: log entry 41
+  B-->>P: ack 41
+  P-->>C: OK
+  P--xB: heartbeats stop, primary crashed
+  Note over D,B: failover window, writes unavailable
+  D->>D: timeout expires, suspect primary
+  D->>B: fence old primary, promote backup
+  C->>B: write x = 6, redirected
+  B-->>C: OK

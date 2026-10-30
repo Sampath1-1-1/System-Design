@@ -1,0 +1,17 @@
+%% Figure 26.8 — Replicating and committing one entry
+sequenceDiagram
+  participant C as Client
+  participant L as Leader S1
+  participant F2 as Follower S2
+  participant F3 as Follower S3
+  C->>L: SET x=3
+  Note over L: append index 7 term 4, fsync
+  L->>F2: AppendEntries prev 6:4, entry 7:4, commit 6
+  L->>F3: AppendEntries prev 6:4, entry 7:4, commit 6
+  F2-->>L: success, match 7
+  Note over L: 2 of 3 hold index 7, term 4 is current
+  Note over L: commitIndex = 7, apply x=3
+  L-->>C: OK
+  F3-->>L: success, match 7
+  L->>F2: next heartbeat, commit 7
+  Note over F2: apply x=3

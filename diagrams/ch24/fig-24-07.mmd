@@ -1,0 +1,12 @@
+%% Figure 24.7 — The NTP on-wire exchange
+sequenceDiagram
+  participant C as Client clock
+  participant S as Server clock
+  Note over C: T1 = client time at send
+  C->>S: request carrying T1
+  Note over S: T2 = server time at receive
+  Note over S: T3 = server time at reply
+  S->>C: reply carrying T1, T2, T3
+  Note over C: T4 = client time at receive
+  Note over C: offset = ((T2 - T1) + (T3 - T4)) / 2
+  Note over C: delay = (T4 - T1) - (T3 - T2)

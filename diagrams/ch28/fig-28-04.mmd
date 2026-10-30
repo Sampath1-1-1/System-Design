@@ -1,0 +1,20 @@
+%% Figure 28.4 — Coordinator failure after the votes: participants block
+sequenceDiagram
+  participant C as Coordinator
+  participant A as Participant A
+  participant B as Participant B
+  participant X as Other client
+  C->>A: PREPARE t1
+  C->>B: PREPARE t1
+  A-->>C: YES - locks held on acct 7
+  B-->>C: YES - locks held on acct 9
+  Note over C: crashes before or just after forcing a decision
+  A->>C: what happened to t1
+  Note over A: no reply - cannot commit, cannot abort
+  A->>B: do you know the outcome of t1
+  B-->>A: no, I am in doubt too
+  X->>A: UPDATE acct 7
+  Note over X,A: blocked behind t1 locks until coordinator returns
+  C->>C: restart, read log
+  C->>A: COMMIT t1 if logged, else ABORT t1
+  C->>B: COMMIT t1 if logged, else ABORT t1

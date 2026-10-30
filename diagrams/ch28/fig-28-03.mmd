@@ -1,0 +1,21 @@
+%% Figure 28.3 — Coordinator and participant state machines
+stateDiagram-v2
+  state Coordinator {
+    C_Init: INIT
+    C_Wait: WAIT - collecting votes
+    C_Commit: COMMITTED - logged
+    C_Abort: ABORTED
+    C_Init --> C_Wait: send PREPARE
+    C_Wait --> C_Commit: all YES, force COMMIT
+    C_Wait --> C_Abort: any NO or timeout
+  }
+  state Participant {
+    P_Work: WORKING
+    P_Ready: PREPARED - in doubt
+    P_Commit: COMMITTED
+    P_Abort: ABORTED
+    P_Work --> P_Ready: force PREPARED, vote YES
+    P_Work --> P_Abort: vote NO or timeout
+    P_Ready --> P_Commit: receive COMMIT
+    P_Ready --> P_Abort: receive ABORT
+  }

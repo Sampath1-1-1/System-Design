@@ -1,0 +1,15 @@
+%% Figure 24.12 — Version vectors detect a concurrent shopping-cart update
+sequenceDiagram
+  participant X as Client X
+  participant R1 as Replica R1
+  participant R2 as Replica R2
+  participant Y as Client Y
+  X->>R1: get cart
+  R1-->>X: book, context R1 = 1
+  Y->>R2: get cart
+  R2-->>Y: book, context R1 = 1
+  X->>R1: put book and pen, context R1 = 1
+  Note over R1: new version R1 = 2
+  Y->>R2: put book and lamp, context R1 = 1
+  Note over R2: new version R1 = 1, R2 = 1
+  Note over R1,R2: After sync, R1 = 2 vs R1 = 1 and R2 = 1 are incomparable, so both are siblings

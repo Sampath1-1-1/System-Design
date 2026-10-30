@@ -1,0 +1,12 @@
+%% Figure 29.7 — Lineage of a word-count job cut into stages at the wide dependency
+flowchart LR
+  subgraph S1["Stage 1: 8 tasks, pipelined"]
+    T[(textFile<br/>8 partitions)] -->|narrow| FM[flatMap words]
+    FM -->|narrow| MP[map to word, 1]
+    MP -->|narrow| PC[partial sums<br/>shuffle write]
+  end
+  PC ==>|wide: shuffle by word| RK
+  subgraph S2["Stage 2: 4 tasks"]
+    RK[reduceByKey<br/>4 partitions] -->|narrow| FL[filter count over 100]
+    FL --> SV[(saveAsTextFile)]
+  end

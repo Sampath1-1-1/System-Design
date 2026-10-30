@@ -1,0 +1,18 @@
+%% Figure 25.3 — ABD quorum read with write-back on three replicas
+sequenceDiagram
+  participant C as Reader
+  participant R1 as Replica 1
+  participant R2 as Replica 2
+  participant R3 as Replica 3
+  Note over C,R3: Phase 1, query a majority
+  C->>R1: get value and timestamp
+  C->>R2: get value and timestamp
+  R1-->>C: x=1, ts=7
+  R2-->>C: x=0, ts=6
+  Note over C: choose highest ts, x=1
+  Note over C,R3: Phase 2, write back to a majority
+  C->>R2: store x=1, ts=7
+  C->>R3: store x=1, ts=7
+  R2-->>C: ack
+  R3-->>C: ack
+  Note over C: return 1 after two round trips

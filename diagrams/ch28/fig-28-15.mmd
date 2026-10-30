@@ -1,0 +1,13 @@
+%% Figure 28.15 — Choosing a transaction strategy
+flowchart TD
+  S([Operation writes several entities]) --> Q1{Can the entities share<br/>a partition key?}
+  Q1 -->|"yes"| A1["Redesign: co-locate,<br/>single-partition transaction"]
+  Q1 -->|"no"| Q2{Same database system<br/>that supports distributed txns?}
+  Q2 -->|"yes"| Q3{Must intermediate states<br/>be invisible?}
+  Q3 -->|"yes"| A2["2PC over consensus groups:<br/>Spanner, CockroachDB, TiDB"]
+  Q3 -->|"no, but atomic"| A2
+  Q2 -->|"no: separate services"| Q4{Is each step<br/>compensable?}
+  Q4 -->|"yes"| A3["Saga with compensations<br/>Ch 32"]
+  Q4 -->|"no"| Q5{Is it one write plus<br/>notifying others?}
+  Q5 -->|"yes"| A4["Transactional outbox<br/>and idempotent consumers"]
+  Q5 -->|"no"| A5["Rethink the boundary:<br/>merge services or use XA"]

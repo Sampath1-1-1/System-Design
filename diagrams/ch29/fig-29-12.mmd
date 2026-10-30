@@ -1,0 +1,16 @@
+%% Figure 29.12 — A 10 s window with a watermark, a late update and a dropped event
+sequenceDiagram
+  participant Src as Source
+  participant Op as Window operator
+  participant Out as Downstream
+  Src->>Op: events t=1, 4, 8
+  Src->>Op: event t=13, watermark becomes 11
+  Op->>Out: ON_TIME window 0-10, count 3
+  Src->>Op: late event t=9
+  Op->>Out: LATE window 0-10, count 4
+  Src->>Op: event t=23, watermark becomes 21
+  Op->>Out: ON_TIME window 10-20, count 1
+  Src->>Op: event t=7, too late
+  Op-->>Op: side output, state already purged
+  Src->>Op: late event t=15
+  Op->>Out: LATE window 10-20, count 2

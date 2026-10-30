@@ -1,0 +1,11 @@
+%% Figure 24.2 — The two generals problem: every acknowledgment needs another acknowledgment
+sequenceDiagram
+  participant A as General A
+  participant B as General B
+  A->>B: Attack at dawn
+  Note over B: B knows the plan, but does A know B knows?
+  B->>A: Ack, agreed
+  Note over A: A knows B agreed, but B does not know the ack arrived
+  A->>B: Ack of your ack
+  Note over B: Now A does not know this arrived
+  A--xB: Any further message may be captured

@@ -1,0 +1,15 @@
+%% Figure 28.12 — Commit wait timeline at the coordinator leader
+sequenceDiagram
+  participant C as Client
+  participant L as Coordinator leader
+  participant R as Paxos replicas
+  C->>L: commit
+  Note over L: TT.now is 1000 plus or minus 4 ms, choose s = 1004
+  par replicate commit record
+    L->>R: log COMMIT at s = 1004
+    R-->>L: quorum ack after about 5 ms
+  and commit wait
+    Note over L: wait until TT.after 1004, i.e. earliest > 1004
+  end
+  Note over L: true time now at least 1008 - about 2 epsilon after choosing s
+  L-->>C: committed at 1004, release locks

@@ -1,0 +1,16 @@
+%% Figure 29.15 — Lambda versus Kappa
+flowchart LR
+  subgraph Lambda["Lambda architecture"]
+    SRC1[[Event log]] --> BATCH[Batch layer<br/>Spark over all history]
+    SRC1 --> SPEED[Speed layer<br/>stream job, recent data]
+    BATCH --> BV[(Batch views)]
+    SPEED --> RV[(Realtime views)]
+    BV --> SRV[Serving layer merge]
+    RV --> SRV
+  end
+  subgraph Kappa["Kappa architecture"]
+    SRC2[[Replayable log<br/>long retention]] --> J1[Stream job v1]
+    SRC2 -.->|replay from offset 0| J2[Stream job v2]
+    J1 --> T1[(Table v1)]
+    J2 -.-> T2[(Table v2)]
+  end

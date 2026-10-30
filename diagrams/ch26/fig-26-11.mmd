@@ -1,0 +1,11 @@
+%% Figure 26.11 — ReadIndex: linearizable reads without writing to the log
+sequenceDiagram
+  participant C as Client
+  participant L as Leader
+  participant F as Follower majority
+  C->>L: GET x
+  Note over L: readIndex = commitIndex = 42
+  L->>F: heartbeat, term 7
+  F-->>L: ack term 7
+  Note over L: still leader, wait until applied index is 42 or more
+  L-->>C: x = 3 as of index 42

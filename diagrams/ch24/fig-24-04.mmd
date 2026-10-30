@@ -1,0 +1,15 @@
+%% Figure 24.4 — Three kinds of network partition
+flowchart LR
+  subgraph Complete["Complete partition"]
+    A1[A] --- B1[B]
+    C1[C]
+  end
+  subgraph Partial["Partial partition"]
+    A2[A] --- C2[C]
+    C2 --- B2[B]
+    A2 -.-x|no link| B2
+  end
+  subgraph Asym["Asymmetric partition"]
+    A3[A] -->|A to B works| B3[B]
+    B3 -.-x|B to A lost| A3
+  end

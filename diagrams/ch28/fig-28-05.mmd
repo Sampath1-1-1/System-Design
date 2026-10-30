@@ -1,0 +1,8 @@
+%% Figure 28.5 — The X/Open DTP model
+flowchart LR
+  AP([Application program]) -->|"begin, commit via TX API"| TM[Transaction manager]
+  AP -->|"SQL with XID"| RM1[(Database RM)]
+  AP -->|"send with XID"| RM2[[Message broker RM]]
+  TM -->|"XA prepare, commit, recover"| RM1
+  TM -->|"XA prepare, commit, recover"| RM2
+  TM --> TL[("TM log - decisions")]

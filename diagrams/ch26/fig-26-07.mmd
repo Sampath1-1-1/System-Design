@@ -1,0 +1,9 @@
+%% Figure 26.7 — Raft role transitions
+stateDiagram-v2
+  [*] --> Follower
+  Follower --> Candidate: election timeout, no heartbeat
+  Candidate --> Candidate: timeout, split vote, new term
+  Candidate --> Leader: votes from a majority
+  Candidate --> Follower: sees leader or higher term
+  Leader --> Follower: sees higher term
+  Follower --> Follower: heartbeat resets timer

@@ -1,0 +1,16 @@
+%% Figure 27.13 — Blocking read repair with R = 2
+sequenceDiagram
+  participant C as Client
+  participant CO as Coordinator
+  participant A as Replica A
+  participant B as Replica B
+  C->>CO: read k, quorum
+  CO->>A: full data for k
+  CO->>B: digest for k
+  A-->>CO: value v2 at time 20
+  B-->>CO: digest differs
+  CO->>B: full data for k
+  B-->>CO: value v1 at time 10
+  CO->>B: write v2
+  B-->>CO: ack
+  CO-->>C: v2

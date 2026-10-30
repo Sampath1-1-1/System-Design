@@ -1,0 +1,15 @@
+%% Figure 25.1 — A linearizable history and its linearization points
+sequenceDiagram
+  participant A as Client A
+  participant X as Register x, initially 0
+  participant B as Client B
+  participant C as Client C
+  A->>X: invoke write x=1 at t=0
+  B->>X: invoke read x at t=1
+  Note over X: LP of B read, returns 0
+  X-->>B: 0 at t=4
+  Note over X: LP of A write, x becomes 1
+  C->>X: invoke read x at t=5
+  Note over X: LP of C read, returns 1
+  X-->>A: ok at t=10
+  X-->>C: 1 at t=12

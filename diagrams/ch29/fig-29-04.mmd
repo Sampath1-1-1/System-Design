@@ -1,0 +1,10 @@
+%% Figure 29.4 — Lifecycle of a task under re-execution and speculation
+stateDiagram-v2
+  [*] --> Idle
+  Idle --> Running: scheduled on a worker
+  Running --> Completed: output committed
+  Running --> Idle: worker lost or task error
+  Running --> Speculating: slow near end of phase
+  Speculating --> Completed: first attempt to finish wins
+  Completed --> Idle: map output lost with its node
+  Completed --> [*]: job finished

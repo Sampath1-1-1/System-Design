@@ -1,0 +1,44 @@
+%% Figure 25.10 — The consistency hierarchy: transactional isolation (left) and single-object consistency (right)
+flowchart TB
+  SS["Strict serializable"]
+  subgraph TX["Transaction isolation, multi-object"]
+    SER[Serializable]
+    RR["Repeatable read"]
+    SI["Snapshot isolation"]
+    CS["Cursor stability"]
+    MAV["Monotonic atomic view"]
+    RC["Read committed"]
+    RU["Read uncommitted"]
+  end
+  subgraph SO["Consistency, single-object"]
+    LIN[Linearizable]
+    SEQ[Sequential]
+    CAU[Causal]
+    PRAM["PRAM"]
+    WFR["Writes follow reads"]
+    MR["Monotonic reads"]
+    MW["Monotonic writes"]
+    RYW["Read your writes"]
+  end
+  SS --> SER
+  SS --> LIN
+  SER --> RR
+  SER --> SI
+  RR --> CS
+  CS --> RC
+  SI --> MAV
+  MAV --> RC
+  RC --> RU
+  LIN --> SEQ
+  SEQ --> CAU
+  CAU --> PRAM
+  CAU --> WFR
+  PRAM --> MR
+  PRAM --> MW
+  PRAM --> RYW
+  classDef unavailable fill:#f6d5d5,stroke:#a33
+  classDef sticky fill:#fbe9c6,stroke:#a70
+  classDef total fill:#d9f0d9,stroke:#383
+  class SS,SER,RR,SI,CS,LIN,SEQ unavailable
+  class CAU,PRAM,RYW sticky
+  class MAV,RC,RU,WFR,MR,MW total

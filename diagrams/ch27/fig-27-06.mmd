@@ -1,0 +1,12 @@
+%% Figure 27.6 — An all-to-all causality violation
+sequenceDiagram
+  participant A as Leader A
+  participant B as Leader B
+  participant C as Leader C
+  A->>A: insert row 9
+  A-)B: insert row 9, fast link
+  B->>B: update row 9 to paid
+  B-)C: update row 9, fast link
+  Note over C: update arrives for a row it lacks
+  A-)C: insert row 9, slow link
+  Note over C: insert arrives late

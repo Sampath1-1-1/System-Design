@@ -848,8 +848,7 @@ What to notice:
 
 1. From the table, at $t = 10$ ms: $(R, W) = (1, 1)$ gives 0.9600, $(1, 2)$ gives 0.9792, $(2, 1)$ gives 0.9989.
 2. Only $(2, 1)$ meets 99%. It also keeps writes at one acknowledgment.
-3. Cost: every read waits for the second-fastest of three responses instead of the fastest. With legs averaging 0.75 ms each way that adds well under a millisecond at the median, but the read p99 rises with the second-order statistic.
-4. The author's own writes still need read-your-writes (§25.6), which the probability does not provide.
+3. Cost: every read waits for the second-fastest of three responses, which raises read p99. The author's own writes still need read-your-writes (§25.6).
 
 **Interpretation.** PBS turns "eventually" into a curve you can put in a service level objective. **Engineering implication.** Measure the four WARS distributions in your deployment, rerun the simulation and choose $(R, W)$ per table; revisit when disks, load or topology change.
 :::
@@ -859,7 +858,7 @@ What to notice:
 Eventual consistency is the right default for data where a short window of staleness is harmless and availability or latency dominates: counters of likes and views, recommendation features, product catalogs, DNS, caches, shopping carts with merge semantics. It is the wrong choice for anything whose correctness depends on a single current value: balances, inventory reservations, uniqueness, locks. Many systems combine the two per operation, which is the theme of §25.10.
 
 ::: mistake
-**Mistake — "Eventual consistency means data is usually stale."** In well-run systems most reads are fresh; PBS-style measurements typically show staleness windows of milliseconds. The danger is not frequent staleness but *unbounded* staleness during incidents (a partitioned replica, a stalled replication stream) and the anomalies (reading backwards, missing own write) that the bare model permits. Add session guarantees and monitor replication lag.
+**Mistake — "Eventual consistency means data is usually stale."** Most reads are usually fresh. The danger is *unbounded* staleness during incidents (a partitioned replica, a stalled replication stream) and the anomalies the bare model permits. Add session guarantees and monitor replication lag.
 :::
 
 ### 25.7.4 Models compared
@@ -943,7 +942,7 @@ Brewer conjectured in a 2000 keynote that a web service cannot be simultaneously
 **Partition tolerance (P)** is not a property the system chooses; it is the assumption that the network may lose arbitrarily many messages between nodes.
 :::
 
-Each term is narrower than its everyday meaning. "C" is linearizability of a single register, not ACID consistency or serializability. "A" requires *every* non-failing node to answer, with no time bound; a system that answers 99.99% of requests within 100 ms but refuses requests on a minority side is not "available" in the CAP sense, and a system that answers after an hour is. "P" is a network fault, not a design option.
+Each term is narrower than its everyday meaning. "C" is linearizability of a single register, not ACID consistency. "A" requires *every* non-failing node to answer, with no time bound: a system that answers 99.99% of requests in 100 ms but refuses the minority side is not CAP-available, and one that answers after an hour is. "P" is a network fault, not a design option.
 
 #### How the proof works
 

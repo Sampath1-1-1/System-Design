@@ -1,0 +1,12 @@
+%% Figure 24.9 — Last-writer-wins discards the later write when one clock runs fast
+sequenceDiagram
+  participant U as User
+  participant A as Node A, clock +150 ms
+  participant B as Node B, correct clock
+  participant R as Replica
+  U->>A: set caption v1 at true 10.000
+  A->>R: v1 stamped 10.150
+  U->>B: set caption v2 at true 10.050
+  B->>R: v2 stamped 10.050
+  Note over R: 10.050 is less than 10.150, so v2 is discarded
+  R-->>U: later reads return v1

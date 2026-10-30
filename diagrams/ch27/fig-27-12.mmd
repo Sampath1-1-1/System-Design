@@ -1,0 +1,11 @@
+%% Figure 27.12 — Choosing a recovery path
+flowchart TD
+  S([Replica returns or is replaced]) --> D1{"Local disk<br/>intact?"}
+  D1 -->|yes| D2{"Log retained since<br/>last applied position?"}
+  D1 -->|no| RB["Rebuild: stream data<br/>from peers in parallel"]
+  D2 -->|yes| LC["Log catch-up:<br/>replay missed entries"]
+  D2 -->|no| SN["Install snapshot,<br/>then replay log"]
+  RB --> V["Verify with<br/>Merkle repair"]
+  SN --> V
+  LC --> J["Rejoin read path<br/>when lag within budget"]
+  V --> J

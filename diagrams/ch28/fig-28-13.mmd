@@ -1,0 +1,12 @@
+%% Figure 28.13 — Calvin's architecture
+flowchart TB
+  C([Clients]) -->|"transaction requests"| SEQ
+  subgraph R1["Replica 1"]
+    SEQ[["Sequencers: 10 ms epoch batches"]]
+    SEQ -->|"ordered batch"| SCH1[Scheduler partition 1]
+    SEQ -->|"ordered batch"| SCH2[Scheduler partition 2]
+    SCH1 --> ST1[(Storage partition 1)]
+    SCH2 --> ST2[(Storage partition 2)]
+    SCH1 <-->|"local read results"| SCH2
+  end
+  SEQ -.->|"Paxos or async replication of input log"| R2["Replica 2: same partitions,<br/>same log, same result"]

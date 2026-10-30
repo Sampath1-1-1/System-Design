@@ -1,0 +1,20 @@
+%% Figure 25.7 — Read-your-writes and monotonic-reads violations behind a load balancer
+sequenceDiagram
+  participant U as User session
+  participant LB as Load balancer
+  participant R1 as Replica 1, up to date
+  participant R2 as Replica 2, lagging
+  U->>LB: POST comment c42
+  LB->>R1: write c42
+  R1-->>U: 201 created
+  U->>LB: GET thread
+  LB->>R2: read thread
+  R2-->>U: thread without c42
+  Note over U,R2: RYW violated, own comment missing
+  U->>LB: GET thread again
+  LB->>R1: read thread
+  R1-->>U: thread with c42 and c43
+  U->>LB: GET thread again
+  LB->>R2: read thread
+  R2-->>U: thread without c42 or c43
+  Note over U,R2: MR violated, time went backwards

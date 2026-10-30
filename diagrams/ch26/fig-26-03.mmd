@@ -1,0 +1,19 @@
+%% Figure 26.3 — Lease-based leader election through a coordination service
+sequenceDiagram
+  participant A as Candidate A
+  participant B as Candidate B
+  participant K as Coordination store
+  A->>K: create leader key, lease 15 s
+  K-->>A: OK, revision 101
+  B->>K: create leader key, lease 15 s
+  K-->>B: FAILED, held by A
+  B->>K: watch leader key
+  loop every 2 s
+    A->>K: renew lease
+    K-->>A: OK
+  end
+  Note over A: A crashes, renewals stop
+  Note over K: 15 s later lease expires, key deleted
+  K-->>B: watch event: key deleted
+  B->>K: create leader key, lease 15 s
+  K-->>B: OK, revision 140

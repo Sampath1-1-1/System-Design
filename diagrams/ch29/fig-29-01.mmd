@@ -1,0 +1,11 @@
+%% Figure 29.1 — A Unix pipeline and the distributed batch job that generalizes it
+flowchart LR
+  subgraph Unix["One machine"]
+    F[(access.log)] --> A1[awk extract] --> S1[sort] --> U1[uniq -c] --> O1[(top URLs)]
+  end
+  subgraph Cluster["Cluster of N nodes"]
+    B[(Input blocks<br/>HDFS or S3)] --> M1[Map tasks x M]
+    M1 -->|partition by key| SH[[Shuffle<br/>network all-to-all]]
+    SH --> R1[Reduce tasks x R]
+    R1 --> O2[(Output files<br/>new, immutable)]
+  end

@@ -1,0 +1,12 @@
+%% Figure 27.4 — A CRAQ read that hits a dirty object
+sequenceDiagram
+  participant R as Reader
+  participant M as Middle node
+  participant T as Tail
+  Note over M: holds v7 clean and v8 dirty
+  R->>M: read key k
+  M->>T: version query for k
+  T-->>M: last committed is v7
+  M-->>R: value at v7
+  T-)M: ack v8 committed
+  Note over M: v8 now clean, v7 deleted

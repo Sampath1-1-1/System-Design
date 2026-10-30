@@ -1,0 +1,20 @@
+%% Figure 29.9 — A shuffle crossing rack uplinks
+flowchart LR
+  subgraph RackA["Rack A: 20 nodes"]
+    MA[Map tasks] --> DA[(Shuffle files<br/>local disk)]
+    RA[Reduce tasks]
+  end
+  subgraph RackB["Rack B: 20 nodes"]
+    MB[Map tasks] --> DB2[(Shuffle files<br/>local disk)]
+    RB[Reduce tasks]
+  end
+  DA -->|in-rack fetch| RA
+  DA -->|cross-rack fetch| TA[ToR switch A]
+  TA -->|oversubscribed uplink| SP[Spine]
+  SP --> TB[ToR switch B]
+  TB --> RB
+  DB2 -->|in-rack fetch| RB
+  DB2 -->|cross-rack fetch| TB
+  TB --> SP
+  SP --> TA
+  TA --> RA
