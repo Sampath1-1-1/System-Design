@@ -79,22 +79,22 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part IV — Scalability and Performance
 
 **Ch 18 — Scalability** (L2, A)
-18.3 Vertical scaling · 18.4 Horizontal scaling · 18.5 Stateless vs stateful services · 18.6 Load distribution · 18.7 Bottleneck identification · 18.8 Scaling application servers · 18.9 Scaling databases (overview) · 18.10 Scale cube (X/Y/Z axes) · 18.11 Capacity planning
+18.3 Vertical scaling · 18.4 Horizontal scaling · 18.5 Stateless vs stateful services · 18.6 Load distribution · 18.7 Bottleneck identification · 18.8 Scaling application servers · 18.9 Scaling databases (overview) · 18.10 The scale cube · 18.11 Capacity planning
 
 **Ch 19 — Load Balancing** (L2, A)
-19.3 Layer 4 vs Layer 7 · 19.4 Algorithms: round robin, weighted RR, least connections, least response time, power of two choices, consistent hashing, Maglev · 19.5 Health checks · 19.6 Session affinity · 19.7 Active–passive and active–active · 19.8 Load balancer failure and redundancy (VRRP, anycast, ECMP) · 19.9 DNS and global server load balancing · 19.10 Client-side load balancing
+19.3 Layer 4 versus layer 7 load balancing · 19.4 Load-balancing algorithms · 19.5 Health checks · 19.6 Session affinity · 19.7 Active–passive and active–active balancer pairs · 19.8 Balancer failure and redundancy · 19.9 DNS and global server load balancing · 19.10 Client-side load balancing · 19.11 Choosing a load balancer: products compared
 
 **Ch 20 — Caching** (L2, A)
-20.3 Cache fundamentals and hit ratio · 20.4 CPU cache vs application cache · 20.5 Where to cache (client, CDN, gateway, application, database) · 20.6 Redis and Memcached internals · 20.7 Cache-aside, read-through, write-through, write-back, write-around · 20.8 TTL · 20.9 Eviction: LRU, LFU, ARC, TinyLFU · 20.10 Cache invalidation · 20.11 Cache stampede · 20.12 Cache penetration · 20.13 Cache avalanche · 20.14 Distributed caching and consistent hashing · 20.15 Hot keys · 20.16 Redis vs Memcached
+20.3 Cache fundamentals and hit ratio · 20.4 CPU cache versus application cache · 20.5 Where to cache · 20.6 Redis and Memcached internals · 20.7 Caching patterns: cache-aside, read-through, write-through, write-back, write-around · 20.8 Time to live (TTL) · 20.9 Eviction: LRU, LFU, ARC and TinyLFU · 20.10 Cache invalidation · 20.11 Cache stampede · 20.12 Cache penetration · 20.13 Cache avalanche · 20.14 Distributed caching and consistent hashing · 20.15 Hot keys · 20.16 Redis versus Memcached
 
 **Ch 21 — Content Delivery Networks** (L2, A)
-21.3 CDN architecture · 21.4 Edge, mid-tier and origin · 21.5 Cache hierarchy and origin shielding · 21.6 Cache keys and invalidation/purge · 21.7 Static vs dynamic content · 21.8 Video delivery (HLS/DASH, adaptive bitrate) · 21.9 Edge computing on CDNs · 21.10 Netflix Open Connect (public material)
+21.3 CDN architecture · 21.4 Edge, mid-tier and origin · 21.5 Cache hierarchy and origin shielding · 21.6 Cache keys, HTTP caching headers and invalidation · 21.7 Static versus dynamic content · 21.8 Video delivery · 21.9 Edge computing on CDNs · 21.10 Netflix Open Connect · 21.11 CDN security
 
 **Ch 22 — API and Traffic Management** (L2–L3, A)
-22.3 Rate limiting · 22.4 Token bucket · 22.5 Leaky bucket · 22.6 Fixed window · 22.7 Sliding window log and sliding window counter · 22.8 Distributed rate limiting · 22.9 Throttling and load shedding · 22.10 Backpressure · 22.11 Timeouts and deadlines · 22.12 Retries with exponential backoff and jitter; retry budgets · 22.13 Circuit breakers · 22.14 Bulkheads · 22.15 Idempotency and idempotency keys
+22.3 Rate limiting · 22.4 Token bucket · 22.5 Leaky bucket · 22.6 Fixed window · 22.7 Sliding window log and sliding window counter · 22.8 Distributed rate limiting · 22.9 Throttling and load shedding · 22.10 Backpressure · 22.11 Timeouts and deadlines · 22.12 Retries with exponential backoff and jitter · 22.13 Circuit breakers · 22.14 Bulkheads · 22.15 Idempotency and idempotency keys
 
 **Ch 23 — Performance Engineering** (L3, A)
-23.3 Performance methodology (USE, RED, golden signals) · 23.4 Profiling CPU and memory · 23.5 Load testing and benchmarking pitfalls (coordinated omission) · 23.6 Tail latency at scale · 23.7 Hedged and tied requests · 23.8 Batching, pipelining and compression · 23.9 Garbage collection and runtime effects · 23.10 Capacity models from measurements
+23.3 Performance methodology · 23.4 Profiling CPU and memory · 23.5 Load testing and benchmarking pitfalls · 23.6 Tail latency at scale · 23.7 Hedged and tied requests · 23.8 Batching, pipelining and compression · 23.9 Garbage collection and runtime effects · 23.10 Capacity models from measurements
 
 ## Part V — Distributed Systems
 

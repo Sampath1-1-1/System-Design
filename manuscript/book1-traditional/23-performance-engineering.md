@@ -735,7 +735,7 @@ Within a server, mitigations are **service classes** (interactive before batch),
 
 #### First-principles explanation
 
-You order a taxi through one app; if no driver accepts within five minutes, you also order through a second and take whichever car comes first. An occasional cancelled booking buys protection from the rare 40-minute wait. The key choice is the delay: order from both at once and you double the load on drivers; wait too long and the hedge is useless.
+You order a taxi through one app; if no driver accepts within five minutes, you also order through a second and take whichever car comes first. An occasional canceled booking buys protection from the rare 40-minute wait. The key choice is the delay: order from both at once and you double the load on drivers; wait too long and the hedge is useless.
 
 **Figure 23.8 — A hedged request.**
 
@@ -1281,6 +1281,8 @@ $$n = \left\lceil \frac{\lambda_{\text{peak}}\,(1 + g)}{u \cdot X_{\max}} \right
 | $u$ | Target fraction of $X_{\max}$ at peak (headroom for queueing and variance) | dimensionless |
 | $Z$ | Number of availability zones, sized to survive the loss of one | count |
 :::
+
+This is the provisioning formula of §18.11.2 with $c\,u_{target}$ replaced by the fitted $u \cdot X_{\max}$, the growth term written as one allowance $g$ for the horizon, and the zone term rounded per zone so that every zone runs the same count (it can therefore exceed §18.11.2's $\lceil N \cdot Z/(Z-1) \rceil$ by up to $Z - 2$ instances: 33 rather than 32 in the example below).
 
 ::: example
 **Worked example — Sizing from the fitted model.** Forecast peak 150,000 RPS, growth allowance 30%, $X_{\max} = 13{,}588$ req/s per instance from the fit, target $u = 0.7$, three zones.

@@ -4,7 +4,7 @@
 
 Every service eventually receives more requests than it can handle: from success (a launch), abuse (a scraper) or, very often, itself (a slow database makes callers time out, they retry, and the retries triple the load). As utilization approaches 100%, queueing delay grows without bound (§4.10.3); this chapter is the toolbox for staying on the safe side of that curve. It covers **rate limiting** (deciding how much each client may send), **load shedding** and **backpressure** (what a server does when total demand exceeds capacity), the client-side disciplines of **timeouts, deadlines, retries, circuit breakers and bulkheads**, and finally **idempotency keys**, which make retries safe for operations that must never happen twice, such as charging a card.
 
-The running example is PhotoShare (Chapter 1), which now offers a public API and sells a "PhotoShare Pro" subscription through an external payment provider: the API needs quotas, the upload service needs overload protection, and the purchase must never charge twice.
+The running example is PhotoShare (Chapter 1), which now offers a public API and sells a "PhotoShare Pro" subscription through an external payment provider: the API needs quotas, the upload service needs overload protection, and the purchase must never charge twice. The traffic figures in this chapter describe PhotoShare several years after the v3 stage of §1.9, with rates 15–30× higher than Chapter 1's; each worked example states its own capacity and load, so treat them as independent scenarios rather than one consistent fleet.
 
 ## 22.1 Learning objectives
 
@@ -1081,7 +1081,7 @@ flowchart LR
 **Definition — Backpressure.** A flow-control mechanism in which a slower downstream component signals upstream components to reduce their sending rate, by blocking, by advertising available capacity, or by rejecting, so that work in progress stays bounded instead of piling up in unbounded buffers.
 :::
 
-When a packing station falls behind, the assembly line stops feeding it rather than heaping goods on the floor (an unbounded queue). Backpressure is that stop signal travelling upstream.
+When a packing station falls behind, the assembly line stops feeding it rather than heaping goods on the floor (an unbounded queue). Backpressure is that stop signal traveling upstream.
 
 TCP is the canonical example (§7.7.6): when the receiver stops reading, its advertised window drops to zero and the sender's `write()` blocks. Systems break the chain by inserting **unbounded** buffers (a list a handler appends to, a task per message), turning backpressure into memory growth and latency.
 
@@ -1119,7 +1119,7 @@ $$Q_{\max} = \mu \times D_{\text{queue}}$$
 :::
 
 ::: example
-**Worked example — Sizing the upload service's request queue.** Workers complete $\mu = 500$ requests/s; the gateway's timeout leaves at most 200 ms for queueing.
+**Worked example — Sizing the upload service's request queue.** Consider a single upload cell (half the fleet of §22.9's example) whose workers complete $\mu = 500$ requests/s; the gateway's timeout leaves at most 200 ms for queueing.
 
 1. $Q_{\max} = 500 \times 0.2 = 100$ requests.
 2. A request arriving behind 100 others waits $100/500 = 0.2$ s, the full budget; request 101 should be rejected immediately rather than queued to time out.
@@ -1554,7 +1554,7 @@ flowchart LR
 1. Profile: 300 RPS × 0.020 s = 6 in flight → pool 10.
 2. Recommendations: 100 RPS × 0.150 s = 15 → pool 25.
 3. Payment status: 20 RPS × 0.400 s = 8 → pool 15.
-4. Incident: recommendations slow to 3 s. Demand becomes $100 \times 3 = 300$ concurrent calls. In a single shared 200-thread pool, all 200 threads would block on recommendations within about 2 s and the whole feed would stop. With bulkheads, 25 slots are busy, about 275 RPS-worth of recommendation calls fail fast, and profile and payment calls use their own 25 slots normally.
+4. Incident: recommendations slow to 3 s. Demand becomes $100 \times 3 = 300$ concurrent calls. In a single shared 200-thread pool, all 200 threads would block on recommendations within about 2 s and the whole feed would stop. With bulkheads, the 25 slots stay busy and complete only $25/3 \approx 8$ recommendation calls per second, so about 92 of the 100 per second fail fast (the 275 calls of excess concurrency are never admitted), and profile and payment calls use their own 10 and 15 slots normally.
 
 **Interpretation.** Bulkheads convert a total outage into a partial degradation. **Engineering implication.** Give every remote dependency its own concurrency limit, combine it with timeouts and a breaker, and design the fallback the user sees when the bulkhead rejects.
 :::

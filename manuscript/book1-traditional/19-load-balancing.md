@@ -327,7 +327,7 @@ $$L_i = \lambda_i \, W_i \quad\Longrightarrow\quad \lambda_i = \frac{L_i}{W_i}$$
 :::
 
 ::: warning
-**The fast-failure sinkhole.** A backend that fails instantly (returns `503` in 1 ms because its database is down) has the fewest in-flight requests, so least connections sends it *more* traffic. The Google SRE book describes the same trap for "least-loaded" balancing [Beyer et al. 2016, ch. 20]. Pair load-aware algorithms with passive health checks that count errors (§19.5.3).
+**The fast-failure sinkhole.** A backend that fails instantly (returns `503` in 1 ms because its database is down) has the fewest in-flight requests, so least connections sends it *more* traffic. The Google SRE book describes the same trap for "least-loaded" balancing [Beyer et al. 2016, ch. 20]. Pair load-aware algorithms with passive health checks that count errors (§19.5.1).
 :::
 
 ### 19.4.3 Least response time and EWMA
@@ -1129,7 +1129,7 @@ $$U_{\max} = \frac{N - k}{N}$$
 2. $N = 5$: $U_{\max} = 80\%$; normal load $6$ Gbit/s $= 60\%$, leaving margin.
 3. An active–passive pair would need two 30 Gbit/s balancers, with $U_{\max} = 50\%$ of the installed hardware.
 
-*Interpretation.* Active–passive wastes half of the hardware but is simple; active–active wastes $k/N$, which shrinks as $N$ grows. *Engineering implication.* Use active–passive for small sites and appliances, active–active behind ECMP or anycast once traffic exceeds one box. Either way, **test** failover: a standby that has never taken traffic is a hope, not a plan.
+*Interpretation.* Active–passive wastes half of the hardware but is simple; active–active wastes $k/N$, which shrinks as $N$ grows. *Engineering implication.* Use active–passive for small sites and appliances, active–active behind ECMP or anycast once traffic exceeds one balancer. Either way, **test** failover: a standby that has never taken traffic is a hope, not a plan.
 :::
 
 ## 19.8 Balancer failure and redundancy

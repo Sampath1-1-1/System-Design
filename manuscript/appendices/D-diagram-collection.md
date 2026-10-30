@@ -3743,7 +3743,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-  C([Clients]) -->|DNS answer| DNS{{GSLB DNS}}
+  C([Clients]) -->|DNS query| DNS{{GSLB DNS}}
   C -->|anycast VIP| E1[Edge site A]
   C -->|anycast VIP| E2[Edge site B]
   E1 -->|ECMP| L4A[L4 Maglev tier]
@@ -3964,6 +3964,86 @@ sequenceDiagram
   A->>R: SET row:9001 with TTL
 ```
 
+**Figure 20.12 — W-TinyLFU: window, admission filter and segmented main cache.**
+
+```mermaid
+flowchart LR
+  REQ([Access key]) -->|record| CMS[[Frequency sketch<br/>4-bit Count-Min, aged]]
+  REQ -->|miss: insert| WIN[Window LRU<br/>1% of capacity]
+  WIN -->|window victim = candidate| ADM{TinyLFU admission<br/>freq candidate above<br/>freq victim?}
+  CMS -.->|estimates| ADM
+  ADM -->|yes: admit| PROB[Probation SLRU<br/>20% of main]
+  ADM -->|no| DROP([Candidate dropped])
+  PROB -->|hit: promote| PROT[Protected SLRU<br/>80% of main]
+  PROT -->|overflow: demote| PROB
+  PROB -->|victim on admission| EV([Evicted])
+```
+
+**Figure 20.13 — CDC-driven invalidation across regions (after Facebook's mcsqueal).**
+
+```mermaid
+flowchart LR
+  W([Web server]) -->|SQL write| DB[(MySQL primary)]
+  DB -->|commit log| SQ[Invalidation daemon<br/>tails log, extracts keys]
+  SQ -.->|batched deletes| MR[Delete router<br/>mcrouter]
+  MR -.->|DEL keys| C1[(Cache cluster 1)]
+  MR -.->|DEL keys| C2[(Cache cluster 2)]
+  DB -->|replication| RDB[(Replica, other region)]
+  RDB -->|commit log| SQ2[Invalidation daemon<br/>in that region]
+  SQ2 -.->|DEL keys| C3[(Region 2 caches)]
+```
+
+**Figure 20.14 — Stampede protection with a lease: one recompute, others wait or serve stale.**
+
+```mermaid
+sequenceDiagram
+  participant A as Client A
+  participant B as Client B
+  participant C as Cache
+  participant D as Database
+  A->>C: GET k
+  C-->>A: miss, lease token 7
+  B->>C: GET k
+  C-->>B: miss, no token, retry in 50 ms
+  A->>D: expensive query
+  D-->>A: v2
+  A->>C: SET k v2 with token 7
+  C-->>A: stored
+  B->>C: GET k after backoff
+  C-->>B: v2 hit
+```
+
+**Figure 20.15 — Defenses against cache penetration.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|GET item 98765| S[App service]
+  S --> BF{Bloom filter<br/>may exist?}
+  BF -->|definitely absent| NF([404, no backend work])
+  BF -->|maybe| R[(Cache)]
+  R -->|hit, value or NULL marker| S
+  R -->|miss| DB[(Database)]
+  DB -->|not found| NEG[Store NULL marker<br/>TTL 60 s]
+  NEG -.-> R
+  DB -->|row| S
+```
+
+**Figure 20.16 — Hot-key mitigation with L1 caches and replicated keys.**
+
+```mermaid
+flowchart LR
+  U([Clients]) -->|HTTPS| LB[Load balancer]
+  LB --> S1[App 1<br/>L1 TTL 1 s]
+  LB --> S2[App 2<br/>L1 TTL 1 s]
+  LB --> S3[App n<br/>L1 TTL 1 s]
+  S1 -->|L1 miss: GET post:7 copy 0| N1[(Cache node A)]
+  S2 -->|L1 miss: GET post:7 copy 1| N2[(Cache node B)]
+  S3 -->|L1 miss: GET post:7 copy 2| N3[(Cache node C)]
+  HK[[Hot-key detector<br/>Count-Min top-k]] -.->|mark post:7 hot| S1
+  HK -.->|mark hot| S2
+  HK -.->|mark hot| S3
+```
+
 ## Chapter 21 — Content Delivery Networks
 
 **Figure 21.1 — A CDN: users, PoPs, mid-tier and origin.**
@@ -4139,7 +4219,7 @@ flowchart LR
   AWS -->|2 URLs of chosen OCAs| C
   C -->|3 HTTPS video segments| OCA1[Embedded OCA in ISP]
   C -.->|fallback| OCA2[OCA at exchange point]
-  S3[(Origin storage in AWS)] -.->|nightly fill window| OCA2
+  S3[(Origin storage in AWS)] -.->|off-peak fill window| OCA2
   OCA2 -.->|tier fill| OCA1
   OCA1 -.->|health, cache contents| AWS
 ```
@@ -4277,6 +4357,100 @@ flowchart LR
   K -->|writes| DB[(Database)]
   K -.->|request n| T
   T -.->|request n| P
+```
+
+**Figure 22.10 — Deadline propagation through the PhotoShare Pro purchase path.**
+
+```mermaid
+sequenceDiagram
+  participant A as Mobile app
+  participant G as API gateway
+  participant O as Order service
+  participant P as Payment service
+  participant X as Payment provider
+  A->>G: POST /subscriptions, timeout 1000 ms
+  Note over G: budget 1000, spends 20, keeps 10
+  G->>O: deadline in 970 ms
+  Note over O: DB and fraud check 120, keeps 20
+  O->>P: deadline in 830 ms
+  Note over P: spends 30, keeps 20
+  P->>X: charge, timeout 780 ms
+  X--xP: no answer by 780 ms
+  P-->>O: 504, outcome unknown
+  O-->>G: 503 with retry hint
+  G-->>A: 503 within 1000 ms
+```
+
+**Figure 22.11 — Retry amplification in a four-layer call graph.**
+
+```mermaid
+flowchart LR
+  U([User request]) --> L1["App SDK<br/>3 attempts"]
+  L1 -->|up to 3| L2["API gateway<br/>3 attempts each"]
+  L2 -->|up to 9| L3["Feed service<br/>3 attempts each"]
+  L3 -->|up to 27| L4["Profile service<br/>3 attempts each"]
+  L4 -->|up to 81| DB[(Overloaded database)]
+```
+
+**Figure 22.12 — Circuit breaker state machine.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Closed
+  Closed --> Closed: success or failure below threshold
+  Closed --> Open: failure rate at or above threshold
+  Open --> Open: calls fail fast
+  Open --> HalfOpen: cool-down elapsed
+  HalfOpen --> Closed: all trial calls succeed
+  HalfOpen --> Open: any trial call fails
+```
+
+**Figure 22.13 — Bulkheads isolating dependencies in the feed service.**
+
+```mermaid
+flowchart LR
+  C([Requests]) --> F[Feed service]
+  F --> P1["Pool A: 10<br/>profile calls"]
+  F --> P2["Pool B: 25<br/>recommendation calls"]
+  F --> P3["Pool C: 15<br/>payment-status calls"]
+  P1 -->|gRPC| S1[Profile service]
+  P2 -->|gRPC| S2[Recommendation service]
+  P3 -->|HTTPS| S3[Payments service]
+  S2 -.->|slow: 3 s| X[Pool B full, fail fast]
+```
+
+**Figure 22.14 — An idempotent purchase retried after a lost response.**
+
+```mermaid
+sequenceDiagram
+  participant A as Mobile app
+  participant S as Subscription API
+  participant K as Key store
+  participant P as Payment provider
+  A->>A: key = new UUID, saved with the cart
+  A->>S: POST /subscriptions, Idempotency-Key k1
+  S->>K: insert k1 in_progress with fingerprint
+  S->>P: charge, provider key k1
+  P-->>S: charged ch_9
+  S->>K: k1 completed, store 201 and body
+  S--xA: response lost - network drop
+  A->>S: retry POST, same key k1
+  S->>K: lookup k1
+  K-->>S: completed, fingerprint matches
+  S-->>A: stored 201 with charge ch_9
+```
+
+**Figure 22.15 — Lifecycle of an idempotency-key record.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> InProgress: first request claims key
+  InProgress --> Completed: work and response commit atomically
+  InProgress --> InProgress: concurrent duplicate gets 409
+  InProgress --> InProgress: lease expired, retry takes over
+  Completed --> Completed: retry gets stored response
+  Completed --> Completed: different body gets 422
+  Completed --> [*]: retention TTL expires
 ```
 
 ## Chapter 23 — Performance Engineering

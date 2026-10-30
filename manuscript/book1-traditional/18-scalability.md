@@ -816,7 +816,7 @@ $$D(t) = D_0 (1 + g)^t \qquad t_{exhaust} = \frac{\ln (C_{usable} / D_0)}{\ln (1
 :::
 
 ::: example
-**Worked example — When must QuickBite start partitioning orders?** The order database's WAL disk caps it at about 500 orders/s (§2.6); at $u_{target} = 0.6$, $C_{usable} = 300$ orders/s. Today $D_0 = 56$ orders/s at 2 million users, growing 8% per month.
+**Worked example — When must QuickBite start partitioning orders?** The order database's WAL disk caps it at about 500 orders/s (§2.6); at $u_{target} = 0.6$, $C_{usable} = 300$ orders/s. Today $D_0 = 56$ orders/s at 2 million users (the unrounded 55.6 of §2.11, which Chapter 2 rounds up to 60), growing 8% per month.
 
 1. $C_{usable} / D_0 = 300 / 56 = 5.36$; $\ln 5.36 = 1.678$; $\ln 1.08 = 0.0770$.
 2. $t_{exhaust} = 1.678 / 0.0770 = 21.8$ months.

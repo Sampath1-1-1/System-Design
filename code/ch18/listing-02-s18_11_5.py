@@ -1,3 +1,4 @@
+# Extracted from manuscript/book1-traditional/18-scalability.md §18.11.5 (listing 2). Edit the manuscript, not this file.
 """QuickBite capacity plan from 1k to 10M daily active users (Section 18.11).
 
 All inputs are teaching assumptions carried over from Chapter 2 (Table 2.10, Section 2.11).

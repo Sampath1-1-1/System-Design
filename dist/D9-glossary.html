@@ -200,6 +200,12 @@ transactions do not see each other’s partial effects; at the strongest
 level, the outcome equals some serial execution.
 <strong>Durability</strong> — once a commit is acknowledged, its effects
 survive crashes. <em>(§11.12)</em></p>
+<p><strong>Active–passive and active–active</strong> — In an
+<strong>active–passive</strong> pair, one balancer carries all traffic
+while a standby monitors it and takes over the VIP on failure. In
+<strong>active–active</strong>, all balancers carry traffic at once
+(spread by DNS, ECMP or anycast), and survivors absorb a failed member’s
+share. <em>(§19.7)</em></p>
 <p><strong>Active recall</strong> — Deliberately retrieving information
 from memory without looking at the source, for example by answering a
 question, drawing a diagram or explaining aloud. Its measured benefit
@@ -267,6 +273,12 @@ return <code>401</code>; AuthZ failures return <code>403</code>.
 prefix a user has typed so far, returns a short ranked list (typically
 5–10) of likely completions, usually popular past queries or entity
 names, on every keystroke or after a short pause. <em>(§16.9.1)</em></p>
+<p><strong>Autoscaling</strong> — Automatically changing the number of
+instances of a service in response to a measured or forecast signal,
+within configured minimum and maximum bounds. <strong>Reactive</strong>
+autoscaling responds to current metrics; <strong>scheduled</strong>
+autoscaling follows a calendar; <strong>predictive</strong> autoscaling
+acts on a forecast. <em>(§18.8.2)</em></p>
 <p><strong>Availability</strong> — The fraction of time (or of requests)
 for which a system serves correctly:
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><mtext mathvariant="normal">uptime</mtext><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">uptime</mtext><mo>+</mo><mtext mathvariant="normal">downtime</mtext><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">A = \text{uptime}/(\text{uptime} + \text{downtime})</annotation></semantics></math>,
@@ -282,6 +294,11 @@ per second, storage, bandwidth, memory, number of nodes). The aim is to
 be within a factor of about 2–3 of the truth with a few minutes of
 arithmetic. This section introduces the method. Chapter 89 is the full
 handbook. <em>(§2.11.1)</em></p>
+<p><strong>Backpressure</strong> — A flow-control mechanism in which a
+slower downstream component signals upstream components to reduce their
+sending rate, by blocking, by advertising available capacity, or by
+rejecting, so that work in progress stays bounded instead of piling up
+in unbounded buffers. <em>(§22.10)</em></p>
 <p><strong>Backward and forward compatibility</strong> —
 <strong>Backward compatibility</strong>: newer code can read data
 written by older code. <strong>Forward compatibility</strong>: older
@@ -376,16 +393,67 @@ each frame carries a <strong>pin count</strong> (how many threads are
 using it right now), a <strong>dirty flag</strong> (whether it differs
 from the disk copy) and bookkeeping for the <strong>replacement
 policy</strong> that chooses which page to evict. <em>(§13.4.1)</em></p>
+<p><strong>Bulkhead</strong> — Partitioning a service’s limited
+resources (threads, connections, memory, instances) into isolated pools,
+one per dependency, tenant or workload class, so that exhaustion of one
+pool cannot starve the others. <em>(§22.14)</em></p>
 <h2 id="c">C</h2>
+<p><strong>Cache</strong> — A store that holds copies of data whose
+authoritative version lives elsewhere (the <strong>backing
+store</strong> or <strong>source of truth</strong>), placed so that
+reading the copy is faster or cheaper than reading the original. A
+lookup that finds the data is a <strong>hit</strong>; one that does not
+is a <strong>miss</strong>. The <strong>cache hit ratio</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>h</mi><annotation encoding="application/x-tex">h</annotation></semantics></math>
+is hits divided by lookups; the <strong>miss ratio</strong> is
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mo>−</mo><mi>h</mi></mrow><annotation encoding="application/x-tex">1 - h</annotation></semantics></math>.
+<em>(§20.3.1)</em></p>
+<p><strong>Cache-aside</strong> — The application reads the cache first;
+on a miss it reads the database and populates the cache itself. On a
+write it updates the database and then <strong>deletes</strong>
+(invalidates) the cache entry. The cache never talks to the database.
+Also called <strong>look-aside</strong> or
+<strong>demand-filled</strong> caching. <em>(§20.7.1)</em></p>
+<p><strong>Cache avalanche</strong> — A large fraction of cache entries
+becomes unavailable at once, because many keys expire together or
+because cache nodes fail or restart, so the database suddenly receives
+the full read load. <em>(§20.13)</em></p>
 <p><strong>Cache coherence</strong> — The guarantee that all cores
 observe a single, consistent sequence of values for each memory
 location, even though each core keeps private copies in its own caches.
 <em>(§5.4.6)</em></p>
+<p><strong>Cache key</strong> — The value a cache uses to decide whether
+two requests may receive the same stored response. By default it is the
+method plus the full URL (scheme, host, path and query string), extended
+by any request headers listed in the response’s <code>Vary</code>
+header. <em>(§21.6.2)</em></p>
 <p><strong>Cache line</strong> — The fixed-size unit in which data moves
 between memory and caches. On x86-64 and most ARM server cores a line is
 64 bytes; some designs (for example Apple’s M-series cores) use 128
 bytes (as of 2024). A load of a single byte brings its whole line into
 the cache. <em>(§5.4.3)</em></p>
+<p><strong>Cache penetration</strong> — Requests for keys that do not
+exist in the database. Because there is nothing to cache, every such
+request misses and reaches the database. A bug or an attacker iterating
+random IDs can push the database’s full read load through the cache.
+<em>(§20.12)</em></p>
+<p><strong>Cache stampede (thundering herd, dog-piling)</strong> — When
+a popular entry expires or is evicted, many concurrent requests miss at
+once and all recompute or reload it, multiplying load on the backend
+exactly when it is busiest. <em>(§20.11)</em></p>
+<p><strong>Cache tiers</strong> — The <strong>edge</strong> tier is the
+set of PoPs that accept user connections. A <strong>mid-tier</strong>
+(also <em>parent</em>, <em>regional</em> or <em>upper-tier</em> cache)
+is a smaller set of larger caches that edges consult on a miss. An
+<strong>origin shield</strong> is a mid-tier designated as the single
+path to a given origin. The <strong>origin</strong> is the customer’s
+own infrastructure that holds the authoritative content.
+<em>(§21.4.1)</em></p>
+<p><strong>Capacity planning</strong> — The recurring process of
+forecasting demand, translating it into the resources needed to serve it
+within the service-level objective with stated headroom and redundancy,
+and acquiring those resources before they are needed, allowing for the
+lead time to obtain them. <em>(§18.11.1)</em></p>
 <p><strong>Central processing unit (CPU)</strong> — The hardware that
 executes a program’s <strong>instructions</strong>: simple operations
 such as “add these two numbers”, “load a value from memory address X”,
@@ -411,6 +479,12 @@ information as a dotted number with
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
 one-bits followed by zeros (<code>/26</code> =
 <code>255.255.255.192</code>). <em>(§7.4.2)</em></p>
+<p><strong>Circuit breaker</strong> — A client-side proxy for calls to a
+dependency that tracks recent failures and, when they cross a threshold,
+<strong>opens</strong>: it fails calls immediately without contacting
+the dependency for a cool-down period, then lets a few trial calls
+through (<strong>half-open</strong>) and <strong>closes</strong> again
+only if they succeed. <em>(§22.13)</em></p>
 <p><strong>Client–server architecture</strong> — A way of dividing a
 system into two roles: a <strong>client</strong>, which initiates
 requests on behalf of a user or another program, and a
@@ -418,6 +492,13 @@ requests on behalf of a user or another program, and a
 shared resources (data, computation) and returns responses. The two
 communicate over a network using an agreed <strong>protocol</strong>.
 <em>(§8.3.1)</em></p>
+<p><strong>Client-side load balancing</strong> — The calling process
+obtains the list of backend endpoints from service discovery (§34.7) and
+chooses a backend for each request itself, with no proxy in the path. A
+<strong>lookaside</strong> balancer is an external service that tells
+clients <em>which</em> backends to use (and with what weights) while the
+traffic still flows directly from client to backend.
+<em>(§19.10)</em></p>
 <p><strong>Clock rate</strong> — The frequency at which a core’s
 internal circuitry steps from one state to the next, measured in hertz
 (cycles per second). A 4 GHz core has a <strong>cycle time</strong> of 1
@@ -501,6 +582,17 @@ is the number of nodes. Both keys and nodes are hashed onto the same
 circular number space (the <strong>ring</strong>). Each key belongs to
 the first node found by moving clockwise from the key’s position [Karger
 et al. 1997]. <em>(§3.3.2)</em></p>
+<p><strong>Consistent hashing with bounded loads</strong> — A variant of
+consistent hashing in which every backend has a
+<strong>capacity</strong> of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">⌈</mo><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>+</mo><mi>ε</mi><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.167em"></mspace><mi>m</mi><mi>/</mi><mi>n</mi><mo stretchy="false" form="postfix">⌉</mo></mrow><annotation encoding="application/x-tex">\lceil (1+\varepsilon)\, m/n \rceil</annotation></semantics></math>
+for
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
+current items (requests, sessions) and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+backends. An item goes to the first backend clockwise from its hash that
+is below capacity, so overflow from a full backend walks on to the next
+[Mirrokni, Thorup &amp; Zadimoghaddam 2018]. <em>(§19.4.7)</em></p>
 <p><strong>Content-defined chunking (CDC)</strong> — Splitting a byte
 stream into variable-size chunks whose boundaries are chosen by the
 content itself: a rolling hash is computed over a small sliding window,
@@ -508,6 +600,12 @@ and a boundary is declared wherever the hash matches a pattern (for
 example, its low 13 bits equal a fixed value). Each chunk is then
 identified by a cryptographic hash of its bytes, so identical chunks are
 stored once (<strong>deduplication</strong>). <em>(§15.8.3)</em></p>
+<p><strong>Content delivery network (CDN)</strong> — A distributed
+system of caching reverse proxies (§7.12) deployed in many network
+locations, which serves content on behalf of an <strong>origin</strong>
+(the authoritative server for the content) from the location nearest
+each user, fetching from the origin only on a cache miss.
+<em>(§21.3.1)</em></p>
 <p><strong>Context diagram</strong> — A diagram that shows the whole
 system as a single box, surrounded by the people (actors) and external
 systems that interact with it, with each interaction labeled. Context
@@ -517,6 +615,12 @@ the C4 model [Brown C4]. <em>(§2.4.1)</em></p>
 thread running on a CPU core, saves its CPU state into its PCB, and
 loads the saved state of another thread so that it resumes where it left
 off. <em>(§6.4)</em></p>
+<p><strong>Coordinated omission</strong> — A measurement error in which
+the load generator, by waiting for slow responses before sending more
+requests, fails to send (and therefore fails to measure) the requests
+that would have experienced the slowness. The tester and the system
+“coordinate” to omit the worst samples. The term and diagnosis are due
+to Gil Tene [Tene, How NOT to Measure Latency]. <em>(§23.5.3)</em></p>
 <p><strong>Cost-based optimizer</strong> — The component that enumerates
 equivalent physical plans for a query (access paths, join orders, join
 algorithms), estimates each plan’s cost from <strong>statistics</strong>
@@ -628,6 +732,11 @@ changed since. Because verification needs only the public key,
 device controller read from or write to main memory directly, without
 the CPU copying each word; the CPU only sets up the transfer and is told
 when it finishes. <em>(§5.7.3)</em></p>
+<p><strong>Direct server return (DSR)</strong> — A forwarding mode in
+which the balancer delivers request packets to the backend but the
+backend sends responses <strong>directly to the client</strong>, using
+the VIP as its source address, bypassing the balancer on the return
+path. <em>(§19.3.1)</em></p>
 <p><strong>Distributed denial of service (DDoS)</strong> — An attack
 that makes a service unavailable by overwhelming some finite resource —
 network bandwidth, packet-processing capacity, connection-state tables,
@@ -666,6 +775,11 @@ year). It is quoted in nines like availability: “eleven nines of
 durability” means an annual loss probability of
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mo>−</mo><mn>11</mn></mrow></msup><annotation encoding="application/x-tex">10^{-11}</annotation></semantics></math>
 per object. <em>(§4.16.1)</em></p>
+<p><strong>Dynamic site acceleration (DSA)</strong> — Routing
+uncacheable requests through the CDN anyway, so that TCP and TLS
+terminate near the user and the edge forwards each request to the origin
+over pre-established, tuned, long-lived connections, sometimes along an
+overlay path chosen from measurements. <em>(§21.7.2)</em></p>
 <h2 id="e">E</h2>
 <p><strong>Elasticsearch cluster</strong> — A set of nodes that share
 one cluster state (index definitions, mappings and the location of every
@@ -741,11 +855,37 @@ allowed outbound connection is automatically permitted.
 <strong>Application-layer firewalls</strong>, including web application
 firewalls (WAFs), parse protocols such as HTTP to block malicious
 requests. <em>(§7.14)</em></p>
+<p><strong>Fixed window counter</strong> — A limiter that divides time
+into aligned windows of length
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math>
+(for example each clock minute), keeps one counter per key per window,
+and admits a request if the current window’s counter is below the limit
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>L</mi><annotation encoding="application/x-tex">L</annotation></semantics></math>.
+The counter resets at each window boundary. <em>(§22.6.1)</em></p>
 <p><strong>Forward secrecy</strong> — A property of a key-exchange
 protocol whereby compromise of a party’s long-term private key does not
 reveal session keys from past sessions. It is achieved by using fresh
 <strong>ephemeral</strong> key pairs for every session (the “E” in
 ECDHE) and deleting them afterward. <em>(§10.4.4)</em></p>
+<p><strong>Four golden signals</strong> — Google’s site reliability
+engineering guidance says that if you can measure only four metrics of a
+user-facing system, measure <strong>latency</strong> (time to serve a
+request, tracking successful and failed requests separately),
+<strong>traffic</strong> (demand, such as requests per second),
+<strong>errors</strong> (rate of failed requests, explicit or implicit)
+and <strong>saturation</strong> (how “full” the service is, emphasizing
+its most constrained resource) [Beyer et al. 2016, ch. 6].
+<em>(§23.3.3)</em></p>
+<p><strong>Freshness and validation</strong> — A stored response is
+<strong>fresh</strong> while its age is below its <strong>freshness
+lifetime</strong> and may then be served without contacting the origin;
+once <strong>stale</strong>, it must normally be
+<strong>revalidated</strong>, by sending a conditional request
+(<code>If-None-Match</code> with the stored <code>ETag</code>, or
+<code>If-Modified-Since</code>), to which the origin answers
+<code>304 Not Modified</code> (keep using the copy) or
+<code>200 OK</code> with a new body [RFC 9111; RFC 9110].
+<em>(§21.6.1)</em></p>
 <p><strong>Functional dependency</strong> — In a relation
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>R</mi><annotation encoding="application/x-tex">R</annotation></semantics></math>,
 the functional dependency
@@ -765,6 +905,14 @@ system does — for example, “a signed-in user can upload a JPEG or PNG
 photo up to 20 MB, and it appears in their followers’ feeds”.
 <em>(§1.6.1)</em></p>
 <h2 id="g">G</h2>
+<p><strong>Garbage collection (GC)</strong> — Automatic reclamation of
+heap memory that the program can no longer reach. A
+<strong>tracing</strong> collector finds live objects by following
+references from <strong>roots</strong> (stacks, globals, registers) and
+reclaims everything else. A <strong>stop-the-world (STW) pause</strong>
+is an interval in which all application threads (the
+<strong>mutator</strong>) are halted so the collector can work on a
+consistent heap [Jones et al. 2023]. <em>(§23.9.1)</em></p>
 <p><strong>Geohash</strong> — A string encoding of a latitude/longitude
 cell, published by Gustavo Niemeyer in 2008, formed by alternately
 bisecting the longitude and latitude ranges, interleaving the resulting
@@ -804,17 +952,52 @@ function</strong> is designed for speed and statistical uniformity on
 ordinary inputs. A <strong>cryptographic hash function</strong>
 additionally resists an adversary who tries to find collisions or
 preimages (§10.4.1). <em>(§17.3.1)</em></p>
+<p><strong>Hash slot (Redis Cluster)</strong> — One of 16,384 buckets
+into which Redis Cluster divides the keyspace:
+<code>slot = CRC16(key) mod 16384</code>. Each primary owns a set of
+slots. If a key contains <code>{...}</code>, only the substring inside
+the braces (a <strong>hash tag</strong>) is hashed, so related keys can
+be forced into one slot [Redis Docs: Cluster specification].
+<em>(§20.6.4)</em></p>
+<p><strong>Health check</strong> — A mechanism by which a balancer
+decides whether a backend should receive traffic. An
+<strong>active</strong> check sends synthetic probes (a TCP connect, an
+HTTP <code>GET /healthz</code>, a gRPC health RPC) on a timer. A
+<strong>passive</strong> check, also called <strong>outlier
+detection</strong>, watches real traffic for errors, timeouts or latency
+and <strong>ejects</strong> misbehaving backends for a period.
+<em>(§19.5.1)</em></p>
+<p><strong>Hedged request</strong> — A request sent to one replica and,
+if no response arrives within a <strong>hedge delay</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>,
+sent again to a second replica; the client uses whichever response
+arrives first and cancels or ignores the other [Dean and Barroso 2013].
+<em>(§23.7.1)</em></p>
 <p><strong>High-level design (HLD)</strong> — A description of a system
 as a set of major components (services, data stores, queues, caches,
 external dependencies), their responsibilities, the interfaces and
 protocols between them, data flows, and deployment topology — at a level
 of detail where each component is a box whose internals are not yet
 specified. <em>(§1.5.1)</em></p>
+<p><strong>Horizontal scaling (scaling out)</strong> — Increasing
+capacity by adding more nodes that share the workload, for example by
+running 20 identical application servers behind a load balancer instead
+of one. Removing nodes when load falls is <strong>scaling in</strong>.
+<em>(§18.4.1)</em></p>
+<p><strong>Hot key</strong> — A single key whose request rate exceeds
+what the node holding it can serve, so partitioning cannot help: all
+requests for one key go to one node. <em>(§20.15)</em></p>
 <p><strong>Hot partition and hot key</strong> — A <strong>hot
 partition</strong> receives enough excess requests or data to saturate
 its node while peers idle. A <strong>hot key</strong> is a single key
 causing that excess. <strong>Skew</strong> is uneven distribution of
 data or load in general. <em>(§14.10.1)</em></p>
+<p><strong>HTTP adaptive streaming</strong> — Video is encoded at
+several quality levels (a <strong>bitrate ladder</strong>), each cut
+into <strong>segments</strong> of a few seconds stored as ordinary
+files. A <strong>manifest</strong> lists the levels and segment URLs.
+The player downloads the manifest, then fetches segments one by one over
+HTTP, choosing a level for each segment. <em>(§21.8.1)</em></p>
 <p><strong>HTTP cookie</strong> — A small name–value pair that a server
 asks the browser to store, via the <code>Set-Cookie</code> response
 header, and that the browser automatically returns in the
@@ -829,6 +1012,13 @@ small registers, with relative standard error about
 independent of the cardinality itself [Flajolet et al. 2007].
 <em>(§17.5.1)</em></p>
 <h2 id="i">I</h2>
+<p><strong>Idempotency key</strong> — A unique value, generated by the
+client once per <em>logical</em> operation and sent with every attempt
+of that operation (for example in an <code>Idempotency-Key</code>
+header), that the server uses to recognize retries: the first attempt
+executes and its result is stored under the key; later attempts with the
+same key return the stored result instead of executing again.
+<em>(§22.15.1)</em></p>
 <p><strong>Idempotent method</strong> — A method for which the intended
 effect on the server of sending the same request
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>&gt;</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">N &gt; 0</annotation></semantics></math>
@@ -928,6 +1118,15 @@ receiving its first byte (for example, ~100 ns for a DRAM load).
 moved once transfers are flowing (for example, ~38 GB/s for one
 DDR5-4800 channel). Achieved bandwidth is <strong>throughput</strong>.
 <em>(§5.9.1)</em></p>
+<p><strong>Layer 4 (L4) and layer 7 (L7) load balancing</strong> — An
+<strong>L4 load balancer</strong> makes its decision from
+transport-layer information (IP addresses, ports, protocol) and balances
+<strong>connections or flows</strong>: every packet of one TCP
+connection goes to the same backend. An <strong>L7 load
+balancer</strong> terminates the client connection, parses the
+application protocol (usually HTTP), and balances
+<strong>requests</strong>: two requests on one connection may go to
+different backends. <em>(§19.3.1)</em></p>
 <p><strong>Leaf–spine (folded Clos) network</strong> — A two-tier
 topology in which every <strong>leaf</strong> (top-of-rack) switch
 connects to every <strong>spine</strong> switch, and servers attach only
@@ -936,12 +1135,52 @@ hops apart (leaf → spine → leaf), and traffic is spread across all
 spines with ECMP. It is a form of the multistage <strong>Clos
 network</strong>, first described by Charles Clos in 1953 for telephone
 switching. Larger fabrics add a third tier. <em>(§7.17.1)</em></p>
+<p><strong>Leaky bucket</strong> — (a) <strong>As a queue:</strong>
+requests enter a FIFO buffer of capacity
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Q</mi><annotation encoding="application/x-tex">Q</annotation></semantics></math>
+that is drained at a constant rate
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>r</mi><annotation encoding="application/x-tex">r</annotation></semantics></math>;
+arrivals that find the buffer full are dropped. Output is perfectly
+smooth. (b) <strong>As a meter:</strong> a counter (the “water level”)
+increases by one per admitted request and leaks at rate
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>r</mi><annotation encoding="application/x-tex">r</annotation></semantics></math>;
+a request that would overflow capacity is rejected immediately. The
+meter form makes the same admit/reject decisions as a token bucket with
+the same rate and capacity. <em>(§22.5.1)</em></p>
+<p><strong>Least connections</strong> — Send each new connection or
+request to the backend with the fewest <strong>active</strong>
+(in-flight) connections or requests, as counted by the balancer.
+<em>Weighted least connections</em> divides each count by the backend’s
+weight. Envoy calls the request-counting variant <strong>least
+request</strong>; AWS ALB calls it <strong>least outstanding
+requests</strong>. <em>(§19.4.2)</em></p>
+<p><strong>Least response time</strong> — Choose the backend with the
+lowest recent latency, usually an <strong>exponentially weighted moving
+average (EWMA)</strong> of observed response times, often multiplied by
+the in-flight count so that both queue length and speed count.
+<em>(§19.4.3)</em></p>
 <p><strong>Little’s Law</strong> — For any stable system observed over a
 long period, the average number of items in the system equals the
 average arrival rate multiplied by the average time each item spends in
 the system:
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mo>=</mo><mi>λ</mi><mi>W</mi></mrow><annotation encoding="application/x-tex">L = \lambda W</annotation></semantics></math>
 [Little 1961]. <em>(§4.11.1)</em></p>
+<p><strong>Load balancer</strong> — A component that receives traffic
+addressed to a single service endpoint, the <strong>virtual IP address
+(VIP)</strong> or service name, and distributes it across a
+<strong>pool</strong> of <strong>backends</strong> (also called
+<em>upstreams</em>, <em>targets</em> or <em>real servers</em>) according
+to a <strong>balancing algorithm</strong>, while excluding backends that
+are unhealthy. <em>(§19.3.1)</em></p>
+<p><strong>Load shedding and throttling</strong> — <strong>Load
+shedding</strong> is a server rejecting some requests early and cheaply
+(usually with 503) because accepting them would push it past capacity,
+regardless of whether each client is within its quota.
+<strong>Throttling</strong> is slowing a client down, by delaying or
+rejecting its requests; rate limiting is the quota-based form.
+<strong>Goodput</strong> is the rate of requests completed
+<em>usefully</em>: correctly and before the client gave up.
+<em>(§22.9.1)</em></p>
 <p><strong>Local and global secondary indexes</strong> — A
 <strong>local</strong> (document-partitioned) index lives in each
 partition and covers only its rows. A <strong>global</strong>
@@ -989,6 +1228,15 @@ structures, algorithms, database schemas, API request and response
 formats, error handling and state transitions — at a level of detail
 from which an engineer can write code. <em>(§1.5.1)</em></p>
 <h2 id="m">M</h2>
+<p><strong>Maglev hashing</strong> — A consistent-hashing scheme that
+builds a <strong>lookup table</strong> of prime size
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>M</mi><annotation encoding="application/x-tex">M</annotation></semantics></math>
+in which every entry names a backend. Each backend has its own
+pseudo-random <strong>preference permutation</strong> of table
+positions; backends take turns claiming their next preferred empty
+position until the table is full. A packet’s backend is
+<code>table[hash(5-tuple) mod M]</code>: one array read [Eisenbud et
+al. 2016]. <em>(§19.4.8)</em></p>
 <p><strong>Matrix</strong> — A rectangular grid of numbers with
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
 rows and
@@ -1141,6 +1389,24 @@ third-party application obtain <em>limited</em> access to an HTTP
 service on behalf of a resource owner, by obtaining an <strong>access
 token</strong> from an authorization server instead of using the owner’s
 credentials [RFC 6749]. <em>(§8.14.1)</em></p>
+<p><strong>Offload ratio</strong> — The fraction of traffic a CDN serves
+without contacting the origin. <strong>Request offload</strong> counts
+requests; <strong>byte offload</strong> counts bytes. Both are a cache
+hit ratio (§20.3) measured at the boundary between the CDN and the
+origin. <em>(§21.5.1)</em></p>
+<p><strong>Open and closed workload models</strong> — In an
+<strong>open</strong> model, new requests arrive at a rate that is
+independent of how fast the system answers: users on the internet do not
+wait for each other. In a <strong>closed</strong> model, a fixed
+population of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
+users (or load-generator threads) each sends a request, waits for the
+response, optionally pauses for a <strong>think time</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>Z</mi><annotation encoding="application/x-tex">Z</annotation></semantics></math>,
+and only then sends the next. A <strong>partly open</strong> model has
+sessions that arrive openly but issue several requests each,
+closed-loop, within the session [Schroeder et al. 2006].
+<em>(§23.5.2)</em></p>
 <p><strong>OpenAPI Specification (OAS)</strong> — A vendor-neutral,
 machine-readable format (YAML or JSON) for describing HTTP APIs: paths,
 operations, parameters, request and response bodies (as JSON Schema),
@@ -1160,6 +1426,10 @@ Reasoning in orders of magnitude means estimating only the <em>power of
 ten</em> of a quantity (is it 10, 1,000 or 1,000,000 requests per
 second?) because that, not the exact value, decides the architecture.
 <em>(§2.10.1)</em></p>
+<p><strong>Origin shielding</strong> — Routing every cache miss for an
+origin through one designated cache tier (the <strong>shield</strong>),
+so that the origin sees at most one request per object per freshness
+period, regardless of how many edge PoPs missed. <em>(§21.5.3)</em></p>
 <p><strong>Out-of-order (OoO) execution</strong> — A technique in which
 the core executes instructions as soon as their inputs are ready rather
 than strictly in program order, while still making the results
@@ -1214,6 +1484,13 @@ of the measurements fall. Latency percentiles are written
 latency value below which the given percentage of requests fall. If p99
 latency is 300 ms, 99% of requests completed in 300 ms or less and 1%
 took longer. p50 is the median. <em>(§1.7.1)</em></p>
+<p><strong>Performance engineering</strong> — The practice of measuring,
+explaining and improving the <strong>latency</strong>,
+<strong>throughput</strong> and <strong>resource efficiency</strong> of
+a system against explicit targets, using repeatable methods rather than
+intuition. Its outputs are diagnoses (why is it slow?), changes (make it
+faster or cheaper) and predictions (how much capacity will we need?).
+<em>(§23.3.1)</em></p>
 <p><strong>PKCE (Proof Key for Code Exchange, “pixy”)</strong> — An
 extension in which the client creates a random secret, the <strong>code
 verifier</strong>, sends only its SHA-256 hash, the <strong>code
@@ -1221,10 +1498,20 @@ challenge</strong>, with the authorization request, and must present the
 verifier when redeeming the authorization code. An attacker who
 intercepts the code cannot redeem it without the verifier [RFC 7636].
 <em>(§8.14.3)</em></p>
+<p><strong>Point of presence (PoP)</strong> — A CDN site in one
+metropolitan area or interconnection facility, containing load
+balancers, caching proxy servers with RAM and SSD storage, and
+connections to local networks. Large CDNs operate hundreds of PoPs; some
+also place servers inside Internet service provider (ISP) networks.
+<em>(§21.3.2)</em></p>
 <p><strong>Polyglot persistence</strong> — Using several different
 data-storage technologies within one system, each chosen for the access
 pattern it serves best, rather than forcing all data into one database
 [Fowler 2011; Sadalage &amp; Fowler 2012]. <em>(§12.13.1)</em></p>
+<p><strong>Power of two choices (P2C)</strong> — For each request, pick
+<strong>two</strong> backends uniformly at random and send the request
+to the less loaded of the two (by in-flight count, EWMA latency or
+another load signal). <em>(§19.4.4)</em></p>
 <p><strong>Primary key in CQL</strong> — In Cassandra Query Language,
 <code>PRIMARY KEY ((a, b), c, d)</code> declares <code>(a, b)</code> as
 the <strong>partition key</strong> — hashed to choose the replicas and
@@ -1256,6 +1543,14 @@ resume it exactly where it left off. In Linux it is
 <p><strong>Process state</strong> — The scheduling status of a process
 (or thread): whether it is running on a CPU, ready and waiting for a
 CPU, or blocked waiting for an event. <em>(§6.3.4)</em></p>
+<p><strong>Profiler</strong> — A tool that attributes a resource (CPU
+time, wall-clock time, allocated bytes, lock wait time) to the code
+locations that consumed it. A <strong>sampling profiler</strong>
+interrupts the program at a fixed frequency and records the current call
+stack; a function’s share of samples estimates its share of time. An
+<strong>instrumenting</strong> (deterministic, tracing) profiler inserts
+hooks at every function entry and exit and records exact call counts and
+durations. <em>(§23.4.1)</em></p>
 <p><strong>Protocol</strong> — A set of rules two parties agree on for
 exchanging messages: message formats, the meaning of each field, and the
 actions each side takes on sending, receiving or timing out. A
@@ -1299,6 +1594,15 @@ operations on shared state. A <strong>data race</strong> is the specific
 case where two threads access the same memory location concurrently, at
 least one access is a write, and nothing orders them.
 <em>(§6.9)</em></p>
+<p><strong>Rate limiting</strong> — Enforcing an upper bound on how many
+requests (or how much work) a given <strong>client identity</strong> may
+submit to a resource over time. Requests beyond the bound are rejected
+(or, less often, delayed). The bound is usually stated as a
+<strong>rate</strong> (for example 100 requests per minute) plus a
+<strong>burst</strong> allowance. <em>(§22.3.1)</em></p>
+<p><strong>Read-through</strong> — The application asks only the cache;
+on a miss the <em>cache</em> loads the value from the database through a
+configured loader, stores it and returns it. <em>(§20.7.3)</em></p>
 <p><strong>Read-your-writes consistency</strong> — After a client writes
 a value, its own later reads return that value or a newer one. Other
 clients get no such promise. <em>(§14.4.3)</em></p>
@@ -1306,6 +1610,13 @@ clients get no such promise. <em>(§14.4.3)</em></p>
 between nodes so that data and load stay even as nodes join, leave or
 fail and as data grows, while staying available and moving no more data
 than necessary. <em>(§14.9.1)</em></p>
+<p><strong>RED method</strong> — For every <strong>service</strong>,
+monitor <strong>R</strong>ate (requests per second),
+<strong>E</strong>rrors (failed requests per second) and
+<strong>D</strong>uration (the distribution of request latency, as a
+histogram from which percentiles are read). Tom Wilkie proposed it while
+at Weaveworks as a service-level complement to USE [Wilkie 2018].
+<em>(§23.3.3)</em></p>
 <p><strong>Register</strong> — A tiny, extremely fast storage slot
 inside a core, typically 64 bits wide for general-purpose registers.
 x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A
@@ -1400,6 +1711,17 @@ how components interact [Fielding 2000]. In everyday usage, a “REST API”
 is an HTTP API that models its domain as <strong>resources</strong>
 identified by URIs and manipulated with the standard HTTP methods.
 <em>(§8.6.1)</em></p>
+<p><strong>Round robin (RR)</strong> — Send the
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>k</mi><annotation encoding="application/x-tex">k</annotation></semantics></math>-th
+request to backend
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>k</mi><mrow><mspace width="0.222em"></mspace><mo>mod</mo><mspace width="0.222em"></mspace><mi>N</mi></mrow></mrow><annotation encoding="application/x-tex">k \bmod N</annotation></semantics></math>.
+<strong>Weighted round robin (WRR)</strong> gives backend
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>
+an integer weight
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>w</mi><mi>i</mi></msub><annotation encoding="application/x-tex">w_i</annotation></semantics></math>
+and sends it a share
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>w</mi><mi>i</mi></msub><mi>/</mi><msub><mo>∑</mo><mi>j</mi></msub><msub><mi>w</mi><mi>j</mi></msub></mrow><annotation encoding="application/x-tex">w_i / \sum_j w_j</annotation></semantics></math>
+of requests in each cycle. <em>(§19.4.1)</em></p>
 <p><strong>Routing and forwarding</strong> — <strong>Forwarding</strong>
 is the per-packet act of choosing an outgoing interface for a packet
 based on its destination address and the <strong>forwarding
@@ -1416,6 +1738,26 @@ you can optimize for at most two [Athanassoulis et al. 2016].
 read-only: the client does not request, and does not expect, any state
 change on the server [RFC 9110 §9.2.1]. Logging or metrics side effects
 are allowed. <em>(§8.6.3)</em></p>
+<p><strong>Scalability</strong> — The ability of a system to handle a
+growing workload by adding resources, with throughput rising roughly in
+proportion to the resources added and latency staying within its
+objective. A system is <em>not</em> scalable for a workload if adding
+resources yields little or no extra throughput, or if the cost per unit
+of work rises sharply. <em>(§18.3.1)</em></p>
+<p><strong>Scale cube</strong> — A model by Martin Abbott and Michael
+Fisher that classifies every scaling technique along three independent
+axes [Abbott and Fisher 2015]: the <strong>X axis</strong>, cloning
+identical copies of a service or its data behind a load balancer; the
+<strong>Y axis</strong>, splitting by function, service or resource so
+that each part handles different work; and the <strong>Z axis</strong>,
+splitting by customer, requester or other key so that each part handles
+the same work for a subset of the data or users. <em>(§18.10.1)</em></p>
+<p><strong>Scaling bottleneck</strong> — The resource that limits
+throughput as load or node count grows: the resource with the largest
+service demand per unit of capacity (§2.6). For a horizontally scaled
+system, it is usually a resource that <em>all</em> nodes share and that
+cannot itself be scaled out by adding application nodes.
+<em>(§18.7.1)</em></p>
 <p><strong>Search engine (as a data store)</strong> — A system such as
 Elasticsearch, OpenSearch or Apache Solr that stores JSON documents and
 builds an <strong>inverted index</strong> — a map from each term to the
@@ -1468,6 +1810,10 @@ then loads JavaScript to make it interactive
 <p><strong>Session</strong> — Server-recognized state that links a
 series of requests to one authenticated user (or anonymous visitor) over
 time, typically identified by a cookie. <em>(§8.10.2)</em></p>
+<p><strong>Session affinity (sticky sessions)</strong> — A balancer
+policy that sends all requests of one client session to the same
+backend, identified by a cookie, the client’s IP address or a request
+key. <em>(§19.6)</em></p>
 <p><strong>Set-associative cache</strong> — A cache divided into
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>S</mi><annotation encoding="application/x-tex">S</annotation></semantics></math>
 sets of
@@ -1513,6 +1859,19 @@ contains about a fraction
 of the nodes. Search, insert and delete take expected
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mrow><mo stretchy="true" form="prefix">(</mo><mo>log</mo><mi>n</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">O(\log n)</annotation></semantics></math>
 time [Pugh 1990]. <em>(§17.7.1)</em></p>
+<p><strong>Sliding window counter</strong> — A limiter that keeps
+fixed-window counters for the current and previous windows and estimates
+the count over the last
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math>
+seconds by weighting the previous window’s count by the fraction of it
+that still overlaps the sliding interval. <em>(§22.7.2)</em></p>
+<p><strong>Sliding window log</strong> — A limiter that stores the
+timestamp of every admitted request per key and admits a new request
+only if fewer than
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>L</mi><annotation encoding="application/x-tex">L</annotation></semantics></math>
+timestamps fall in the interval
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">(</mo><mi>t</mi><mo>−</mo><mi>W</mi><mo>,</mo><mi>t</mi><mo stretchy="false" form="postfix">]</mo></mrow><annotation encoding="application/x-tex">(t - W, t]</annotation></semantics></math>.
+<em>(§22.7.1)</em></p>
 <p><strong>Slotted page</strong> — A page layout in which a
 <strong>header</strong> is followed by an array of
 <strong>slots</strong> (also called line pointers or item IDs) that
@@ -1551,6 +1910,11 @@ manipulating data (DML: <code>SELECT</code>, <code>INSERT</code>,
 (<code>BEGIN</code>, <code>COMMIT</code>, <code>ROLLBACK</code>). Every
 major database implements the core standard plus its own dialect.
 <em>(§11.6.1)</em></p>
+<p><strong>Stateful service</strong> — A service whose instances hold
+data that must survive between requests and that clients or other
+instances depend on: a database, a cache node, a WebSocket server
+holding live connections, or an application server keeping sessions in
+memory. <em>(§18.5.1)</em></p>
 <p><strong>Stateless service</strong> — A service that keeps no
 client-specific data in its own memory between requests. Every request
 carries, or lets the service look up from a shared store, everything
@@ -1633,6 +1997,12 @@ the <strong>assets</strong> in it that are worth protecting, the
 the <strong>threats</strong> (ways a security property could be
 violated), and the <strong>mitigations</strong> chosen for each threat
 [Shostack 2014]. <em>(§10.3.2)</em></p>
+<p><strong>Timeout and deadline</strong> — A <strong>timeout</strong> is
+a relative duration after which a caller stops waiting for one operation
+(for example 300 ms). A <strong>deadline</strong> is an absolute point
+in time by which the <em>whole</em> request must complete; it is passed
+along the call chain so that every downstream call knows how much time
+remains. <em>(§22.11)</em></p>
 <p><strong>Time-series database (TSDB)</strong> — A database optimized
 for sequences of timestamped measurements. Data is organized into
 <strong>series</strong>, each identified by a metric name plus a set of
@@ -1640,6 +2010,33 @@ for sequences of timestamped measurements. Data is organized into
 <code>{host=&quot;web-3&quot;, region=&quot;eu&quot;}</code>, and each series is an
 append-only list of <strong>samples</strong>
 <code>(timestamp, value)</code>. <em>(§12.8.1)</em></p>
+<p><strong>Time to live (TTL)</strong> — The maximum time an entry may
+be served after it was stored. After the TTL the entry is treated as
+absent (or, with stale-while-revalidate, as stale). Redis removes
+expired keys lazily when they are accessed and actively by periodically
+sampling keys that have a TTL [Redis Docs: EXPIRE]. <em>(§20.8)</em></p>
+<p><strong>TinyLFU</strong> — An <strong>admission policy</strong>: when
+the cache is full and a new candidate arrives, admit it only if its
+estimated access frequency exceeds that of the victim the eviction
+policy would remove. Frequencies are estimated by a small approximate
+sketch (a Count-Min sketch with 4-bit counters, §17.6) over a sample of
+recent requests, and <strong>aged</strong> by halving every counter
+after a fixed number of requests [Einziger, Friedman &amp; Manes 2017].
+<em>(§20.9.3)</em></p>
+<p><strong>Token bucket</strong> — A rate limiter that keeps a counter
+of <strong>tokens</strong>, refilled continuously at
+<strong>rate</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>r</mi><annotation encoding="application/x-tex">r</annotation></semantics></math>
+up to a maximum <strong>capacity</strong> (burst size)
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>.
+Each request consumes one token (or a cost
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>c</mi><annotation encoding="application/x-tex">c</annotation></semantics></math>);
+a request that finds too few tokens is rejected. The long-run admitted
+rate is at most
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>r</mi><annotation encoding="application/x-tex">r</annotation></semantics></math>,
+and up to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
+requests may be admitted at once. <em>(§22.4.1)</em></p>
 <p><strong>Torn write (torn page)</strong> — A page write that is
 interrupted by a crash so that part of the page on disk is new and part
 is old. It arises because the database page (8 or 16 KiB) is larger than
@@ -1694,6 +2091,15 @@ and a checksum to IP. Its 8-byte header provides process-to-process
 delivery of individual <strong>datagrams</strong> with no handshake, no
 acknowledgments, no retransmission, no ordering, and no flow or
 congestion control. <em>(§7.8)</em></p>
+<p><strong>USE method</strong> — For every <strong>resource</strong>,
+check <strong>U</strong>tilization (the fraction of time the resource
+was busy, or the fraction of its capacity in use),
+<strong>S</strong>aturation (the amount of extra work queued because the
+resource could not service it) and <strong>E</strong>rrors (the count of
+error events) [Gregg USE]. A resource is any physical or software
+component with finite capacity: CPUs, memory, disks, network interfaces,
+controllers and interconnects, but also locks, thread pools, connection
+pools and file descriptors. <em>(§23.3.2)</em></p>
 <h2 id="v">V</h2>
 <p><strong>Varint</strong> — A variable-length encoding of an unsigned
 integer in base 128: each byte carries 7 bits of the number,
@@ -1718,6 +2124,10 @@ by machine-learning models) and answers <strong>approximate nearest
 neighbor (ANN) search</strong> queries: “the <em>k</em> stored vectors
 most similar to this query vector”, by cosine similarity, dot product or
 Euclidean distance. <em>(§12.10)</em></p>
+<p><strong>Vertical scaling (scaling up)</strong> — Increasing the
+capacity of a single node by giving it more or faster CPU cores, memory,
+storage or network bandwidth, for example by moving a database from an
+8-core to a 64-core machine. <em>(§18.3.1)</em></p>
 <p><strong>Virtual memory</strong> — A mechanism in which every address
 a program uses is a <strong>virtual address</strong> that the hardware’s
 <strong>memory-management unit (MMU)</strong> translates, using tables
@@ -1760,6 +2170,18 @@ written <em>before</em> the changed pages themselves reach disk. Each
 record is identified by a monotonically increasing <strong>log sequence
 number (LSN)</strong>, usually its byte offset in the log. Also called
 the redo log (InnoDB) or journal. <em>(§13.5.1)</em></p>
+<p><strong>Write-around</strong> — Writes go directly to the database
+and bypass the cache; the cache is populated only by reads (usually
+cache-aside), and the written key is invalidated or left to expire.
+<em>(§20.7.6)</em></p>
+<p><strong>Write-back</strong> — Writes update only the cache and are
+acknowledged immediately; the cache marks entries <strong>dirty</strong>
+and flushes them to the database asynchronously, in batches or after a
+delay. <em>(§20.7.5)</em></p>
+<p><strong>Write-through</strong> — Every write goes to the cache, which
+synchronously writes it to the database before acknowledging; the cache
+is updated and the database is updated as one client-visible operation.
+<em>(§20.7.4)</em></p>
 <h2 id="z">Z</h2>
 <p><strong>Zero trust</strong> — A security model in which network
 location confers no trust: every request is authenticated, authorized
@@ -1768,5 +2190,16 @@ workload, plus contextual signals, regardless of where it originates.
 NIST SP 800-207 describes it as moving defenses “from static,
 network-based perimeters to focus on users, assets, and resources” [NIST
 SP 800-207]. <em>(§10.10.1)</em></p>
+<p><strong>Zipf (Zipf-like) distribution</strong> — A popularity law in
+which the item of popularity rank
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>
+is requested with probability proportional to
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>1</mn><mi>/</mi><msup><mi>i</mi><mi>s</mi></msup></mrow><annotation encoding="application/x-tex">1/i^{s}</annotation></semantics></math>,
+where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>s</mi><mo>&gt;</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">s &gt; 0</annotation></semantics></math>
+is the <strong>skew exponent</strong>. Breslau et al. found that
+requests to web proxies follow a Zipf-like law with an exponent below 1
+and that, as a consequence, hit ratio grows roughly logarithmically with
+cache size [Breslau et al. 1999]. <em>(§20.3.3)</em></p>
 </body>
 </html>

@@ -2789,6 +2789,59 @@ $$W_{\text{risk}} \approx r_w \times T_{\text{flush}}, \qquad \text{write reduct
 | $r_{\text{flush}}$ | Database writes per second after coalescing | writes/s |
 :::
 
+*From §20.8*
+
+::: formula
+**TTL with uniform jitter**
+
+$$T_i = T_{\text{base}} + U_i, \quad U_i \sim \text{Uniform}(0, J), \qquad \text{peak refills/s} \approx \frac{K}{\max(J, t_{\text{write}})}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_i$ | TTL given to key $i$ | s |
+| $T_{\text{base}}$ | Base TTL | s |
+| $J$ | Jitter range | s |
+| $K$ | Keys written together | keys |
+| $t_{\text{write}}$ | Time span over which the keys were originally written | s |
+:::
+
+*From §20.11.2*
+
+::: formula
+**XFetch early-recomputation rule and its consequences (Poisson arrivals)**
+
+$$\text{recompute if } \; t - \delta\,\beta\,\ln(u) \ge t_{\text{exp}}, \quad u \sim \text{Uniform}(0,1] \qquad\Rightarrow\qquad P(\text{early} \mid r) = e^{-r/(\delta\beta)}$$
+
+$$\mathbb{E}[\text{lead}] \approx \delta\beta\left(\ln(\lambda\delta\beta) + \gamma\right), \qquad \mathbb{E}[\text{recomputes per refresh}] \approx e^{1/\beta}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $t$ | Current time | s |
+| $t_{\text{exp}}$ | Entry's expiry time | s |
+| $r = t_{\text{exp}} - t$ | Time remaining before expiry | s |
+| $\delta$ | Measured recompute time, stored with the value | s |
+| $\beta$ | Aggressiveness; 1 is the recommended default | dimensionless |
+| $u$ | Uniform random number per request | dimensionless |
+| $\lambda$ | Request rate for the key | requests/s |
+| $\gamma$ | Euler–Mascheroni constant, ≈ 0.5772 | dimensionless |
+:::
+
+*From §20.15*
+
+::: formula
+**Remote load from a hot key with L1 caches and replication**
+
+$$R_{\text{remote}} \le \min\!\left(\lambda_k,\ \frac{A}{T_{L1}}\right), \qquad R_{\text{per node}} = \frac{R_{\text{remote}}}{r}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda_k$ | Request rate for the hot key | requests/s |
+| $A$ | Number of app instances with an L1 cache | instances |
+| $T_{L1}$ | L1 TTL | s |
+| $r$ | Number of replicated copies of the key | copies |
+| $R_{\text{remote}}$, $R_{\text{per node}}$ | Requests to the remote tier, and to each node holding a copy | requests/s |
+:::
+
 ## Chapter 21 — Content Delivery Networks
 
 *From §21.3.1*
@@ -3080,6 +3133,71 @@ $$Q_{\max} = \mu \times D_{\text{queue}}$$
 | $D_{\text{queue}}$ | Maximum acceptable time an item may wait in the queue | s |
 :::
 
+*From §22.11*
+
+::: formula
+**Timeout budget along a call chain**
+
+$$B_{i+1} = B_i - e_i - m_i, \qquad \text{start the call only if } B_{i+1} > \hat{s}_{i+1}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $B_i$ | Remaining budget when hop $i$ receives the request | ms |
+| $e_i$ | Time hop $i$ spends before calling hop $i+1$ (local work, earlier calls) | ms |
+| $m_i$ | Margin hop $i$ reserves to build and return its own response | ms |
+| $B_{i+1}$ | Budget passed to hop $i+1$ | ms |
+| $\hat{s}_{i+1}$ | Typical latency of hop $i+1$ (for example its p50) | ms |
+:::
+
+*From §22.12.2*
+
+::: formula
+**Backoff with jitter (attempt $k = 1, 2, \dots$)**
+
+$$s_k = \min(\text{cap},\ \text{base} \cdot 2^{k})$$
+
+$$\text{full: } U(0, s_k) \qquad \text{equal: } \tfrac{s_k}{2} + U\!\left(0, \tfrac{s_k}{2}\right) \qquad \text{decorrelated: } \min\bigl(\text{cap},\ U(\text{base},\ 3\,w_{k-1})\bigr)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $k$ | Retry number | count |
+| base | Initial backoff unit | ms |
+| cap | Maximum wait | ms |
+| $s_k$ | Exponential backoff ceiling for retry $k$ | ms |
+| $U(a, b)$ | A uniformly random value between $a$ and $b$ | ms |
+| $w_{k-1}$ | The previous wait for decorrelated jitter ($w_0 = \text{base}$) | ms |
+:::
+
+*From §22.12.3*
+
+::: formula
+**Retry amplification**
+
+$$A = \prod_{i=1}^{d} a_i = a^{d}\ \ \text{(identical layers)}, \qquad \mathbb{E}[\text{attempts per layer}] = \sum_{j=0}^{a-1} p^{j} = \frac{1 - p^{a}}{1 - p}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $A$ | Worst-case calls reaching the bottom layer per user request | calls |
+| $a_i$ | Maximum attempts (1 + retries) at layer $i$ | attempts |
+| $d$ | Number of layers that retry | layers |
+| $p$ | Probability that one attempt fails ($p < 1$) | dimensionless |
+:::
+
+*From §22.15.4*
+
+::: formula
+**Idempotency-key storage**
+
+$$S = \lambda_w \times T_{\text{ttl}} \times s_r$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S$ | Steady-state storage for key records | bytes |
+| $\lambda_w$ | Rate of keyed (non-idempotent) requests | requests/s |
+| $T_{\text{ttl}}$ | Retention window | s |
+| $s_r$ | Average record size (key, fingerprint, stored response) | bytes |
+:::
+
 ## Chapter 23 — Performance Engineering
 
 *From §23.4.1*
@@ -3245,7 +3363,7 @@ $$t_{\text{plain}} = \frac{S}{W} \qquad t_{\text{comp}} = \frac{S}{C_c} + \frac{
 ::: formula
 **GC frequency and pause exposure**
 
-$$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p}{I_{\text{minor}}} \qquad \text{Go heap target} = H_{\text{live}} \times \left(1 + \frac{\text{GOGC}}{100}\right)$$
+$$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p + w}{I_{\text{minor}}} \qquad \text{Go heap target} = H_{\text{live}} \times \left(1 + \frac{\text{GOGC}}{100}\right)$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
@@ -3253,6 +3371,7 @@ $$I_{\text{minor}} = \frac{E}{a} \qquad f_{\text{hit}} \approx \frac{p}{I_{\text
 | $a$ | Allocation rate | MB/s |
 | $I_{\text{minor}}$ | Interval between minor collections | seconds |
 | $p$ | STW pause per minor collection | seconds |
+| $w$ | Request duration | seconds |
 | $f_{\text{hit}}$ | Approximate fraction of requests that overlap a pause | dimensionless |
 | $H_{\text{live}}$ | Live heap after the previous Go collection | MB |
 | GOGC | Go's GC percentage setting (default 100) | percent |

@@ -1,3 +1,4 @@
+# Extracted from manuscript/book1-traditional/18-scalability.md §18.8.4 (listing 1). Edit the manuscript, not this file.
 """Target-tracking autoscaler with startup delay and warm-up (Section 18.8).
 
 A simplified model of the Kubernetes HPA rule

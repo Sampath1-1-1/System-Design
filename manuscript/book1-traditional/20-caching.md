@@ -1228,7 +1228,7 @@ Defenses:
 |---|---|---|---|---|
 | Stampede | One hot key expires; $\lambda\delta$ concurrent recomputes | Spikes of identical queries; per-key miss bursts | Shed load; serve stale | Leases or single-flight, XFetch, stale-while-revalidate |
 | Penetration | Requests for nonexistent keys bypass the cache | High miss ratio with many "not found" results | Block abusive clients | Negative caching, Bloom filter, rate limits, ID validation |
-| Avalanche | Many keys expire together, or cache nodes fail | Hit ratio collapses; database QPS jumps | Throttle, warm caches, fail over | Jitter, replication, warming, L1 and stale-if-error, load shedding |
+| Avalanche | Many keys expire together, or cache nodes fail | Hit ratio collapses; database queries/s jump | Throttle, warm caches, fail over | Jitter, replication, warming, L1 and stale-if-error, load shedding |
 
 ## 20.14 Distributed caching and consistent hashing
 
@@ -1396,7 +1396,7 @@ $$R_{\text{remote}} \le \min\!\left(\lambda_k,\ \frac{A}{T_{L1}}\right), \qquad 
 **Answer.** Writers delete local keys after commit; a CDC daemon per database (primary and each replica) tails the commit log and issues batched deletes to that region's caches, so a region's caches are invalidated only after its replica has applied the change, preventing refills from lagging replicas. Keep TTLs as a backstop, use leases against stale sets, and for read-your-writes after a user's own update, route that user's reads to the primary or mark the key so misses read the primary (Facebook's remote markers) [Nishtala et al. 2013].
 
 **Q9. A team proposes replacing LRU with LFU in a 200 GB cache. How do you decide?**
-**Answer.** Replay a production trace through LRU, LFU with aging, ARC and W-TinyLFU at several sizes and compare hit ratios and database QPS (§20.9.5); scans hurt LRU, popularity shifts hurt pure LFU. In Redis this is `allkeys-lfu` versus `allkeys-lru`.
+**Answer.** Replay a production trace through LRU, LFU with aging, ARC and W-TinyLFU at several sizes and compare hit ratios and database queries per second (§20.9.5); scans hurt LRU, popularity shifts hurt pure LFU. In Redis this is `allkeys-lfu` versus `allkeys-lru`.
 
 ## 20.20 Practical exercises
 

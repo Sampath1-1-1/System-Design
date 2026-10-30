@@ -66,17 +66,25 @@
 
 **Buffer pool** — A region of memory, managed by the database itself, divided into page-sized **frames** that cache disk pages. A **page table** maps page IDs to frames; each frame carries a **pin count** (how many threads are using it right now), a **dirty flag** (whether it differs from the disk copy) and bookkeeping for the **replacement policy** that chooses which page to evict. *(§13.4.1)*
 
+**Bulkhead** — Partitioning a service's limited resources (threads, connections, memory, instances) into isolated pools, one per dependency, tenant or workload class, so that exhaustion of one pool cannot starve the others. *(§22.14)*
+
 ## C
 
 **Cache** — A store that holds copies of data whose authoritative version lives elsewhere (the **backing store** or **source of truth**), placed so that reading the copy is faster or cheaper than reading the original. A lookup that finds the data is a **hit**; one that does not is a **miss**. The **cache hit ratio** $h$ is hits divided by lookups; the **miss ratio** is $1 - h$. *(§20.3.1)*
 
 **Cache-aside** — The application reads the cache first; on a miss it reads the database and populates the cache itself. On a write it updates the database and then **deletes** (invalidates) the cache entry. The cache never talks to the database. Also called **look-aside** or **demand-filled** caching. *(§20.7.1)*
 
+**Cache avalanche** — A large fraction of cache entries becomes unavailable at once, because many keys expire together or because cache nodes fail or restart, so the database suddenly receives the full read load. *(§20.13)*
+
 **Cache coherence** — The guarantee that all cores observe a single, consistent sequence of values for each memory location, even though each core keeps private copies in its own caches. *(§5.4.6)*
 
 **Cache key** — The value a cache uses to decide whether two requests may receive the same stored response. By default it is the method plus the full URL (scheme, host, path and query string), extended by any request headers listed in the response's `Vary` header. *(§21.6.2)*
 
 **Cache line** — The fixed-size unit in which data moves between memory and caches. On x86-64 and most ARM server cores a line is 64 bytes; some designs (for example Apple's M-series cores) use 128 bytes (as of 2024). A load of a single byte brings its whole line into the cache. *(§5.4.3)*
+
+**Cache penetration** — Requests for keys that do not exist in the database. Because there is nothing to cache, every such request misses and reaches the database. A bug or an attacker iterating random IDs can push the database's full read load through the cache. *(§20.12)*
+
+**Cache stampede (thundering herd, dog-piling)** — When a popular entry expires or is evicted, many concurrent requests miss at once and all recompute or reload it, multiplying load on the backend exactly when it is busiest. *(§20.11)*
 
 **Cache tiers** — The **edge** tier is the set of PoPs that accept user connections. A **mid-tier** (also *parent*, *regional* or *upper-tier* cache) is a smaller set of larger caches that edges consult on a miss. An **origin shield** is a mid-tier designated as the single path to a given origin. The **origin** is the customer's own infrastructure that holds the authoritative content. *(§21.4.1)*
 
@@ -87,6 +95,8 @@
 **Certificate Transparency (CT)** — A system of public, append-only, Merkle-tree-based logs into which CAs record every certificate they issue, so that mis-issued certificates become publicly detectable [RFC 6962]. *(§10.5)*
 
 **CIDR block** — An address range written as `address/prefix-length`, for example `192.168.10.64/26`. The prefix length $n$ says that the first $n$ bits identify the network; the remaining $32-n$ bits (IPv4) or $128-n$ bits (IPv6) identify hosts. The **subnet mask** is the same information as a dotted number with $n$ one-bits followed by zeros (`/26` = `255.255.255.192`). *(§7.4.2)*
+
+**Circuit breaker** — A client-side proxy for calls to a dependency that tracks recent failures and, when they cross a threshold, **opens**: it fails calls immediately without contacting the dependency for a cool-down period, then lets a few trial calls through (**half-open**) and **closes** again only if they succeed. *(§22.13)*
 
 **Client–server architecture** — A way of dividing a system into two roles: a **client**, which initiates requests on behalf of a user or another program, and a **server**, which waits for requests, performs work on shared resources (data, computation) and returns responses. The two communicate over a network using an agreed **protocol**. *(§8.3.1)*
 
@@ -216,7 +226,7 @@
 
 **Four golden signals** — Google's site reliability engineering guidance says that if you can measure only four metrics of a user-facing system, measure **latency** (time to serve a request, tracking successful and failed requests separately), **traffic** (demand, such as requests per second), **errors** (rate of failed requests, explicit or implicit) and **saturation** (how "full" the service is, emphasizing its most constrained resource) [Beyer et al. 2016, ch. 6]. *(§23.3.3)*
 
-**Freshness and validation** — A stored response is **fresh** while its age is below its **freshness lifetime** and may then be served without contacting the origin; once **stale**, it must normally be **revalidated**, by sending a conditional request (`If-None-Match` with the stored `ETag`, or `If-Modified-Since`), to which the origin answers `304 Not Modified` (keep using the copy) or `200 OK` with a new body [RFC 9111]. *(§21.6.1)*
+**Freshness and validation** — A stored response is **fresh** while its age is below its **freshness lifetime** and may then be served without contacting the origin; once **stale**, it must normally be **revalidated**, by sending a conditional request (`If-None-Match` with the stored `ETag`, or `If-Modified-Since`), to which the origin answers `304 Not Modified` (keep using the copy) or `200 OK` with a new body [RFC 9111; RFC 9110]. *(§21.6.1)*
 
 **Functional dependency** — In a relation $R$, the functional dependency $X \to Y$ holds if any two rows that agree on the columns $X$ also agree on the columns $Y$. $X$ is the **determinant**. Example: `product_id → product_name` because one product ID always has one name. *(§11.5.1)*
 
@@ -250,6 +260,8 @@
 
 **Horizontal scaling (scaling out)** — Increasing capacity by adding more nodes that share the workload, for example by running 20 identical application servers behind a load balancer instead of one. Removing nodes when load falls is **scaling in**. *(§18.4.1)*
 
+**Hot key** — A single key whose request rate exceeds what the node holding it can serve, so partitioning cannot help: all requests for one key go to one node. *(§20.15)*
+
 **Hot partition and hot key** — A **hot partition** receives enough excess requests or data to saturate its node while peers idle. A **hot key** is a single key causing that excess. **Skew** is uneven distribution of data or load in general. *(§14.10.1)*
 
 **HTTP adaptive streaming** — Video is encoded at several quality levels (a **bitrate ladder**), each cut into **segments** of a few seconds stored as ordinary files. A **manifest** lists the levels and segment URLs. The player downloads the manifest, then fetches segments one by one over HTTP, choosing a level for each segment. *(§21.8.1)*
@@ -259,6 +271,8 @@
 **HyperLogLog (HLL)** — A probabilistic algorithm that estimates the number of distinct items (the **cardinality**) in a multiset using $m$ small registers, with relative standard error about $1.04/\sqrt{m}$, independent of the cardinality itself [Flajolet et al. 2007]. *(§17.5.1)*
 
 ## I
+
+**Idempotency key** — A unique value, generated by the client once per *logical* operation and sent with every attempt of that operation (for example in an `Idempotency-Key` header), that the server uses to recognize retries: the first attempt executes and its result is stored under the key; later attempts with the same key return the stored result instead of executing again. *(§22.15.1)*
 
 **Idempotent method** — A method for which the intended effect on the server of sending the same request $N > 0$ times is the same as sending it once [RFC 9110 §9.2.2]. The *response* may differ (a second `DELETE` may return 404); the *state* does not. *(§8.6.3)*
 
@@ -574,7 +588,13 @@
 
 **Threat model** — A structured description of a system, the **assets** in it that are worth protecting, the **adversaries** who might attack it and their capabilities, the **threats** (ways a security property could be violated), and the **mitigations** chosen for each threat [Shostack 2014]. *(§10.3.2)*
 
+**Timeout and deadline** — A **timeout** is a relative duration after which a caller stops waiting for one operation (for example 300 ms). A **deadline** is an absolute point in time by which the *whole* request must complete; it is passed along the call chain so that every downstream call knows how much time remains. *(§22.11)*
+
 **Time-series database (TSDB)** — A database optimized for sequences of timestamped measurements. Data is organized into **series**, each identified by a metric name plus a set of **labels** (tags) such as `{host="web-3", region="eu"}`, and each series is an append-only list of **samples** `(timestamp, value)`. *(§12.8.1)*
+
+**Time to live (TTL)** — The maximum time an entry may be served after it was stored. After the TTL the entry is treated as absent (or, with stale-while-revalidate, as stale). Redis removes expired keys lazily when they are accessed and actively by periodically sampling keys that have a TTL [Redis Docs: EXPIRE]. *(§20.8)*
+
+**TinyLFU** — An **admission policy**: when the cache is full and a new candidate arrives, admit it only if its estimated access frequency exceeds that of the victim the eviction policy would remove. Frequencies are estimated by a small approximate sketch (a Count-Min sketch with 4-bit counters, §17.6) over a sample of recent requests, and **aged** by halving every counter after a fixed number of requests [Einziger, Friedman & Manes 2017]. *(§20.9.3)*
 
 **Token bucket** — A rate limiter that keeps a counter of **tokens**, refilled continuously at **rate** $r$ up to a maximum **capacity** (burst size) $b$. Each request consumes one token (or a cost $c$); a request that finds too few tokens is rejected. The long-run admitted rate is at most $r$, and up to $b$ requests may be admitted at once. *(§22.4.1)*
 
