@@ -1,9 +1,0 @@
-%% Figure 21.10 — Open Connect: control plane in the cloud, bytes from the ISP
-flowchart LR
-  C([Netflix client]) -->|1 browse, press play| AWS[Control plane in AWS]
-  AWS -->|2 URLs of chosen OCAs| C
-  C -->|3 HTTPS video segments| OCA1[Embedded OCA in ISP]
-  C -.->|fallback| OCA2[OCA at exchange point]
-  S3[(Origin storage in AWS)] -.->|off-peak fill window| OCA2
-  OCA2 -.->|tier fill| OCA1
-  OCA1 -.->|health, cache contents| AWS

@@ -1,8 +1,0 @@
-%% Figure 17.15 — Flickr-style ticket servers
-flowchart LR
-  A1[App server 1] -->|SQL: REPLACE INTO, LAST_INSERT_ID| T1[("Ticket DB odd<br/>1, 3, 5, ...")]
-  A2[App server 2] -->|SQL| T2[("Ticket DB even<br/>2, 4, 6, ...")]
-  A1 -->|on failure| T2
-  A2 -->|on failure| T1
-  A1 -->|insert row with ID| S[(Sharded databases)]
-  A2 -->|insert row with ID| S

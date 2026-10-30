@@ -1,9 +1,0 @@
-%% Figure 23.12 — Capacity modeling workflow
-flowchart LR
-  B["Steady-state runs<br/>at N = 1, 2, 4 ... 64"] --> M[(Throughput per N)]
-  M --> F["Fit USL:<br/>γ, α, β"]
-  F --> V{Residuals small,<br/>N* inside range?}
-  V -->|no| B
-  V -->|yes| K["Peak N* and X_max;<br/>choose operating point"]
-  K --> FL["Fleet size: peak RPS,<br/>growth, headroom, zones"]
-  FL -.->|production telemetry| M

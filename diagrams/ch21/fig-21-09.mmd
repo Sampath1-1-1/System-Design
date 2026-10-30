@@ -1,9 +1,0 @@
-%% Figure 21.9 — The ABR control loop
-flowchart LR
-  NET{{Network path}} -->|segment bytes| DL[Downloader]
-  DL -->|throughput sample| EST[Throughput estimator]
-  DL -->|adds seconds| BUF[(Playback buffer)]
-  BUF -->|drains in real time| PLAY[Decoder and screen]
-  BUF -->|buffer level| ABR{ABR rule}
-  EST -->|estimate| ABR
-  ABR -->|next rendition| DL

@@ -1,8 +1,0 @@
-%% Figure 24.15 — Where errors can enter a file transfer, and which check covers them
-flowchart LR
-  DA[(Disk A)] -->|read| MA["Memory and<br/>app on host A"]
-  MA -->|copy| NA["Network stack A"]
-  NA -->|"TCP segments,<br/>per-hop CRC"| NB["Network stack B"]
-  NB -->|copy| MB["Memory and<br/>app on host B"]
-  MB -->|write| DB[(Disk B)]
-  DB -.->|"end-to-end checksum<br/>compared with A"| MA

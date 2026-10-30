@@ -1,7 +1,0 @@
-%% Figure 23.10 — A batcher with size and time triggers
-flowchart LR
-  P([Producers]) -->|items at rate λ| BUF[[Batch buffer]]
-  BUF --> D{"Size ≥ B_max<br/>or age ≥ T_max?"}
-  D -->|yes| SEND[Flush one batch:<br/>cost t0 + B·t1]
-  D -->|no| BUF
-  SEND -->|one RPC or write| SINK[(Broker or disk)]

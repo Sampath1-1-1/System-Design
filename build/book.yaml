@@ -116,31 +116,9 @@ parts:
   - [87, "Part XVIII — Interview Preparation"]
   - [93, "Part XIX — Practical Projects"]
 
-# Deliverable volumes: chapter ranges (inclusive) plus extra files
+# The single deliverable: the main textbook (all written chapters, plus roadmap and glossary appendices)
 volumes:
-  D1-system-design-textbook:
-    title: "The Complete System Design Knowledge Base — Book I: Traditional System Design and Distributed Systems"
-    chapters: [1, 56]
+  System-Design-Textbook:
+    title: "The Complete System Design Knowledge Base"
+    chapters: [1, 93]
     extra: [manuscript/appendices/E-learning-roadmap.md, manuscript/appendices/A-glossary.md]
-  D2-ml-ai-system-design-textbook:
-    title: "The Complete System Design Knowledge Base — Book II: Machine Learning and AI System Design"
-    chapters: [57, 86]
-    include: [4]
-  D7-traditional-interview-handbook:
-    title: "Traditional System Design Interview Handbook"
-    chapters: [87, 91]
-  D8-ml-ai-interview-handbook:
-    title: "ML and AI System Design Interview Handbook"
-    chapters: [87, 92]
-    exclude: [91]
-  D9-glossary:
-    title: "Glossary"
-    chapters: []
-    extra: [manuscript/appendices/A-glossary.md]
-  D3-learning-roadmap:
-    title: "Learning Roadmap"
-    chapters: []
-    extra: [manuscript/appendices/E-learning-roadmap.md, docs/project/02-dependency-map.md]
-  D6-project-handbook:
-    title: "Practical Implementation Project Handbook"
-    chapters: [93, 93]

@@ -1,8 +1,0 @@
-%% Figure 20.1 — The hit and miss paths of a cache in front of a database
-flowchart LR
-  C([Client]) -->|HTTPS| S[App service]
-  S -->|1 GET key| R[(Cache<br/>RAM, about 0.3 ms)]
-  R -->|2a hit: value| S
-  S -->|2b miss: SQL query| DB[(Database<br/>2 to 20 ms)]
-  DB -->|3 rows| S
-  S -.->|4 SET key value TTL| R

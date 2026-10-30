@@ -1,9 +1,0 @@
-%% Figure 17.11 — Geohash refinement: each character narrows the cell
-flowchart TD
-  W["World: 2 ranges<br/>lon -180 to 180, lat -90 to 90"] -->|first 5 bits| C1["9<br/>about 5,000 x 5,000 km"]
-  C1 -->|next 5 bits| C2["9q<br/>about 1,250 x 620 km"]
-  C2 -->|next 5 bits| C3["9q8<br/>about 156 x 156 km"]
-  C3 -->|next 5 bits| C4["9q8y<br/>about 39 x 19 km"]
-  C4 -->|next 5 bits| C5["9q8yy<br/>about 4.9 x 4.9 km"]
-  C5 -->|next 5 bits| C6["9q8yyk<br/>about 1.2 x 0.6 km"]
-  C6 --> IDX[("Index: key = geohash,<br/>value = driver IDs")]

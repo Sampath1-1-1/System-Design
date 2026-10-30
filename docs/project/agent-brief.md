@@ -19,12 +19,12 @@ You are a specialist author on a research team writing a professional system-des
 - Follow the template exactly, including the full end matter: summary, knowledge checkpoint (answers in `<details>`), interview questions (basic / intermediate / advanced with model answers), practical exercises, design challenges, references, open verification items.
 - Every Mermaid diagram: `**Figure N.K — Title.**` caption before it and a "Reading the diagram" explanation after it (components, protocols, direction, sync/async, storage boundaries, failure points, scaling). Validate syntax by running `node build/render_mermaid.js <jobs.json>` or `python3 build/build.py --chapters N --name check --formats html`.
 - Every formula in a `formula` callout with a Symbol/Meaning/Units table, followed by an `example` callout with step-by-step arithmetic, interpretation and engineering implication. Double-check every number.
-- Code must be correct; run Python with `python3` before including it. Save runnable programs also to `code/chNN/`.
+- Code must be correct; run Python with `python3` before including it. Code lives only inside the chapter; do not create separate code files.
 - Industry examples carry `*Evidence: Primary|Secondary|Illustrative*`. Never attribute a hypothetical design to a company.
 - Cite only sources you are confident exist; use WebSearch/WebFetch sparingly to verify. Never fabricate titles, authors, URLs or numbers. Put anything uncertain under "Open verification items".
 - Run `python3 build/qa_check.py` and fix every finding for your chapter.
-- Build side effects: `build.py` regenerates `manuscript/appendices/*` and `diagrams/*` for every chapter. After any check build, run `rm -f dist/check.* && git checkout -- manuscript/appendices` so you leave only your chapter's changes. Save code for your chapter only (`code/chNN/`); do not run `build/extract_code.py`, which rewrites every chapter's folder.
+- Build side effects: `build.py` regenerates `manuscript/appendices/A-glossary.md`. After any check build, run `rm -f dist/check.* && git checkout -- manuscript/appendices` so you leave only your chapter's changes.
 - Length is measured by `qa_check.py` (counts everything outside code blocks, including tables and references). Stay within the stated target on that count.
-- Write in chunks (create, then append) to avoid oversized writes. Do not commit or push. Do not edit files other than your chapter and `code/chNN/`.
+- Write in chunks (create, then append) to avoid oversized writes. Do not commit or push. Do not create or edit any file other than your chapter.
 
 **When finished, reply with:** word count, number of figures/tables/formulas, QA-check result, and the open verification items (≤ 150 words).

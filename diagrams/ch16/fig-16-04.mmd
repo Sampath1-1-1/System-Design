@@ -1,9 +1,0 @@
-%% Figure 16.4 — Ranked query pipeline inside one shard
-flowchart LR
-  Q([Analyzed query terms]) --> IT[Postings iterators<br/>one per term]
-  IT -->|advance with<br/>block max scores| WAND{Can doc beat<br/>k-th best score?}
-  WAND -->|no: skip block| IT
-  WAND -->|yes| SC[Compute BM25<br/>+ field boosts]
-  SC --> HEAP[(Top-k min-heap)]
-  HEAP -->|k best docIDs| RR[Optional rescoring<br/>of top candidates]
-  RR --> OUT([Shard result])

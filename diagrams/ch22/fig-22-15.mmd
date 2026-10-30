@@ -1,9 +1,0 @@
-%% Figure 22.15 — Lifecycle of an idempotency-key record
-stateDiagram-v2
-  [*] --> InProgress: first request claims key
-  InProgress --> Completed: work and response commit atomically
-  InProgress --> InProgress: concurrent duplicate gets 409
-  InProgress --> InProgress: lease expired, retry takes over
-  Completed --> Completed: retry gets stored response
-  Completed --> Completed: different body gets 422
-  Completed --> [*]: retention TTL expires

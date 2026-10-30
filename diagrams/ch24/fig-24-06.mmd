@@ -1,8 +1,0 @@
-%% Figure 24.6 — Gray failure is a disagreement between observers
-flowchart LR
-  FD["Failure detector<br/>heartbeat every 1 s"] -->|"ping OK"| N["Storage node<br/>disk 100x slower"]
-  APP([Application requests]) -->|read and write| N
-  N -->|"heartbeat replies in 1 ms"| FD
-  N -.->|"requests time out"| APP
-  FD --> V1{"Detector verdict:<br/>healthy"}
-  APP --> V2{"App experience:<br/>failed"}

@@ -1,9 +1,0 @@
-%% Figure 5.5 — The memory and storage hierarchy (as of 2024–2025, approximate)
-flowchart TB
-  REG["Registers<br/>~0.3 ns · ~1 KiB per core"] --> L1["L1 cache<br/>~1 ns · 32-64 KiB per core"]
-  L1 --> L2["L2 cache<br/>~4 ns · 0.5-3 MiB per core"]
-  L2 --> L3["L3 cache<br/>~15 ns · 8-500 MiB per chip"]
-  L3 --> DRAM[("DRAM<br/>~100 ns · GBs to TBs")]
-  DRAM --> SSD[("NVMe SSD<br/>~50-100 µs · TBs")]
-  SSD --> HDD[("Hard disk<br/>~5-15 ms · 10-30 TB each")]
-  HDD --> ARC[("Tape or archive storage<br/>seconds to hours · PBs")]

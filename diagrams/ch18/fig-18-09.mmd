@@ -1,9 +1,0 @@
-%% Figure 18.9 — Stage S1: 1,000 DAU
-flowchart LR
-  C([Apps]) -->|HTTPS| LB[Managed load balancer]
-  LB -->|HTTP| A1["Monolith<br/>zone a"]
-  LB -->|HTTP| A2["Monolith<br/>zone b"]
-  A1 -->|SQL| DB[("Managed PostgreSQL<br/>daily backups")]
-  A2 -->|SQL| DB
-  A1 -->|HTTPS| PAY{{Payment provider}}
-  A2 -->|"HTTPS, images"| OS[(Object storage)]

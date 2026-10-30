@@ -1,8 +1,0 @@
-%% Figure 18.7 — The scale cube applied to QuickBite
-flowchart TB
-  O["One monolith,<br/>one database"] -->|"X: clone"| X["N identical app nodes<br/>plus read replicas"]
-  O -->|"Y: split by function"| Y["Catalog, orders, dispatch,<br/>location services"]
-  O -->|"Z: split by customer key"| Z["Cells per country or city<br/>each with its own data"]
-  X --> ALL["X within Y within Z:<br/>cloned pods of each service<br/>in each regional cell"]
-  Y --> ALL
-  Z --> ALL

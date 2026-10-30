@@ -1,9 +1,0 @@
-%% Figure 19.10 — DNS-based global server load balancing
-flowchart LR
-  C([Client]) -->|query api.example.com| RR[Recursive resolver]
-  RR -->|query with ECS subnet| G{{GSLB authoritative DNS}}
-  HC[Health and latency probes] -.->|region status| G
-  G -->|"A record: region VIP, TTL 30 s"| RR
-  RR -->|cached answer| C
-  C -->|HTTPS| R1[Region EU balancers]
-  C -.->|after failover| R2[Region US balancers]

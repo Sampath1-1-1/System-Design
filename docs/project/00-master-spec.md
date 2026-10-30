@@ -26,7 +26,7 @@ The learner must come to understand, for every technology: why it exists, what p
 - 27 traditional and 27 ML/AI case studies, each in the 16-section format.
 - ≥ 105 practice interview questions with full reference solutions.
 - 20 progressive implementation projects.
-- 10 deliverables (see `06-document-structure.md`), built to PDF, DOCX and HTML.
+- One deliverable: the main textbook (all chapters, roadmap and glossary), built to PDF and DOCX. (Changed from ten deliverables on 2026-10-30 at the reader's request.)
 
 ## 0.4 Workflow per session
 
@@ -46,4 +46,5 @@ The learner must come to understand, for every technology: why it exists, what p
 | 2026-10-30 | Decimal units (KB=10³) for estimation, binary (KiB) where precision matters, always stated | Matches common interview practice while staying precise |
 | 2026-10-30 | Ten deliverables composed from shared chapters rather than duplicated text | Avoids divergence between volumes |
 | 2026-10-30 | Wave 1 chapters ran 12–23k words (≈1.5× targets). Accepted for the foundations (Ch 1–10) because cuts would remove template elements; later waves get firmer length targets and the "deep treatment in owner chapter only" rule is enforced at briefing | Keeps the full set at a printable size |
-| 2026-10-30 | Runnable listings are extracted automatically to `code/chNN/` by `build/extract_code.py` rather than maintained by hand | One source of truth |
+| 2026-10-30 | Runnable listings are extracted automatically to `code/chNN/` by `build/extract_code.py` rather than maintained by hand | One source of truth (superseded below) |
+| 2026-10-30 | **Scope change requested by the reader:** produce only the main textbook (PDF + DOCX). Removed separate code files, diagram sources, formula handbook, diagram collection, glossary/roadmap volumes and HTML outputs; code and diagrams remain inside chapters, roadmap and glossary become appendices of the textbook | Reader wants one textbook, no other files |

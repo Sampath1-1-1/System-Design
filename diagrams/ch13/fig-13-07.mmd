@@ -1,9 +1,0 @@
-%% Figure 13.7 — LSM tree write path and levels
-flowchart TB
-  C([Client write]) -->|1 append| WAL[[WAL]]
-  C -->|2 insert| MT[Active memtable<br/>skip list in RAM]
-  MT -->|3 full: freeze| IMM[Immutable memtable]
-  IMM -.->|4 flush: one sequential write| L0[(L0: SSTables<br/>key ranges overlap)]
-  L0 -.->|5 compaction| L1[(L1: 256 MB<br/>non-overlapping files)]
-  L1 -.->|compaction| L2[(L2: 2.56 GB)]
-  L2 -.->|compaction| LN[(Last level: about 90%<br/>of all data)]

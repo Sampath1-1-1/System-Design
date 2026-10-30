@@ -1,8 +1,0 @@
-%% Figure 20.2 — Cache layers from the client to the database
-flowchart LR
-  C([Browser or app<br/>HTTP cache]) -->|HTTPS| CDN{{CDN edge<br/>Chapter 21}}
-  CDN -->|cache miss| GW[API gateway<br/>response cache]
-  GW --> S[App service<br/>in-process L1]
-  S -->|TCP RESP| R[(Remote cache L2<br/>Redis or Memcached)]
-  S -->|SQL on miss| DB[(Database<br/>buffer pool, §13.4)]
-  DB --> DISK[(Disk<br/>OS page cache)]

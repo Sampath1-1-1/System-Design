@@ -10,7 +10,7 @@ This repository is the single source of truth for a multi-volume engineering tex
 |---|---|
 | See what the books cover | [`docs/project/01-master-toc.md`](docs/project/01-master-toc.md) |
 | Know what to learn first | [`docs/project/02-dependency-map.md`](docs/project/02-dependency-map.md) and [Appendix E — Learning roadmap](manuscript/appendices/E-learning-roadmap.md) |
-| Read the chapters | [`manuscript/`](manuscript/) or the built files in [`dist/`](dist/) |
+| Read the textbook | [`dist/System-Design-Textbook.pdf`](dist/) (or the chapter sources in [`manuscript/`](manuscript/)) |
 | Check progress | [`docs/project/progress-tracker.md`](docs/project/progress-tracker.md) |
 | Contribute a chapter | [`docs/project/style-guide.md`](docs/project/style-guide.md) and [`docs/project/chapter-template.md`](docs/project/chapter-template.md) |
 
@@ -21,22 +21,9 @@ This repository is the single source of truth for a multi-volume engineering tex
 - **Book III — Interviews and Practice** (Chapters 87–93): interview framework, capacity estimation handbook, company preparation, 100+ practice questions, 20 implementation projects.
 - **Appendices A–I**: glossary, bibliography, formula handbook, diagram collection, learning roadmap, reference numbers, comparison index, open questions, index.
 
-## Deliverables
+## Output
 
-| # | Deliverable | Output file(s) in `dist/` |
-|---|---|---|
-| D1 | Master System Design Textbook | `D1-system-design-textbook.{pdf,docx,html}` |
-| D2 | ML and AI System Design Textbook | `D2-ml-ai-system-design-textbook.*` |
-| D3 | Learning Roadmap | `manuscript/appendices/E-learning-roadmap.md` (+ built with D1) |
-| D4 | Architecture Diagram Collection | `D4-architecture-diagram-collection.{pdf,html}` + `diagrams/**/*.mmd` |
-| D5 | Formula and Estimation Handbook | `D5-formula-handbook.*` |
-| D6 | Project Handbook | `D6-project-handbook.*` |
-| D7 | Traditional Interview Handbook | `D7-traditional-interview-handbook.*` |
-| D8 | ML/AI Interview Handbook | `D8-ml-ai-interview-handbook.*` |
-| D9 | Glossary | Appendix A |
-| D10 | Bibliography | Appendix B / `references/bibliography.md` |
-
-Volumes whose chapters are not written yet are skipped by the build; see the progress tracker.
+One deliverable: **the main textbook**, built to `dist/System-Design-Textbook.pdf` and `dist/System-Design-Textbook.docx`. It contains every written chapter in order, followed by the learning roadmap and the glossary. Code examples and diagrams live inside the chapters; there are no separate code or diagram files.
 
 ## Building
 
@@ -51,11 +38,7 @@ python3 build/build.py
 ```
 
 ```bash
-python3 build/build.py --chapters 1-10 --name preview --formats html,pdf
-```
-
-```bash
 python3 build/qa_check.py --tracker
 ```
 
-The build extracts every Mermaid diagram to `diagrams/chNN/*.mmd`, renders SVG/PNG with headless Chromium, regenerates Appendix C (formulas) and Appendix D (diagrams), and writes the volumes to `dist/`.
+The build renders every Mermaid diagram with headless Chromium, regenerates the glossary from the chapters, and writes the textbook to `dist/`.

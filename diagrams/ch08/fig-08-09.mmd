@@ -1,9 +1,0 @@
-%% Figure 8.9 — Relationship graph for a Zanzibar-style check
-flowchart LR
-  carol([user carol]) -->|member| sre[group sre]
-  sre -->|member| eng[group eng]
-  bob([user bob]) -->|member| eng
-  eng -->|viewer| folder[folder eng]
-  folder -->|parent of| doc[doc readme]
-  alice([user alice]) -->|owner| doc
-  doc --> D{"check: carol viewer of doc?"}

@@ -1,9 +1,0 @@
-%% Figure 25.12 — The PACELC decision for one operation
-flowchart TD
-  OP([Request arrives]) --> P{Can the replica<br/>reach a quorum?}
-  P -->|no, partitioned| PA{Partition<br/>choice}
-  PA -->|PA| A1[Answer locally,<br/>reconcile later]
-  PA -->|PC| C1[Refuse or wait<br/>until healed]
-  P -->|yes, normal| EL{Else<br/>choice}
-  EL -->|EL| L1[Answer from nearest<br/>replica, maybe stale]
-  EL -->|EC| C2[Coordinate with<br/>quorum or leader]

@@ -1,8 +1,0 @@
-%% Figure 11.5 — The executed plan tree for "revenue by city over the last day"
-flowchart BT
-  SO["Seq Scan on orders<br/>filter: last day, not cancelled<br/>78,515 rows"] -->|"rows"| HJ["Hash Join<br/>o.customer_id = c.customer_id"]
-  SC["Seq Scan on customers<br/>100,000 rows"] -->|"rows"| H["Hash<br/>build, 5.7 MB"]
-  H -->|"hash table"| HJ
-  HJ -->|"78,515 joined rows"| AG["HashAggregate<br/>group by city: 5 groups"]
-  AG -->|"5 rows"| S["Sort<br/>by revenue desc"]
-  S -->|"5 rows"| R([Client])

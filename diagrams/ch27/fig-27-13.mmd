@@ -1,9 +1,0 @@
-%% Figure 27.13 — Version vectors creating and resolving siblings
-flowchart LR
-  D1["D1 Sx1<br/>cart: milk"] --> D2["D2 Sx2<br/>cart: milk, eggs"]
-  D2 -->|"write via Sy"| D3["D3 Sx2 Sy1<br/>add bread"]
-  D2 -->|"write via Sz"| D4["D4 Sx2 Sz1<br/>remove eggs"]
-  D3 --> SIB{"Concurrent?<br/>neither dominates"}
-  D4 --> SIB
-  SIB -->|"read returns siblings"| CL([Client merges])
-  CL -->|"write via Sx"| D5["D5 Sx3 Sy1 Sz1<br/>merged cart"]

@@ -1,8 +1,0 @@
-%% Figure 5.10 — From hardware facts to design decisions
-flowchart LR
-  F1["Random I/O far slower<br/>than sequential"] --> D1["Append-only logs, LSM trees,<br/>large blocks, columnar files"]
-  F2["Fixed cost per operation<br/>syscall, RTT, interrupt"] --> D2["Batching, pipelining,<br/>group commit"]
-  F3["Each level ~3-1000x slower<br/>than the one above"] --> D3["Caching at every layer,<br/>keep working set in RAM"]
-  F4["Cache lines and NUMA<br/>reward nearby data"] --> D4["Data locality: arrays, sharding,<br/>compute near data"]
-  F5["Devices need many<br/>requests in flight"] --> D5["Async I/O, thread pools,<br/>queue depth"]
-  F6["Shared written data<br/>does not scale across cores"] --> D6["Per-core state, shared-nothing,<br/>partitioning"]

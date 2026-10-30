@@ -1,7 +1,0 @@
-%% Figure 22.11 — Retry amplification in a four-layer call graph
-flowchart LR
-  U([User request]) --> L1["App SDK<br/>3 attempts"]
-  L1 -->|up to 3| L2["API gateway<br/>3 attempts each"]
-  L2 -->|up to 9| L3["Feed service<br/>3 attempts each"]
-  L3 -->|up to 27| L4["Profile service<br/>3 attempts each"]
-  L4 -->|up to 81| DB[(Overloaded database)]

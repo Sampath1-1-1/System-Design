@@ -1,9 +1,0 @@
-%% Figure 26.10 — Why a leader must not commit old-term entries by counting replicas
-flowchart TB
-  A["a: S1 leader, term 2<br/>index 2 = t2 on S1, S2"] --> B["b: S1 crashes. S5 leader, term 3<br/>votes S3, S4, S5. index 2 = t3 on S5"]
-  B --> C["c: S5 crashes. S1 leader, term 4<br/>copies index 2 = t2 to S3: 3 of 5"]
-  C --> D{"Commit index 2<br/>by replica count?"}
-  D -->|"unsafe rule"| E["d: S1 crashes. S5 wins term 5<br/>votes S2, S3, S4. Overwrites index 2"]
-  D -->|"Raft rule"| F["e: S1 first replicates index 3 = t4<br/>to a majority. Index 2 and 3 committed"]
-  E --> X["A committed entry is lost"]
-  F --> Y["S5 can no longer win:<br/>majority has last term 4"]

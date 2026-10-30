@@ -1,8 +1,0 @@
-%% Figure 15.10 — A lifecycle policy for log objects
-stateDiagram-v2
-  [*] --> Hot : PUT
-  Hot --> Warm : age 30 days
-  Warm --> Archive : age 90 days
-  Archive --> Expired : age 365 days
-  Archive --> Hot : restore request, hours
-  Expired --> [*]

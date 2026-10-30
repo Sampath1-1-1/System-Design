@@ -1,8 +1,0 @@
-%% Figure 23.11 — Generational heap
-flowchart LR
-  A([Allocation]) -->|bump pointer| E[Eden]
-  E -->|minor GC: copy live| SV[Survivor spaces]
-  SV -->|survives N collections| OLD[Old generation]
-  E -.->|dead objects| FREE([Reclaimed])
-  OLD -->|major or concurrent GC| FREE
-  OLD -.->|write barrier records<br/>old-to-young refs| CARD[[Card table]]

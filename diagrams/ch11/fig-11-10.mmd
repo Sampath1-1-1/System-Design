@@ -1,6 +1,0 @@
-%% Figure 11.10 — InnoDB current row and undo chain for product 42
-flowchart LR
-  CI[("Clustered index leaf<br/>on_hand 8, DB_TRX_ID 995")] -->|"DB_ROLL_PTR"| U2[["Undo record<br/>on_hand 9, trx 994"]]
-  U2 -->|"roll pointer"| U1[["Undo record<br/>on_hand 10, trx 993"]]
-  RV(["Read view that cannot see 995"]) -.->|"reconstructs"| U2
-  PU["Purge thread"] -->|"discards when no read view needs"| U1

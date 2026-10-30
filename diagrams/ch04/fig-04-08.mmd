@@ -1,9 +1,0 @@
-%% Figure 4.8 — The replica-loss race for three-way replication
-stateDiagram-v2
-  [*] --> ThreeCopies
-  ThreeCopies --> TwoCopies : any of 3 fails, rate 3λ
-  TwoCopies --> ThreeCopies : re-replicated within T
-  TwoCopies --> OneCopy : any of 2 fails, rate 2λ
-  OneCopy --> TwoCopies : re-replicated within T
-  OneCopy --> Lost : last copy fails, rate λ
-  Lost --> [*]

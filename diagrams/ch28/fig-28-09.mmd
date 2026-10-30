@@ -1,9 +1,0 @@
-%% Figure 28.9 — A transfer saga with compensation
-flowchart LR
-  T1["T1: debit acct 7<br/>Ledger service"] --> T2["T2: credit acct 9<br/>Partner bank API"]
-  T2 -->|"success"| DONE([Transfer complete])
-  T2 -->|"rejected"| C1["C1: refund acct 7<br/>Ledger service"]
-  C1 --> FAIL([Transfer failed, money returned])
-  O[Saga orchestrator] -.->|"drives steps via durable log"| T1
-  O -.-> T2
-  O -.-> C1

@@ -1,7 +1,0 @@
-%% Figure 15.8 — Layered, partitioned file-system metadata (after Tectonic)
-flowchart LR
-  C([Client library]) -->|resolve path| MS[Stateless metadata service]
-  MS --> NL[(Name layer<br/>dir ID + name to ID)]
-  MS --> FL[(File layer<br/>file ID to blocks)]
-  MS --> BL[(Block layer<br/>block to chunk locations)]
-  C -->|read and write chunks| CS[(Chunk store nodes)]

@@ -1,8 +1,0 @@
-%% Figure 13.4 — The three ARIES passes over the log
-flowchart LR
-  A["Oldest record of<br/>a loser transaction"] --- B["Smallest recLSN<br/>in dirty page table"]
-  B --- C["Last checkpoint<br/>BEGIN, END"]
-  C --- E["End of log<br/>crash point"]
-  C ==>|1 Analysis forward| E
-  B ==>|2 Redo forward, repeat history| E
-  E -.->|3 Undo backward, write CLRs| A

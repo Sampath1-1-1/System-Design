@@ -1,6 +1,8 @@
 # 6. Estimated Document Structure and Deliverable Mapping
 
-## 6.1 How the ten deliverables are assembled
+## 6.1 How the deliverable is assembled
+
+> **Scope change (2026-10-30):** at the reader's request only the main textbook is produced: `dist/System-Design-Textbook.pdf` and `.docx`, containing all written chapters plus the learning roadmap and glossary as appendices. The table below records the original plan for reference.
 
 All deliverables are generated from one source of truth — the Markdown manuscript — so content is written once and reused. `build/book.yaml` lists which files go into each deliverable.
 
