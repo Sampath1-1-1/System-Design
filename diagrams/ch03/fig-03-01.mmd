@@ -1,0 +1,15 @@
+%% Figure 3.1 — The ten-step concept-mastery loop
+flowchart TD
+  S1["1 Understand the concept"] --> S2["2 Identify the problem"]
+  S2 --> S3["3 Understand the mechanism"]
+  S3 --> S4["4 Draw the architecture"]
+  S4 --> S5["5 Study a real implementation"]
+  S5 --> S6["6 Analyze trade-offs"]
+  S6 --> S7["7 Explore failure scenarios"]
+  S7 --> S8["8 Implement a simplified version"]
+  S8 --> S9["9 Solve a design problem"]
+  S9 --> S10["10 Explain it independently"]
+  S10 --> D{Gaps found?}
+  D -->|yes| S3
+  D -->|no| R[(Flashcards and journal)]
+  R -.->|spaced review| S10

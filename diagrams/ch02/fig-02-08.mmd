@@ -1,0 +1,10 @@
+%% Figure 2.8 — ADR life cycle
+stateDiagram-v2
+    [*] --> Proposed
+    Proposed --> Accepted: review approves
+    Proposed --> Rejected: review declines
+    Accepted --> Deprecated: no longer relevant
+    Accepted --> Superseded: new ADR replaces it
+    Rejected --> [*]
+    Deprecated --> [*]
+    Superseded --> [*]

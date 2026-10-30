@@ -1,0 +1,123 @@
+/* The Complete System Design Knowledge Base — print and screen stylesheet */
+:root {
+  --navy: #1B2A4A;
+  --blue: #1F5FA8;   --blue-bg: #EEF4FB;
+  --teal: #127A7A;   --teal-bg: #ECF6F6;
+  --green: #3C7A4A;  --green-bg: #EEF5EF;
+  --amber: #B7791F;  --amber-bg: #FBF4E6;
+  --grey: #8A94A6;   --grey-bg: #F4F5F7;
+  --text: #1F2328;   --muted: #57606A; --rule: #D8DEE6;
+  --page-bg: #FFFFFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
+    --green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
+    --grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+  }
+}
+:root[data-theme="dark"] {
+  --navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
+  --green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
+  --grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+}
+
+html { font-size: 16px; }
+body {
+  font-family: "Source Serif 4", "Source Serif Pro", Georgia, "DejaVu Serif", serif;
+  color: var(--text); background: var(--page-bg);
+  line-height: 1.6; max-width: 48rem; margin: 0 auto; padding: 2rem 1rem 4rem;
+  hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word;
+}
+h1, h2, h3, h4, h5 { font-family: Inter, "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--navy); line-height: 1.25; }
+h1 { font-size: 2rem; border-bottom: 3px solid var(--navy); padding-bottom: .4rem; margin-top: 3rem; }
+h1.part-title { font-size: 2.3rem; text-align: center; border: none; margin-top: 35vh; }
+h2 { font-size: 1.45rem; margin-top: 2.4rem; border-bottom: 1px solid var(--rule); padding-bottom: .2rem; }
+h3 { font-size: 1.18rem; margin-top: 1.8rem; }
+h4 { font-size: 1rem; margin-top: 1.4rem; color: var(--blue); text-transform: none; }
+a { color: var(--blue); }
+blockquote { margin: 1rem 0; padding: .4rem 1rem; border-left: 3px solid var(--rule); color: var(--muted); font-family: Inter, sans-serif; font-size: .9rem; }
+
+/* Code */
+code { font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; font-size: .86em; background: var(--grey-bg); padding: .05em .3em; border-radius: 3px; }
+pre { background: var(--grey-bg); border: 1px solid var(--rule); border-radius: 6px; padding: .8rem 1rem; overflow-x: auto; font-size: .82rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+pre code { background: none; padding: 0; font-size: inherit; }
+
+/* Tables */
+table { border-collapse: collapse; width: 100%; margin: 1rem 0 1.4rem; font-family: Inter, "DejaVu Sans", sans-serif; font-size: .82rem; line-height: 1.4; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; break-inside: avoid; }
+th { background: var(--blue-bg); color: var(--navy); text-align: left; font-weight: 600; border-bottom: 2px solid var(--navy); }
+th, td { padding: .4rem .55rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--grey-bg) 60%, transparent); }
+.table-wrap { overflow-x: auto; }
+
+/* Figures */
+figure, p > img { text-align: center; }
+img { max-width: 100%; height: auto; }
+figure { margin: 1.2rem 0; break-inside: avoid; }
+figure img { display: block; margin: 0 auto; background: #fff; border-radius: 4px; }
+figcaption { font-family: Inter, sans-serif; font-size: .82rem; color: var(--muted); margin-top: .4rem; }
+.mermaid-error { border: 2px dashed var(--amber); background: var(--amber-bg); }
+
+/* Maths */
+math[display="block"] { margin: .8rem 0; overflow-x: auto; }
+
+/* Callouts */
+div.definition, div.concept, div.example, div.formula, div.tip, div.recommendation,
+div.mistake, div.warning, div.industry, div.note, div.summary {
+  border-left: 4px solid var(--grey); background: var(--grey-bg); padding: .7rem 1rem .5rem; margin: 1.2rem 0; border-radius: 0 6px 6px 0; break-inside: avoid-page;
+}
+div.definition::before, div.concept::before, div.example::before, div.formula::before, div.tip::before,
+div.recommendation::before, div.mistake::before, div.warning::before, div.industry::before, div.note::before, div.summary::before {
+  display: block; font-family: Inter, sans-serif; font-size: .68rem; letter-spacing: .09em; font-weight: 700; text-transform: uppercase; margin-bottom: .3rem;
+}
+div.definition { border-color: var(--blue); background: var(--blue-bg); }       div.definition::before { content: "Definition"; color: var(--blue); }
+div.formula { border: 1px solid var(--blue); border-left-width: 4px; background: var(--blue-bg); } div.formula::before { content: "Formula"; color: var(--blue); }
+div.concept { border-color: var(--teal); background: var(--teal-bg); }          div.concept::before { content: "Key concept"; color: var(--teal); }
+div.industry { border-color: var(--teal); background: var(--teal-bg); }         div.industry::before { content: "Industry example"; color: var(--teal); }
+div.tip { border-color: var(--green); background: var(--green-bg); }            div.tip::before { content: "Interview tip"; color: var(--green); }
+div.recommendation { border-color: var(--green); background: var(--green-bg); } div.recommendation::before { content: "Recommendation"; color: var(--green); }
+div.mistake { border-color: var(--amber); background: var(--amber-bg); }        div.mistake::before { content: "Common mistake"; color: var(--amber); }
+div.warning { border-color: var(--amber); background: var(--amber-bg); }        div.warning::before { content: "Warning / trade-off"; color: var(--amber); }
+div.example { border-color: var(--grey); background: var(--grey-bg); }          div.example::before { content: "Worked example"; color: var(--muted); }
+div.note { border-color: var(--grey); background: var(--grey-bg); }             div.note::before { content: "Note"; color: var(--muted); }
+div.summary { border-color: var(--navy); background: var(--blue-bg); }          div.summary::before { content: "Summary"; color: var(--navy); }
+div.definition > p:last-child, div.concept > p:last-child, div.example > p:last-child, div.formula > p:last-child,
+div.tip > p:last-child, div.recommendation > p:last-child, div.mistake > p:last-child, div.warning > p:last-child,
+div.industry > p:last-child, div.note > p:last-child, div.summary > p:last-child { margin-bottom: .3rem; }
+
+details { background: var(--grey-bg); border: 1px solid var(--rule); border-radius: 6px; padding: .5rem 1rem; margin: 1rem 0; }
+summary { cursor: pointer; font-family: Inter, sans-serif; font-weight: 600; color: var(--navy); }
+
+/* Title page and TOC */
+.title-page { text-align: center; margin-top: 20vh; break-after: page; page-break-after: always; }
+.title-page h1.title { border: none; font-size: 2.4rem; }
+.title-page .subtitle { font-family: Inter, sans-serif; color: var(--teal); font-size: 1.2rem; }
+.title-page .meta { color: var(--muted); font-family: Inter, sans-serif; margin-top: 3rem; font-size: .9rem; }
+nav#TOC { font-family: Inter, sans-serif; font-size: .9rem; }
+nav#TOC ul { list-style: none; padding-left: 1.1rem; }
+nav#TOC > ul { padding-left: 0; }
+nav#TOC > ul > li { margin-top: .5rem; font-weight: 600; }
+nav#TOC > ul > li li { font-weight: 400; }
+nav#TOC a { text-decoration: none; color: var(--text); }
+
+@media (max-width: 600px) { body { padding: 1rem 16px 3rem; } h1 { font-size: 1.6rem; } table { font-size: .75rem; } }
+
+/* Print */
+@page { size: A4; margin: 22mm 20mm 24mm 20mm; }
+@media print {
+  html { font-size: 10.5pt; }
+  body { max-width: none; padding: 0; background: #fff; color: #1F2328; }
+  :root { --page-bg: #fff; }
+  h1 { break-before: page; }
+  h1.title, .title-page h1 { break-before: auto; }
+  h2, h3, h4 { break-after: avoid; }
+  pre, table, figure, .formula { break-inside: avoid; }
+  pre { white-space: pre-wrap; }
+  a { color: inherit; text-decoration: none; }
+  details { border: none; padding: 0; }
+  details > summary { list-style: none; }
+  nav#TOC { break-after: page; }
+  .part-page { break-before: page; break-after: page; }
+}

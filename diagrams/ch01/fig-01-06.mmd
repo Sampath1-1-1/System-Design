@@ -1,0 +1,14 @@
+%% Figure 1.6 — PhotoShare v2: cache, read replicas and asynchronous processing
+flowchart LR
+  C([Client]) -->|HTTPS API| LB[Load balancer]
+  C -->|HTTPS images| CDN{{CDN}}
+  CDN -->|cache miss| OBJ[(Object storage)]
+  LB -->|HTTP| APP["App servers x N"]
+  APP -->|get and set| CACHE[(Cache cluster)]
+  APP -->|writes| DBP[(Primary database)]
+  APP -->|feed reads| DBR[(Read replicas)]
+  DBP -.->|replication| DBR
+  APP -->|put original| OBJ
+  APP -.->|resize job| Q[[Job queue]]
+  Q -.->|deliver| W[Thumbnail workers]
+  W -->|put thumbnails| OBJ

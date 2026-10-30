@@ -1,0 +1,13 @@
+%% Figure 2.1 — The system designer's thinking loop
+flowchart TD
+    R["Clarify requirements<br/>§2.5"] --> B["Draw the boundary<br/>§2.4"]
+    B --> A["State assumptions<br/>§2.7"]
+    A --> E["Estimate scale<br/>§2.10–2.11"]
+    E --> D["Decompose into components<br/>§2.3"]
+    D --> N["Find bottlenecks<br/>§2.6"]
+    N --> F["Design for failure<br/>§2.9"]
+    F --> T["Evaluate trade-offs<br/>§2.8"]
+    T --> Q{Good enough<br/>for the risk?}
+    Q -->|no, refine| R
+    Q -->|yes| W["Document decisions<br/>§2.12"]
+    W -.->|new facts or growth| R

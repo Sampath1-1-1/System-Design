@@ -1,0 +1,17 @@
+%% Figure 2.6 — QuickBite checkout designed for failure
+flowchart LR
+    C([Customer app]) -->|HTTPS + idempotency key| ORD[Order Service]
+    ORD -->|timeout 2s, breaker| PAY[Payment Service]
+    PAY -->|timeout 1.5s| PSP{{Payment Provider}}
+    PAY -.->|on breaker open| FB["Fallback:<br/>offer other method"]
+    subgraph Zone_A_and_B [Two availability zones]
+        ODB[(Order DB primary)]
+        ODB2[(Order DB standby)]
+        OB[[Outbox table]]
+    end
+    ORD -->|SQL transaction| ODB
+    ODB -.->|sync replication| ODB2
+    ORD -->|same transaction| OB
+    OB -.->|relay| Q[[Event Log]]
+    Q -.->|at-least-once| RT[Restaurant Notifier]
+    Q -.->|at-least-once| DSP[Dispatch Service]

@@ -1,0 +1,10 @@
+%% Figure 3.7 — The postmortem study loop
+flowchart LR
+  R{{Public incident report}} --> T["Reconstruct the timeline"]
+  T --> A["Draw the architecture<br/>mark the trigger point"]
+  A --> CF["Separate trigger from<br/>contributing factors"]
+  CF --> M["Map each factor to a chapter"]
+  M --> P["Write the prevention<br/>you would have designed"]
+  P --> G["Generalize to one rule"]
+  G --> J[(Journal and flashcards)]
+  J -.->|spaced review| A

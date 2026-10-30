@@ -1,0 +1,20 @@
+%% Figure 1.7 — PhotoShare v3: services, partitioned data and multi-zone deployment
+flowchart LR
+  C([Client]) -->|HTTPS images| CDN{{CDN}}
+  C -->|HTTPS API| GW[API gateway]
+  CDN -->|cache miss| OBJ[(Object storage)]
+  subgraph ZoneA["Availability zone A, mirrored in zone B"]
+    GW -->|RPC| UP[Upload service]
+    GW -->|RPC| FEED[Feed service]
+    GW -->|RPC| USR[User and graph service]
+    UP -->|write| META[("Photo metadata<br/>partitioned by user")]
+    UP -.->|photo posted event| BUS[[Event log]]
+    BUS -.->|consume| FAN[Fan-out workers]
+    BUS -.->|consume| THW[Thumbnail workers]
+    FAN -->|read followers| USR
+    FAN -->|append to feeds| FC[(Feed cache)]
+    FEED -->|read| FC
+    FEED -->|hydrate| META
+  end
+  UP -->|put original| OBJ
+  THW -->|put thumbnails| OBJ

@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Glossary</title>
+  <style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+</style>
+  <style type="text/css">
+:root {
+--navy: #1B2A4A;
+--blue: #1F5FA8; --blue-bg: #EEF4FB;
+--teal: #127A7A; --teal-bg: #ECF6F6;
+--green: #3C7A4A; --green-bg: #EEF5EF;
+--amber: #B7791F; --amber-bg: #FBF4E6;
+--grey: #8A94A6; --grey-bg: #F4F5F7;
+--text: #1F2328; --muted: #57606A; --rule: #D8DEE6;
+--page-bg: #FFFFFF;
+}
+@media (prefers-color-scheme: dark) {
+:root:not([data-theme="light"]) {
+--navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
+--green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
+--grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+}
+}
+:root[data-theme="dark"] {
+--navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
+--green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
+--grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+}
+html { font-size: 16px; }
+body {
+font-family: "Source Serif 4", "Source Serif Pro", Georgia, "DejaVu Serif", serif;
+color: var(--text); background: var(--page-bg);
+line-height: 1.6; max-width: 48rem; margin: 0 auto; padding: 2rem 1rem 4rem;
+hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word;
+}
+h1, h2, h3, h4, h5 { font-family: Inter, "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--navy); line-height: 1.25; }
+h1 { font-size: 2rem; border-bottom: 3px solid var(--navy); padding-bottom: .4rem; margin-top: 3rem; }
+h1.part-title { font-size: 2.3rem; text-align: center; border: none; margin-top: 35vh; }
+h2 { font-size: 1.45rem; margin-top: 2.4rem; border-bottom: 1px solid var(--rule); padding-bottom: .2rem; }
+h3 { font-size: 1.18rem; margin-top: 1.8rem; }
+h4 { font-size: 1rem; margin-top: 1.4rem; color: var(--blue); text-transform: none; }
+a { color: var(--blue); }
+blockquote { margin: 1rem 0; padding: .4rem 1rem; border-left: 3px solid var(--rule); color: var(--muted); font-family: Inter, sans-serif; font-size: .9rem; }
+
+code { font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; font-size: .86em; background: var(--grey-bg); padding: .05em .3em; border-radius: 3px; }
+pre { background: var(--grey-bg); border: 1px solid var(--rule); border-radius: 6px; padding: .8rem 1rem; overflow-x: auto; font-size: .82rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+pre code { background: none; padding: 0; font-size: inherit; }
+
+table { border-collapse: collapse; width: 100%; margin: 1rem 0 1.4rem; font-family: Inter, "DejaVu Sans", sans-serif; font-size: .82rem; line-height: 1.4; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; break-inside: avoid; }
+th { background: var(--blue-bg); color: var(--navy); text-align: left; font-weight: 600; border-bottom: 2px solid var(--navy); }
+th, td { padding: .4rem .55rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--grey-bg) 60%, transparent); }
+.table-wrap { overflow-x: auto; }
+
+figure, p > img { text-align: center; }
+img { max-width: 100%; height: auto; }
+figure { margin: 1.2rem 0; break-inside: avoid; }
+figure img { display: block; margin: 0 auto; background: #fff; border-radius: 4px; }
+figcaption { font-family: Inter, sans-serif; font-size: .82rem; color: var(--muted); margin-top: .4rem; }
+.mermaid-error { border: 2px dashed var(--amber); background: var(--amber-bg); }
+
+math[display="block"] { margin: .8rem 0; overflow-x: auto; }
+
+div.definition, div.concept, div.example, div.formula, div.tip, div.recommendation,
+div.mistake, div.warning, div.industry, div.note, div.summary {
+border-left: 4px solid var(--grey); background: var(--grey-bg); padding: .7rem 1rem .5rem; margin: 1.2rem 0; border-radius: 0 6px 6px 0; break-inside: avoid-page;
+}
+div.definition::before, div.concept::before, div.example::before, div.formula::before, div.tip::before,
+div.recommendation::before, div.mistake::before, div.warning::before, div.industry::before, div.note::before, div.summary::before {
+display: block; font-family: Inter, sans-serif; font-size: .68rem; letter-spacing: .09em; font-weight: 700; text-transform: uppercase; margin-bottom: .3rem;
+}
+div.definition { border-color: var(--blue); background: var(--blue-bg); } div.definition::before { content: "Definition"; color: var(--blue); }
+div.formula { border: 1px solid var(--blue); border-left-width: 4px; background: var(--blue-bg); } div.formula::before { content: "Formula"; color: var(--blue); }
+div.concept { border-color: var(--teal); background: var(--teal-bg); } div.concept::before { content: "Key concept"; color: var(--teal); }
+div.industry { border-color: var(--teal); background: var(--teal-bg); } div.industry::before { content: "Industry example"; color: var(--teal); }
+div.tip { border-color: var(--green); background: var(--green-bg); } div.tip::before { content: "Interview tip"; color: var(--green); }
+div.recommendation { border-color: var(--green); background: var(--green-bg); } div.recommendation::before { content: "Recommendation"; color: var(--green); }
+div.mistake { border-color: var(--amber); background: var(--amber-bg); } div.mistake::before { content: "Common mistake"; color: var(--amber); }
+div.warning { border-color: var(--amber); background: var(--amber-bg); } div.warning::before { content: "Warning / trade-off"; color: var(--amber); }
+div.example { border-color: var(--grey); background: var(--grey-bg); } div.example::before { content: "Worked example"; color: var(--muted); }
+div.note { border-color: var(--grey); background: var(--grey-bg); } div.note::before { content: "Note"; color: var(--muted); }
+div.summary { border-color: var(--navy); background: var(--blue-bg); } div.summary::before { content: "Summary"; color: var(--navy); }
+div.definition > p:last-child, div.concept > p:last-child, div.example > p:last-child, div.formula > p:last-child,
+div.tip > p:last-child, div.recommendation > p:last-child, div.mistake > p:last-child, div.warning > p:last-child,
+div.industry > p:last-child, div.note > p:last-child, div.summary > p:last-child { margin-bottom: .3rem; }
+details { background: var(--grey-bg); border: 1px solid var(--rule); border-radius: 6px; padding: .5rem 1rem; margin: 1rem 0; }
+summary { cursor: pointer; font-family: Inter, sans-serif; font-weight: 600; color: var(--navy); }
+
+.title-page { text-align: center; margin-top: 20vh; break-after: page; page-break-after: always; }
+.title-page h1.title { border: none; font-size: 2.4rem; }
+.title-page .subtitle { font-family: Inter, sans-serif; color: var(--teal); font-size: 1.2rem; }
+.title-page .meta { color: var(--muted); font-family: Inter, sans-serif; margin-top: 3rem; font-size: .9rem; }
+nav#TOC { font-family: Inter, sans-serif; font-size: .9rem; }
+nav#TOC ul { list-style: none; padding-left: 1.1rem; }
+nav#TOC > ul { padding-left: 0; }
+nav#TOC > ul > li { margin-top: .5rem; font-weight: 600; }
+nav#TOC > ul > li li { font-weight: 400; }
+nav#TOC a { text-decoration: none; color: var(--text); }
+@media (max-width: 600px) { body { padding: 1rem 16px 3rem; } h1 { font-size: 1.6rem; } table { font-size: .75rem; } }
+
+@page { size: A4; margin: 22mm 20mm 24mm 20mm; }
+@media print {
+html { font-size: 10.5pt; }
+body { max-width: none; padding: 0; background: #fff; color: #1F2328; }
+:root { --page-bg: #fff; }
+h1 { break-before: page; }
+h1.title, .title-page h1 { break-before: auto; }
+h2, h3, h4 { break-after: avoid; }
+pre, table, figure, .formula { break-inside: avoid; }
+pre { white-space: pre-wrap; }
+a { color: inherit; text-decoration: none; }
+details { border: none; padding: 0; }
+details > summary { list-style: none; }
+nav#TOC { break-after: page; }
+.part-page { break-before: page; break-after: page; }
+}
+</style>
+</head>
+<body>
+<div class="title-page"><h1 class="title">Glossary</h1><p class="subtitle">From first principles to expert practice</p><p class="meta">Built from the manuscript sources · 0 chapter(s) in this edition</p></div>
+<header id="title-block-header" hidden>
+<h1 class="title">Glossary</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#appendix-a-glossary" id="toc-appendix-a-glossary">Appendix
+A — Glossary</a>
+<ul>
+<li><a href="#a" id="toc-a">A</a></li>
+<li><a href="#b" id="toc-b">B</a></li>
+<li><a href="#c" id="toc-c">C</a></li>
+<li><a href="#d" id="toc-d">D</a></li>
+<li><a href="#e" id="toc-e">E</a></li>
+<li><a href="#f" id="toc-f">F</a></li>
+<li><a href="#g" id="toc-g">G</a></li>
+<li><a href="#h" id="toc-h">H</a></li>
+<li><a href="#i" id="toc-i">I</a></li>
+<li><a href="#k" id="toc-k">K</a></li>
+<li><a href="#l" id="toc-l">L</a></li>
+<li><a href="#m" id="toc-m">M</a></li>
+<li><a href="#n" id="toc-n">N</a></li>
+<li><a href="#o" id="toc-o">O</a></li>
+<li><a href="#p" id="toc-p">P</a></li>
+<li><a href="#q" id="toc-q">Q</a></li>
+<li><a href="#r" id="toc-r">R</a></li>
+<li><a href="#s" id="toc-s">S</a></li>
+<li><a href="#t" id="toc-t">T</a></li>
+<li><a href="#u" id="toc-u">U</a></li>
+<li><a href="#v" id="toc-v">V</a></li>
+<li><a href="#w" id="toc-w">W</a></li>
+<li><a href="#z" id="toc-z">Z</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="appendix-a-glossary">Appendix A — Glossary</h1>
+<blockquote>
+<p>Generated by <code>build/build.py</code> from the definition callouts
+in every chapter; the first (defining) occurrence of each term is used.
+Canonical usage rules are in
+<code>docs/project/terminology.md</code>.</p>
+</blockquote>
+<h2 id="a">A</h2>
+<p><strong>Active recall</strong> — Deliberately retrieving information
+from memory without looking at the source, for example by answering a
+question, drawing a diagram or explaining aloud. Its measured benefit
+for later retention is called the <strong>testing effect</strong>.
+<em>(§3.4.2)</em></p>
+<p><strong>Address space</strong> — The range of memory addresses a
+process can use. On Linux x86-64 with 4-level page tables, user space
+spans 2⁴⁷ bytes = 128 TiB of <em>virtual</em> addresses; the kernel
+occupies the upper half and is not accessible from user mode.
+<em>(§6.3.2)</em></p>
+<p><strong>Anycast</strong> — An addressing scheme in which the same IP
+prefix is announced via BGP from many locations at once. Each client’s
+packets are routed to whichever announcing location is “closest”
+according to BGP path selection. <em>(§7.5.3)</em></p>
+<p><strong>Architectural decision</strong> — A design choice that
+addresses an architecturally significant requirement — one that affects
+structure, quality attributes, interfaces or technology in a way that is
+costly to change later. Examples: choosing a relational database over a
+key-value store; storing files in object storage; making photo
+processing asynchronous. <em>(§1.8.1)</em></p>
+<p><strong>Architecture Decision Record (ADR)</strong> — A short
+document that captures one architectural decision: its context, the
+decision itself, its status, and its consequences. ADRs are numbered,
+kept in sequence (often in the code repository), and never edited to
+reverse a decision — a new ADR <em>supersedes</em> the old one [Nygard
+2011]. <em>(§1.8.1)</em></p>
+<p><strong>Architecture documentation</strong> — The written and
+diagrammed record of a system’s structure and of the decisions that
+shaped it. It is written so that people who were not in the room (new
+team members, reviewers, your future self) can understand <em>what</em>
+the system is and <em>why</em> it is that way. <em>(§2.12.1)</em></p>
+<p><strong>Asymmetric (public-key) cryptography</strong> — Cryptography
+using a mathematically linked <strong>key pair</strong>: a
+<strong>public key</strong> that can be shared with anyone and a
+<strong>private key</strong> kept secret by its owner. What one key
+does, only the other can undo or verify. Security rests on problems
+believed hard to invert: factoring large integers (RSA) or computing
+discrete logarithms on elliptic curves (ECC). <em>(§10.4.3)</em></p>
+<p><strong>Audit log</strong> — An append-only record of
+security-relevant events — who (actor), did what (action), to which
+resource, when, from where, and with what result — retained so that
+actions can be investigated and attributed. A log is
+<strong>tamper-evident</strong> if any modification, deletion or
+reordering of past entries can be detected. <em>(§10.12)</em></p>
+<p><strong>Authenticated encryption with associated data (AEAD)</strong>
+— A symmetric scheme that provides confidentiality for the plaintext
+<em>and</em> integrity for both the ciphertext and optional unencrypted
+<strong>associated data</strong> (AAD), producing an authentication
+<strong>tag</strong> that decryption checks before releasing any
+plaintext. AES-GCM and ChaCha20-Poly1305 are AEAD schemes.
+<em>(§10.4.2)</em></p>
+<p><strong>Availability</strong> — The fraction of time (or of requests)
+for which a system serves correctly:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><mtext mathvariant="normal">uptime</mtext><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">uptime</mtext><mo>+</mo><mtext mathvariant="normal">downtime</mtext><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">A = \text{uptime}/(\text{uptime} + \text{downtime})</annotation></semantics></math>,
+or, request-based,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><mtext mathvariant="normal">successful requests</mtext><mi>/</mi><mtext mathvariant="normal">valid requests</mtext></mrow><annotation encoding="application/x-tex">A = \text{successful requests} / \text{valid requests}</annotation></semantics></math>.
+It is commonly quoted in “nines”: 99.9% is “three nines”.
+<em>(§4.14.1)</em></p>
+<h2 id="b">B</h2>
+<p><strong>Back-of-the-envelope estimation</strong> — A quick
+calculation, done with round numbers and stated assumptions, that gives
+the order of magnitude of a system’s load and resource needs (requests
+per second, storage, bandwidth, memory, number of nodes). The aim is to
+be within a factor of about 2–3 of the truth with a few minutes of
+arithmetic. This section introduces the method. Chapter 89 is the full
+handbook. <em>(§2.11.1)</em></p>
+<p><strong>Backward and forward compatibility</strong> —
+<strong>Backward compatibility</strong>: newer code can read data
+written by older code. <strong>Forward compatibility</strong>: older
+code can read data written by newer code [Kleppmann 2017, ch. 4].
+<em>(§8.9.3)</em></p>
+<p><strong>BGP</strong> — A <strong>path-vector</strong> routing
+protocol in which neighboring routers (peers) exchange, over a TCP
+session on port 179, announcements of the form “prefix P is reachable
+via AS path [X, Y, Z]”. Each AS chooses among the paths it hears
+according to its own <strong>policy</strong>, then re-announces its
+chosen path (with its own ASN prepended) to the peers its policy allows.
+<em>(§7.5.2)</em></p>
+<p><strong>Bit and byte</strong> — A <strong>bit</strong> (symbol b) is
+a single binary digit, 0 or 1. A <strong>byte</strong> (symbol B) is 8
+bits. Storage and memory are conventionally measured in bytes; network
+link speeds are conventionally measured in bits per second (bps).
+<em>(§4.5.1)</em></p>
+<p><strong>Bottleneck</strong> — The resource whose capacity limits the
+throughput of the whole system for a given workload. Throughput cannot
+rise above the bottleneck’s capacity no matter how much the other
+resources are improved. Formally, it is the resource with the highest
+<strong>service demand</strong> per request (defined below).
+<em>(§2.6.1)</em></p>
+<p><strong>Branch prediction</strong> — Hardware that guesses the
+outcome of a conditional jump (a <strong>branch</strong>, e.g. an
+<code>if</code> or a loop condition) before it is computed, so that the
+pipeline can keep fetching instructions. A wrong guess is a
+<strong>misprediction</strong> and forces a pipeline flush.
+<em>(§5.3.4)</em></p>
+<h2 id="c">C</h2>
+<p><strong>Cache coherence</strong> — The guarantee that all cores
+observe a single, consistent sequence of values for each memory
+location, even though each core keeps private copies in its own caches.
+<em>(§5.4.6)</em></p>
+<p><strong>Cache line</strong> — The fixed-size unit in which data moves
+between memory and caches. On x86-64 and most ARM server cores a line is
+64 bytes; some designs (for example Apple’s M-series cores) use 128
+bytes (as of 2024). A load of a single byte brings its whole line into
+the cache. <em>(§5.4.3)</em></p>
+<p><strong>Central processing unit (CPU)</strong> — The hardware that
+executes a program’s <strong>instructions</strong>: simple operations
+such as “add these two numbers”, “load a value from memory address X”,
+or “if this value is zero, jump to instruction Y”. A modern CPU package
+contains several independent <strong>cores</strong>, each of which can
+execute its own stream of instructions. <em>(§5.3.1)</em></p>
+<p><strong>Certificate Transparency (CT)</strong> — A system of public,
+append-only, Merkle-tree-based logs into which CAs record every
+certificate they issue, so that mis-issued certificates become publicly
+detectable [RFC 6962]. <em>(§10.5)</em></p>
+<p><strong>CIDR block</strong> — An address range written as
+<code>address/prefix-length</code>, for example
+<code>192.168.10.64/26</code>. The prefix length
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+says that the first
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+bits identify the network; the remaining
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>32</mn><mo>−</mo><mi>n</mi></mrow><annotation encoding="application/x-tex">32-n</annotation></semantics></math>
+bits (IPv4) or
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mn>128</mn><mo>−</mo><mi>n</mi></mrow><annotation encoding="application/x-tex">128-n</annotation></semantics></math>
+bits (IPv6) identify hosts. The <strong>subnet mask</strong> is the same
+information as a dotted number with
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+one-bits followed by zeros (<code>/26</code> =
+<code>255.255.255.192</code>). <em>(§7.4.2)</em></p>
+<p><strong>Client–server architecture</strong> — A way of dividing a
+system into two roles: a <strong>client</strong>, which initiates
+requests on behalf of a user or another program, and a
+<strong>server</strong>, which waits for requests, performs work on
+shared resources (data, computation) and returns responses. The two
+communicate over a network using an agreed <strong>protocol</strong>.
+<em>(§8.3.1)</em></p>
+<p><strong>Clock rate</strong> — The frequency at which a core’s
+internal circuitry steps from one state to the next, measured in hertz
+(cycles per second). A 4 GHz core has a <strong>cycle time</strong> of 1
+/ (4 × 10⁹) s = 0.25 ns. <em>(§5.3.2)</em></p>
+<p><strong>Compare-and-swap (CAS)</strong> — An atomic CPU instruction
+that, in one indivisible step, compares a memory location with an
+expected value and, only if they are equal, replaces it with a new
+value, reporting whether it succeeded. On x86-64 it is
+<code>LOCK CMPXCHG</code>; ARMv8.1 and later provide <code>CAS</code>,
+and earlier ARM uses load-linked/store-conditional pairs.
+<em>(§6.10.4)</em></p>
+<p><strong>Component</strong> — A unit of a system with a clear
+responsibility and an interface — for example a web service, a database,
+a cache, a message queue, a load balancer or a third-party payment
+provider. <em>(§1.3.1)</em></p>
+<p><strong>Components of network delay</strong> — <strong>Propagation
+delay</strong>: time for a signal to travel the physical distance.
+<strong>Transmission (serialization) delay</strong>: time to push all of
+a packet’s bits onto the link. <strong>Queuing delay</strong>: time
+spent waiting in buffers behind other packets. <strong>Processing
+delay</strong>: time for a device to examine headers, look up routes and
+copy the packet. <em>(§7.15.1)</em></p>
+<p><strong>Concept-mastery loop</strong> — A fixed sequence of ten
+learning activities applied to one system-design concept. Each activity
+produces a concrete artifact (a definition, a diagram, a program, a
+design). The concept counts as mastered only when you can rebuild every
+artifact without notes. <em>(§3.3.1)</em></p>
+<p><strong>Concurrency and parallelism</strong> —
+<strong>Concurrency</strong> is the <em>structuring</em> of a program as
+multiple tasks whose lifetimes overlap, so that progress on one does not
+wait for the others to finish. <strong>Parallelism</strong> is the
+<em>simultaneous execution</em> of multiple computations on multiple
+hardware units (cores, CPUs, GPUs). <em>(§6.8)</em></p>
+<p><strong>Condition variable</strong> — A queue of threads waiting for
+some condition on shared state to become true, always used together with
+a mutex. <code>wait</code> atomically releases the mutex and sleeps;
+<code>notify</code> (<code>signal</code>) wakes one waiter and
+<code>notify_all</code> (<code>broadcast</code>) wakes all.
+<em>(§6.10.3)</em></p>
+<p><strong>Congestion window (cwnd)</strong> — A sender-side limit, in
+bytes or segments, on unacknowledged data in flight, based on the
+sender’s estimate of what the network path can absorb. The sender may
+have at most
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">cwnd</mtext><mo>,</mo><mtext mathvariant="normal">rwnd</mtext><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\min(\text{cwnd}, \text{rwnd})</annotation></semantics></math>
+bytes outstanding. <em>(§7.7.7)</em></p>
+<p><strong>Consistent hashing</strong> — A way of assigning keys to
+nodes so that, when a node is added or removed, only about
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>/</mi><mi>N</mi></mrow><annotation encoding="application/x-tex">K/N</annotation></semantics></math>
+of the
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>K</mi><annotation encoding="application/x-tex">K</annotation></semantics></math>
+keys change owner, where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>
+is the number of nodes. Both keys and nodes are hashed onto the same
+circular number space (the <strong>ring</strong>). Each key belongs to
+the first node found by moving clockwise from the key’s position [Karger
+et al. 1997]. <em>(§3.3.2)</em></p>
+<p><strong>Context diagram</strong> — A diagram that shows the whole
+system as a single box, surrounded by the people (actors) and external
+systems that interact with it, with each interaction labeled. Context
+diagrams come from structured analysis [DeMarco 1979] and are Level 1 of
+the C4 model [Brown C4]. <em>(§2.4.1)</em></p>
+<p><strong>Context switch</strong> — The kernel operation that stops one
+thread running on a CPU core, saves its CPU state into its PCB, and
+loads the saved state of another thread so that it resumes where it left
+off. <em>(§6.4)</em></p>
+<p><strong>CPU-bound and I/O-bound</strong> — A workload is
+<strong>CPU-bound</strong> when its speed is limited by how fast the
+processor can execute instructions; giving it a faster CPU or more cores
+speeds it up. It is <strong>I/O-bound</strong> when it spends most of
+its time waiting for storage or the network; a faster CPU barely helps,
+but more concurrency or faster devices do. A related category,
+<strong>memory-bound</strong>, is limited by memory latency or bandwidth
+(§5.9) — the CPU looks “busy” but is mostly stalled. <em>(§5.8)</em></p>
+<p><strong>CPU cache</strong> — A small, fast memory built from SRAM
+(static RAM) on the processor chip that holds copies of recently used
+main-memory data, so that most loads and stores do not have to wait for
+DRAM. <em>(§5.4.1)</em></p>
+<p><strong>CPU scheduler</strong> — The part of the kernel that decides
+which ready thread runs next on each core and for how long. The rule it
+follows is the <strong>scheduling policy</strong>; the mechanism that
+performs the switch is the dispatcher (§6.4). <em>(§6.5)</em></p>
+<p><strong>Critical section</strong> — A region of code that accesses
+shared state and must not be executed by more than one thread at a time.
+Guaranteeing this is <strong>mutual exclusion</strong>.
+<em>(§6.9)</em></p>
+<p><strong>Cryptographic hash function</strong> — A deterministic
+function
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>H</mi><annotation encoding="application/x-tex">H</annotation></semantics></math>
+that maps an input of any length to a fixed-length output (the
+<strong>digest</strong>), such that it is computationally infeasible to
+(1) find an input that hashes to a given digest (<strong>preimage
+resistance</strong>), (2) given one input, find a different input with
+the same digest (<strong>second-preimage resistance</strong>), and (3)
+find any two distinct inputs with the same digest (<strong>collision
+resistance</strong>). <em>(§10.4.1)</em></p>
+<h2 id="d">D</h2>
+<p><strong>Deadline</strong> — An absolute point in time by which a
+client needs an RPC to complete. gRPC transmits it as a remaining
+timeout; when it passes, the client stops waiting with
+<code>DEADLINE_EXCEEDED</code> and the server can see that the call was
+cancelled [gRPC Docs: Deadlines]. <em>(§8.8.4)</em></p>
+<p><strong>Deadlock</strong> — A state in which each thread in a set is
+waiting for a resource held by another thread in the same set, so none
+can ever proceed. <em>(§6.11.1)</em></p>
+<p><strong>Decomposition</strong> — Dividing a system into smaller parts
+(<strong>components</strong>) so that each part has one clear
+responsibility, a well-defined interface, and as few dependencies on
+other parts as possible. Each part can then be understood, built, scaled
+and changed mostly on its own. <em>(§2.3.2)</em></p>
+<p><strong>Deliberate practice</strong> — Effortful practice designed to
+improve performance. It targets specific weaknesses, has clear goals,
+gives immediate feedback and is usually guided by a teacher or coach
+[Ericsson et al. 1993]. <em>(§3.4.6)</em></p>
+<p><strong>Design assumption</strong> — A belief about the workload, the
+environment or the business that the design depends on but that has not
+yet been verified, for example “80% of requests are reads” or “the
+payment provider responds within 1 s at p99”. An assumption is
+<strong>stated</strong> when it is written down with its value, its
+source, your confidence in it and how it will be checked.
+<em>(§2.7.1)</em></p>
+<p><strong>Design document (design doc)</strong> — A written proposal,
+produced before significant implementation, that states a problem, its
+goals and non-goals, a proposed design, the alternatives considered, and
+cross-cutting concerns (security, privacy, operations, cost), so that
+others can review it while changes are still cheap.
+<em>(§1.10.1)</em></p>
+<p><strong>Designing for failure</strong> — Treating component failure
+as a <em>normal, expected event</em> rather than an exception. For every
+component and dependency, the design states what happens when it is
+slow, returns errors or disappears, and makes sure the <strong>blast
+radius</strong> (the set of users and features affected) is as small as
+possible. <em>(§2.9.1)</em></p>
+<p><strong>Digital signature</strong> — A scheme with three algorithms:
+key generation, <strong>sign</strong> (using the private key, produces a
+signature over a message) and <strong>verify</strong> (using the public
+key, checks a signature against a message). A valid signature shows that
+the message was approved by the holder of the private key and has not
+changed since. Because verification needs only the public key,
+<em>anyone</em> can verify, which provides non-repudiation.
+<em>(§10.4.5)</em></p>
+<p><strong>Direct memory access (DMA)</strong> — A mechanism that lets a
+device controller read from or write to main memory directly, without
+the CPU copying each word; the CPU only sets up the transfer and is told
+when it finishes. <em>(§5.7.3)</em></p>
+<p><strong>Distributed denial of service (DDoS)</strong> — An attack
+that makes a service unavailable by overwhelming some finite resource —
+network bandwidth, packet-processing capacity, connection-state tables,
+or application CPU, memory and database capacity — with traffic from
+many sources at once, typically a <strong>botnet</strong> of compromised
+devices or abused open servers. <em>(§10.11)</em></p>
+<p><strong>DNS time to live (TTL)</strong> — A per-record value, in
+seconds, that tells any cache how long it may reuse the record before
+asking again. <strong>Negative caching</strong> stores “this name does
+not exist” (NXDOMAIN) answers for a duration derived from the zone’s SOA
+record [RFC 2308]. <em>(§7.6.4)</em></p>
+<p><strong>Domain Name System (DNS)</strong> — A hierarchical,
+distributed database that maps human-readable <strong>domain
+names</strong> (such as <code>www.example.com</code>) to data, most
+often IP addresses, and the protocol used to query it [RFC 1034; RFC
+1035]. <em>(§7.6.1)</em></p>
+<p><strong>DRAM (dynamic random-access memory)</strong> — The technology
+used for main memory. Each bit is stored as charge in a tiny capacitor
+that leaks and must be <strong>refreshed</strong> every few tens of
+milliseconds. DRAM is <strong>volatile</strong>: its contents are lost
+when power is removed. <em>(§5.5.1)</em></p>
+<h2 id="e">E</h2>
+<p><strong>Encapsulation</strong> — The process by which each layer of
+the stack prepends its own header (and sometimes appends a trailer) to
+the data unit handed down by the layer above, treating that data unit as
+an opaque payload. <strong>Decapsulation</strong> is the reverse at the
+receiver. <em>(§7.3.1)</em></p>
+<p><strong>Envelope encryption</strong> — Encrypting data with a
+<strong>data-encryption key (DEK)</strong> generated for that data, then
+encrypting (“wrapping”) the DEK with a KEK held in a KMS, and storing
+the wrapped DEK alongside the ciphertext [AWS Docs: KMS concepts].
+<em>(§10.9.2)</em></p>
+<p><strong>Expected value</strong> — The probability-weighted average
+outcome of a random quantity
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>E</mi><mrow><mo stretchy="true" form="prefix">[</mo><mi>X</mi><mo stretchy="true" form="postfix">]</mo></mrow><mo>=</mo><msub><mo>∑</mo><mi>i</mi></msub><msub><mi>x</mi><mi>i</mi></msub><mspace width="0.167em"></mspace><mi>P</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>X</mi><mo>=</mo><msub><mi>x</mi><mi>i</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">E[X] = \sum_i x_i \, P(X = x_i)</annotation></semantics></math>.
+It is the long-run average over many repetitions. <em>(§4.6.3)</em></p>
+<p><strong>Exponent</strong> — In
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mi>b</mi><mi>n</mi></msup><annotation encoding="application/x-tex">b^n</annotation></semantics></math>,
+the <strong>base</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
+is multiplied by itself
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+times;
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+is the <strong>exponent</strong> (or power). By convention
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>b</mi><mn>0</mn></msup><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">b^0 = 1</annotation></semantics></math>
+and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>b</mi><mrow><mo>−</mo><mi>n</mi></mrow></msup><mo>=</mo><mn>1</mn><mi>/</mi><msup><mi>b</mi><mi>n</mi></msup></mrow><annotation encoding="application/x-tex">b^{-n} = 1/b^n</annotation></semantics></math>.
+<em>(§4.3.1)</em></p>
+<h2 id="f">F</h2>
+<p><strong>False sharing</strong> — A performance problem in which
+threads on different cores write to <em>different</em> variables that
+happen to sit in the <em>same</em> cache line, so the coherence protocol
+bounces the line between cores as if they were sharing data.
+<em>(§5.4.7)</em></p>
+<p><strong>Firewall</strong> — A device or software function that
+permits or denies traffic according to rules. A
+<strong>stateless</strong> (packet-filter) firewall evaluates each
+packet independently against rules on addresses, ports and protocol. A
+<strong>stateful</strong> firewall tracks connections, so a reply to an
+allowed outbound connection is automatically permitted.
+<strong>Application-layer firewalls</strong>, including web application
+firewalls (WAFs), parse protocols such as HTTP to block malicious
+requests. <em>(§7.14)</em></p>
+<p><strong>Forward secrecy</strong> — A property of a key-exchange
+protocol whereby compromise of a party’s long-term private key does not
+reveal session keys from past sessions. It is achieved by using fresh
+<strong>ephemeral</strong> key pairs for every session (the “E” in
+ECDHE) and deleting them afterward. <em>(§10.4.4)</em></p>
+<p><strong>Functional requirement (FR)</strong> — A statement of a
+behavior the system must provide: an input, action or event, and the
+observable result. Functional requirements describe <em>what</em> the
+system does — for example, “a signed-in user can upload a JPEG or PNG
+photo up to 20 MB, and it appears in their followers’ feeds”.
+<em>(§1.6.1)</em></p>
+<h2 id="g">G</h2>
+<p><strong>GraphQL</strong> — A query language for APIs and a runtime
+for executing those queries against a strongly typed
+<strong>schema</strong>. The client sends a document describing exactly
+the fields it wants; the server returns JSON of the same shape [GraphQL
+Spec]. <em>(§8.7.1)</em></p>
+<p><strong>gRPC</strong> — An open-source RPC framework, originally
+developed at Google and released in 2015, that uses Protocol Buffers as
+its interface definition language and message format and HTTP/2 as its
+transport [gRPC Docs]. <em>(§8.8.2)</em></p>
+<h2 id="h">H</h2>
+<p><strong>Hard disk drive (HDD)</strong> — A storage device that
+records data magnetically on spinning platters, read and written by
+heads mounted on a moving arm (the <strong>actuator</strong>). Data is
+organized in concentric <strong>tracks</strong> divided into
+<strong>sectors</strong> of 512 or 4096 bytes. <em>(§5.6.1)</em></p>
+<p><strong>High-level design (HLD)</strong> — A description of a system
+as a set of major components (services, data stores, queues, caches,
+external dependencies), their responsibilities, the interfaces and
+protocols between them, data flows, and deployment topology — at a level
+of detail where each component is a box whose internals are not yet
+specified. <em>(§1.5.1)</em></p>
+<h2 id="i">I</h2>
+<p><strong>Idempotent method</strong> — A method for which the intended
+effect on the server of sending the same request
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>N</mi><mo>&gt;</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">N &gt; 0</annotation></semantics></math>
+times is the same as sending it once [RFC 9110 §9.2.2]. The
+<em>response</em> may differ (a second <code>DELETE</code> may return
+404); the <em>state</em> does not. <em>(§8.6.3)</em></p>
+<p><strong>Instruction pipeline</strong> — A technique in which the core
+splits instruction execution into stages and works on different stages
+of several consecutive instructions at the same time, like an assembly
+line. <em>(§5.3.3)</em></p>
+<p><strong>Interleaving</strong> — Mixing different kinds of problems or
+concepts within one practice session (A B C A C B), instead of finishing
+all practice on one kind before moving to the next (AAA BBB CCC, called
+<strong>blocking</strong>). <em>(§3.4.5)</em></p>
+<p><strong>I/O (input/output)</strong> — Any transfer of data between
+the CPU/memory and a device outside it: storage, network cards, GPUs,
+keyboards. A <strong>device controller</strong> on each device does the
+physical work; the CPU communicates with it through <strong>device
+registers</strong> and shared memory. <em>(§5.7)</em></p>
+<p><strong>IOPS</strong> — Input/output operations per second: the
+number of independent read or write requests a device completes per
+second, quoted for a stated request size (usually 4 KiB) and
+<strong>queue depth</strong> (number of requests outstanding at once).
+<em>(§5.6.5)</em></p>
+<p><strong>IP address</strong> — A numeric identifier assigned to a
+network interface that the Internet Protocol uses to deliver packets. An
+<strong>IPv4</strong> address is 32 bits, written as four decimal octets
+(<code>203.0.113.25</code>) [RFC 791]. An <strong>IPv6</strong> address
+is 128 bits, written as eight groups of four hexadecimal digits
+separated by colons (<code>2001:db8:0:1::25</code>) [RFC 8200].
+<em>(§7.4.1)</em></p>
+<h2 id="k">K</h2>
+<p><strong>Key management service (KMS)</strong> — A managed service,
+backed by hardware security modules (HSMs), that generates and stores
+<strong>key-encryption keys (KEKs)</strong> that never leave it in
+plaintext, performs cryptographic operations with them on request,
+enforces access policies on every use and logs every call. Examples: AWS
+KMS, Google Cloud KMS, Azure Key Vault, HashiCorp Vault’s Transit
+engine. <em>(§10.9.2)</em></p>
+<h2 id="l">L</h2>
+<p><strong>Latency and bandwidth (hardware)</strong> —
+<strong>Latency</strong> is the time from issuing one request to
+receiving its first byte (for example, ~100 ns for a DRAM load).
+<strong>Bandwidth</strong> is the maximum rate at which data can be
+moved once transfers are flowing (for example, ~38 GB/s for one
+DDR5-4800 channel). Achieved bandwidth is <strong>throughput</strong>.
+<em>(§5.9.1)</em></p>
+<p><strong>Leaf–spine (folded Clos) network</strong> — A two-tier
+topology in which every <strong>leaf</strong> (top-of-rack) switch
+connects to every <strong>spine</strong> switch, and servers attach only
+to leaves. Any two servers on different leaves are exactly two switch
+hops apart (leaf → spine → leaf), and traffic is spread across all
+spines with ECMP. It is a form of the multistage <strong>Clos
+network</strong>, first described by Charles Clos in 1953 for telephone
+switching. Larger fabrics add a third tier. <em>(§7.17.1)</em></p>
+<p><strong>Little’s Law</strong> — For any stable system observed over a
+long period, the average number of items in the system equals the
+average arrival rate multiplied by the average time each item spends in
+the system:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>L</mi><mo>=</mo><mi>λ</mi><mi>W</mi></mrow><annotation encoding="application/x-tex">L = \lambda W</annotation></semantics></math>
+[Little 1961]. <em>(§4.11.1)</em></p>
+<p><strong>Logarithm</strong> — The logarithm base
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
+of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>x</mi><annotation encoding="application/x-tex">x</annotation></semantics></math>,
+written
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mo>log</mo><mi>b</mi></msub><mi>x</mi></mrow><annotation encoding="application/x-tex">\log_b x</annotation></semantics></math>,
+is the exponent to which
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>b</mi><annotation encoding="application/x-tex">b</annotation></semantics></math>
+must be raised to give
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>x</mi><annotation encoding="application/x-tex">x</annotation></semantics></math>:
+if
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msup><mi>b</mi><mi>y</mi></msup><mo>=</mo><mi>x</mi></mrow><annotation encoding="application/x-tex">b^y = x</annotation></semantics></math>
+then
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>y</mi><mo>=</mo><msub><mo>log</mo><mi>b</mi></msub><mi>x</mi></mrow><annotation encoding="application/x-tex">y = \log_b x</annotation></semantics></math>.
+<em>(§4.4.1)</em></p>
+<p><strong>Long polling</strong> — A technique in which the client sends
+an HTTP request that the server deliberately does not answer until
+either new data is available or a server-side timeout
+<em>T</em><sub>hold</sub> expires; on receiving any response, the client
+immediately sends the next request. <em>(§9.4.1)</em></p>
+<p><strong>Low-level design (LLD)</strong> — A description of the
+internals of one component: its modules, classes or functions, data
+structures, algorithms, database schemas, API request and response
+formats, error handling and state transitions — at a level of detail
+from which an engineer can write code. <em>(§1.5.1)</em></p>
+<h2 id="m">M</h2>
+<p><strong>Matrix</strong> — A rectangular grid of numbers with
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>m</mi><annotation encoding="application/x-tex">m</annotation></semantics></math>
+rows and
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+columns (an
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>m</mi><mo>×</mo><mi>n</mi></mrow><annotation encoding="application/x-tex">m \times n</annotation></semantics></math>
+matrix). A set of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+embeddings of dimension
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>
+is naturally stored as an
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi><mo>×</mo><mi>d</mi></mrow><annotation encoding="application/x-tex">n \times d</annotation></semantics></math>
+matrix, one embedding per row. <em>(§4.9.3)</em></p>
+<p><strong>Mean and median</strong> — The <strong>mean</strong>
+(arithmetic average) of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+values is their sum divided by
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>.
+The <strong>median</strong> is the middle value after sorting (the
+average of the two middle values when
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>n</mi><annotation encoding="application/x-tex">n</annotation></semantics></math>
+is even); half of the values are at or below it. <em>(§4.7.1)</em></p>
+<p><strong>Memory hierarchy</strong> — The layered arrangement of
+storage technologies in a computer, from small, fast and expensive per
+byte (registers, caches) to large, slow and cheap per byte (disks,
+tape), in which each level acts as a cache for the level below it.
+<em>(§5.5.2)</em></p>
+<p><strong>Message authentication code (MAC)</strong> — A short tag
+computed from a message and a secret key,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>t</mi><mo>=</mo><msub><mtext mathvariant="normal">MAC</mtext><mi>K</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>m</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">t = \text{MAC}_K(m)</annotation></semantics></math>,
+such that without
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>K</mi><annotation encoding="application/x-tex">K</annotation></semantics></math>
+it is infeasible to produce a valid tag for any new message.
+<strong>HMAC</strong> is the standard construction from a hash function:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mtext mathvariant="normal">HMAC</mtext><mi>K</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><mi>m</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mi>H</mi><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">(</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><mo>⊕</mo><mtext mathvariant="normal">opad</mtext><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.167em"></mspace><mo stretchy="false" form="postfix">∥</mo><mspace width="0.167em"></mspace><mi>H</mi><mrow><mo stretchy="true" form="prefix">(</mo><mrow><mo stretchy="true" form="prefix">(</mo><mi>K</mi><mo>⊕</mo><mtext mathvariant="normal">ipad</mtext><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.167em"></mspace><mo stretchy="false" form="postfix">∥</mo><mspace width="0.167em"></mspace><mi>m</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">)</mo></mrow><annotation encoding="application/x-tex">\text{HMAC}_K(m) = H\big((K \oplus \text{opad}) \,\|\, H((K \oplus \text{ipad}) \,\|\, m)\big)</annotation></semantics></math>
+[Krawczyk et al. 1997]. <em>(§10.4.6)</em></p>
+<p><strong>Mobile push notification</strong> — A message sent by an
+application’s server to a platform-operated push service — Apple Push
+Notification service (<strong>APNs</strong>) for Apple platforms,
+Firebase Cloud Messaging (<strong>FCM</strong>) for Android (and
+optionally iOS and web) — which delivers it, on a best-effort basis,
+over a single persistent connection that the operating system maintains
+to that service on behalf of all apps. <em>(§9.8.1)</em></p>
+<p><strong>Multi-core processor</strong> — A single chip containing
+several complete cores, each with its own pipeline and private caches,
+sharing the last-level cache and memory. <em>(§5.3.6)</em></p>
+<p><strong>Mutex (mutual-exclusion lock)</strong> — An object with two
+operations, <code>lock</code> and <code>unlock</code>, guaranteeing that
+at most one thread holds it at a time. A thread that calls
+<code>lock</code> while another holds it waits. <em>(§6.10.1)</em></p>
+<h2 id="n">N</h2>
+<p><strong>Network Address Translation (NAT)</strong> — A function,
+usually in a router or gateway, that rewrites the source and/or
+destination IP addresses (and usually ports) of packets as they pass,
+keeping a <strong>translation table</strong> so that replies can be
+rewritten back. The most common form, <strong>source NAT with port
+translation</strong> (NAPT, often just “NAT”), lets many hosts with
+private addresses share one public address [RFC 3022].
+<em>(§7.13)</em></p>
+<p><strong>Non-functional requirement (NFR)</strong> — A requirement on
+<em>how well</em> the system performs its functions, or on constraints
+under which it operates, expressed as a measurable target — for example
+“p99 feed latency ≤ 300 ms at 2,000 RPS” or “monthly availability ≥
+99.9%”. NFRs are also called <strong>quality attributes</strong> or,
+informally, the <strong>“-ilities”</strong> (scalability, availability,
+durability, …). <em>(§1.7.1)</em></p>
+<p><strong>NUMA (non-uniform memory access)</strong> — A memory
+architecture in which each processor socket (or each chiplet group
+within a socket) has its own directly attached memory. A core can access
+all memory in the machine, but accessing its <strong>local</strong>
+memory is faster than accessing <strong>remote</strong> memory attached
+to another socket. <em>(§5.10)</em></p>
+<h2 id="o">O</h2>
+<p><strong>Operating system (OS)</strong> — The software layer that
+manages a computer’s hardware (CPU, memory, storage, network) and
+provides running programs with safe, shared, abstract access to it. The
+privileged core of the OS that runs with full hardware access is the
+<strong>kernel</strong>. <em>(§6.3.1)</em></p>
+<p><strong>Order of magnitude</strong> — A factor of ten. Two quantities
+differ by <em>k</em> orders of magnitude when their ratio is about
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mi>k</mi></msup><annotation encoding="application/x-tex">10^k</annotation></semantics></math>.
+Reasoning in orders of magnitude means estimating only the <em>power of
+ten</em> of a quantity (is it 10, 1,000 or 1,000,000 requests per
+second?) because that, not the exact value, decides the architecture.
+<em>(§2.10.1)</em></p>
+<p><strong>Out-of-order (OoO) execution</strong> — A technique in which
+the core executes instructions as soon as their inputs are ready rather
+than strictly in program order, while still making the results
+<em>appear</em> in program order (it <strong>retires</strong> them in
+order). <em>(§5.3.5)</em></p>
+<p><strong>OWASP Top 10</strong> — A consensus ranking of the most
+critical web application security risk categories, published by the Open
+Worldwide Application Security Project from vulnerability data
+contributed by testing organizations plus a community survey. This
+section uses the <strong>2021 edition</strong> [OWASP 2021]. A 2025
+edition has since been published; it keeps broken access control at #1,
+folds SSRF into it, and adds categories for software supply-chain
+failures and mishandling of exceptional conditions, so the architectural
+controls below remain applicable. <em>(§10.7)</em></p>
+<h2 id="p">P</h2>
+<p><strong>Page cache</strong> — The kernel’s in-RAM cache of file
+contents, organized in pages. Reads are served from it when possible;
+writes normally modify pages in it (marking them <strong>dirty</strong>)
+and return immediately, with the kernel writing them back to storage
+later. <em>(§6.6.6)</em></p>
+<p><strong>Percentile</strong> — The
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math>-th
+percentile of a set of measurements is the value at or below which
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>q</mi><annotation encoding="application/x-tex">q</annotation></semantics></math>%
+of the measurements fall. Latency percentiles are written
+<strong>p50</strong> (the median), <strong>p95</strong>,
+<strong>p99</strong> and <strong>p99.9</strong> (also written p999): the
+50th, 95th, 99th and 99.9th percentiles. <em>(§4.8.1)</em></p>
+<p><strong>Percentile latency (p50, p95, p99, p99.9)</strong> — The
+latency value below which the given percentage of requests fall. If p99
+latency is 300 ms, 99% of requests completed in 300 ms or less and 1%
+took longer. p50 is the median. <em>(§1.7.1)</em></p>
+<p><strong>Priority inversion</strong> — A situation in which a
+high-priority thread is blocked waiting for a lock held by a
+low-priority thread, while a medium-priority thread, which needs no
+lock, preempts the low-priority one, so the high-priority thread
+effectively runs at the lowest priority. <em>(§6.11.5)</em></p>
+<p><strong>Probability</strong> — A number between 0 and 1 that measures
+how likely an event is: 0 means impossible, 1 means certain. If an
+experiment is repeated many times, the probability of event
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>A</mi><annotation encoding="application/x-tex">A</annotation></semantics></math>,
+written
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>P</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>A</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">P(A)</annotation></semantics></math>,
+is the long-run fraction of repetitions in which
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>A</mi><annotation encoding="application/x-tex">A</annotation></semantics></math>
+happens. <em>(§4.6.1)</em></p>
+<p><strong>Process</strong> — A running instance of a program: its code,
+its private <strong>virtual address space</strong>, one or more threads
+of execution, and the OS resources it holds (open files, sockets, signal
+handlers, credentials). <em>(§6.3.2)</em></p>
+<p><strong>Process control block (PCB)</strong> — The kernel data
+structure that records everything needed to stop a process and later
+resume it exactly where it left off. In Linux it is
+<code>struct task_struct</code>. <em>(§6.3.3)</em></p>
+<p><strong>Process state</strong> — The scheduling status of a process
+(or thread): whether it is running on a CPU, ready and waiting for a
+CPU, or blocked waiting for an event. <em>(§6.3.4)</em></p>
+<p><strong>Protocol</strong> — A set of rules two parties agree on for
+exchanging messages: message formats, the meaning of each field, and the
+actions each side takes on sending, receiving or timing out. A
+<strong>protocol stack</strong> is a set of protocols layered so that
+each uses the service provided by the layer below and offers a service
+to the layer above. <em>(§7.3.1)</em></p>
+<p><strong>Proxy</strong> — An intermediary that terminates a client’s
+connection and opens its own connection onward, relaying requests and
+responses. A <strong>forward proxy</strong> acts on behalf of
+<strong>clients</strong> and is chosen by them (or their network
+administrator). A <strong>reverse proxy</strong> acts on behalf of
+<strong>servers</strong> and is chosen by the site operator; clients
+usually do not know it exists. <em>(§7.12)</em></p>
+<p><strong>Public key infrastructure (PKI)</strong> — The set of roles,
+policies and systems that bind public keys to identities. A
+<strong>certificate</strong> (X.509) is a document stating “this public
+key belongs to this name (for example <code>api.example.com</code>),
+valid from date A to date B”, signed by a <strong>certificate authority
+(CA)</strong>. A client trusts a certificate if it can build a
+<strong>chain</strong> of valid signatures from it to a <strong>root
+CA</strong> certificate in its local <strong>trust store</strong>.
+<em>(§10.5)</em></p>
+<h2 id="q">Q</h2>
+<p><strong>Queueing system</strong> — A model in which
+<strong>jobs</strong> (requests, messages, packets) arrive at a
+<strong>service centre</strong>, wait in a <strong>queue</strong> if all
+<strong>servers</strong> are busy, receive service, and depart. The
+<strong>arrival rate</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>λ</mi><annotation encoding="application/x-tex">\lambda</annotation></semantics></math>
+is the average number of jobs arriving per second; the <strong>service
+rate</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>μ</mi><annotation encoding="application/x-tex">\mu</annotation></semantics></math>
+is the average number of jobs one server can complete per second when it
+is never idle, so the average <strong>service time</strong> is
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi><mo>=</mo><mn>1</mn><mi>/</mi><mi>μ</mi></mrow><annotation encoding="application/x-tex">S = 1/\mu</annotation></semantics></math>.
+<em>(§4.10.1)</em></p>
+<h2 id="r">R</h2>
+<p><strong>Race condition</strong> — A bug in which the result of a
+program depends on the relative timing or interleaving of concurrent
+operations on shared state. A <strong>data race</strong> is the specific
+case where two threads access the same memory location concurrently, at
+least one access is a write, and nothing orders them.
+<em>(§6.9)</em></p>
+<p><strong>Register</strong> — A tiny, extremely fast storage slot
+inside a core, typically 64 bits wide for general-purpose registers.
+x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A
+(AArch64) exposes 31. Reading a register costs essentially nothing
+beyond the instruction that uses it. <em>(§5.3.2)</em></p>
+<p><strong>Remote procedure call (RPC)</strong> — A mechanism that lets
+a program call a function in another process, usually on another
+machine, with syntax that resembles a local function call. Generated
+<strong>stubs</strong> serialize the arguments, send them over the
+network, and deserialize the result [Birrell and Nelson 1984].
+<em>(§8.8.1)</em></p>
+<p><strong>Request–response lifecycle</strong> — The complete sequence
+of network and processing steps between a client issuing a request and
+receiving the full response, including name resolution, connection
+establishment, routing through intermediaries, application processing,
+data access and the return path. <em>(§8.5.1)</em></p>
+<p><strong>Requirement</strong> — A statement of what the system must do
+(a <strong>functional requirement</strong>, e.g. “a customer can cancel
+an order before the restaurant accepts it”) or how well it must do it (a
+<strong>non-functional requirement</strong>, e.g. “99% of order
+placements complete within 800 ms”). A requirement is
+<strong>testable</strong> if you could write an automated check or a
+measurement that proves it is met. <em>(§2.5.1)</em></p>
+<p><strong>REST (Representational State Transfer)</strong> — An
+architectural style for distributed hypermedia systems, defined by Roy
+Fielding in his 2000 doctoral dissertation as a set of constraints on
+how components interact [Fielding 2000]. In everyday usage, a “REST API”
+is an HTTP API that models its domain as <strong>resources</strong>
+identified by URIs and manipulated with the standard HTTP methods.
+<em>(§8.6.1)</em></p>
+<p><strong>Routing and forwarding</strong> — <strong>Forwarding</strong>
+is the per-packet act of choosing an outgoing interface for a packet
+based on its destination address and the <strong>forwarding
+table</strong>. <strong>Routing</strong> is the control-plane process of
+building those tables by exchanging reachability information with other
+routers. <em>(§7.5.1)</em></p>
+<h2 id="s">S</h2>
+<p><strong>Safe method</strong> — A method whose semantics are
+read-only: the client does not request, and does not expect, any state
+change on the server [RFC 9110 §9.2.1]. Logging or metrics side effects
+are allowed. <em>(§8.6.3)</em></p>
+<p><strong>Secret</strong> — Any value that grants access and must be
+kept confidential: database passwords, API keys, OAuth client secrets,
+TLS and signing private keys, encryption keys, webhook HMAC keys.
+<strong>Secrets management</strong> is the practice of storing,
+distributing, rotating, auditing and revoking secrets so that they are
+available to the workloads that need them and to nobody else.
+<em>(§10.8)</em></p>
+<p><strong>Security property</strong> — A statement about what must
+remain true about a system even when an adversary is actively trying to
+violate it. The classic triad is <strong>confidentiality</strong> (only
+authorized parties can read data), <strong>integrity</strong> (data and
+behavior cannot be changed without detection) and
+<strong>availability</strong> (authorized parties can use the system
+when they need it), often abbreviated <strong>CIA</strong>. System
+designers add <strong>authentication</strong> (knowing who is acting),
+<strong>authorization</strong> (deciding what that actor may do) and
+<strong>non-repudiation</strong> (an actor cannot credibly deny an
+action they took). <em>(§10.3.1)</em></p>
+<p><strong>Semaphore</strong> — An integer counter with two atomic
+operations introduced by Dijkstra: <strong>wait</strong> (P, or
+<em>acquire</em>) decrements it and blocks if the result would be
+negative; <strong>signal</strong> (V, or <em>release</em>) increments it
+and wakes a waiter [Dijkstra 1965]. <em>(§6.10.2)</em></p>
+<p><strong>Serialization (encoding)</strong> — Translating an in-memory
+data structure into a sequence of bytes for storage or transmission;
+<strong>deserialization (decoding)</strong> is the reverse [Kleppmann
+2017, ch. 4]. <em>(§8.9.1)</em></p>
+<p><strong>Server-Sent Events (SSE)</strong> — A W3C/WHATWG-standardized
+mechanism in which a client opens one long-lived HTTP request and the
+server streams a sequence of UTF-8 text events down the response body
+using the <code>text/event-stream</code> format; browsers expose it
+through the <code>EventSource</code> API, which parses events and
+reconnects automatically, resuming from the last received event ID
+[WHATWG HTML §9.2]. <em>(§9.5.1)</em></p>
+<p><strong>Server-side rendering (SSR)</strong> — The server produces
+complete HTML for each request; the browser displays it immediately and
+then loads JavaScript to make it interactive
+(<strong>hydration</strong>). <em>(§8.4.2)</em></p>
+<p><strong>Set-associative cache</strong> — A cache divided into
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>S</mi><annotation encoding="application/x-tex">S</annotation></semantics></math>
+sets of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math>
+slots (<strong>ways</strong>). A line at a given address may be stored
+in any of the
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>W</mi><annotation encoding="application/x-tex">W</annotation></semantics></math>
+ways of exactly one set.
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>W</mi><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">W = 1</annotation></semantics></math>
+is a <strong>direct-mapped</strong> cache; a cache with a single set
+holding every line is <strong>fully associative</strong>.
+<em>(§5.4.4)</em></p>
+<p><strong>Short polling</strong> — A technique in which the client
+sends an ordinary HTTP request at a fixed interval <em>T</em> to ask
+whether new data exists; the server answers immediately, either with the
+new data or with an empty response, and the connection’s request ends.
+<em>(§9.3.1)</em></p>
+<p><strong>SIMD (single instruction, multiple data)</strong> — CPU
+instructions that apply the same operation to several data elements
+packed into one wide <strong>vector register</strong> at once — for
+example, adding eight pairs of 32-bit floats in a single instruction.
+<em>(§5.11.1)</em></p>
+<p><strong>Simultaneous multithreading (SMT)</strong> — A technique in
+which one physical core runs two (occasionally more) instruction streams
+at once, interleaving them through the same execution units. Intel
+markets its implementation as <strong>Hyper-Threading
+Technology</strong>. Each stream appears to the operating system as a
+separate <strong>logical CPU</strong> (or <strong>hardware
+thread</strong>). <em>(§5.3.6)</em></p>
+<p><strong>Single-page application (SPA) / client-side rendering
+(CSR)</strong> — The server sends a nearly empty HTML shell plus a
+JavaScript bundle; the JavaScript calls JSON APIs and builds the page in
+the browser. Navigation afterwards happens without full page loads.
+<em>(§8.4.2)</em></p>
+<p><strong>Software architecture</strong> — “The set of structures
+needed to reason about the system, which comprise software elements,
+relations among them, and properties of both” [Bass et al. 2021]. The
+international standard for architecture description defines it as the
+fundamental concepts or properties of a system in its environment,
+embodied in its elements, relationships, and in the principles of its
+design and evolution [ISO/IEC/IEEE 42010]. <em>(§1.4.1)</em></p>
+<p><strong>Solid-state drive (SSD)</strong> — A storage device with no
+moving parts that stores data in <strong>NAND flash</strong> memory
+cells, managed by an on-board controller running a <strong>flash
+translation layer</strong> (FTL). <em>(§5.6.2)</em></p>
+<p><strong>Spaced repetition</strong> — Reviewing material at increasing
+intervals, so that each review happens around the time you would
+otherwise begin to forget it. The underlying finding, that spacing study
+sessions apart beats massing them together, is the <strong>spacing
+effect</strong>. <em>(§3.4.3)</em></p>
+<p><strong>Speedup</strong> — The ratio of the time a job takes on one
+processor (or node) to the time it takes on
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>N</mi><annotation encoding="application/x-tex">N</annotation></semantics></math>:
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>N</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mi>T</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo stretchy="true" form="postfix">)</mo></mrow><mi>/</mi><mi>T</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>N</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">S(N) = T(1)/T(N)</annotation></semantics></math>.
+Perfect, <strong>linear</strong> speedup is
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>S</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>N</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mi>N</mi></mrow><annotation encoding="application/x-tex">S(N) = N</annotation></semantics></math>.
+<em>(§4.12.1)</em></p>
+<p><strong>Stateless service</strong> — A service that keeps no
+client-specific data in its own memory between requests. Every request
+carries, or lets the service look up from a shared store, everything
+needed to process it. <em>(§8.3.2)</em></p>
+<p><strong>Static site generation (SSG)</strong> — HTML is produced at
+build time and served as static files, usually from a CDN (Chapter 21).
+Pages that change per user cannot be fully static. <em>(§8.4.2)</em></p>
+<p><strong>STRIDE</strong> — A mnemonic for six threat categories,
+developed at Microsoft in 1999 by Loren Kohnfelder and Praerit Garg and
+popularized by Shostack [Shostack 2014]: <strong>S</strong>poofing,
+<strong>T</strong>ampering, <strong>R</strong>epudiation,
+<strong>I</strong>nformation disclosure, <strong>D</strong>enial of
+service and <strong>E</strong>levation of privilege. Each category is
+the violation of one security property. <em>(§10.3.4)</em></p>
+<p><strong>Superscalar execution</strong> — A core that can issue and
+complete more than one instruction per cycle by having several execution
+units working in parallel. <em>(§5.3.5)</em></p>
+<p><strong>Symmetric encryption</strong> — Encryption in which the same
+secret key is used to encrypt and decrypt. A <strong>block
+cipher</strong> such as AES (Advanced Encryption Standard) encrypts
+fixed 128-bit blocks under a 128-, 192- or 256-bit key; a <strong>mode
+of operation</strong> turns the block cipher into a scheme for messages
+of any length. <em>(§10.4.2)</em></p>
+<p><strong>System</strong> — A set of interacting
+<strong>components</strong> (programs, machines, data stores, networks
+and people) that together deliver a capability no single component
+delivers alone. Components interact only through
+<strong>interfaces</strong>: agreed formats and protocols for exchanging
+requests, responses and data. <em>(§1.3.1)</em></p>
+<p><strong>System boundary</strong> — The line that separates what you
+are designing and are responsible for from everything outside it: users,
+other teams’ systems and third-party services. You control what is
+inside. You can only <em>depend on</em> what is outside.
+<em>(§2.4.1)</em></p>
+<p><strong>System call (syscall)</strong> — A controlled entry from user
+mode into the kernel to request a privileged service, such as reading a
+file, sending on a socket, allocating memory or creating a process.
+Linux x86-64 has a few hundred system calls, each identified by a number
+[Linux man-pages: syscalls(2)]. <em>(§6.7)</em></p>
+<p><strong>System design</strong> — The process of deciding the
+components of a software system, their responsibilities, their
+interfaces, how data flows and is stored between them, and how they are
+deployed — so that the system meets its functional requirements
+<em>and</em> its non-functional requirements (performance, scalability,
+availability, durability, security, cost and others) under stated
+assumptions about load and failure. The output of the process is also
+called the <em>system design</em>: a set of decisions, diagrams and
+documents. <em>(§1.3.2)</em></p>
+<p><strong>System design interview</strong> — A 45–60-minute interview
+in which a candidate designs a system from an open-ended prompt (for
+example, “design a photo-sharing service”) in conversation with an
+interviewer, who evaluates the candidate’s process, technical judgment
+and communication rather than a single correct answer.
+<em>(§1.11.1)</em></p>
+<h2 id="t">T</h2>
+<p><strong>TCP</strong> — A connection-oriented transport protocol that
+provides a reliable, ordered, full-duplex <strong>byte stream</strong>
+between two endpoints identified by (IP address, port) pairs. It
+achieves reliability with sequence numbers, acknowledgments and
+retransmission; it protects a slow receiver with <strong>flow
+control</strong>; and it protects the network with <strong>congestion
+control</strong>. <em>(§7.7.1)</em></p>
+<p><strong>Thread</strong> — An independent sequence of execution within
+a process, with its own program counter, registers and stack, sharing
+the process’s address space, heap, globals and open files with the
+process’s other threads. <em>(§6.3.5)</em></p>
+<p><strong>Threat model</strong> — A structured description of a system,
+the <strong>assets</strong> in it that are worth protecting, the
+<strong>adversaries</strong> who might attack it and their capabilities,
+the <strong>threats</strong> (ways a security property could be
+violated), and the <strong>mitigations</strong> chosen for each threat
+[Shostack 2014]. <em>(§10.3.2)</em></p>
+<p><strong>Trade-off</strong> — A situation where improving one desired
+property of a system makes another worse. Examples: lower latency at
+higher cost, stronger consistency at lower availability during network
+partitions, faster delivery at higher operational risk. Every design
+decision is a trade-off. If you cannot name what an option makes worse,
+you have not understood it yet. <em>(§2.8.1)</em></p>
+<p><strong>Transport Layer Security (TLS)</strong> — A protocol that
+gives two communicating applications <strong>confidentiality</strong>
+(eavesdroppers cannot read the data), <strong>integrity</strong>
+(tampering is detected) and <strong>authentication</strong> (at least
+the server proves its identity, usually with an X.509 certificate).
+<strong>HTTPS</strong> is HTTP carried over TLS, on TCP port 443 by
+default. TLS 1.3 is specified in RFC 8446 (2018). <em>(§7.10.1)</em></p>
+<p><strong>Trust boundary</strong> — A line in a system where the level
+of trust changes: data or requests crossing it come from a party that
+the receiving side does not fully control or trust. Examples: the
+internet-to-load-balancer edge, the browser-to-server connection, a
+service calling a third-party API, a tenant’s code running on shared
+infrastructure. <em>(§10.3.2)</em></p>
+<h2 id="u">U</h2>
+<p><strong>UDP</strong> — The User Datagram Protocol [RFC 768] is a
+connectionless transport protocol that adds only port numbers, a length
+and a checksum to IP. Its 8-byte header provides process-to-process
+delivery of individual <strong>datagrams</strong> with no handshake, no
+acknowledgments, no retransmission, no ordering, and no flow or
+congestion control. <em>(§7.8)</em></p>
+<h2 id="v">V</h2>
+<p><strong>Varint</strong> — A variable-length encoding of an unsigned
+integer in base 128: each byte carries 7 bits of the number,
+least-significant group first, and the most significant bit (MSB) of
+each byte is a continuation flag — 1 means “another byte follows”
+[Protocol Buffers Docs: Encoding]. <em>(§8.9.2)</em></p>
+<p><strong>Vector</strong> — An ordered list of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>
+numbers,
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>𝐚</mi><mo>=</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>a</mi><mn>1</mn></msub><mo>,</mo><msub><mi>a</mi><mn>2</mn></msub><mo>,</mo><mi>…</mi><mo>,</mo><msub><mi>a</mi><mi>d</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\mathbf{a} = (a_1, a_2, \ldots, a_d)</annotation></semantics></math>,
+where
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>
+is the <strong>dimension</strong>. Geometrically, a vector is an arrow
+from the origin to a point in
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>d</mi><annotation encoding="application/x-tex">d</annotation></semantics></math>-dimensional
+space; its <strong>length</strong> (or norm) is
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="prefix">∥</mo><mi>𝐚</mi><mo stretchy="false" form="postfix">∥</mo><mo>=</mo><msqrt><mrow><msubsup><mi>a</mi><mn>1</mn><mn>2</mn></msubsup><mo>+</mo><mi>⋯</mi><mo>+</mo><msubsup><mi>a</mi><mi>d</mi><mn>2</mn></msubsup></mrow></msqrt></mrow><annotation encoding="application/x-tex">\lVert \mathbf{a} \rVert = \sqrt{a_1^2 + \cdots + a_d^2}</annotation></semantics></math>.
+<em>(§4.9.1)</em></p>
+<p><strong>Virtual memory</strong> — A mechanism in which every address
+a program uses is a <strong>virtual address</strong> that the hardware’s
+<strong>memory-management unit (MMU)</strong> translates, using tables
+maintained by the kernel, into a <strong>physical address</strong> in
+RAM, or into a fault if no valid mapping exists. <em>(§6.6.1)</em></p>
+<h2 id="w">W</h2>
+<p><strong>WebRTC</strong> — A set of IETF protocols (overview in RFC
+8825 [Alvestrand 2021]) and a W3C browser API [W3C WebRTC] for real-time
+audio, video and arbitrary data directly between peers. Media travels
+over SRTP, data over SCTP data channels, both secured by DTLS, typically
+over UDP; peers discover a working network path using ICE with the help
+of STUN and TURN servers. <em>(§9.7.1)</em></p>
+<p><strong>WebSocket</strong> — A protocol, standardized in RFC 6455
+[Fette &amp; Melnikov 2011], that starts as an HTTP/1.1 request,
+<em>upgrades</em> the underlying TCP connection, and thereafter carries
+a full-duplex sequence of framed messages in both directions with 2–14
+bytes of framing overhead per frame. URLs use the schemes
+<code>ws://</code> (plain TCP, default port 80) and <code>wss://</code>
+(over TLS, default port 443). <em>(§9.6.1)</em></p>
+<h2 id="z">Z</h2>
+<p><strong>Zero trust</strong> — A security model in which network
+location confers no trust: every request is authenticated, authorized
+and encrypted based on the identity of the user, the device and the
+workload, plus contextual signals, regardless of where it originates.
+NIST SP 800-207 describes it as moving defenses “from static,
+network-based perimeters to focus on users, assets, and resources” [NIST
+SP 800-207]. <em>(§10.10.1)</em></p>
+</body>
+</html>

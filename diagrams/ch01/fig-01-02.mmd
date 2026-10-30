@@ -1,0 +1,9 @@
+%% Figure 1.2 — High-level design of the PhotoShare upload path
+flowchart LR
+  C([Client]) -->|HTTPS upload| API[Upload service]
+  API -->|store original| OBJ[(Object storage)]
+  API -->|insert metadata row| DB[(Metadata database)]
+  API -.->|enqueue resize job| Q[[Job queue]]
+  Q -.->|deliver job| W[Thumbnail workers]
+  W -->|write thumbnails| OBJ
+  W -->|mark photo ready| DB

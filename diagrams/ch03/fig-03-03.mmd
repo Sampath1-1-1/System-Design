@@ -1,0 +1,16 @@
+%% Figure 3.3 — Session read when the primary owner has failed
+sequenceDiagram
+  participant C as Client
+  participant A as App Service
+  participant R as Ring router
+  participant N3 as cache-3 down
+  participant N7 as cache-7 replica
+  C->>A: GET /profile with session cookie
+  A->>R: owners of session key
+  R-->>A: cache-3 then cache-7
+  A->>N3: GET session
+  N3--xA: timeout after 20 ms
+  A->>N7: GET session
+  N7-->>A: session data
+  A-->>C: 200 OK
+  Note over A,R: membership update removes cache-3 from the ring

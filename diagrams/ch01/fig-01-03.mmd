@@ -1,0 +1,32 @@
+%% Figure 1.3 — Low-level design of the upload component (class view)
+classDiagram
+  class UploadController {
+    +handleUpload(request) Response
+  }
+  class PhotoService {
+    +createPhoto(userId, stream, contentType) Photo
+  }
+  class BlobStore {
+    <<interface>>
+    +put(key, stream) void
+    +get(key) Stream
+  }
+  class PhotoRepository {
+    +insert(photo) void
+    +markReady(photoId) void
+  }
+  class JobPublisher {
+    +publishResize(photoId) void
+  }
+  class Photo {
+    +photoId
+    +ownerId
+    +storageKey
+    +status
+    +createdAt
+  }
+  UploadController --> PhotoService
+  PhotoService --> BlobStore
+  PhotoService --> PhotoRepository
+  PhotoService --> JobPublisher
+  PhotoRepository --> Photo

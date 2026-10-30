@@ -1,0 +1,8 @@
+%% Figure 1.1 — PhotoShare v0: a single-server design
+flowchart LR
+  C([Mobile or web client]) -->|HTTPS| WEB["Web server<br/>(TLS, static files)"]
+  subgraph VM["Single virtual machine"]
+    WEB -->|local call| APP["PhotoShare application"]
+    APP -->|SQL over local socket| DB[(Relational database)]
+    APP -->|file write and read| DISK[("Local disk<br/>photo files")]
+  end

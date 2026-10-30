@@ -1,0 +1,1707 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Learning Roadmap</title>
+  <style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+
+ul.task-list[class]{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+font-size: inherit;
+width: 0.8em;
+margin: 0 0.8em 0.2em -1.6em;
+vertical-align: middle;
+}
+</style>
+  <style type="text/css">
+:root {
+--navy: #1B2A4A;
+--blue: #1F5FA8; --blue-bg: #EEF4FB;
+--teal: #127A7A; --teal-bg: #ECF6F6;
+--green: #3C7A4A; --green-bg: #EEF5EF;
+--amber: #B7791F; --amber-bg: #FBF4E6;
+--grey: #8A94A6; --grey-bg: #F4F5F7;
+--text: #1F2328; --muted: #57606A; --rule: #D8DEE6;
+--page-bg: #FFFFFF;
+}
+@media (prefers-color-scheme: dark) {
+:root:not([data-theme="light"]) {
+--navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
+--green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
+--grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+}
+}
+:root[data-theme="dark"] {
+--navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
+--green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
+--grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+}
+html { font-size: 16px; }
+body {
+font-family: "Source Serif 4", "Source Serif Pro", Georgia, "DejaVu Serif", serif;
+color: var(--text); background: var(--page-bg);
+line-height: 1.6; max-width: 48rem; margin: 0 auto; padding: 2rem 1rem 4rem;
+hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word;
+}
+h1, h2, h3, h4, h5 { font-family: Inter, "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--navy); line-height: 1.25; }
+h1 { font-size: 2rem; border-bottom: 3px solid var(--navy); padding-bottom: .4rem; margin-top: 3rem; }
+h1.part-title { font-size: 2.3rem; text-align: center; border: none; margin-top: 35vh; }
+h2 { font-size: 1.45rem; margin-top: 2.4rem; border-bottom: 1px solid var(--rule); padding-bottom: .2rem; }
+h3 { font-size: 1.18rem; margin-top: 1.8rem; }
+h4 { font-size: 1rem; margin-top: 1.4rem; color: var(--blue); text-transform: none; }
+a { color: var(--blue); }
+blockquote { margin: 1rem 0; padding: .4rem 1rem; border-left: 3px solid var(--rule); color: var(--muted); font-family: Inter, sans-serif; font-size: .9rem; }
+
+code { font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; font-size: .86em; background: var(--grey-bg); padding: .05em .3em; border-radius: 3px; }
+pre { background: var(--grey-bg); border: 1px solid var(--rule); border-radius: 6px; padding: .8rem 1rem; overflow-x: auto; font-size: .82rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+pre code { background: none; padding: 0; font-size: inherit; }
+
+table { border-collapse: collapse; width: 100%; margin: 1rem 0 1.4rem; font-family: Inter, "DejaVu Sans", sans-serif; font-size: .82rem; line-height: 1.4; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; break-inside: avoid; }
+th { background: var(--blue-bg); color: var(--navy); text-align: left; font-weight: 600; border-bottom: 2px solid var(--navy); }
+th, td { padding: .4rem .55rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tbody tr:nth-child(even) { background: color-mix(in srgb, var(--grey-bg) 60%, transparent); }
+.table-wrap { overflow-x: auto; }
+
+figure, p > img { text-align: center; }
+img { max-width: 100%; height: auto; }
+figure { margin: 1.2rem 0; break-inside: avoid; }
+figure img { display: block; margin: 0 auto; background: #fff; border-radius: 4px; }
+figcaption { font-family: Inter, sans-serif; font-size: .82rem; color: var(--muted); margin-top: .4rem; }
+.mermaid-error { border: 2px dashed var(--amber); background: var(--amber-bg); }
+
+math[display="block"] { margin: .8rem 0; overflow-x: auto; }
+
+div.definition, div.concept, div.example, div.formula, div.tip, div.recommendation,
+div.mistake, div.warning, div.industry, div.note, div.summary {
+border-left: 4px solid var(--grey); background: var(--grey-bg); padding: .7rem 1rem .5rem; margin: 1.2rem 0; border-radius: 0 6px 6px 0; break-inside: avoid-page;
+}
+div.definition::before, div.concept::before, div.example::before, div.formula::before, div.tip::before,
+div.recommendation::before, div.mistake::before, div.warning::before, div.industry::before, div.note::before, div.summary::before {
+display: block; font-family: Inter, sans-serif; font-size: .68rem; letter-spacing: .09em; font-weight: 700; text-transform: uppercase; margin-bottom: .3rem;
+}
+div.definition { border-color: var(--blue); background: var(--blue-bg); } div.definition::before { content: "Definition"; color: var(--blue); }
+div.formula { border: 1px solid var(--blue); border-left-width: 4px; background: var(--blue-bg); } div.formula::before { content: "Formula"; color: var(--blue); }
+div.concept { border-color: var(--teal); background: var(--teal-bg); } div.concept::before { content: "Key concept"; color: var(--teal); }
+div.industry { border-color: var(--teal); background: var(--teal-bg); } div.industry::before { content: "Industry example"; color: var(--teal); }
+div.tip { border-color: var(--green); background: var(--green-bg); } div.tip::before { content: "Interview tip"; color: var(--green); }
+div.recommendation { border-color: var(--green); background: var(--green-bg); } div.recommendation::before { content: "Recommendation"; color: var(--green); }
+div.mistake { border-color: var(--amber); background: var(--amber-bg); } div.mistake::before { content: "Common mistake"; color: var(--amber); }
+div.warning { border-color: var(--amber); background: var(--amber-bg); } div.warning::before { content: "Warning / trade-off"; color: var(--amber); }
+div.example { border-color: var(--grey); background: var(--grey-bg); } div.example::before { content: "Worked example"; color: var(--muted); }
+div.note { border-color: var(--grey); background: var(--grey-bg); } div.note::before { content: "Note"; color: var(--muted); }
+div.summary { border-color: var(--navy); background: var(--blue-bg); } div.summary::before { content: "Summary"; color: var(--navy); }
+div.definition > p:last-child, div.concept > p:last-child, div.example > p:last-child, div.formula > p:last-child,
+div.tip > p:last-child, div.recommendation > p:last-child, div.mistake > p:last-child, div.warning > p:last-child,
+div.industry > p:last-child, div.note > p:last-child, div.summary > p:last-child { margin-bottom: .3rem; }
+details { background: var(--grey-bg); border: 1px solid var(--rule); border-radius: 6px; padding: .5rem 1rem; margin: 1rem 0; }
+summary { cursor: pointer; font-family: Inter, sans-serif; font-weight: 600; color: var(--navy); }
+
+.title-page { text-align: center; margin-top: 20vh; break-after: page; page-break-after: always; }
+.title-page h1.title { border: none; font-size: 2.4rem; }
+.title-page .subtitle { font-family: Inter, sans-serif; color: var(--teal); font-size: 1.2rem; }
+.title-page .meta { color: var(--muted); font-family: Inter, sans-serif; margin-top: 3rem; font-size: .9rem; }
+nav#TOC { font-family: Inter, sans-serif; font-size: .9rem; }
+nav#TOC ul { list-style: none; padding-left: 1.1rem; }
+nav#TOC > ul { padding-left: 0; }
+nav#TOC > ul > li { margin-top: .5rem; font-weight: 600; }
+nav#TOC > ul > li li { font-weight: 400; }
+nav#TOC a { text-decoration: none; color: var(--text); }
+@media (max-width: 600px) { body { padding: 1rem 16px 3rem; } h1 { font-size: 1.6rem; } table { font-size: .75rem; } }
+
+@page { size: A4; margin: 22mm 20mm 24mm 20mm; }
+@media print {
+html { font-size: 10.5pt; }
+body { max-width: none; padding: 0; background: #fff; color: #1F2328; }
+:root { --page-bg: #fff; }
+h1 { break-before: page; }
+h1.title, .title-page h1 { break-before: auto; }
+h2, h3, h4 { break-after: avoid; }
+pre, table, figure, .formula { break-inside: avoid; }
+pre { white-space: pre-wrap; }
+a { color: inherit; text-decoration: none; }
+details { border: none; padding: 0; }
+details > summary { list-style: none; }
+nav#TOC { break-after: page; }
+.part-page { break-before: page; break-after: page; }
+}
+</style>
+</head>
+<body>
+<div class="title-page"><h1 class="title">Learning Roadmap</h1><p class="subtitle">From first principles to expert practice</p><p class="meta">Built from the manuscript sources · 0 chapter(s) in this edition</p></div>
+<header id="title-block-header" hidden>
+<h1 class="title">Learning Roadmap</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#appendix-e-learning-roadmap-and-proficiency-levels" id="toc-appendix-e-learning-roadmap-and-proficiency-levels">Appendix E —
+Learning Roadmap and Proficiency Levels</a>
+<ul>
+<li><a href="#e.1-how-to-use-this-roadmap" id="toc-e.1-how-to-use-this-roadmap">E.1 How to use this
+roadmap</a></li>
+<li><a href="#e.2-the-five-proficiency-levels" id="toc-e.2-the-five-proficiency-levels">E.2 The five proficiency
+levels</a></li>
+<li><a href="#e.3-self-assessment" id="toc-e.3-self-assessment">E.3
+Self-assessment</a></li>
+<li><a href="#e.4-track-1-full-12-month-program-beginner-to-level-4" id="toc-e.4-track-1-full-12-month-program-beginner-to-level-4">E.4 Track
+1 — Full 12-month program (beginner to Level 4)</a></li>
+<li><a href="#e.5-track-2-16-week-interview-track-level-23-engineer-senior-interviews" id="toc-e.5-track-2-16-week-interview-track-level-23-engineer-senior-interviews">E.5
+Track 2 — 16-week interview track (Level 2–3 engineer → senior
+interviews)</a></li>
+<li><a href="#e.6-track-3-24-week-mlai-infrastructure-track-software-engineer-mlai-systems" id="toc-e.6-track-3-24-week-mlai-infrastructure-track-software-engineer-mlai-systems">E.6
+Track 3 — 24-week ML/AI infrastructure track (software engineer → ML/AI
+systems)</a></li>
+<li><a href="#e.7-monthly-milestone-review-template" id="toc-e.7-monthly-milestone-review-template">E.7 Monthly milestone
+review template</a></li>
+</ul></li>
+<li><a href="#concept-dependency-map" id="toc-concept-dependency-map">2.
+Concept Dependency Map</a>
+<ul>
+<li><a href="#part-level-dependency-graph" id="toc-part-level-dependency-graph">2.1 Part-level dependency
+graph</a></li>
+<li><a href="#concept-level-dependency-graph-critical-path" id="toc-concept-level-dependency-graph-critical-path">2.2 Concept-level
+dependency graph (critical path)</a></li>
+<li><a href="#chapter-prerequisite-table" id="toc-chapter-prerequisite-table">2.3 Chapter prerequisite
+table</a></li>
+<li><a href="#reading-paths" id="toc-reading-paths">2.4 Reading
+paths</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="appendix-e-learning-roadmap-and-proficiency-levels">Appendix E —
+Learning Roadmap and Proficiency Levels</h1>
+<blockquote>
+<p><strong>Deliverable 3.</strong> This appendix turns the 93 chapters
+into a schedule. It defines five proficiency levels, what you must know
+and be able to do at each, and week-by-week milestones for three tracks:
+the full 12-month program, a 16-week interview track, and a 24-week
+ML/AI infrastructure track for working engineers.</p>
+</blockquote>
+<h2 id="e.1-how-to-use-this-roadmap">E.1 How to use this roadmap</h2>
+<ol type="1">
+<li>Find your starting level with the self-assessment in §E.3. Do not
+skip a level because a topic “sounds familiar” — the readiness criteria
+test whether you can <em>explain and apply</em> a concept, not whether
+you recognize its name.</li>
+<li>Pick a track (§E.4–E.6). Each week lists chapters, a hands-on task
+and a checkpoint. Budget the stated hours; if a week overruns, extend it
+rather than skipping the exercise — implementation is where
+understanding consolidates (Ch 3, §3.7).</li>
+<li>At the end of every month, run the month’s <strong>milestone
+review</strong>: answer the knowledge checkpoints of each chapter from
+memory, redraw the month’s key architecture diagrams without notes, and
+solve one design challenge aloud in 45 minutes.</li>
+<li>Record progress in a design journal (template in Ch 3, §3.10).</li>
+</ol>
+<h2 id="e.2-the-five-proficiency-levels">E.2 The five proficiency
+levels</h2>
+<p><strong>Figure E.1 — Proficiency ladder.</strong></p>
+<div class="warning">
+<p><strong>Diagram failed to render.</strong> Source:</p>
+<pre class="text"><code>flowchart LR
+  L1[&quot;Level 1&lt;br/&gt;Absolute beginner&quot;] --&gt; L2[&quot;Level 2&lt;br/&gt;Intermediate engineer&quot;]
+  L2 --&gt; L3[&quot;Level 3&lt;br/&gt;Advanced engineer&quot;]
+  L3 --&gt; L4[&quot;Level 4&lt;br/&gt;Senior / Staff&quot;]
+  L4 --&gt; L5[&quot;Level 5&lt;br/&gt;Expert / Principal&quot;]</code></pre>
+</div>
+<p><strong>Reading the diagram.</strong> The levels are cumulative: each
+assumes every competency of the previous one. The arrows are not
+time-boxed — a strong backend engineer may already sit at Level 3 for
+traditional systems but at Level 1 for ML infrastructure. Assess each
+track (A: traditional, B: ML/AI) separately.</p>
+<h3 id="level-1-absolute-beginner">Level 1 — Absolute beginner</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Dimension</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Required knowledge</strong></td>
+<td>Ch 1–8, 11, 35. What a client, server, API, database, process,
+thread, IP address, DNS lookup and HTTP request are; functional vs
+non-functional requirements; powers of ten and basic percentiles.</td>
+</tr>
+<tr class="even">
+<td><strong>Expected competencies</strong></td>
+<td>Trace one HTTP request from browser to database and back, naming
+every hop. Write a CRUD REST API with a relational database. Model a
+simple domain in tables with primary/foreign keys. Do a
+back-of-the-envelope estimate of requests per second from daily active
+users.</td>
+</tr>
+<tr class="odd">
+<td><strong>Practical projects</strong></td>
+<td>P-01 REST API service; P-02 URL shortener (single node).</td>
+</tr>
+<tr class="even">
+<td><strong>Architecture exercises</strong></td>
+<td>Draw a single-server web app; then add a load balancer and a second
+app server and explain what breaks (sessions).</td>
+</tr>
+<tr class="odd">
+<td><strong>Interview readiness</strong></td>
+<td>Not yet ready for system design rounds. Can answer “what happens
+when you type a URL?” thoroughly.</td>
+</tr>
+<tr class="even">
+<td><strong>Explain independently</strong></td>
+<td>TCP vs UDP; what an index is and why it speeds reads but slows
+writes; what latency vs throughput mean; why HTTPS needs
+certificates.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="level-2-intermediate-engineer">Level 2 — Intermediate
+engineer</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Dimension</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Required knowledge</strong></td>
+<td>Ch 9–10, 12, 14, 17–22, 24, 30, 33, 36–37, 57. Replication,
+sharding, consistent hashing, caching patterns, CDNs, load-balancing
+algorithms, rate limiting, queues and pub/sub, monolith vs
+microservices, ML basics.</td>
+</tr>
+<tr class="even">
+<td><strong>Expected competencies</strong></td>
+<td>Turn a vague prompt into numbered FRs/NFRs with targets. Estimate
+storage, bandwidth and RPS with peak factors. Choose SQL vs NoSQL with
+justification. Add a cache and explain invalidation and stampede
+protection. Design a rate limiter and pick an algorithm.</td>
+</tr>
+<tr class="odd">
+<td><strong>Practical projects</strong></td>
+<td>P-03 Redis cache; P-04 rate limiter; P-05 load-balancer simulation;
+P-06 message queue.</td>
+</tr>
+<tr class="even">
+<td><strong>Architecture exercises</strong></td>
+<td>URL shortener, Pastebin, rate limiter and notification system (Ch
+52) at 10⁷ DAU.</td>
+</tr>
+<tr class="odd">
+<td><strong>Interview readiness</strong></td>
+<td>Can complete an entry-level (new-grad / mid-level) system design
+round: correct high-level architecture, reasonable estimates, identifies
+the main bottleneck.</td>
+</tr>
+<tr class="even">
+<td><strong>Explain independently</strong></td>
+<td>Cache-aside vs write-through; why sharding needs a good key;
+at-least-once delivery and why consumers must be idempotent; Little’s
+Law applied to a thread pool.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="level-3-advanced-engineer">Level 3 — Advanced engineer</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Dimension</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Required knowledge</strong></td>
+<td>Ch 13, 15–16, 23, 25–27, 29, 31–32, 34, 38–43, 58–62, 66. Storage
+engines, consistency models, Raft, quorums, Kafka internals,
+outbox/saga/CQRS, observability, Kubernetes, CI/CD, ML lifecycle,
+feature stores, model serving.</td>
+</tr>
+<tr class="even">
+<td><strong>Expected competencies</strong></td>
+<td>Design a complete distributed application with explicit consistency
+choices, failure handling and observability. Explain a database’s write
+path down to WAL and fsync. Design an ML system from problem formulation
+to online serving with a feature store.</td>
+</tr>
+<tr class="odd">
+<td><strong>Practical projects</strong></td>
+<td>P-07 distributed KV store; P-08 replicated DB simulation; P-09
+notification service; P-10 real-time chat; P-11 distributed job
+scheduler.</td>
+</tr>
+<tr class="even">
+<td><strong>Architecture exercises</strong></td>
+<td>All of Ch 52–53; ML case studies 81.5 (product recommendation) and
+82.3 (spam detection).</td>
+</tr>
+<tr class="odd">
+<td><strong>Interview readiness</strong></td>
+<td>Passes a senior-level (L5/E5 equivalent) traditional round and a
+mid-level ML system design round: deep-dives on request, quantifies
+trade-offs, discusses failure modes unprompted.</td>
+</tr>
+<tr class="even">
+<td><strong>Explain independently</strong></td>
+<td>Raft leader election and log matching; why <code>R + W &gt; N</code>
+gives read-your-writes only under certain conditions; Kafka ISR and
+<code>acks=all</code>; point-in-time feature joins and training–serving
+skew.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="level-4-senior-staff-engineer">Level 4 — Senior / Staff
+engineer</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Dimension</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Required knowledge</strong></td>
+<td>Ch 28, 44, 46–48, 50–51, 63–65, 67–80. Distributed transactions,
+multi-region design, cluster scheduling, multi-tenancy, security
+architecture, cost; GPU performance, distributed training, model
+optimization, recommendation architecture, MLOps, LLM inference, RAG,
+agents, AI platforms.</td>
+</tr>
+<tr class="even">
+<td><strong>Expected competencies</strong></td>
+<td>Make and defend architecture decisions spanning teams: multi-region
+active–active, tenant isolation, SLOs and error budgets, cost models.
+Size a GPU fleet for training and for LLM serving from first principles.
+Design a RAG or agent platform with evaluation, guardrails and
+observability.</td>
+</tr>
+<tr class="odd">
+<td><strong>Practical projects</strong></td>
+<td>P-12 event-driven microservices; P-13 real-time analytics pipeline;
+P-14 recommendation engine; P-15 distributed ML inference; P-18
+production RAG; P-19 scalable LLM inference.</td>
+</tr>
+<tr class="even">
+<td><strong>Architecture exercises</strong></td>
+<td>All of Ch 54–56 and 81–86. Write a design document with ADRs for one
+case study and have it reviewed.</td>
+</tr>
+<tr class="odd">
+<td><strong>Interview readiness</strong></td>
+<td>Passes staff-level rounds: drives the conversation, scopes
+ambiguity, prioritizes the hardest sub-problem, connects technical
+choices to business, cost and organizational constraints.</td>
+</tr>
+<tr class="even">
+<td><strong>Explain independently</strong></td>
+<td>Spanner commit-wait; why cells limit blast radius; ZeRO stage 3
+memory math; continuous batching and PagedAttention; when RAG beats
+fine-tuning; how to evaluate an agent.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="level-5-expert-principal-architect">Level 5 — Expert / Principal
+architect</h3>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Dimension</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Required knowledge</strong></td>
+<td>Ch 45, 49, 80 plus the primary papers cited across Parts V, IX, XIII
+and XVI. Theory (FLP, CAP proofs, BFT bounds, consistency hierarchies,
+scaling laws) and practice at 10⁴–10⁵ machine scale.</td>
+</tr>
+<tr class="even">
+<td><strong>Expected competencies</strong></td>
+<td>Set multi-year technical direction; evaluate novel systems from
+papers; reason about organization-wide failure domains, reliability
+economics and sustainability; design platforms other teams build
+on.</td>
+</tr>
+<tr class="odd">
+<td><strong>Practical projects</strong></td>
+<td>P-16 distributed training platform; P-17 multi-tenant feature store;
+P-20 multi-agent orchestration platform.</td>
+</tr>
+<tr class="even">
+<td><strong>Architecture exercises</strong></td>
+<td>Critique a published architecture (e.g., a Dynamo, Spanner or
+PagedAttention paper) and propose a design for a changed constraint.
+Lead a postmortem-driven redesign.</td>
+</tr>
+<tr class="odd">
+<td><strong>Interview readiness</strong></td>
+<td>Principal-level: articulates long-term trade-offs, migration
+strategy, organizational design (Conway’s law), and the economics of the
+platform.</td>
+</tr>
+<tr class="even">
+<td><strong>Explain independently</strong></td>
+<td>Why consensus is impossible in a fully asynchronous system with one
+crash failure and how real systems sidestep it; goodput at 16k-GPU
+scale; the cost/latency frontier of an LLM product.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="e.3-self-assessment">E.3 Self-assessment</h2>
+<p>Score yourself 0–2 on each statement (0 = cannot, 1 = with notes, 2 =
+from memory, aloud, in under five minutes). Start at the first level
+where your total is below 14 of 20.</p>
+<p><strong>Table E.1 — Placement self-assessment.</strong></p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Level</th>
+<th>Ten statements to score</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>Explain DNS resolution · TCP handshake · HTTP request/response ·
+process vs thread · what an index is · primary/foreign keys · REST verbs
+and status codes · latency vs throughput · p99 · RPS from DAU</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>Cache-aside and invalidation · consistent hashing · token bucket ·
+L4 vs L7 load balancing · replication lag · sharding keys ·
+at-least-once delivery · CDN pull vs push · SQL vs NoSQL choice ·
+precision vs recall</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>Raft election · quorum math · Kafka partitions/ISR · outbox pattern
+· LSM vs B-tree · Kubernetes control plane · SLO/error budget · feature
+store PIT join · dynamic batching · canary analysis</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>2PC failure modes · multi-region active–active · tenant isolation
+options · cost model of a service · data/tensor/pipeline parallelism ·
+KV-cache memory · RAG evaluation · agent guardrails · model routing ·
+DRF scheduling</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>FLP intuition · linearizability vs serializability · PBFT bound ·
+TrueTime · ZeRO-3 communication · MFU at scale · scaling laws ·
+disaggregated serving · failure rates at 10k GPUs · multi-year platform
+migration</td>
+</tr>
+</tbody>
+</table>
+<h2 id="e.4-track-1-full-12-month-program-beginner-to-level-4">E.4 Track
+1 — Full 12-month program (beginner to Level 4)</h2>
+<p><strong>Budget:</strong> 10–12 hours per week · 52 weeks · Levels 1 →
+4. Each week: read (≈ 60%), implement or exercise (≈ 30%), recall and
+explain (≈ 10%).</p>
+<p><strong>Figure E.2 — Twelve-month program at a glance.</strong></p>
+<div class="warning">
+<p><strong>Diagram failed to render.</strong> Source:</p>
+<pre class="text"><code>gantt
+  title Twelve-month program
+  dateFormat  YYYY-MM-DD
+  axisFormat  M%m
+  section Level 1
+  Thinking, maths, CS foundations      :a1, 2027-01-04, 8w
+  Web, data basics, OOD                :a2, after a1, 5w
+  section Level 2
+  Data systems, scale, caching         :b1, after a2, 7w
+  Distributed basics, messaging        :b2, after b1, 5w
+  section Level 3
+  Distributed depth, Kafka, EDA        :c1, after b2, 5w
+  Production infra, case studies I-II  :c2, after c1, 6w
+  section Level 3-4 ML
+  ML foundations, data, GPUs, serving  :d1, after c2, 8w
+  section Level 4
+  LLMs, RAG, agents, AI infra          :e1, after d1, 5w
+  Expert topics, case studies, interviews :e2, after e1, 3w</code></pre>
+</div>
+<p><strong>Reading the diagram.</strong> Bars are sequential phases; the
+dates are an example start (any Monday works). Levels overlap at the
+boundaries because review weeks consolidate the previous level while
+starting the next. The ML phase begins only after production
+infrastructure because serving, MLOps and AI-infrastructure chapters
+assume Kubernetes, observability and deployment knowledge.</p>
+<p><strong>Table E.2 — Weekly milestones, 12-month program.</strong></p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Wk</th>
+<th>Chapters</th>
+<th>Hands-on task</th>
+<th>Checkpoint</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>1, 3</td>
+<td>Set up design journal and flashcard deck</td>
+<td>Explain FR vs NFR with three examples each</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>2</td>
+<td>Write requirements + context diagram for a food-ordering app</td>
+<td>Present it in 10 minutes</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>4 (§4.3–4.9)</td>
+<td>Estimation drills: 20 powers-of-ten problems</td>
+<td>Score ≥ 18/20</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>4 (§4.10–4.18)</td>
+<td>Simulate an M/M/1 queue in Python; compare with formula</td>
+<td>Explain why latency explodes near 100% utilization</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>5</td>
+<td>Cache-stride benchmark</td>
+<td>Draw the memory hierarchy with latencies from memory</td>
+</tr>
+<tr class="even">
+<td>6</td>
+<td>6</td>
+<td>Race condition + mutex fix; event-loop echo server</td>
+<td>Explain epoll vs thread-per-connection</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>7</td>
+<td><code>dig</code>, <code>curl -w</code>, Wireshark on a TLS
+handshake</td>
+<td>Narrate “type a URL” end to end</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>Review</td>
+<td>Redo checkpoints Ch 1–7</td>
+<td><strong>Month 2 milestone review</strong></td>
+</tr>
+<tr class="odd">
+<td>9</td>
+<td>8</td>
+<td>P-01 REST API with pagination and JWT</td>
+<td>Defend cursor vs offset pagination</td>
+</tr>
+<tr class="even">
+<td>10</td>
+<td>11</td>
+<td>Schema design + <code>EXPLAIN</code> on indexed vs unindexed
+queries</td>
+<td>Explain B+ tree lookups in I/Os</td>
+</tr>
+<tr class="odd">
+<td>11</td>
+<td>35, 36</td>
+<td>Refactor a small codebase with SOLID</td>
+<td>Class diagram from memory</td>
+</tr>
+<tr class="even">
+<td>12</td>
+<td>9, 10</td>
+<td>SSE + WebSocket demo; password hashing</td>
+<td>Choose a real-time technique for 3 scenarios</td>
+</tr>
+<tr class="odd">
+<td>13</td>
+<td>Review</td>
+<td>P-02 URL shortener (single node)</td>
+<td><strong>Level 1 exit</strong>: self-assessment ≥ 14</td>
+</tr>
+<tr class="even">
+<td>14</td>
+<td>12</td>
+<td>Model one domain in a document DB and a wide-column DB</td>
+<td>SQL vs NoSQL decision for 5 prompts</td>
+</tr>
+<tr class="odd">
+<td>15</td>
+<td>13</td>
+<td>Toy LSM tree (memtable + SSTables + compaction)</td>
+<td>Draw write path with WAL</td>
+</tr>
+<tr class="even">
+<td>16</td>
+<td>14</td>
+<td>Consistent-hashing ring with virtual nodes</td>
+<td>Keys moved when adding a node</td>
+</tr>
+<tr class="odd">
+<td>17</td>
+<td>15, 16</td>
+<td>Inverted index + BM25 in Python</td>
+<td>Explain erasure coding overhead</td>
+</tr>
+<tr class="even">
+<td>18</td>
+<td>17</td>
+<td>Bloom filter, HyperLogLog, Snowflake IDs</td>
+<td>False-positive-rate calculation</td>
+</tr>
+<tr class="odd">
+<td>19</td>
+<td>18, 19</td>
+<td>P-05 load-balancer simulation</td>
+<td>Power-of-two-choices intuition</td>
+</tr>
+<tr class="even">
+<td>20</td>
+<td>20, 21</td>
+<td>P-03 Redis cache-aside with stampede protection</td>
+<td>Five caching patterns from memory</td>
+</tr>
+<tr class="odd">
+<td>21</td>
+<td>22</td>
+<td>P-04 distributed rate limiter</td>
+<td>Token bucket parameters for a given SLA</td>
+</tr>
+<tr class="even">
+<td>22</td>
+<td>23</td>
+<td>Load test with <code>wrk</code>/<code>k6</code>; find the
+bottleneck</td>
+<td>Explain coordinated omission</td>
+</tr>
+<tr class="odd">
+<td>23</td>
+<td>24</td>
+<td>Lamport and vector clocks implementation</td>
+<td>Two partial-failure stories</td>
+</tr>
+<tr class="even">
+<td>24</td>
+<td>30</td>
+<td>P-06 message queue with acks and DLQ</td>
+<td>Delivery semantics table from memory</td>
+</tr>
+<tr class="odd">
+<td>25</td>
+<td>33, 37</td>
+<td>Implement 6 design patterns</td>
+<td>Monolith vs microservices debate</td>
+</tr>
+<tr class="even">
+<td>26</td>
+<td>Review</td>
+<td>Ch 52.1–52.4 case studies</td>
+<td><strong>Level 2 exit</strong> + <strong>Month 6
+milestone</strong></td>
+</tr>
+<tr class="odd">
+<td>27</td>
+<td>25</td>
+<td>Jepsen-style anomaly hunt on a toy store</td>
+<td>Consistency hierarchy diagram</td>
+</tr>
+<tr class="even">
+<td>28</td>
+<td>26</td>
+<td>Raft (election + log replication) — MIT 6.5840 style</td>
+<td>Explain fencing tokens</td>
+</tr>
+<tr class="odd">
+<td>29</td>
+<td>27, 28</td>
+<td>P-07 distributed KV store with quorums</td>
+<td>2PC failure walkthrough</td>
+</tr>
+<tr class="even">
+<td>30</td>
+<td>29, 31</td>
+<td>Kafka locally: partitions, consumer groups, lag</td>
+<td>Partition count sizing</td>
+</tr>
+<tr class="odd">
+<td>31</td>
+<td>32, 34</td>
+<td>Outbox + saga demo</td>
+<td>Choreography vs orchestration</td>
+</tr>
+<tr class="even">
+<td>32</td>
+<td>38</td>
+<td>Four LLD problems (parking lot, elevator, LRU, vending)</td>
+<td>45-min LLD mock</td>
+</tr>
+<tr class="odd">
+<td>33</td>
+<td>39, 40</td>
+<td>SLOs, burn-rate alerts, OpenTelemetry tracing</td>
+<td>Error-budget policy</td>
+</tr>
+<tr class="even">
+<td>34</td>
+<td>41, 42</td>
+<td>Deploy P-01 to Kubernetes with HPA</td>
+<td>Kubernetes control-plane walk-through</td>
+</tr>
+<tr class="odd">
+<td>35</td>
+<td>43</td>
+<td>CI/CD with canary; Terraform a VPC</td>
+<td>Rollback plan</td>
+</tr>
+<tr class="even">
+<td>36</td>
+<td>52, 53</td>
+<td>P-09 notification service; P-10 chat</td>
+<td>Two 45-min mocks</td>
+</tr>
+<tr class="odd">
+<td>37</td>
+<td>54, 55</td>
+<td>YouTube, Uber, payment system cases</td>
+<td>Two 45-min mocks</td>
+</tr>
+<tr class="even">
+<td>38</td>
+<td>Review</td>
+<td>56 + P-11 job scheduler</td>
+<td><strong>Level 3 exit (Track A)</strong></td>
+</tr>
+<tr class="odd">
+<td>39</td>
+<td>57</td>
+<td>Train/evaluate a classifier; compute all metrics</td>
+<td>Precision/recall trade-off for fraud</td>
+</tr>
+<tr class="even">
+<td>40</td>
+<td>58, 59</td>
+<td>Small MLP in PyTorch; memory math</td>
+<td>ML lifecycle diagram</td>
+</tr>
+<tr class="odd">
+<td>41</td>
+<td>60, 61</td>
+<td>Batch + streaming feature pipeline</td>
+<td>Lambda vs Kappa</td>
+</tr>
+<tr class="even">
+<td>42</td>
+<td>62, 63</td>
+<td>Feast feature store with PIT join</td>
+<td>Training–serving skew causes</td>
+</tr>
+<tr class="odd">
+<td>43</td>
+<td>64</td>
+<td>Roofline analysis of a matmul</td>
+<td>Compute- vs memory-bound</td>
+</tr>
+<tr class="even">
+<td>44</td>
+<td>65</td>
+<td>DDP on 2 GPUs (or simulated); FLOPs estimate</td>
+<td>6ND estimate for a model</td>
+</tr>
+<tr class="odd">
+<td>45</td>
+<td>66, 67</td>
+<td>Serve a model with dynamic batching; quantize it</td>
+<td>Batch size vs latency curve</td>
+</tr>
+<tr class="even">
+<td>46</td>
+<td>68–71</td>
+<td>P-14 two-tower recommender; drift monitor</td>
+<td>Multi-stage funnel sizing</td>
+</tr>
+<tr class="odd">
+<td>47</td>
+<td>72</td>
+<td>Implement attention + KV cache in NumPy</td>
+<td>KV-cache size for a 70B model</td>
+</tr>
+<tr class="even">
+<td>48</td>
+<td>73</td>
+<td>Run vLLM; measure TTFT/TPOT vs concurrency</td>
+<td>Continuous batching explanation</td>
+</tr>
+<tr class="odd">
+<td>49</td>
+<td>74, 75</td>
+<td>P-18 production RAG with hybrid search + reranking</td>
+<td>Retrieval metrics</td>
+</tr>
+<tr class="even">
+<td>50</td>
+<td>76–78</td>
+<td>Agent with tool calling, guardrails and eval set</td>
+<td>Prompt-injection defenses</td>
+</tr>
+<tr class="odd">
+<td>51</td>
+<td>79, 80, 81–86 (2 cases)</td>
+<td>Model gateway with token-based rate limits</td>
+<td>Two ML/AI mocks</td>
+</tr>
+<tr class="even">
+<td>52</td>
+<td>87–92</td>
+<td>Full mock loop: 2 traditional + 2 ML/AI</td>
+<td><strong>Level 4 readiness review</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Level 5 content (Ch 45, 49, 80 deep dives, primary-paper reading) is
+a continuing program after week 52: one paper and one design critique
+per week.</p>
+<h2 id="e.5-track-2-16-week-interview-track-level-23-engineer-senior-interviews">E.5
+Track 2 — 16-week interview track (Level 2–3 engineer → senior
+interviews)</h2>
+<p><strong>Budget:</strong> 12–15 hours/week. Assumes Level 2
+fundamentals.</p>
+<p><strong>Table E.3 — Interview track.</strong></p>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Wk</th>
+<th>Focus</th>
+<th>Chapters</th>
+<th>Practice</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>Framework and estimation</td>
+<td>2, 4, 87, 88, 89</td>
+<td>30 estimation drills</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>Data systems refresh</td>
+<td>11, 12, 14</td>
+<td>Q-T-01 … Q-T-04</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>Caching, CDN, LB</td>
+<td>19, 20, 21</td>
+<td>Q-T-05 … Q-T-08</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>Traffic management</td>
+<td>22, 17</td>
+<td>Rate limiter + URL shortener mocks</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>Distributed core</td>
+<td>24, 25, 26</td>
+<td>KV-store mock</td>
+</tr>
+<tr class="even">
+<td>6</td>
+<td>Replication and transactions</td>
+<td>27, 28</td>
+<td>Payment-system mock</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>Messaging</td>
+<td>30, 31, 32</td>
+<td>Notification-system mock</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>Microservices and reliability</td>
+<td>34, 39, 40</td>
+<td>Mid-point mock with a peer</td>
+</tr>
+<tr class="odd">
+<td>9</td>
+<td>Social systems</td>
+<td>53</td>
+<td>News feed, chat, Twitter mocks</td>
+</tr>
+<tr class="even">
+<td>10</td>
+<td>Media and files</td>
+<td>54</td>
+<td>YouTube, Dropbox mocks</td>
+</tr>
+<tr class="odd">
+<td>11</td>
+<td>Location and commerce</td>
+<td>55</td>
+<td>Uber, ticketing mocks</td>
+</tr>
+<tr class="even">
+<td>12</td>
+<td>Data platforms</td>
+<td>56, 16</td>
+<td>Search, logging mocks</td>
+</tr>
+<tr class="odd">
+<td>13</td>
+<td>Senior depth</td>
+<td>44, 47</td>
+<td>Multi-region mock</td>
+</tr>
+<tr class="even">
+<td>14</td>
+<td>Company preparation</td>
+<td>90</td>
+<td>Company-specific mocks</td>
+</tr>
+<tr class="odd">
+<td>15</td>
+<td>Practice library sweep</td>
+<td>91</td>
+<td>10 timed questions</td>
+</tr>
+<tr class="even">
+<td>16</td>
+<td>Final review</td>
+<td>Summaries of all above</td>
+<td>3 full mocks; rubric self-score ≥ “Hire”</td>
+</tr>
+</tbody>
+</table>
+<h2 id="e.6-track-3-24-week-mlai-infrastructure-track-software-engineer-mlai-systems">E.6
+Track 3 — 24-week ML/AI infrastructure track (software engineer → ML/AI
+systems)</h2>
+<p><strong>Budget:</strong> 10–12 hours/week. Assumes Level 3 on Track
+A.</p>
+<p><strong>Table E.4 — ML/AI track.</strong></p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Wk</th>
+<th>Chapters</th>
+<th>Deliverable</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1–2</td>
+<td>4.9, 57</td>
+<td>Metrics notebook; A/B test sample-size calculator</td>
+</tr>
+<tr class="even">
+<td>3</td>
+<td>58</td>
+<td>PyTorch MLP; parameter/activation memory worksheet</td>
+</tr>
+<tr class="odd">
+<td>4</td>
+<td>59, 60</td>
+<td>Architecture diagram of an end-to-end ML system</td>
+</tr>
+<tr class="even">
+<td>5–6</td>
+<td>61, 29</td>
+<td>Lakehouse table + streaming feature job</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>62, 63</td>
+<td>Feature store with PIT-correct training set</td>
+</tr>
+<tr class="even">
+<td>8–9</td>
+<td>64</td>
+<td>GPU profiling exercise; roofline worksheet</td>
+</tr>
+<tr class="odd">
+<td>10–11</td>
+<td>65</td>
+<td>Multi-GPU training run; parallelism plan for a 70B model</td>
+</tr>
+<tr class="even">
+<td>12</td>
+<td>66</td>
+<td>Model server with dynamic batching and autoscaling</td>
+</tr>
+<tr class="odd">
+<td>13</td>
+<td>67</td>
+<td>Quantization + ONNX/TensorRT comparison</td>
+</tr>
+<tr class="even">
+<td>14</td>
+<td>68</td>
+<td>Two-tower retrieval + ranker</td>
+</tr>
+<tr class="odd">
+<td>15</td>
+<td>69, 70</td>
+<td>CI/CD/CT pipeline with drift-triggered retraining</td>
+</tr>
+<tr class="even">
+<td>16</td>
+<td>71</td>
+<td>Fairness audit and model card</td>
+</tr>
+<tr class="odd">
+<td>17</td>
+<td>72</td>
+<td>Transformer from scratch (small)</td>
+</tr>
+<tr class="even">
+<td>18–19</td>
+<td>73</td>
+<td>LLM serving benchmark; capacity plan</td>
+</tr>
+<tr class="odd">
+<td>20</td>
+<td>74, 75</td>
+<td>Production RAG with evaluation harness</td>
+</tr>
+<tr class="even">
+<td>21</td>
+<td>76, 77</td>
+<td>LoRA fine-tune; tool-using agent</td>
+</tr>
+<tr class="odd">
+<td>22</td>
+<td>78, 79</td>
+<td>Eval pipeline; model gateway with routing and fallback</td>
+</tr>
+<tr class="even">
+<td>23</td>
+<td>80, 81–85</td>
+<td>Two case studies written as design docs</td>
+</tr>
+<tr class="odd">
+<td>24</td>
+<td>86, 92</td>
+<td>Four ML/AI mock interviews</td>
+</tr>
+</tbody>
+</table>
+<h2 id="e.7-monthly-milestone-review-template">E.7 Monthly milestone
+review template</h2>
+<ol type="1">
+<li><strong>Recall:</strong> answer every knowledge-checkpoint question
+for the month’s chapters without notes; mark misses for spaced
+repetition.</li>
+<li><strong>Redraw:</strong> reproduce the month’s three most important
+architecture diagrams from memory; compare with the book.</li>
+<li><strong>Quantify:</strong> solve three estimation problems from Ch
+89 in under five minutes each.</li>
+<li><strong>Design:</strong> solve one design challenge aloud in 45
+minutes; self-score with the Ch 88 rubric.</li>
+<li><strong>Build:</strong> demo the month’s project to someone else,
+including one injected failure.</li>
+<li><strong>Reflect:</strong> write half a page in the design journal —
+what is still unclear, which open question to research next.</li>
+</ol>
+<h1 id="concept-dependency-map">2. Concept Dependency Map</h1>
+<p>This map shows which chapters must be understood before others. It
+drives the reading order, the “Prerequisites” section of every chapter,
+and the weekly roadmap (Appendix E). An arrow <code>A --&gt; B</code>
+means “A is a prerequisite of B”.</p>
+<h2 id="part-level-dependency-graph">2.1 Part-level dependency
+graph</h2>
+<p><strong>Figure P.1 — Part-level dependencies.</strong></p>
+<div class="warning">
+<p><strong>Diagram failed to render.</strong> Source:</p>
+<pre class="text"><code>flowchart TD
+  P1[&quot;Part I&lt;br/&gt;Design Thinking + Maths&lt;br/&gt;Ch 1-4&quot;] --&gt; P2[&quot;Part II&lt;br/&gt;CS Foundations&lt;br/&gt;Ch 5-10&quot;]
+  P2 --&gt; P3[&quot;Part III&lt;br/&gt;Data Systems&lt;br/&gt;Ch 11-17&quot;]
+  P2 --&gt; P4[&quot;Part IV&lt;br/&gt;Scalability + Performance&lt;br/&gt;Ch 18-23&quot;]
+  P3 --&gt; P4
+  P3 --&gt; P5[&quot;Part V&lt;br/&gt;Distributed Systems&lt;br/&gt;Ch 24-29&quot;]
+  P4 --&gt; P5
+  P5 --&gt; P6[&quot;Part VI&lt;br/&gt;Messaging + Events&lt;br/&gt;Ch 30-32&quot;]
+  P2 --&gt; P7[&quot;Part VII&lt;br/&gt;Software Architecture&lt;br/&gt;Ch 33-38&quot;]
+  P6 --&gt; P7
+  P4 --&gt; P8[&quot;Part VIII&lt;br/&gt;Production Infra + Ops&lt;br/&gt;Ch 39-43&quot;]
+  P7 --&gt; P8
+  P5 --&gt; P9[&quot;Part IX&lt;br/&gt;Advanced + Expert&lt;br/&gt;Ch 44-51&quot;]
+  P8 --&gt; P9
+  P8 --&gt; P10[&quot;Part X&lt;br/&gt;Traditional Case Studies&lt;br/&gt;Ch 52-56&quot;]
+  P6 --&gt; P10
+  P1 --&gt; P11[&quot;Part XI&lt;br/&gt;ML Foundations&lt;br/&gt;Ch 57-60&quot;]
+  P11 --&gt; P12[&quot;Part XII&lt;br/&gt;ML Data Infra&lt;br/&gt;Ch 61-63&quot;]
+  P5 --&gt; P12
+  P11 --&gt; P13[&quot;Part XIII&lt;br/&gt;Training Infra&lt;br/&gt;Ch 64-65&quot;]
+  P11 --&gt; P14[&quot;Part XIV&lt;br/&gt;Serving + Optimization&lt;br/&gt;Ch 66-68&quot;]
+  P13 --&gt; P14
+  P12 --&gt; P15[&quot;Part XV&lt;br/&gt;MLOps + Responsible ML&lt;br/&gt;Ch 69-71&quot;]
+  P14 --&gt; P15
+  P14 --&gt; P16[&quot;Part XVI&lt;br/&gt;LLM + AI Systems&lt;br/&gt;Ch 72-80&quot;]
+  P13 --&gt; P16
+  P15 --&gt; P17[&quot;Part XVII&lt;br/&gt;ML/AI Case Studies&lt;br/&gt;Ch 81-86&quot;]
+  P16 --&gt; P17
+  P10 --&gt; P18[&quot;Part XVIII&lt;br/&gt;Interview Prep&lt;br/&gt;Ch 87-92&quot;]
+  P17 --&gt; P18
+  P10 --&gt; P19[&quot;Part XIX&lt;br/&gt;Projects&lt;br/&gt;Ch 93&quot;]
+  P17 --&gt; P19</code></pre>
+</div>
+<p><strong>Reading the diagram.</strong> Each box is a part of the book;
+arrows point from prerequisite to dependent. Two independent entry
+points exist after Part I: the traditional track (Parts II→X) and the ML
+track (Part XI onward). The ML track rejoins the traditional track at
+Part XII (data infrastructure needs distributed systems from Part V) and
+at Part XVI (LLM serving needs serving infrastructure from Parts IV and
+VIII via Part XIV). The interview and project parts sit at the end
+because they integrate everything.</p>
+<h2 id="concept-level-dependency-graph-critical-path">2.2 Concept-level
+dependency graph (critical path)</h2>
+<p><strong>Figure P.2 — Critical concept path from first principles to
+LLM infrastructure.</strong></p>
+<div class="warning">
+<p><strong>Diagram failed to render.</strong> Source:</p>
+<pre class="text"><code>flowchart LR
+  M[&quot;Ch 4 Little&#39;s Law,&lt;br/&gt;percentiles, queueing&quot;] --&gt; PERF[&quot;Ch 23 Performance&lt;br/&gt;engineering&quot;]
+  CA[&quot;Ch 5 Memory hierarchy&quot;] --&gt; SE[&quot;Ch 13 Storage engines&quot;]
+  OS[&quot;Ch 6 Threads, I/O models&quot;] --&gt; RT[&quot;Ch 9 Real-time&lt;br/&gt;connections&quot;]
+  NET[&quot;Ch 7 TCP, HTTP, TLS&quot;] --&gt; WEB[&quot;Ch 8 APIs, auth&quot;]
+  NET --&gt; LB[&quot;Ch 19 Load balancing&quot;]
+  RDB[&quot;Ch 11 Indexes,&lt;br/&gt;transactions&quot;] --&gt; SE
+  SE --&gt; SCALE[&quot;Ch 14 Replication,&lt;br/&gt;sharding&quot;]
+  SCALE --&gt; CH[&quot;Ch 17 Consistent&lt;br/&gt;hashing&quot;]
+  CH --&gt; CACHE[&quot;Ch 20 Distributed&lt;br/&gt;caching&quot;]
+  SCALE --&gt; CONS[&quot;Ch 25 Consistency&lt;br/&gt;models&quot;]
+  CLK[&quot;Ch 24 Clocks,&lt;br/&gt;failures&quot;] --&gt; CONS
+  CONS --&gt; RAFT[&quot;Ch 26 Raft, quorums&quot;]
+  RAFT --&gt; KAFKA[&quot;Ch 31 Kafka ISR&quot;]
+  RAFT --&gt; TX[&quot;Ch 28 Distributed&lt;br/&gt;transactions&quot;]
+  KAFKA --&gt; EDA[&quot;Ch 32 Outbox,&lt;br/&gt;sagas, CQRS&quot;]
+  TX --&gt; EDA
+  LA[&quot;Ch 4 Linear algebra&quot;] --&gt; MLF[&quot;Ch 57-58 ML + DL&lt;br/&gt;fundamentals&quot;]
+  CA --&gt; GPU[&quot;Ch 64 GPU&lt;br/&gt;architecture&quot;]
+  MLF --&gt; GPU
+  GPU --&gt; DT[&quot;Ch 65 Distributed&lt;br/&gt;training&quot;]
+  MLF --&gt; LLM[&quot;Ch 72 Transformers,&lt;br/&gt;KV cache&quot;]
+  GPU --&gt; LLMI[&quot;Ch 73 LLM inference&quot;]
+  LLM --&gt; LLMI
+  PERF --&gt; LLMI
+  CACHE --&gt; LLMI
+  MLF --&gt; VEC[&quot;Ch 74 Vector search&quot;]
+  CH --&gt; VEC
+  VEC --&gt; RAG[&quot;Ch 75 RAG&quot;]
+  LLMI --&gt; RAG
+  RAG --&gt; AG[&quot;Ch 77 Agents&quot;]
+  EDA --&gt; AG</code></pre>
+</div>
+<p><strong>Reading the diagram.</strong> This is the longest chain of
+concepts the book builds. For example, to understand continuous batching
+and KV-cache paging in LLM inference (Ch 73) you need GPU memory
+hierarchy (Ch 64), the attention/KV-cache mechanism (Ch 72), queueing
+and tail-latency reasoning (Ch 4, Ch 23) and caching concepts (Ch 20).
+Agentic systems (Ch 77) depend on both RAG and on durable workflow
+patterns from event-driven architecture (Ch 32), because production
+agents are long-running, retryable workflows.</p>
+<h2 id="chapter-prerequisite-table">2.3 Chapter prerequisite table</h2>
+<p><strong>Table P.1 — Hard prerequisites per chapter</strong> (soft
+prerequisites are named inside each chapter).</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Ch</th>
+<th>Title</th>
+<th>Hard prerequisites</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>What Is System Design?</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>How to Think Like a System Designer</td>
+<td>1</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>Learning Method</td>
+<td>1</td>
+</tr>
+<tr class="even">
+<td>4</td>
+<td>Quantitative Foundations</td>
+<td>— (high-school algebra)</td>
+</tr>
+<tr class="odd">
+<td>5</td>
+<td>Computer Architecture</td>
+<td>4</td>
+</tr>
+<tr class="even">
+<td>6</td>
+<td>Operating Systems</td>
+<td>5</td>
+</tr>
+<tr class="odd">
+<td>7</td>
+<td>Networking Fundamentals</td>
+<td>4, 6</td>
+</tr>
+<tr class="even">
+<td>8</td>
+<td>Web Application Fundamentals</td>
+<td>7</td>
+</tr>
+<tr class="odd">
+<td>9</td>
+<td>Real-Time Communication</td>
+<td>6, 7, 8</td>
+</tr>
+<tr class="even">
+<td>10</td>
+<td>Security Fundamentals</td>
+<td>7, 8</td>
+</tr>
+<tr class="odd">
+<td>11</td>
+<td>Relational Databases</td>
+<td>4, 5</td>
+</tr>
+<tr class="even">
+<td>12</td>
+<td>NoSQL Databases</td>
+<td>11</td>
+</tr>
+<tr class="odd">
+<td>13</td>
+<td>Storage Engine Internals</td>
+<td>5, 6, 11</td>
+</tr>
+<tr class="even">
+<td>14</td>
+<td>Database Scaling</td>
+<td>11, 12, 13</td>
+</tr>
+<tr class="odd">
+<td>15</td>
+<td>Object/Block/File Storage</td>
+<td>5, 6, 14</td>
+</tr>
+<tr class="even">
+<td>16</td>
+<td>Search Systems</td>
+<td>11, 13, 14</td>
+</tr>
+<tr class="odd">
+<td>17</td>
+<td>Data Structures for Scale</td>
+<td>4, 14</td>
+</tr>
+<tr class="even">
+<td>18</td>
+<td>Scalability</td>
+<td>2, 4, 8</td>
+</tr>
+<tr class="odd">
+<td>19</td>
+<td>Load Balancing</td>
+<td>7, 18</td>
+</tr>
+<tr class="even">
+<td>20</td>
+<td>Caching</td>
+<td>5, 14, 18</td>
+</tr>
+<tr class="odd">
+<td>21</td>
+<td>CDNs</td>
+<td>7, 20</td>
+</tr>
+<tr class="even">
+<td>22</td>
+<td>API and Traffic Management</td>
+<td>4, 8, 18</td>
+</tr>
+<tr class="odd">
+<td>23</td>
+<td>Performance Engineering</td>
+<td>4, 6, 18</td>
+</tr>
+<tr class="even">
+<td>24</td>
+<td>Distributed Systems Fundamentals</td>
+<td>7, 14</td>
+</tr>
+<tr class="odd">
+<td>25</td>
+<td>Consistency and Availability</td>
+<td>14, 24</td>
+</tr>
+<tr class="even">
+<td>26</td>
+<td>Consensus and Coordination</td>
+<td>24, 25</td>
+</tr>
+<tr class="odd">
+<td>27</td>
+<td>Replication and Fault Tolerance</td>
+<td>14, 25, 26</td>
+</tr>
+<tr class="even">
+<td>28</td>
+<td>Distributed Transactions</td>
+<td>11, 26, 27</td>
+</tr>
+<tr class="odd">
+<td>29</td>
+<td>Distributed Data Processing</td>
+<td>14, 24</td>
+</tr>
+<tr class="even">
+<td>30</td>
+<td>Messaging Fundamentals</td>
+<td>8, 24</td>
+</tr>
+<tr class="odd">
+<td>31</td>
+<td>Kafka Deep Dive</td>
+<td>13, 26, 30</td>
+</tr>
+<tr class="even">
+<td>32</td>
+<td>Event-Driven Patterns</td>
+<td>28, 30, 31</td>
+</tr>
+<tr class="odd">
+<td>33</td>
+<td>Architecture Patterns</td>
+<td>8, 30</td>
+</tr>
+<tr class="even">
+<td>34</td>
+<td>Microservices</td>
+<td>22, 32, 33</td>
+</tr>
+<tr class="odd">
+<td>35</td>
+<td>Object-Oriented Design</td>
+<td>— (basic programming)</td>
+</tr>
+<tr class="even">
+<td>36</td>
+<td>SOLID</td>
+<td>35</td>
+</tr>
+<tr class="odd">
+<td>37</td>
+<td>Design Patterns</td>
+<td>35, 36</td>
+</tr>
+<tr class="even">
+<td>38</td>
+<td>UML and LLD</td>
+<td>35–37</td>
+</tr>
+<tr class="odd">
+<td>39</td>
+<td>Reliability and Resilience</td>
+<td>4, 22, 27</td>
+</tr>
+<tr class="even">
+<td>40</td>
+<td>Observability</td>
+<td>4, 34, 39</td>
+</tr>
+<tr class="odd">
+<td>41</td>
+<td>Cloud Computing</td>
+<td>7, 15</td>
+</tr>
+<tr class="even">
+<td>42</td>
+<td>Containers and Kubernetes</td>
+<td>6, 41</td>
+</tr>
+<tr class="odd">
+<td>43</td>
+<td>Deployment and Infrastructure</td>
+<td>42</td>
+</tr>
+<tr class="even">
+<td>44</td>
+<td>Multi-Region Systems</td>
+<td>25, 27, 39</td>
+</tr>
+<tr class="odd">
+<td>45</td>
+<td>Advanced Consistency and BFT</td>
+<td>25, 26</td>
+</tr>
+<tr class="even">
+<td>46</td>
+<td>Distributed Scheduling</td>
+<td>26, 42</td>
+</tr>
+<tr class="odd">
+<td>47</td>
+<td>Multi-Tenancy</td>
+<td>22, 42</td>
+</tr>
+<tr class="even">
+<td>48</td>
+<td>Edge and Serverless</td>
+<td>21, 41</td>
+</tr>
+<tr class="odd">
+<td>49</td>
+<td>Large-Scale Data Infra and HPC</td>
+<td>15, 29</td>
+</tr>
+<tr class="even">
+<td>50</td>
+<td>Security Architecture and Privacy</td>
+<td>10, 34</td>
+</tr>
+<tr class="odd">
+<td>51</td>
+<td>Cost and Sustainability</td>
+<td>41</td>
+</tr>
+<tr class="even">
+<td>52–56</td>
+<td>Traditional case studies</td>
+<td>Parts I–VIII (each case lists specifics)</td>
+</tr>
+<tr class="odd">
+<td>57</td>
+<td>ML Fundamentals</td>
+<td>4</td>
+</tr>
+<tr class="even">
+<td>58</td>
+<td>Deep Learning Essentials</td>
+<td>57</td>
+</tr>
+<tr class="odd">
+<td>59</td>
+<td>ML Lifecycle</td>
+<td>57</td>
+</tr>
+<tr class="even">
+<td>60</td>
+<td>ML System Architecture</td>
+<td>18, 30, 59</td>
+</tr>
+<tr class="odd">
+<td>61</td>
+<td>Data Engineering for ML</td>
+<td>29, 60</td>
+</tr>
+<tr class="even">
+<td>62</td>
+<td>Feature Stores</td>
+<td>20, 61</td>
+</tr>
+<tr class="odd">
+<td>63</td>
+<td>Data Labeling and Quality</td>
+<td>59, 61</td>
+</tr>
+<tr class="even">
+<td>64</td>
+<td>GPU Architecture</td>
+<td>5, 58</td>
+</tr>
+<tr class="odd">
+<td>65</td>
+<td>Distributed Training</td>
+<td>7, 58, 64</td>
+</tr>
+<tr class="even">
+<td>66</td>
+<td>Model Serving</td>
+<td>19, 42, 60</td>
+</tr>
+<tr class="odd">
+<td>67</td>
+<td>Model Optimization</td>
+<td>64, 66</td>
+</tr>
+<tr class="even">
+<td>68</td>
+<td>Recommendation Architecture</td>
+<td>62, 66, 74 (ANN preview)</td>
+</tr>
+<tr class="odd">
+<td>69</td>
+<td>MLOps</td>
+<td>43, 59, 66</td>
+</tr>
+<tr class="even">
+<td>70</td>
+<td>ML Monitoring</td>
+<td>40, 57, 69</td>
+</tr>
+<tr class="odd">
+<td>71</td>
+<td>Responsible ML</td>
+<td>57, 69</td>
+</tr>
+<tr class="even">
+<td>72</td>
+<td>LLM Fundamentals</td>
+<td>4.9, 58</td>
+</tr>
+<tr class="odd">
+<td>73</td>
+<td>LLM Inference</td>
+<td>23, 64, 66, 72</td>
+</tr>
+<tr class="even">
+<td>74</td>
+<td>Vector Search</td>
+<td>4.9, 16, 72</td>
+</tr>
+<tr class="odd">
+<td>75</td>
+<td>RAG</td>
+<td>16, 73, 74</td>
+</tr>
+<tr class="even">
+<td>76</td>
+<td>LLM Adaptation</td>
+<td>65, 72</td>
+</tr>
+<tr class="odd">
+<td>77</td>
+<td>Agents</td>
+<td>32, 75</td>
+</tr>
+<tr class="even">
+<td>78</td>
+<td>LLM Evaluation</td>
+<td>57, 75, 77</td>
+</tr>
+<tr class="odd">
+<td>79</td>
+<td>Production AI Infrastructure</td>
+<td>47, 73, 78</td>
+</tr>
+<tr class="even">
+<td>80</td>
+<td>Large-Scale AI Infrastructure</td>
+<td>46, 65, 79</td>
+</tr>
+<tr class="odd">
+<td>81–86</td>
+<td>ML/AI case studies</td>
+<td>Parts XI–XVI (each case lists specifics)</td>
+</tr>
+<tr class="even">
+<td>87–92</td>
+<td>Interview preparation</td>
+<td>Part X and/or Part XVII</td>
+</tr>
+<tr class="odd">
+<td>93</td>
+<td>Projects</td>
+<td>Per project (listed in project)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="reading-paths">2.4 Reading paths</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Goal</th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Absolute beginner, traditional track</td>
+<td>1 → 3 → 4 → 5 → 6 → 7 → 8 → 11 → 18 → 19 → 20 → 30 → 33 → 52.1</td>
+</tr>
+<tr class="even">
+<td>Interview in 8 weeks (experienced backend engineer)</td>
+<td>2, 4 (skim), 14, 17, 18–22, 24–27, 30–32, 34, 39, 52–56, 87–89,
+91</td>
+</tr>
+<tr class="odd">
+<td>ML engineer moving into ML system design</td>
+<td>4.9–4.10, 57–60, 61–62, 64–66, 68–70, 81–85, 88, 92</td>
+</tr>
+<tr class="even">
+<td>Backend engineer moving into AI infrastructure</td>
+<td>4, 23, 57–58, 64, 66, 72–75, 77–79, 86</td>
+</tr>
+<tr class="odd">
+<td>Staff/principal preparation</td>
+<td>28, 39, 44–51, 80, 88 (rubrics), 90</td>
+</tr>
+</tbody>
+</table>
+</body>
+</html>

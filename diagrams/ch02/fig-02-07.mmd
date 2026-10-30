@@ -1,0 +1,19 @@
+%% Figure 2.7 — QuickBite C4 container view, after the §2.8 decision
+flowchart LR
+    CU([Customer]) -->|HTTPS JSON| MOB["Mobile apps<br/>iOS and Android"]
+    MOB -->|HTTPS JSON| MONO["Core service<br/>modular monolith"]
+    MOB -->|HTTPS JSON| LOCS["Location service<br/>separate deploy"]
+    subgraph QuickBite_Platform [QuickBite platform boundary]
+        MONO
+        LOCS
+        ODB[("Relational DB<br/>orders, catalog")]
+        CACHE[("Menu cache<br/>in-memory")]
+        EV[[Event Log]]
+        LST[("Location store<br/>in-memory, by city")]
+    end
+    MONO -->|SQL| ODB
+    MONO -->|key lookups| CACHE
+    MONO -.->|outbox events| EV
+    EV -.->|order events| LOCS
+    LOCS -->|geo writes| LST
+    MONO -->|HTTPS| PSP{{Payment Provider}}
