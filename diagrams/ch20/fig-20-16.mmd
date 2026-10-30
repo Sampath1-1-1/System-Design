@@ -1,0 +1,12 @@
+%% Figure 20.16 — Hot-key mitigation with L1 caches and replicated keys
+flowchart LR
+  U([Clients]) -->|HTTPS| LB[Load balancer]
+  LB --> S1[App 1<br/>L1 TTL 1 s]
+  LB --> S2[App 2<br/>L1 TTL 1 s]
+  LB --> S3[App n<br/>L1 TTL 1 s]
+  S1 -->|L1 miss: GET post:7 copy 0| N1[(Cache node A)]
+  S2 -->|L1 miss: GET post:7 copy 1| N2[(Cache node B)]
+  S3 -->|L1 miss: GET post:7 copy 2| N3[(Cache node C)]
+  HK[[Hot-key detector<br/>Count-Min top-k]] -.->|mark post:7 hot| S1
+  HK -.->|mark hot| S2
+  HK -.->|mark hot| S3

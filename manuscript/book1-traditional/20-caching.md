@@ -67,7 +67,7 @@ flowchart LR
   S -.->|4 SET key value TTL| R
 ```
 
-**Reading the diagram.** The client calls the application service over HTTPS. The service first asks the cache (a separate in-memory store reached over TCP); on a hit (2a) it answers immediately. On a miss (2b) it queries the database, then writes the result into the cache (4) so the next reader hits. Steps 1–3 are synchronous; the fill (dotted) need not delay the response. Two storage boundaries exist: the disposable cache in RAM and the durable database. Failure points: a cache outage turns every request into path 2b, multiplying database load (§20.13); a fill that races with a write can store stale data (§20.7.2). Scaling: the cache tier scales by partitioning keys over nodes (§20.14); the database sees only misses.
+**Reading the diagram.** The service first asks the cache over TCP; on a hit (2a) it answers immediately, on a miss (2b) it queries the database and fills the cache (4) so the next reader hits. Steps 1–3 are synchronous; the fill (dotted) need not delay the response. Storage boundaries: the disposable cache in RAM and the durable database. Failure points: a cache outage sends every request down path 2b (§20.13); a fill racing a write can store stale data (§20.7.2). Scaling: partition keys over cache nodes (§20.14); the database sees only misses.
 
 ### 20.3.2 Hit ratio, effective latency and backend load
 
@@ -104,7 +104,7 @@ $$T_{\text{eff}} = t_c + (1 - h)\, t_b \qquad\qquad R_{\text{db}} = (1 - h)\, R_
 :::
 
 ::: mistake
-**"Our cache hit ratio is 95%, so the cache is working."** A hit ratio is meaningless without the miss *rate* in requests per second and the backend's capacity. 95% of 1,000 RPS leaves 50 misses per second, trivial; 95% of 1,000,000 RPS leaves 50,000, enough to overwhelm most databases. Also check whether the hit ratio is computed per request or per key lookup: a page with 20 lookups and one miss is a "95% hit ratio" but a 100% slow page.
+**"Our cache hit ratio is 95%, so the cache is working."** 95% of 1,000 RPS leaves 50 misses/s; 95% of 1,000,000 RPS leaves 50,000, enough to overwhelm most databases. And a page with 20 lookups and one miss is a "95% hit ratio" but a 100% slow page.
 :::
 
 ### 20.3.3 Popularity skew: why small caches work
@@ -274,15 +274,15 @@ flowchart LR
 
 HTTP caching is standardized in RFC 9111 [RFC 9111]; §21.6.1 treats it in depth for CDNs. The origin controls client and intermediary caches with headers:
 
-- `Cache-Control: max-age=600` lets any cache reuse the response for 600 s; `s-maxage` sets a different lifetime for shared caches such as CDNs; `private` forbids shared caches from storing a per-user response; `no-store` forbids storage altogether; `no-cache` permits storage but requires revalidation before each use.
-- **Validators**: an `ETag` (an opaque version identifier) or `Last-Modified`. When a stored response is stale, the client sends `If-None-Match: "<etag>"`; if nothing changed, the server replies `304 Not Modified` with no body, saving bandwidth but not the round trip.
-- `stale-while-revalidate=60` lets a cache serve a stale response for up to 60 s while it refreshes in the background, and `stale-if-error` lets it serve stale content when the origin fails [RFC 5861]. §20.11.4 applies the same idea to server-side caches.
+- `Cache-Control: max-age=600` permits reuse for 600 s; `s-maxage` sets the lifetime for shared caches; `private` keeps per-user responses out of shared caches; `no-store` forbids storage.
+- **Validators** (`ETag`, `Last-Modified`): a stale copy is revalidated with `If-None-Match`, and `304 Not Modified` saves the body but not the round trip.
+- `stale-while-revalidate` serves a stale copy while refreshing in the background; `stale-if-error` serves it when the origin fails [RFC 5861]. §20.11.3 applies the idea to server-side caches.
 
 For static assets, the standard trick is **cache busting**: put a content hash in the file name (`app.3f9a2c.js`) and set a TTL of a year. The URL changes whenever the content changes, so no invalidation is ever needed.
 
 ### 20.5.3 CDN and gateway
 
-A **CDN** is a geographically distributed set of HTTP caches; Chapter 21 covers its architecture, tiered caching and purge. An **API gateway** or reverse proxy (NGINX, Envoy, Varnish) can cache whole responses keyed by method, URL and selected headers. The risk at both layers is the **cache key**: if a response varies by a header (language, authorization) that is not part of the key, one user's response can be served to another. Never cache authenticated responses in a shared layer unless the key includes the identity and the response is marked accordingly.
+A **CDN** is a geographically distributed set of HTTP caches (Chapter 21). An **API gateway** or reverse proxy (NGINX, Envoy, Varnish) caches whole responses keyed by method, URL and selected headers. At both layers the risk is the **cache key**: if a response varies by a header (language, authorization) missing from the key, one user's response is served to another.
 
 ### 20.5.4 Application caches: in-process versus remote
 
@@ -480,7 +480,7 @@ sequenceDiagram
   A->>R: DEL user:42
 ```
 
-**Reading the diagram.** All calls are synchronous and initiated by the application, which holds the logic for both stores. On a miss it reads the database and sets the value with a TTL; on a write it commits to the database first, then deletes the key so the next read refills it. Storage boundaries: cache and database, with no transaction spanning both. Failure points: the delete can fail after the commit (the TTL then bounds staleness), and a concurrent read can re-insert old data (§20.7.2). Scaling: the cache holds only what was read, so memory follows the working set.
+**Reading the diagram.** All calls are synchronous and made by the application. On a miss it reads the database and sets the value with a TTL; on a write it commits first, then deletes the key. Storage boundaries: cache and database, with no transaction spanning both. Failure points: a failed delete (the TTL bounds staleness) and a concurrent read re-inserting old data (§20.7.2). Scaling: memory follows the read working set.
 
 Cache-aside is the default for remote caches because it is simple, keeps the cache optional (if the cache is down, reads go to the database) and caches only data that is actually read. Facebook's Memcache deployment is the canonical large-scale example [Nishtala et al. 2013].
 
@@ -544,7 +544,7 @@ sequenceDiagram
   L-->>A: v1 from memory
 ```
 
-**Reading the diagram.** The application sees one synchronous interface; loading is the cache's job. Because the loader sits inside the cache, concurrent misses for the same key can be **coalesced** into one database read, which removes the stampede problem of §20.11 for that process. Storage boundaries and failure points are as in cache-aside, except that a cache outage now also blocks reads unless the client falls back. Caffeine's `LoadingCache` and Guava's `CacheBuilder` are in-process read-through caches; remote read-through is usually provided by a proxy or a cache product's loader plug-in.
+**Reading the diagram.** The application sees one synchronous interface; the cache loads. Because the loader sits inside the cache, concurrent misses for a key can be **coalesced** into one database read (§20.11). Storage boundaries are as in cache-aside, but a cache outage also blocks reads unless the client falls back. Caffeine's `LoadingCache` is an in-process example; remote read-through usually comes from a proxy or loader plug-in.
 
 ### 20.7.4 Write-through
 
@@ -642,7 +642,7 @@ sequenceDiagram
   A->>R: SET row:9001 with TTL
 ```
 
-**Reading the diagram.** The write path touches the database (and at most deletes a stale key); only a later read caches the row. This avoids filling the cache with data that is written once and rarely read, such as logs, uploads or audit rows, which would evict hot entries. The cost is that the first read after a write is always a miss. In practice cache-aside with delete-on-write *is* write-around; the name matters when contrasting it with write-through.
+**Reading the diagram.** Writes touch only the database (and delete a stale key); only a later read caches the row, so write-once data such as logs and audit rows never evicts hot entries. The cost: the first read after a write misses. Cache-aside with delete-on-write *is* write-around; the name matters in contrast with write-through.
 
 ### 20.7.7 Choosing a pattern
 
@@ -962,7 +962,7 @@ What to notice:
 - Scans hurt LRU most (−7 to −14 points); in this trace 20% of requests are unrepeatable scan keys, so 80% of the ideal, about 36.6% at 1%, is the ceiling, and ARC and W-TinyLFU reach about 34%.
 - In-cache LFU collapses on the shifting trace (14.8%) because entries that were hot in an earlier phase keep their high counts. Aging in W-TinyLFU and adaptation in ARC avoid this.
 - The sketch's hash matters. An earlier version of this program that indexed rows with Python's tuple `hash((row, key))` produced correlated rows and lost 2–7 points; a multiplicative hash per row fixed it (§17.3).
-- These are synthetic traces. Caffeine's published comparisons on real traces (database, search, analytics) show the same ordering in most cases, with W-TinyLFU at or near the top [Caffeine Wiki: Efficiency], but you should replay a trace of your own before switching.
+- These are synthetic traces; Caffeine's comparisons on real traces mostly show W-TinyLFU at or near the top [Caffeine Wiki: Efficiency], but replay your own trace before switching.
 
 **Table 20.6 — Eviction and admission policies.**
 
@@ -1001,7 +1001,7 @@ flowchart LR
   SQ2 -.->|DEL keys| C3[(Region 2 caches)]
 ```
 
-**Reading the diagram.** The web server writes only to the database (synchronous). An invalidation daemon on the database host reads the commit log, extracts the keys to delete, batches them and sends them asynchronously (dotted) through a routing layer to every cache cluster that may hold a copy. In another region, the replica's own log drives deletes for local caches, so caches there are invalidated only after the replica has the new data, avoiding a refill from a lagging replica. Storage boundaries: database, log, many cache clusters. Failure points: daemon lag (staleness grows with it), a lost batch (re-read from the log position), and a delete that overtakes replication (the reason for per-region daemons). Scaling: deletes are batched to reduce packet rates.
+**Reading the diagram.** The web server writes only to the database (synchronous). A daemon on the database host reads the commit log, extracts keys, batches them and sends deletes asynchronously (dotted) through a router to every cache cluster. In another region the replica's own log drives deletes, so local caches are invalidated only after the replica has the new data. Storage boundaries: database, log, cache clusters. Failure points: daemon lag, lost batches (replay from the log position) and deletes overtaking replication (hence per-region daemons). Scaling: batching reduces packet rates.
 
 ::: industry
 **Facebook: mcsqueal and leases.** Facebook's Memcache deployment served billions of requests per second as a demand-filled look-aside cache in front of MySQL. Invalidation daemons called **mcsqueal** run on each database, extract deletes from committed transactions and broadcast them, batched, through **mcrouter** to all front-end clusters; in remote regions the replica's daemons do the same. **Leases** (64-bit tokens issued on a miss and voided by a delete) prevent stale sets, and, because a server returns a token only once every 10 seconds per key, they also throttle thundering herds; the paper reports a peak database query rate falling from 17K/s to 1.3K/s in one instance. A small **gutter** pool (about 1% of servers) takes over for failed cache servers with short TTLs, so a failure does not dump its load onto the databases [Nishtala et al. 2013].
@@ -1052,7 +1052,7 @@ sequenceDiagram
   C-->>B: v2 hit
 ```
 
-**Reading the diagram.** The cache grants a lease token only to the first misser; later missers receive "retry" (or a stale value if one is kept), so only client A queries the database. The `SET` succeeds only with a valid token, which also blocks the stale-set race of Figure 20.7. All calls are synchronous; B's wait is a short backoff. Failure points: if A dies, the token expires after its lease time and another client gets one; waiting clients add latency. Scaling: database load per key is one query per refresh regardless of $\lambda$.
+**Reading the diagram.** Only the first misser gets a lease token; later missers are told to retry (or get a stale value), so only A queries the database. The `SET` needs a valid token, which also blocks the stale-set race of Figure 20.7. All calls are synchronous. Failure points: if A dies, its token expires and another client gets one; waiting adds latency. Scaling: one database query per refresh regardless of $\lambda$.
 
 ### 20.11.2 Probabilistic early expiration (XFetch)
 
@@ -1077,7 +1077,7 @@ $$\mathbb{E}[\text{lead}] \approx \delta\beta\left(\ln(\lambda\delta\beta) + \ga
 | $\gamma$ | Euler–Mascheroni constant, ≈ 0.5772 | dimensionless |
 :::
 
-Since $-\ln u$ is exponentially distributed, each request triggers with probability $e^{-r/(\delta\beta)}$. With Poisson arrivals, triggers form a process of intensity $\lambda e^{-r/(\delta\beta)}$, so the remaining time at the first trigger has a Gumbel distribution, giving the expected lead. Requests during the $\delta$ seconds that recompute takes may trigger again; the expected number of extra triggers is $e^{1/\beta} - 1$, independent of $\lambda$.
+Since $-\ln u$ is exponentially distributed, triggers form a Poisson process of intensity $\lambda e^{-r/(\delta\beta)}$; the remaining time at the first trigger is Gumbel-distributed, which gives the expected lead, and requests during the $\delta$-second recompute add $e^{1/\beta} - 1$ extra triggers on average, independent of $\lambda$ (§20.19, Q7).
 
 ::: example
 **Worked example — A hot key with a 2-second recompute.** $\lambda = 100$ requests/s, $\delta = 2$ s, $\beta = 1$, TTL 60 s.
@@ -1202,7 +1202,7 @@ flowchart LR
   DB -->|row| S
 ```
 
-**Reading the diagram.** The in-memory Bloom filter rejects most nonexistent IDs before any network call. IDs that pass go to the cache, which may return a value or a cached "not found" marker; only true misses reach the database, and a not-found answer is stored as a marker with a short TTL (dotted fill). All checks are synchronous. Storage boundaries: filter in process memory (or Redis), cache, database. Failure points: a stale filter that does not know about new items would return false 404s, so new keys must be added to the filter before they are visible; negative markers must be deleted when the item is created. Scaling: at 1% false positives, an attack of 100,000 random IDs per second lets about 1,000 through to the cache tier.
+**Reading the diagram.** The in-memory Bloom filter rejects most nonexistent IDs before any network call. Survivors go to the cache, which returns a value or a cached "not found" marker; only true misses reach the database, and a not-found result is stored with a short TTL (dotted). All checks are synchronous. Storage boundaries: filter, cache, database. Failure points: a filter that lags behind inserts returns false 404s, so add keys before they become visible, and delete negative markers on creation. Scaling: at 1% false positives, 100,000 random IDs/s let about 1,000 through.
 
 Rate limiting per client (§22.3) and validating ID formats before lookup complete the defense.
 
@@ -1212,7 +1212,7 @@ Rate limiting per client (§22.3) and validating ID formats before lookup comple
 **Definition — Cache avalanche.** A large fraction of cache entries becomes unavailable at once, because many keys expire together or because cache nodes fail or restart, so the database suddenly receives the full read load.
 :::
 
-The arithmetic of §20.3.2 explains why this is fatal: at $h = 0.99$ the database sees 1% of reads; with the cache gone it sees 100%, a 100× jump that no database is provisioned for. A database that slows down under the load then causes timeouts and retries, which add more load (§22.12).
+At $h = 0.99$ the database sees 1% of reads; with the cache gone it sees 100%, a 100× jump, and the resulting timeouts and retries add more load (§22.12).
 
 Defenses:
 
@@ -1268,7 +1268,7 @@ flowchart LR
   HK -.->|mark hot| S3
 ```
 
-**Reading the diagram.** The load balancer spreads requests over $n$ app instances. Each keeps hot keys in its in-process L1 for one second, so it sends at most one request per second per hot key to the remote tier, and it picks one of three replicated copies at random, spreading that traffic over three cache nodes. A detector fed by sampled requests marks keys hot asynchronously (dotted), so only hot keys pay for replication. Storage boundaries: process memory and three cache nodes. Failure points: L1 staleness up to its TTL, and writes or deletes that must reach every copy. Scaling: more app instances raise the remote request rate linearly, so lengthen the L1 TTL or add copies.
+**Reading the diagram.** Each of $n$ app instances keeps hot keys in its L1 for one second, so it sends at most one request per second per hot key to the remote tier, choosing one of three replicated copies at random. A detector fed by sampled requests marks keys hot asynchronously (dotted). Storage boundaries: process memory and three cache nodes. Failure points: L1 staleness up to its TTL; writes and deletes must reach every copy. Scaling: remote load grows with instance count, so lengthen the L1 TTL or add copies.
 
 ::: formula
 **Remote load from a hot key with L1 caches and replication**
@@ -1332,40 +1332,34 @@ $$R_{\text{remote}} \le \min\!\left(\lambda_k,\ \frac{A}{T_{L1}}\right), \qquad 
 1. A cache lookup costs 0.4 ms and a database read 12 ms. What is the mean read latency at $h = 0.95$?
 2. Why can a 1-point drop in hit ratio double database load?
 3. Using the $s = 1$ approximation, what is the ideal hit ratio for $C = 10^5$ of $N = 10^7$ keys?
-4. Name two reasons an in-process cache can be preferable to Redis, and two reasons it can be worse.
-5. Why are Redis commands atomic without locks, and what is the operational cost of that design?
-6. How does Redis Cluster map a key to a node, and how do you make two keys land in the same slot?
-7. An item with header is 200 bytes. Which Memcached chunk (growth factor 1.25) holds it, and what fraction is wasted?
-8. Describe the stale-set race in cache-aside and one mechanism that prevents it.
-9. Why delete the cache entry after a write instead of setting the new value?
-10. A write-back cache receives 50,000 writes/s and flushes every 2 s. How many acknowledged writes can a crash lose?
-11. 600,000 keys were written in 30 s with the same TTL. The database tolerates 1,500 refills/s. What jitter range do you need?
-12. Why does in-cache LFU do badly when popularity shifts, and how does W-TinyLFU avoid it?
-13. What do ARC's ghost lists record, and what does a ghost hit change?
-14. For XFetch with $\lambda = 400$ requests/s, $\delta = 0.5$ s, $\beta = 1$, what is the expected lead before expiry?
-15. Why does negative caching not stop an attacker requesting random IDs?
-16. Why does `hash mod N` cause an avalanche when you add a cache node?
-17. 200 app instances use a 2 s L1 TTL for a hot key. What is the maximum remote request rate for it?
+4. Why are Redis commands atomic without locks, and what is the operational cost of that design?
+5. How does Redis Cluster map a key to a node, and how do you make two keys land in the same slot?
+6. An item with header is 200 bytes. Which Memcached chunk (growth factor 1.25) holds it, and what fraction is wasted?
+7. Describe the stale-set race in cache-aside and one mechanism that prevents it.
+8. Why delete the cache entry after a write instead of setting the new value?
+9. A write-back cache receives 50,000 writes/s and flushes every 2 s. How many acknowledged writes can a crash lose?
+10. 600,000 keys were written in 30 s with the same TTL. The database tolerates 1,500 refills/s. What jitter range do you need?
+11. Why does in-cache LFU do badly when popularity shifts, and how does W-TinyLFU avoid it?
+12. What do ARC's ghost lists record, and what does a ghost hit change?
+13. For XFetch with $\lambda = 400$ requests/s, $\delta = 0.5$ s, $\beta = 1$, what is the expected lead before expiry?
+14. 200 app instances use a 2 s L1 TTL for a hot key. What is the maximum remote request rate for it?
 
 <details><summary>Answers</summary>
 
 1. $0.4 + 0.05 \times 12 = 1.0$ ms.
 2. Database reads are proportional to the miss ratio; going from 99% to 98% doubles the miss ratio from 1% to 2%.
 3. $(\ln 10^5 + 0.577)/(\ln 10^7 + 0.577) = (11.513 + 0.577)/(16.118 + 0.577) = 12.090/16.695 \approx 0.724$.
-4. Better: ~100 ns hits with no network or serialization; keeps working during a cache-cluster outage. Worse: one copy per instance multiplies memory and misses; invalidating every instance is hard, so staleness is bounded only by a short TTL.
-5. One thread executes all commands sequentially. Any slow command (`KEYS`, large `DEL`, long scripts) blocks every client, and a process uses only one core for execution.
-6. `CRC16(key) mod 16384` gives the slot; each primary owns a set of slots. Put the same hash tag in both keys, for example `{user:42}:profile` and `{user:42}:cart`.
-7. Classes: 152, 192, 240. 200 > 192, so the 240-byte chunk; waste $40/240 = 16.7\%$.
-8. A reader reads $v_1$ from the database, a writer commits $v_2$ and deletes the key, and the reader then sets $v_1$, which stays until TTL. Leases (the delete voids the reader's token), versioned compare-and-set, or CDC-issued deletes after commit prevent or repair it.
-9. Concurrent writers can set values in a different order from their database commits, leaving an old value cached; deletes are idempotent and order-insensitive.
-10. $50{,}000 \times 2 = 100{,}000$ writes.
-11. $J \ge 600{,}000 / 1{,}500 = 400$ s.
-12. Counts of formerly hot entries stay high, so they are never evicted. W-TinyLFU halves sketch counters periodically (aging) and admits new keys through a recency window.
-13. The keys (not values) recently evicted from $T_1$ and $T_2$. A hit in $B_1$ increases the target size of $T_1$ (more recency); a hit in $B_2$ decreases it (more frequency).
-14. $\lambda\delta\beta = 200$; $0.5 \times (\ln 200 + 0.577) = 0.5 \times 5.875 = 2.94$ s.
-15. Each random ID is requested once, so the negative entry is never reused; a Bloom filter of existing keys is needed.
-16. About $N/(N+1)$ of keys map to a different node, so most entries become unreachable at once and their reads fall through to the database.
-17. $200 / 2 = 100$ requests/s.
+4. One thread executes all commands sequentially. Any slow command (`KEYS`, large `DEL`, long scripts) blocks every client, and a process uses only one core for execution.
+5. `CRC16(key) mod 16384` gives the slot; each primary owns a set of slots. Put the same hash tag in both keys, for example `{user:42}:profile` and `{user:42}:cart`.
+6. Classes: 152, 192, 240. 200 > 192, so the 240-byte chunk; waste $40/240 = 16.7\%$.
+7. A reader reads $v_1$ from the database, a writer commits $v_2$ and deletes the key, and the reader then sets $v_1$, which stays until TTL. Leases (the delete voids the reader's token), versioned compare-and-set, or CDC-issued deletes after commit prevent or repair it.
+8. Concurrent writers can set values in a different order from their database commits, leaving an old value cached; deletes are idempotent and order-insensitive.
+9. $50{,}000 \times 2 = 100{,}000$ writes.
+10. $J \ge 600{,}000 / 1{,}500 = 400$ s.
+11. Counts of formerly hot entries stay high, so they are never evicted. W-TinyLFU halves sketch counters periodically (aging) and admits new keys through a recency window.
+12. The keys (not values) recently evicted from $T_1$ and $T_2$. A hit in $B_1$ increases the target size of $T_1$ (more recency); a hit in $B_2$ decreases it (more frequency).
+13. $\lambda\delta\beta = 200$; $0.5 \times (\ln 200 + 0.577) = 0.5 \times 5.875 = 2.94$ s.
+14. $200 / 2 = 100$ requests/s.
 
 </details>
 
@@ -1374,7 +1368,7 @@ $$R_{\text{remote}} \le \min\!\left(\lambda_k,\ \frac{A}{T_{L1}}\right), \qquad 
 ### Basic
 
 **Q1. When would you add a cache, and what do you need to state when you do?**
-**Answer.** When a read-heavy workload repeatedly reads the same data, the backing store is too slow for the latency target or near its capacity, and the data tolerates bounded staleness. State the expected hit ratio and resulting database load, the pattern (usually cache-aside), the TTL and invalidation mechanism, what happens on a cache outage, and the memory size from the working set.
+**Answer.** When reads repeat, the store is too slow or near capacity, and the data tolerates bounded staleness. State the hit ratio and resulting database load, the pattern, TTL and invalidation, the outage behavior and the memory size.
 
 **Q2. Explain cache-aside versus write-through.**
 **Answer.** Cache-aside: the application reads the cache, fills it from the database on a miss and deletes the key after writing the database; the cache is optional and holds only read data. Write-through: writes go through the cache layer, which writes the database synchronously and updates itself, so reads through that layer are fresh, at the cost of higher write latency and caching data that may never be read.
@@ -1385,7 +1379,7 @@ $$R_{\text{remote}} \le \min\!\left(\lambda_k,\ \frac{A}{T_{L1}}\right), \qquad 
 ### Intermediate
 
 **Q4. Users sometimes see their old profile picture for an hour after changing it. Diagnose.**
-**Answer.** Probably the stale-set race (a slow reader re-inserting the old value after the writer's delete), a missed delete on some write path, a delete-before-write ordering, or a downstream layer (CDN, browser, L1) caching longer. The one-hour duration points to a TTL acting as the backstop. Fix: delete after commit, leases or versioned keys, CDC-driven invalidation, a versioned image URL for the picture, and shorter TTLs on derived caches.
+**Answer.** The one-hour duration points to a TTL acting as backstop for a stale-set race, a missed delete on some write path, delete-before-write ordering, or a CDN or browser layer. Fix: delete after commit, leases or versioned keys, CDC-driven invalidation, and a versioned image URL.
 
 **Q5. Your database melts down every day at 09:00. Why might the cache be involved?**
 **Answer.** A cache avalanche: a job warms or rewrites many keys at the same time each day with identical TTLs, or a daily cache restart empties it. Add TTL jitter, warm caches gradually, keep replicas, add stale-if-error serving, and protect the database with load shedding.
@@ -1402,7 +1396,7 @@ $$R_{\text{remote}} \le \min\!\left(\lambda_k,\ \frac{A}{T_{L1}}\right), \qquad 
 **Answer.** Writers delete local keys after commit; a CDC daemon per database (primary and each replica) tails the commit log and issues batched deletes to that region's caches, so a region's caches are invalidated only after its replica has applied the change, preventing refills from lagging replicas. Keep TTLs as a backstop, use leases against stale sets, and for read-your-writes after a user's own update, route that user's reads to the primary or mark the key so misses read the primary (Facebook's remote markers) [Nishtala et al. 2013].
 
 **Q9. A team proposes replacing LRU with LFU in a 200 GB cache. How do you decide?**
-**Answer.** Replay a production trace through LRU, LFU with aging, ARC and W-TinyLFU at several sizes and compare hit ratios and database QPS, as in §20.9.5. Look for scans (LRU suffers) and popularity shifts (pure LFU suffers). Consider memory overhead and CPU per hit. In Redis this is `allkeys-lfu` versus `allkeys-lru`; in Java, Caffeine gives W-TinyLFU.
+**Answer.** Replay a production trace through LRU, LFU with aging, ARC and W-TinyLFU at several sizes and compare hit ratios and database QPS (§20.9.5); scans hurt LRU, popularity shifts hurt pure LFU. In Redis this is `allkeys-lfu` versus `allkeys-lru`.
 
 ## 20.20 Practical exercises
 

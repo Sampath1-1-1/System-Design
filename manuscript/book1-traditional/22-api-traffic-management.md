@@ -139,15 +139,15 @@ What to notice:
 
 #### First-principles explanation
 
-Imagine a jar on your desk that a friend tops up with one sweet every six seconds, but the jar holds only 20 sweets; when it is full, new sweets fall on the floor. You may eat a sweet only if one is in the jar. If you have been away for an hour, you come back to a full jar and can eat 20 in a row (a **burst**), but after that you can eat only as fast as sweets arrive: ten per minute. The jar size limits the burst; the top-up speed limits the average.
+A jar is topped up with one sweet every six seconds but holds only 20. After an hour away you can eat 20 in a row (a **burst**), then only as fast as sweets arrive. The jar size limits the burst; the top-up speed limits the average.
 
 #### Why does this exist?
 
-Real clients are bursty: a mobile app opening fetches a profile, a feed and ten thumbnails in one second, then goes quiet for a minute. A limiter that allows exactly $r$ requests per second, evenly spaced, would reject legitimate bursts. The token bucket separates two promises, average rate and burst size, which is exactly how capacity is planned. It originated in network traffic shaping and policing, and it is the algorithm behind most API gateways' "rate and burst" settings.
+Real clients are bursty: an app opening fetches a profile, a feed and ten thumbnails in one second, then goes quiet. The token bucket separates average rate from burst size, exactly how capacity is planned; it came from network traffic policing and underlies most gateways' "rate and burst" settings.
 
 #### How it works internally
 
-You do not need a timer that adds tokens. Store two numbers per key, `tokens` and `last` (the time of the last update), and refill lazily when a request arrives:
+No timer is needed. Store `tokens` and `last` (time of last update) per key and refill lazily:
 
 1. `elapsed = now − last`; `tokens = min(b, tokens + elapsed × r)`; `last = now`.
 2. If `tokens ≥ cost`: subtract the cost and admit.
@@ -165,7 +165,7 @@ flowchart LR
   X --> S
 ```
 
-**Reading the diagram.** A request for key *k* triggers a lazy refill computed from the time since the last update, capped at capacity $b$. The decision node compares the token count with the request's cost; admitted requests subtract the cost, rejected requests compute how long until the deficit is refilled. Both paths write the two-number state back to storage (local memory on one node, or a shared store in §22.8). Everything is synchronous and constant-time: no timers, no background threads. The failure point is the read-modify-write on the state, which must be atomic when several threads or nodes share a key (§22.8.2). The structure scales to millions of keys because each costs only two numbers.
+**Reading the diagram.** A request triggers a lazy refill capped at $b$; the decision compares tokens with the request's cost; admitted requests subtract it, rejected ones compute when the deficit refills. Both paths write the two-number state back to storage (local memory, or a shared store in §22.8). Everything is synchronous and constant-time. Failure point: the read-modify-write must be atomic when threads or nodes share a key (§22.8.2). Scaling: two numbers per key, so millions of keys are cheap.
 
 #### Mathematical foundations
 
@@ -182,8 +182,6 @@ $$\text{tokens}(t) = \min\bigl(b,\ \text{tokens}(t_0) + r\,(t - t_0)\bigr) \qqua
 | $A(T)$ | Maximum requests admitted in any interval of length $T$ | requests |
 :::
 
-The bound $A(T) \le b + rT$ says that over any interval the client can use what was saved in the bucket plus what drips in during the interval. It is the same "arrival curve" used in network calculus to describe policed traffic.
-
 ::: example
 **Worked example — PhotoShare free tier: $r = 10$ RPS, $b = 20$.**
 
@@ -193,7 +191,7 @@ The bound $A(T) \le b + rT$ says that over any interval the client can use what 
 4. Time to refill from empty to full: $b/r = 20/10 = 2$ s.
 5. Sustained 15 RPS for 10 s against a full bucket (150 requests over a 9.93 s span): the bound is $20 + 10 \times 9.93 = 119.3$, so at most 119 are admitted; the code below admits exactly 119.
 
-**Interpretation.** $r$ governs the minute-scale average; $b$ governs only the first seconds. **Engineering implication.** Set $r$ from capacity planning (what you can afford per client on average) and $b$ from observed client behavior (the largest legitimate burst, such as an app's start-up sync). If the downstream service cannot absorb $b$ requests at once from many clients simultaneously, the burst parameter, not the rate, is what will hurt you.
+**Interpretation.** $r$ governs the minute-scale average; $b$ only the first seconds. **Engineering implication.** Set $r$ from capacity planning and $b$ from the largest legitimate client burst; if the downstream cannot absorb $b$ requests at once from many clients, the burst, not the rate, will hurt you.
 :::
 
 #### Code example
@@ -275,26 +273,25 @@ t=1.0 s burst of 50: admitted 10
 
 What to notice:
 
-- The clock is injected. Testing time-based code against `time.monotonic()` makes tests slow and flaky; a fake clock makes them exact. In production use a **monotonic** clock, never wall-clock time, which can jump backwards after an NTP correction (§24.9).
-- `retry_after` falls out of the state for free, so the 429 response can tell the client exactly when to return.
-- Non-unit `cost` turns the same class into a cost-based limiter (bytes uploaded, query cost, model tokens).
+- The injected clock makes tests exact. In production use a **monotonic** clock, never wall-clock time, which can jump backwards (§24.9).
+- `retry_after` falls out of the state, so the 429 can say exactly when to return; a non-unit `cost` makes it a cost-based limiter.
 
 #### Real-world industry applications
 
 ::: industry
-**Stripe's API rate limiters.** Stripe described four limiters in production: a per-user **request rate limiter** (the most important, implemented as a token bucket), a **concurrent requests limiter** that caps requests in flight per user, a **fleet usage load shedder** that reserves part of the infrastructure for critical requests, and a **worker utilization load shedder** that sheds lower-priority traffic first when workers are saturated. The token buckets live in Redis so that every API server shares them. Stripe also recommends starting with the request rate limiter and rolling out new limiters in "dark launch" mode, logging what would have been rejected before enforcing [Tarjan 2017].
+**Stripe's API rate limiters.** Stripe described four limiters: a per-user **request rate limiter** (a token bucket in Redis, shared by all API servers), a **concurrent requests limiter**, a **fleet usage load shedder** reserving capacity for critical requests, and a **worker utilization load shedder** that sheds lower-priority traffic first. It recommends dark-launching new limiters, logging what would be rejected before enforcing [Tarjan 2017].
 *Evidence: Primary* — [Tarjan 2017]
 :::
 
 ::: industry
-**Amazon API Gateway throttling.** AWS documents that API Gateway throttles requests with a token bucket algorithm, where a *rate* (steady-state requests per second) and a *burst* (bucket capacity) can be configured per account, stage, method or usage-plan client; requests above the limits receive 429 [AWS Docs: API Gateway throttling].
+**Amazon API Gateway.** AWS documents token-bucket throttling with a configurable *rate* and *burst* per account, stage, method or usage-plan client; excess requests receive 429 [AWS Docs: API Gateway throttling].
 *Evidence: Primary* — [AWS Docs: API Gateway throttling]
 :::
 
 #### Common misconceptions
 
 ::: mistake
-**Mistake — "A token bucket with $r = 10$ RPS means no client ever exceeds 10 RPS."** Over a short window it can reach $b$ requests instantly; at $b = 20$, 20 requests arrive in the same millisecond. If the downstream can handle only 10 concurrent requests, you need a **concurrency limit** (requests in flight) as well as a rate limit. By Little's Law, in-flight requests $= \lambda W$ (§4.11), so a rate limit bounds concurrency only if latency $W$ stays bounded; when the backend slows down, the same rate produces more in-flight work.
+**Mistake — "$r = 10$ RPS means no client ever exceeds 10 RPS."** At $b = 20$, 20 requests can arrive in one millisecond. By Little's Law, in-flight requests $= \lambda W$ (§4.11), so a rate limit bounds concurrency only while latency stays bounded; add a **concurrency limit** too.
 :::
 
 ## 22.5 Leaky bucket
@@ -307,11 +304,11 @@ What to notice:
 
 #### First-principles explanation
 
-Picture a bucket with a small hole in the bottom. Pour water in as unevenly as you like; it leaks out of the hole at a steady drip. If you pour too fast, the bucket overflows and the excess spills. In the **queue** form, the water is the requests themselves: they wait in the bucket and leave at a steady pace, so the downstream sees perfectly smooth traffic, but each request is *delayed*. In the **meter** form, the water is only a measurement: the request is either admitted immediately or rejected, and nothing waits.
+Water poured unevenly into a bucket with a hole leaks out at a steady drip; pour too fast and it overflows. In the **queue** form the water is the requests themselves: they wait and leave smoothly, but *delayed*. In the **meter** form the water is only a measurement: each request is admitted or rejected at once.
 
 #### Why does this exist?
 
-The leaky bucket comes from telecommunications, where networks had to police and shape fixed-size cells so that a switch's buffers would not overflow. For APIs, the queue form is useful when the downstream truly needs a smooth arrival rate (for example, a partner API that permits exactly 5 calls per second, or a database bulk loader). The meter form is useful because it can be implemented with a *single* number per key, which makes it attractive for shared stores.
+It comes from telecommunications, where switches policed and shaped fixed-size cells. For APIs, the queue form suits a downstream that needs smooth arrivals (a partner API allowing exactly 5 calls/s); the meter form needs only *one* number per key.
 
 **Figure 22.3 — Leaky bucket as a queue versus as a meter.**
 
@@ -329,11 +326,11 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** In the left subgraph, bursty arrivals are buffered in a FIFO queue (an in-memory storage boundary of size $Q$) and released at constant rate $r$; the release is asynchronous with respect to the arrival, and the cost is added latency of up to $Q/r$. When the buffer is full, arrivals are dropped. In the right subgraph, nothing is buffered: each arrival is checked against a single stored timestamp (the theoretical arrival time, TAT, explained below) and is admitted or rejected synchronously. The queue form shapes traffic; the meter form polices it. Failure points: the queue form holds requests in memory, so a crash loses them and a long queue adds latency that callers may time out on; the meter form has no such state. Scaling: the meter keeps one number per key, so it shards trivially.
+**Reading the diagram.** Left: arrivals are buffered in a FIFO (an in-memory storage boundary of size $Q$) and released asynchronously at rate $r$, adding up to $Q/r$ latency; a full buffer drops arrivals. Right: nothing is buffered; each arrival is checked synchronously against one stored timestamp (TAT, below) and admitted or rejected. The queue *shapes*, the meter *polices*. Failure points: queued requests are lost on a crash and may time out while waiting. Scaling: the meter's single number per key shards trivially.
 
 ### 22.5.2 GCRA: the leaky bucket as a single timestamp
 
-The **Generic Cell Rate Algorithm (GCRA)** is the meter form defined for ATM (Asynchronous Transfer Mode) networks in ITU-T Recommendation I.371 and the ATM Forum Traffic Management specification [ITU-T I.371; ATM Forum TM 4.0]. Those documents give two equivalent formulations, a "virtual scheduling" algorithm and a "continuous-state leaky bucket"; the virtual-scheduling form is the one usually adapted for API rate limiting. Instead of counting tokens, it remembers when the next request is *due* if the client sent at exactly the allowed rate.
+The **Generic Cell Rate Algorithm (GCRA)** is the meter form defined for ATM (Asynchronous Transfer Mode) networks in ITU-T Recommendation I.371 and the ATM Forum Traffic Management specification [ITU-T I.371; ATM Forum TM 4.0]. Of its two equivalent formulations, the "virtual scheduling" form is the one adapted for APIs: instead of counting tokens, it remembers when the next request is *due* at exactly the allowed rate.
 
 ::: formula
 **GCRA (virtual scheduling form)**
@@ -358,7 +355,7 @@ $$T = \frac{1}{r}, \qquad \tau = (b-1)\,T, \qquad \text{admit at time } t \iff t
 3. Request 1: $0 \ge 0 - 1.9$ ✓; TAT $= 0.1$ s. Request 20: TAT before it is $1.9$; $0 \ge 1.9 - 1.9 = 0$ ✓; TAT becomes $2.0$.
 4. Request 21: $0 \ge 2.0 - 1.9 = 0.1$? No → reject. `Retry-After` $=$ TAT $- \tau - t = 0.1$ s.
 
-**Interpretation.** Exactly 20 admitted and a 0.1 s retry hint: identical to the token bucket in §22.4. **Engineering implication.** GCRA stores one timestamp per key instead of two numbers and needs no refill arithmetic, which makes it attractive in a shared store such as Redis, where state size and script simplicity matter.
+**Interpretation.** Identical to the token bucket of §22.4. **Engineering implication.** One timestamp per key and no refill arithmetic make GCRA attractive in shared stores such as Redis.
 :::
 
 ```python
@@ -427,16 +424,16 @@ admitted: GCRA 71137, token bucket 71137; decisions that differ: 0
 
 What to notice:
 
-- On 100,000 random arrivals the two algorithms make identical decisions: GCRA with $\tau = (b-1)/r$ *is* a token bucket of capacity $b$, stored differently.
-- Times are integer nanoseconds. A first version of this listing used floating-point seconds and admitted only 19 of the burst, because $19 \times 0.1$ accumulated by repeated addition slightly exceeded $1.9$. Production GCRA implementations store integer time for the same reason.
-- `max(self.tat, now)` is what stops an idle client from "banking" more than the burst: a TAT in the past is pulled forward to now.
+- Identical decisions on 100,000 arrivals: GCRA with $\tau = (b-1)/r$ *is* a token bucket of capacity $b$.
+- Integer nanoseconds matter: a floating-point version admitted only 19, because repeated addition of 0.1 slightly exceeded 1.9.
+- `max(self.tat, now)` stops an idle client banking more than the burst.
 
 #### Alternatives and trade-offs
 
-Use the **queue form** only when the downstream requires smooth arrivals and the caller can tolerate waiting; bound the queue so that the maximum wait $Q/r$ stays below the caller's timeout (§22.10). Use the **meter form** (GCRA or token bucket) for API admission, where rejecting fast is better than queueing.
+Use the **queue form** only when the downstream needs smooth arrivals and callers can wait, keeping $Q/r$ below their timeout (§22.10); use the **meter form** for API admission.
 
 ::: mistake
-**Mistake — Treating "leaky bucket" and "token bucket" as rivals.** The leaky bucket *as a meter* and the token bucket are the same policy; only the bookkeeping differs. The genuine difference is between *shaping* (queue and delay, the leaky bucket as a queue) and *policing* (admit or reject immediately). When someone says "we use a leaky bucket", ask which one they mean.
+**Mistake — Treating "leaky bucket" and "token bucket" as rivals.** The meter form and the token bucket are the same policy. The real distinction is *shaping* (queue and delay) versus *policing* (admit or reject); ask which one is meant.
 :::
 
 ## 22.6 Fixed window
@@ -453,7 +450,7 @@ Use the **queue form** only when the downstream requires smooth arrivals and the
 2. Increment the counter atomically (in Redis: `INCR` plus `EXPIRE` set to $W$).
 3. Admit if the new value is at most $L$.
 
-Its appeal is simplicity: one integer per key, one atomic increment, automatic cleanup. Its flaw is the **boundary burst**: the window resets regardless of when the client's requests happened, so a client can spend a full quota at the end of one window and another full quota at the start of the next.
+It is simple (one integer, one atomic increment, automatic cleanup), but suffers the **boundary burst**: a full quota at the end of one window and another at the start of the next.
 
 **Figure 22.4 — The fixed-window boundary burst.**
 
@@ -468,7 +465,7 @@ flowchart LR
   B -->|boundary| C
 ```
 
-**Reading the diagram.** Time flows left to right across two one-minute windows with a limit of 100 per window. The client is idle for 59 seconds, sends 100 requests in the last second of window 1 (all admitted, counter reaches 100), then the counter resets at the boundary and the next 100 requests in the first second of window 2 are also admitted. The storage boundary is a per-window counter that is discarded at each boundary, which is why the history is forgotten. The failure point is the downstream service, which receives 200 requests in two seconds. Every client that discovers this pattern (or every client whose cron job fires at the top of the minute) produces synchronized bursts at window boundaries.
+**Reading the diagram.** Two one-minute windows, limit 100 each. The client sends 100 requests in the last second of window 1 (counter reaches 100); the counter, a per-window storage record, is discarded at the boundary, so 100 more in the first second of window 2 are also admitted. The failure point is the downstream service, which receives 200 requests in two seconds; clients whose cron jobs fire on the minute produce such synchronized bursts.
 
 ::: formula
 **Worst-case burst of a fixed window**
@@ -490,7 +487,7 @@ $$A_{\max}(W) = 2L \qquad\qquad \text{peak short-term rate} \approx \frac{2L}{\d
 2. Client sends 100 requests during 00:59.00–00:59.99 and 100 during 01:00.00–01:00.99. All 200 are admitted (the code in §22.7 confirms it).
 3. In the 2 s interval the client achieved $200/2 = 100$ RPS, which is $100/1.67 = 60$ times the intended average, and any 60 s interval containing both bursts held $2L = 200$ requests.
 
-**Interpretation.** The limit holds per calendar window but not per sliding minute. **Engineering implication.** Fixed windows are acceptable for coarse quotas where a 2× overshoot is harmless (daily or monthly quotas, billing counts). For protecting a backend, use a token bucket or a sliding window, or add a short-window limit (for example 10 per second) on top of the per-minute one.
+**Interpretation.** The limit holds per calendar window, not per sliding minute. **Engineering implication.** Use fixed windows only for coarse daily or monthly quotas; protect backends with a token bucket or sliding window.
 :::
 
 ## 22.7 Sliding window log and sliding window counter
@@ -501,7 +498,7 @@ $$A_{\max}(W) = 2L \qquad\qquad \text{peak short-term rate} \approx \frac{2L}{\d
 **Definition — Sliding window log.** A limiter that stores the timestamp of every admitted request per key and admits a new request only if fewer than $L$ timestamps fall in the interval $(t - W, t]$.
 :::
 
-The log is exact: no interval of length $W$ ever contains more than $L$ admitted requests. In Redis it is typically a sorted set per key (`ZREMRANGEBYSCORE` to drop old entries, `ZCARD` to count, `ZADD` to record). Its cost is memory: up to $L$ timestamps per key. With 1 million active keys and a limit of 1,000 requests per hour, the worst case is $10^6 \times 1{,}000 \times 8$ bytes $= 8$ GB of raw timestamps, several times more inside a sorted set's per-entry overhead. Use the log when $L$ is small (login attempts: 5 per 15 minutes) or when exactness is a contractual requirement.
+The log is exact (in Redis, a sorted set per key) but costs up to $L$ timestamps per key: 1 million keys at 1,000 requests per hour need $10^6 \times 1{,}000 \times 8$ bytes $= 8$ GB raw, more with sorted-set overhead. Use it when $L$ is small (5 login attempts per 15 minutes) or exactness is contractual.
 
 ### 22.7.2 Sliding window counter
 
@@ -511,7 +508,7 @@ The log is exact: no interval of length $W$ ever contains more than $L$ admitted
 
 #### First-principles explanation
 
-You know you made 84 phone calls last hour and 36 so far this hour, and it is now quarter past. How many calls did you make in the last 60 minutes? You do not know when last hour's calls happened, but if they were spread evenly, three-quarters of them (63) fell in the last 45 minutes of that hour, which is still inside your sliding hour. Your estimate is $63 + 36 = 99$. The sliding window counter makes exactly this assumption: the previous window's requests were uniformly spread.
+You made 84 calls last hour and 36 so far this hour; it is quarter past. If last hour's calls were spread evenly, three-quarters (63) fall inside the sliding hour, so the estimate is $63 + 36 = 99$. The counter assumes exactly this uniformity.
 
 ::: formula
 **Sliding window counter estimate**
@@ -538,7 +535,7 @@ $$\hat{N}(t) = C_{\text{prev}} \cdot \frac{W - e}{W} + C_{\text{curr}}, \qquad \
 5. When does the next request fit? The previous window's contribution falls by $84/60 = 1.4$ requests per second, so after $1/1.4 \approx 0.71$ s the estimate drops to 99. `Retry-After` rounds up to 1 s.
 6. Memory: two counters plus a window start, about 16 bytes per key, versus up to 8,000 bytes for a log at $L = 1{,}000$; for 1 million keys, 16 MB versus 8 GB.
 
-**Interpretation.** Two integers per key give a smooth sliding limit with no boundary reset. **Engineering implication.** The sliding window counter is the usual choice for large-scale per-key limits measured in requests per minute or hour; its error depends on how uneven traffic is inside a window, which the code below measures.
+**Interpretation.** Two integers per key give a smooth sliding limit. **Engineering implication.** It is the usual choice for large-scale per-minute or per-hour limits; its error depends on how uneven traffic is within a window, measured below.
 :::
 
 #### Code example
@@ -666,12 +663,12 @@ on/off   3.0    28717  |   23110  100      |   17845  100      |   23929  137
 
 What to notice:
 
-- **Boundary burst.** The fixed window admits all 200; the log admits exactly 100; the counter admits 101 (one extra request slips in 0.6 s after the boundary, once the previous window's weight has decayed by 1%).
-- **Steady traffic.** The counter admits within 1% of the exact log, and its worst real 60 s window is 105–113 requests against a limit of 100: a 5–13% overshoot, versus 37% for the fixed window.
-- **Periodic traffic.** When traffic is on for 40 s and off for 20 s in step with the window, the "uniform spread" assumption is systematically wrong and the counter admits 23% fewer requests than the log at 3 RPS (17,845 versus 23,110). The approximation is good for traffic that is random within a window and poor for traffic phase-locked to it.
+- **Boundary burst:** fixed admits 200, log 100, counter 101 (one slips in 0.6 s after the boundary).
+- **Steady traffic:** the counter admits within 1% of the log; its worst real 60 s window is 105–113 (5–13% over) versus 137 for the fixed window.
+- **Periodic traffic** (40 s on, 20 s off, in step with the window) breaks the uniformity assumption: at 3 RPS the counter admits 23% fewer than the log (17,845 versus 23,110).
 
 ::: industry
-**Cloudflare's rate limiting.** Cloudflare described building rate limiting for millions of domains with exactly this two-counter sliding approximation, stored in its edge caches, chosen because it needs very little memory per key and copes well with bursts at window boundaries. In its write-up, an analysis of 400 million requests from 270,000 distinct sources found that 0.003% of requests were wrongly allowed or rate limited [Desgats 2017].
+**Cloudflare's rate limiting.** Cloudflare described rate limiting for millions of domains with this two-counter approximation, chosen for its tiny per-key memory; its analysis of 400 million requests from 270,000 sources found 0.003% wrongly allowed or limited [Desgats 2017].
 *Evidence: Primary* — [Desgats 2017]
 :::
 
@@ -693,11 +690,11 @@ What to notice:
 
 ### 22.8.1 The problem
 
-A gateway fleet of $N$ nodes behind a load balancer must enforce *one* limit per key, but each node sees only part of the key's traffic. Three facts make this hard: requests for a key may land on any node; traffic is rarely split evenly (long-lived connections and client-side load balancing concentrate a client on a few nodes, §19.6); and every coordination step either adds latency to the request or lets counts go stale.
+$N$ gateway nodes must enforce *one* limit per key, but each sees only part of the traffic, rarely split evenly (long-lived connections concentrate a client on few nodes, §19.6), and every coordination step either adds latency or lets counts go stale.
 
 ### 22.8.2 Centralized counters: Redis with Lua
 
-The simplest correct design puts the limiter state in one shared store, usually Redis, partitioned by key across shards. The naive implementation is a race condition.
+The simplest correct design keeps state in a shared store, usually Redis, partitioned by key. The naive implementation races.
 
 **Figure 22.5 — The read-modify-write race in a shared counter.**
 
@@ -714,7 +711,7 @@ sequenceDiagram
   Note over R: two requests admitted, count shows 100
 ```
 
-**Reading the diagram.** Two gateway nodes handle requests for the same key at the same moment. Each issues a synchronous `GET` to Redis, sees 99 (one below the limit), decides locally to admit, and writes back 100. Both requests are admitted, but the stored count says only one was: the limit is exceeded and the record is wrong. The failure point is the gap between reading and writing; under high concurrency for a hot key, many requests fall into that gap. Adding more gateway nodes makes it worse. The fix is to move the decision into the store so that read, decide and write are one atomic step.
+**Reading the diagram.** Two gateways issue synchronous `GET`s for the same key, both see 99, both admit and both write 100: the limit is exceeded and the stored count is wrong. The failure point is the gap between read and write, which more nodes and hotter keys widen. The fix moves the decision into the store so read, decide and write are one atomic step.
 
 Redis executes a Lua script atomically: no other command runs on that shard while the script executes [Redis Docs: Lua scripting]. The token bucket of §22.4 becomes:
 
@@ -742,9 +739,9 @@ return {allowed, tostring(retry_after)}            -- Lua numbers would be trunc
 
 What to notice:
 
-- Tested against Redis 7.0: 50 pipelined calls on a fresh key with `rate=10, capacity=20, cost=1` returned 20 admits and 30 rejections. Load it once with `SCRIPT LOAD` and call it with `EVALSHA` so only the hash crosses the network.
-- `TIME` uses the Redis server's clock, so gateway nodes with skewed clocks (§24.9) cannot corrupt the bucket. Redis 5 and later replicate a script's *effects* rather than re-running it on replicas, which is what makes calling `TIME` before a write safe.
-- The key expires once a full bucket would have refilled, so idle keys cost no memory. All keys a script touches must be passed in `KEYS` and live on one shard in Redis Cluster; hierarchical limits for one request should share a hash tag such as `{tenant42}` if checked in one script.
+- Tested on Redis 7.0: 50 pipelined `EVALSHA` calls on a fresh key (`10 20 1`) returned 20 admits and 30 rejections.
+- `TIME` uses the server's clock, so skewed gateway clocks (§24.9) cannot corrupt buckets; Redis 5+ replicates script *effects*, which makes this safe.
+- Idle keys expire. In Redis Cluster all keys a script touches must share a shard (use a hash tag such as `{tenant42}`).
 
 **Figure 22.6 — Centralized rate limiting with an atomic script.**
 
@@ -766,14 +763,14 @@ sequenceDiagram
   G-->>C: 429 Retry-After 1
 ```
 
-**Reading the diagram.** The client's request reaches a gateway node, which makes one synchronous round trip to the Redis shard that owns the key (keys are spread across shards by hashing, §14.8). The script runs atomically on that shard and returns the decision and a retry hint. Admitted requests are forwarded to the upload service; rejected ones are answered by the gateway with 429, never touching the service. The storage boundary is the Redis shard; its in-memory state may be lost on failover, which briefly resets some buckets (usually acceptable). Failure points: Redis latency adds to every request, a slow or failed shard blocks every key on it, and a single hot key concentrates load on one shard. Scaling: add shards; for very hot keys, use local pre-aggregation (§22.8.3).
+**Reading the diagram.** The gateway makes one synchronous round trip to the Redis shard owning the key (§14.8); the script runs atomically and returns a decision and retry hint. Admitted requests go to the upload service; rejected ones get 429 without touching it. The Redis shard is the storage boundary; failover may reset some buckets (usually acceptable). Failure points: Redis latency on every request, a failed shard blocking its keys, and hot keys. Scaling: add shards; pre-aggregate hot keys locally (§22.8.3).
 
 ### 22.8.3 Local counting with synchronization, and quota distribution
 
 Two families avoid a remote call on every request.
 
-1. **Local counting with periodic synchronization.** Each node counts locally and, every $\Delta$ seconds, exchanges counts with the others (directly, or via increments to a shared store). Between synchronizations a node decides on a stale view of the global count.
-2. **Quota distribution (leases).** A coordinator divides the global limit into per-node allowances, in proportion to each node's recent demand, and re-divides them periodically. Each node enforces its allowance locally with a token bucket. This is the design of Google's open-source Doorman system and of several gateway "global rate limit" features; Envoy, for example, can call an external rate-limit service for global decisions and apply a local token bucket filter per instance [Envoy Docs: rate limiting].
+1. **Local counting with periodic synchronization.** Nodes count locally and exchange counts every $\Delta$ seconds, deciding in between on a stale global view.
+2. **Quota distribution (leases).** A coordinator divides the limit into per-node allowances in proportion to recent demand, re-divided periodically; nodes enforce them with local buckets. Gateways offer related building blocks: Envoy, for example, supports an external global rate-limit service and a local token-bucket filter [Envoy Docs: rate limiting].
 
 **Figure 22.7 — Local enforcement with synchronization or quota leases.**
 
@@ -791,7 +788,7 @@ flowchart LR
   CO --> ST[(Quota state)]
 ```
 
-**Reading the diagram.** The load balancer spreads requests across $N$ gateway nodes, each deciding synchronously against a local bucket in its own memory, so the request path has no remote call. Asynchronously (dotted arrows), every node reports its recent demand to a quota coordinator, which computes new per-node allowances that sum to the global limit and pushes them back; the coordinator persists its state. In the synchronization variant, nodes exchange counts with each other instead of receiving allowances. Failure points: if the coordinator is unreachable, nodes keep their last allowance (graceful degradation); allowances lag demand by one period, so a sudden shift of traffic between nodes is under-served for up to $\Delta$. Scaling: coordination cost grows with $N$ per period, not with request rate.
+**Reading the diagram.** Each gateway decides synchronously against a local bucket, so the request path has no remote call. Asynchronously (dotted), nodes report demand to a coordinator, which persists state and pushes back allowances summing to the global limit (in the sync variant, nodes exchange counts instead). Failure points: an unreachable coordinator leaves nodes on their last allowance; allowances lag demand by one period. Scaling: coordination grows with $N$ per period, not with request rate.
 
 #### Mathematical foundations
 
@@ -809,8 +806,6 @@ $$E_{\max} \approx \lambda \cdot \Delta \qquad\qquad M_{\text{sync}} = \frac{N(N
 | $M_{\text{sync}}$ | Coordination messages per second (each message can carry all keys) | messages/s |
 :::
 
-The overshoot bound follows because, once the global count crosses the limit, no node learns of it until the next synchronization, and in the worst case every request arriving in that interval is admitted.
-
 ::: example
 **Worked example — 10 gateways, limit 1,000 requests/s for one tenant, offered 3,000 RPS.**
 
@@ -819,7 +814,7 @@ The overshoot bound follows because, once the global count crosses the limit, no
 3. Centralized Redis: zero overshoot, but one round trip per request: 3,000 Redis calls/s for this tenant alone, and roughly 0.2–1 ms added to each request inside a datacenter (§7.15).
 4. Simulation (below): with $\Delta = 100$ ms the measured overshoot averages 147/s (bound 300); with $\Delta = 10$ ms, 9.5/s (bound 30).
 
-**Interpretation.** Accuracy, latency and coordination traffic form a triangle; you can pick two. **Engineering implication.** Choose centralized counters for contractual quotas on expensive operations (where 30% overshoot costs money), local-plus-sync or quotas for very high-rate, latency-critical paths where a few percent of overshoot is harmless.
+**Interpretation.** Accuracy, latency and coordination traffic form a triangle; pick two. **Engineering implication.** Centralize contractual limits on costly operations; use local-plus-sync or quotas on hot paths where a few percent of overshoot is harmless.
 :::
 
 #### Code example: a Redis-free simulation
@@ -961,9 +956,9 @@ demand-weighted quotas     mean   994.5/s  max   996  coordination msgs/s       
 
 What to notice:
 
-- **Static split under-admits under skew.** At 1,500 RPS the tenant is over its limit, yet it receives only 840/s: node 0 sees 750 RPS but may admit only 100, while the other nodes have unused allowance. It works only when every node's share of demand exceeds $L/N$ (the 3,000 RPS case).
-- **Synchronization overshoots** in proportion to $\Delta$, within the $\lambda\Delta$ bound.
-- **Quotas** are accurate here with only 19 messages per second because demand is stationary; a sudden traffic shift would be under-served until the next re-division.
+- **Static split under-admits under skew:** at 1,500 RPS the tenant gets only 840/s because node 0 sees 750 RPS but may admit 100.
+- **Synchronization overshoots** in proportion to $\Delta$, within $\lambda\Delta$.
+- **Quotas** are accurate with 19 messages/s only because demand is stationary.
 
 ### 22.8.4 Comparison
 
@@ -983,11 +978,10 @@ What to notice:
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| All requests fail when Redis is down | Limiter fails *closed* | Error spike on limiter calls | Switch to fail-open with local limits | Decide the policy per limit: fail open for quotas, fail closed for security limits such as login attempts |
-| One Redis shard at 100% CPU | A single hot key (one huge tenant) | Per-shard CPU and latency skew | Split the key into sub-keys or use local pre-aggregation | Hot-key detection (§17.6, §20.15) |
-| Limits overshoot after a deploy | All gateway nodes restarted with empty local counters | 429 rate drops to zero briefly | Self-healing after one window | Persist or warm local state; prefer central state for strict limits |
-| Buckets drift or never refill | Gateway clocks skewed | Different nodes report different `Retry-After` | Use server-side time in the script | Store time from one clock (Redis `TIME`) |
-| Limiter adds p99 latency | Synchronous call to a remote store on every request | Gateway p99 tracks Redis p99 | Short timeout on the limiter call, then fail open | Local caching of "deny" decisions until `Retry-After` |
+| All requests fail when Redis is down | Limiter fails *closed* | Limiter error spike | Fail open with local limits | Per limit: open for quotas, closed for login limits |
+| One shard at 100% CPU | Hot key (one huge tenant) | Per-shard skew | Split key or pre-aggregate locally | Hot-key detection (§17.6, §20.15) |
+| Buckets drift | Gateway clocks skewed | Inconsistent `Retry-After` | Server-side time | Redis `TIME` |
+| Limiter adds p99 latency | Remote call per request | Gateway p99 tracks Redis p99 | Short limiter timeout, then fail open | Cache "deny" until `Retry-After` |
 
 ## 22.9 Throttling and load shedding
 
