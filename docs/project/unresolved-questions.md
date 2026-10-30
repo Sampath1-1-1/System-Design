@@ -148,3 +148,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-141 | 25 | Consistency-map edges and availability colors (Fig 25.10) vs jepsen.io (blocked); Jepsen findings for etcd 3.4.3, MongoDB 4.2.6, PostgreSQL 12.3 (fix believed in 12.4) checked via search only | Open | |
 | UQ-142 | 25 | Cosmos DB bounded-staleness minimums; strong consistency unavailable with multiple write regions; DynamoDB multi-Region strong consistency release date | Open | Time-sensitive |
 | UQ-143 | 25 / 28 | Spanner commit-wait duration figures; Brewer 2012 page numbers | Open | Coordinate with Ch 28 |
+| UQ-144 | 28 | Mohan, Lindsay & Obermarck (1986) forced-write and message counts (Table 28.2) | Open | |
+| UQ-145 | 28 | Percolator: timestamp oracle ~2M timestamps/s; ~50% reduction in document age | Open | |
+| UQ-146 | 28 | Brewer (2017): share of Spanner incidents that were network-related (<8% per a secondary source) | Open | research.google unreachable |
+| UQ-147 | 28 | Calvin near-linear scaling to 100 machines; FaunaDB being Calvin-inspired | Open | |
+| UQ-148 | 28 | 2026 defaults: CockroachDB range size (512 MiB) and max clock offset (500 ms); YugabyteDB YSQL default isolation; TiDB async commit / 1PC status | Open | Version-dependent |

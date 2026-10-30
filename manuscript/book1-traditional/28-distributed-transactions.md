@@ -43,7 +43,7 @@ The single-server version is easy because there is one log and one decision. One
 
 #### Why does this exist?
 
-Partitioning (Chapter 14) is how databases scale writes, and real business operations rarely respect partition boundaries. A transfer debits one account and credits another; an order reserves stock in one partition and writes the order in another; a global secondary index entry lives on a different node from its row (§14.11). Each needs all-or-nothing behavior across nodes.
+Partitioning scales writes (Chapter 14), but business operations ignore partition boundaries: a transfer touches two accounts, an order touches stock and orders, a global index entry lives apart from its row (§14.11). Each needs all-or-nothing behavior across nodes.
 
 ### 28.3.2 Partial failure: a money transfer across two shards
 
@@ -93,7 +93,7 @@ Atomicity is half the job. A distributed transaction must also be isolated (§11
 That second point explains a pattern you will see throughout this chapter. **Snapshot isolation** (SI) needs only per-key write-write checks, so it distributes cheaply, and Percolator and TiDB offer it [Peng and Dabek 2010; Huang et al. 2020]. SI permits write skew: two transfers that each check "sum of a customer's two accounts $\ge$ 0" and each debit a *different* account can both commit and overdraw the customer, exactly the doctors-on-call anomaly of Figure 11.8 with the rows on different machines (§28.7.4 reproduces it). **Serializable** isolation needs either read locks held to commit (Spanner's two-phase locking for read-write transactions [Corbett et al. 2012]) or validation of reads at commit time (CockroachDB's timestamp ordering with read refresh [Taft et al. 2020]). Serializable snapshot isolation (SSI), which PostgreSQL implements on one node by tracking read-write dependencies [Cahill et al. 2008], is hard to distribute because the dependency graph spans partitions.
 
 ::: recommendation
-**Recommendation — Know which isolation your distributed database gives by default.** Spanner and CockroachDB default to serializable; TiDB defaults to snapshot isolation (exposed as `REPEATABLE READ`); YugabyteDB's YSQL defaults to snapshot isolation in recent versions (as of 2026). Under SI, protect cross-row invariants explicitly: lock a shared row with `SELECT ... FOR UPDATE`, or materialize the constraint as a row both transactions must write (§11.13).
+**Recommendation — Know which isolation your distributed database gives by default.** Spanner and CockroachDB default to serializable; TiDB defaults to snapshot isolation (exposed as `REPEATABLE READ`); YugabyteDB's YSQL defaults to snapshot isolation in recent versions (as of 2026). Under SI, protect cross-row invariants with `SELECT ... FOR UPDATE` or a materialized conflict row (§11.13).
 :::
 
 ::: mistake
@@ -280,7 +280,7 @@ $$T_{\text{2PC}} \approx 2\,\text{RTT} + t_{f,p} + t_{f,c} \qquad T_{\text{hold}
 | $T_{\text{hold}}$ | Extra time a participant holds locks during commit, from forcing PREPARED until the decision arrives | seconds |
 :::
 
-The commit phase adds two sequential round trips and two sequential forced writes. The participants' own commit records add a third forced write if the application waits for acknowledgments; a coordinator that replies right after its commit record (Figure 28.2) saves the second round trip from the client's view, but not from the participants' lock hold time.
+The commit phase adds two sequential round trips and two sequential forced writes. Replying right after the coordinator's commit record (Figure 28.2) hides the second round trip from the client, but not from participants' lock hold time.
 
 ::: example
 **Worked example — 2PC inside a datacenter and across regions.** Forced writes take $t_f = 1$ ms on cloud block storage; a local commit therefore costs about 1 ms.
@@ -416,7 +416,6 @@ What to notice:
 
 - The prepared transaction outlives its session *and a server restart*: that is the durable promise of phase 1, taken from the PREPARED record in the WAL.
 - An unrelated update to account 7 blocks and times out: in-doubt transactions hold row locks indefinitely. PostgreSQL will never resolve them on its own, and they also hold back VACUUM (§11.14.2).
-- The global transaction ID `'xfer-42'` is the only link between the two shards. A real coordinator must log it, with the participant list, before sending phase 2.
 
 ::: warning
 **Warning — Heuristic decisions break atomicity.** When an in-doubt transaction blocks production for too long, operators (or XA resource managers configured to do so) may force a **heuristic commit** or **heuristic abort** without the coordinator. If the guess contradicts the coordinator's logged decision, the transaction is no longer atomic and the damage must be repaired by hand. XA reports this as a *heuristic hazard* or *heuristic mixed* outcome. Treat a heuristic decision as an incident, and record which XIDs were forced.
@@ -431,7 +430,7 @@ The program below implements presumed-abort 2PC with durable logs that survive c
 
 Each node has a durable log (a list that survives crash()) and volatile state
 (locks, pending writes) that is lost on a crash and rebuilt from the log.
-Run: python3 twopc_sim.py   (runs the scenario tests)
+Run it directly with python3 to execute the scenario tests.
 """
 import unittest
 
@@ -798,11 +797,7 @@ flowchart TB
 
 **Reading the diagram.** The original coordinator sent `PRE-COMMIT` to A and then lost connectivity; the network splits A from B and D. Each side runs the termination protocol with the nodes it can see. Side 1 contains a pre-committed node, so it commits; side 2 sees only uncertain nodes, so it aborts. Both decisions are durable, and the transaction is no longer atomic. The failure point is the timeout-based failure detector, which cannot distinguish crashed from partitioned. No amount of scaling fixes it; only a majority-based decision does.
 
-Three reasons keep 3PC out of production systems:
-
-1. **It is unsafe in the networks we actually have.** Datacenter networks partition (§24.7), and timeouts misfire under GC pauses and overload (§23.9).
-2. **It costs an extra round trip and forced write** on every commit to fix a failure that is rare.
-3. **Consensus solves the real problem better.** Running 2PC's coordinator and participants as consensus groups (§28.4.8) tolerates crashes *and* partitions, as long as a majority of each group can communicate, and it is safe even when timeouts are wrong.
+3PC is rarely deployed for three reasons: real networks partition and timeouts misfire under GC pauses and overload (§23.9); it adds a round trip and a forced write to every commit; and running 2PC over consensus groups (§28.4.8) tolerates crashes *and* partitions, staying safe even when timeouts are wrong.
 
 **Table 28.4 — Commit protocols compared.**
 
@@ -841,7 +836,7 @@ flowchart LR
 
 **Reading the diagram.** Each box is a local transaction in a different service with its own database; between steps, other transactions can see the intermediate state (account 7 debited, account 9 not yet credited). The orchestrator persists its progress and drives steps asynchronously (dotted arrows), retrying each step until it succeeds, so steps and compensations must be idempotent (§22.15). The failure point is the gap between steps: a saga provides no isolation, so another transaction might read the debited balance and refuse a payment it should have allowed.
 
-The price is isolation. Intermediate states are visible, and compensations must be designed for every step, including steps that cannot truly be undone (an email sent, goods shipped). Chapter 32 treats sagas in depth: orchestration versus choreography (§32.8), countermeasures for missing isolation such as semantic locks and pivot transactions (§32.7), and the **transactional outbox** (§32.5), which makes "commit a local transaction *and* publish a message" atomic without 2PC.
+The price is isolation, plus a compensation for every step, even steps that cannot truly be undone (an email sent). Chapter 32 covers sagas in depth (§32.7–§32.8) and the **transactional outbox** (§32.5), which makes "commit locally *and* publish a message" atomic without 2PC.
 
 ## 28.7 Percolator-style transactions
 
@@ -1110,11 +1105,6 @@ What to notice:
 *Evidence: Primary* — [Peng and Dabek 2010]
 :::
 
-::: industry
-**TiDB — Percolator over Raft for MySQL workloads.** TiDB layers a stateless MySQL-compatible SQL tier over TiKV, which runs Percolator-style transactions across Raft-replicated Regions with PD as the timestamp oracle. Raft learner replicas feed a columnar engine (TiFlash) for analytics on the same data, which the paper presents as hybrid transactional/analytical processing.
-*Evidence: Primary* — [Huang et al. 2020]
-:::
-
 ::: mistake
 **Common misconception — "A leftover lock means data loss."** A Percolator lock left by a dead client is an unresolved, not a lost, transaction. Its fate is already fixed by the primary row; the first reader that needs the cell resolves it. What it costs is latency: readers wait, then pay for the cleanup.
 :::
@@ -1129,7 +1119,7 @@ What to notice:
 
 #### First-principles explanation
 
-Ordinary clocks lie with confidence: a server says 12:00:00.000 when the true time might be 11:59:59.950 (§24.9). TrueTime is a clock that admits its error: "it is between 11:59:59.996 and 12:00:00.004". Admitting the error is what makes it usable for ordering. If you want to be sure your event happens strictly after time $s$ everywhere in the world, you wait until your own clock's *earliest* possible reading has passed $s$.
+Ordinary clocks lie with confidence: a server says 12:00:00.000 when the true time might be 11:59:59.950 (§24.9). TrueTime is a clock that admits its error: "it is between 11:59:59.996 and 12:00:00.004". To be sure an event happens after time $s$ everywhere, wait until your clock's *earliest* possible reading has passed $s$.
 
 #### How it works internally
 
@@ -1231,7 +1221,7 @@ A read-only transaction takes $s_{\text{read}} =$ `TT.now().latest` and reads at
 CAP (§25.8) says that during a network partition a system must give up either consistency or availability. Spanner chooses consistency: a minority side of a partition cannot commit. Brewer argues that Spanner is nevertheless "effectively CA": partitions are rare on Google's private network, and Spanner's measured availability exceeds five nines, so users experience a system that is both consistent and available. In the incident data he reports, network problems were a small minority of Spanner's outages, below user error, overload and bugs [Brewer 2017]. The lesson: availability is an engineering number, and a consistent system on a well-run network can beat a weakly consistent one on a poor network.
 
 ::: industry
-**Google F1 on Spanner — the AdWords backend.** Google migrated its advertising backend from a sharded MySQL deployment to F1, a distributed SQL system built on Spanner, to get cross-shard transactions, consistent secondary indexes and resharding without application changes. The authors describe higher commit latency than MySQL and how they compensated with hierarchical schemas that cluster related rows and with heavy batching and parallelism in the client.
+**Google F1 on Spanner — the AdWords backend.** Google migrated its advertising backend from a sharded MySQL deployment to F1, a distributed SQL system built on Spanner, to get cross-shard transactions, consistent secondary indexes and resharding without application changes. The authors describe higher commit latency than MySQL, offset by hierarchical schemas that cluster related rows and by batching and parallelism.
 *Evidence: Primary* — [Shute et al. 2013]
 :::
 
@@ -1278,7 +1268,7 @@ flowchart TB
   SEQ -.->|"Paxos or async replication of input log"| R2["Replica 2: same partitions,<br/>same log, same result"]
 ```
 
-**Reading the diagram.** The sequencing layer is the only place where nodes coordinate synchronously, and what it replicates is the *input* (subroutine shape: a log), not the resulting data. Schedulers within a replica exchange read results directly (two-way arrow) and never exchange votes. Replica 2 receives the same log asynchronously or through Paxos and computes the same state independently, so storage on each replica is a pure function of the log. Failure points: the sequencer's replication (lose an unreplicated batch and it is lost on all replicas), and a slow transaction, which stalls every later transaction that needs its locks. Scaling: add partitions; throughput grew nearly linearly in the paper's experiments on up to 100 machines.
+**Reading the diagram.** The sequencing layer is the only place where nodes coordinate synchronously, and what it replicates is the *input* (subroutine shape: a log), not the resulting data. Schedulers within a replica exchange read results directly (two-way arrow) and never exchange votes. Replica 2 receives the same log asynchronously or through Paxos and computes the same state independently, so storage on each replica is a pure function of the log. Failure points: an unreplicated batch lost with its sequencer, and a slow transaction stalling later conflicting ones. Scaling: add partitions; throughput grew nearly linearly in the paper's experiments on up to 100 machines.
 
 ::: formula
 **Calvin transaction latency**
@@ -1298,7 +1288,7 @@ $$T_{\text{Calvin}} \approx \frac{e}{2} + T_{\text{rep}} + T_{\text{exec}}$$
 
 1. Calvin: $5 + 70 + 2 = 77$ ms, and locks are held for only about 2 ms.
 2. 2PC over geo-replicated consensus groups: two quorum rounds, $\approx 140$ ms, with locks held across the second round of 70 ms or more.
-3. In one region with $T_{\text{rep}} = 2$ ms: Calvin $5 + 2 + 2 = 9$ ms, where 2PC over consensus groups needs about $2 \times 2 + 1 = 5$ ms (§28.4.4 with replicated writes).
+3. In one region with $T_{\text{rep}} = 2$ ms: Calvin needs $5 + 2 + 2 = 9$ ms, slower than about 5 ms for 2PC over consensus groups.
 
 **Interpretation.** Calvin wins across regions and under contention, because one agreement round replaces two and locks are not held during it; in a single region, batching delay can make it slower. **Engineering implication.** Calvin's lock hold time, not its latency, is what makes it attractive for high-contention workloads such as inventory or ticketing.
 :::
@@ -1348,7 +1338,7 @@ sequenceDiagram
   G-)R2: resolve intent acct 9 - async
 ```
 
-**Reading the diagram.** The three writes are independent Raft proposals in different ranges, issued concurrently, so the client waits for one consensus round, not two. "Implicitly committed" is a property any node can verify: a reader that finds a `STAGING` record checks whether every listed intent exists at the staged timestamp, and if so treats the transaction as committed. The asynchronous arrows clean up afterwards. Failure points: if the gateway dies after the intents are durable, recovery by another transaction finds the staging record and completes it; if some intent is missing, the recovering transaction prevents it from ever being written and aborts the transaction.
+**Reading the diagram.** The three writes are independent Raft proposals in different ranges, issued concurrently, so the client waits for one consensus round, not two. "Implicitly committed" is a property any node can verify: a reader that finds a `STAGING` record checks whether every listed intent exists at the staged timestamp, and if so treats the transaction as committed. The asynchronous arrows clean up afterwards. If the gateway dies, a recovering transaction completes it if all intents exist, or prevents the missing intent from being written and aborts it.
 
 ::: formula
 **Commit latency in consensus rounds**
@@ -1390,7 +1380,7 @@ TiDB, described in §28.7.3, runs Percolator over Raft Regions with a central ti
 | Choose when | You are on Google Cloud and need strict serializability globally | You need serializable SQL across regions on any cloud | You need PostgreSQL semantics at scale | You run MySQL and want to drop manual sharding |
 
 ::: industry
-**CockroachDB — geo-distributed OLTP.** Taft and colleagues describe the design goals as surviving zone and region failures without manual intervention while keeping serializable SQL, and controlling data placement per table or row for latency and residency. The paper evaluates its commit protocols and reports that parallel commits and pipelined writes reduce latency most in multi-region deployments.
+**CockroachDB — geo-distributed OLTP.** Taft and colleagues give the goals as surviving zone and region failures automatically while keeping serializable SQL, with per-table or per-row placement for latency and residency; parallel commits and pipelined writes help most in multi-region deployments.
 *Evidence: Primary* — [Taft et al. 2020]
 :::
 
@@ -1404,9 +1394,7 @@ TiDB, described in §28.7.3, runs Percolator over Raft Regions with a central ti
 |---|---|---|---|---|
 | Spike in transaction retry errors | Contention, timestamp pushes failing read refresh | Retry and restart metrics by statement | Client retry loop with backoff | Shorter transactions; avoid hot keys; `SELECT ... FOR UPDATE` |
 | Clock offset alarms, nodes exiting | NTP failure or VM pause beyond max offset | Clock-offset metrics | Fix time sync; restart nodes | Reliable time sync (PTP or cloud time service); alert early |
-| High latency on simple writes | Leaseholder or Raft leader in a distant region | Per-range latency, lease location | Move leases | Geo-partition data and leases near users |
 | Long-held locks after client crash | Abandoned intents or Percolator locks | Lock wait time | Lock resolution by readers, TTL expiry | Heartbeating transaction records; short TTLs |
-| Timestamp oracle saturation | All transactions request timestamps from one leader | Oracle request latency | Scale up, batch | Keep oracle near clients; prefer async commit |
 
 ## 28.11 Choosing a transaction strategy
 
