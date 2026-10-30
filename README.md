@@ -2,7 +2,7 @@
 
 **From absolute beginner to expert — traditional system design, distributed systems, machine-learning system design and AI/LLM infrastructure.**
 
-This repository is the single source of truth for a multi-volume engineering textbook. Every chapter is written in Markdown with Mermaid diagrams. A build pipeline turns it into professionally formatted PDF, DOCX and HTML deliverables.
+This repository is the single source of truth for one engineering textbook. Every chapter is written in Markdown with Mermaid diagrams, and a build script turns them into a formatted PDF and Word document.
 
 ## Start here
 
@@ -19,7 +19,7 @@ This repository is the single source of truth for a multi-volume engineering tex
 - **Book I — Traditional System Design and Distributed Systems** (Chapters 1–56): foundations, data systems, scalability, distributed systems, messaging, architecture, production infrastructure, expert topics and 27 case studies.
 - **Book II — Machine Learning and AI System Design** (Chapters 57–86): ML foundations, data infrastructure, GPUs and distributed training, serving and optimization, MLOps, LLMs, RAG, agents, AI infrastructure and 27 case studies.
 - **Book III — Interviews and Practice** (Chapters 87–93): interview framework, capacity estimation handbook, company preparation, 100+ practice questions, 20 implementation projects.
-- **Appendices A–I**: glossary, bibliography, formula handbook, diagram collection, learning roadmap, reference numbers, comparison index, open questions, index.
+- **Appendices**: learning roadmap and glossary.
 
 ## Output
 
