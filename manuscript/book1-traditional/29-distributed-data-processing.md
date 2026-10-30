@@ -1436,3 +1436,76 @@ Batch and streaming are two points on one spectrum: a batch job is a stream job 
 | Choose when | Batch dominates, latency of seconds is fine | Sub-second latency or complex event-time state |
 
 The micro-batch and continuous-mode figures are from the Spark documentation [Apache Spark Docs: Structured Streaming]. **Apache Beam** sits above both: a pipeline written once with the Dataflow Model's windowing, triggers and accumulation runs on a chosen **runner** (Google Cloud Dataflow, Flink, Spark), trading some engine-specific features for portability. Chapter 61 uses Beam and Spark for ML data pipelines.
+
+## 29.12 Summary and revision notes
+
+::: summary
+- **Batch** processes bounded, immutable inputs for throughput; rerunning a task is always safe. Scan time is $D/(Nb)$: shrink $D$ (columnar, pruning) before adding nodes.
+- **MapReduce**: map → partition → sort/spill → shuffle → merge → reduce. A combiner pre-aggregates associative, commutative operations and can cut shuffle volume by 100×. Failures are handled by re-executing tasks; backup tasks tame stragglers, which appear in almost every large job ($1-(1-p)^n$).
+- **Joins**: sort-merge shuffles both sides; broadcast copies the small side to every task and wins while $|S| < |L|/(N-1)$ and $|S|$ fits in memory.
+- **Spark**: RDD lineage replaces replication; narrow dependencies pipeline within a stage, wide dependencies end it with a shuffle. Cache reused data. DataFrames let Catalyst prune, push down and choose joins; Tungsten generates code; AQE re-plans at shuffle boundaries (coalesce, switch to broadcast, split skew).
+- **Shuffle** cost is set by the tightest of NIC, rack uplink and local disk; a 10 TB shuffle on 100 nodes needs about 100 s at best. A hot key with fraction $f$ slows a stage by $fP$; salt hot keys and aggregate in two stages.
+- **Locality** mattered when networks were slow; with fast fabrics and object stores, compute and storage are disaggregated.
+- **Streams**: group by event time; windows are tumbling, sliding or session; watermarks trade latency ($\delta$) against late data ($\propto e^{-\delta/\mu}$); triggers and accumulation modes say when and how results are emitted; allowed lateness bounds state.
+- **Flink**: JobManager and TaskManagers; keyed state in key groups; RocksDB for large state; asynchronous barrier snapshots give exactly-once state; savepoints enable upgrades and rescaling. Checkpoint interval trades overhead against catch-up time and sink latency.
+- **Lambda** duplicates logic for freshness plus correctness; **Kappa** reprocesses by replay. Spark leads for batch, Flink for low-latency stateful streaming; Beam provides portability.
+:::
+
+## 29.13 Knowledge checkpoint
+
+1. Why do immutable inputs make batch fault tolerance simple?
+2. List the steps between a map function's output and a reduce function's input.
+3. When may the reduce function be used as a combiner?
+4. Why must a completed map task be rerun when its node dies, but not a completed reduce task?
+5. A phase has 2,000 tasks and each is a straggler with probability 0.0005. What is the chance of at least one straggler?
+6. Using the join-cost formula, should you broadcast a 1 GB table to 200 executors when the other side is 500 GB?
+7. What is the difference between a narrow and a wide dependency, and why does it define stage boundaries?
+8. What three things can Adaptive Query Execution change at run time?
+9. A hot key carries 10% of rows over 400 partitions. What is the skew ratio, and what is it with a salt of 20?
+10. Why did data locality matter less in 2026 than in 2004?
+11. Define event time, processing time and watermark.
+12. For $\mu = 3$ s, $W = 60$ s and $\delta = 6$ s, what fraction of events misses its window?
+13. What do allowed lateness and side outputs each protect against?
+14. Why does a two-input Flink operator align barriers, and what do unaligned checkpoints change?
+15. Why does a longer checkpoint interval increase end-to-end latency with a transactional sink?
+16. What is the main cost of Lambda that Kappa removes, and what does Kappa require instead?
+
+<details><summary>Answers</summary>
+
+1. A task's output depends only on its input, so rerunning it gives the same result; no undo or coordination is needed.
+2. Partitioning by key, buffering, sorting by (partition, key), optional combining, spilling and merging on the map side; fetching (shuffle) and merge-sorting on the reduce side.
+3. When the operation is associative and commutative and its input and output types match, so applying it zero or more times to partial groups does not change the result.
+4. Map output is on the node's unreplicated local disk; reduce output is committed to the replicated file system.
+5. $1 - e^{-2{,}000 \times 0.0005} = 1 - e^{-1} = 0.63$.
+6. Broadcast moves $1 \times 199 = 199$ GB; shuffle moves about $501 \times 0.995 = 499$ GB. Broadcast is cheaper if 1 GB fits comfortably in each executor's memory.
+7. Narrow: each parent partition feeds at most one child partition, so operators pipeline in one task. Wide: a child needs many parents, requiring a shuffle and a barrier, so the scheduler starts a new stage.
+8. It coalesces small shuffle partitions, converts a sort-merge join to a broadcast join, and splits skewed join partitions.
+9. $0.1 \times 400 + 0.9 = 40.9$; with salt 20: $40/20 + 0.9 = 2.9$.
+10. NIC and fabric bandwidth grew to rival local disks, and object stores decoupled storage from compute; columnar reads reduce bytes either way.
+11. Event time: when the event happened. Processing time: when the system observes it. Watermark: an assertion that no events with earlier event time are expected.
+12. $(3/60)\, e^{-2} (1 - e^{-20}) = 0.05 \times 0.135 = 0.68\%$.
+13. Allowed lateness bounds state retention while still updating results for moderately late data; side outputs keep events that arrive later still from being silently lost.
+14. So that the snapshot reflects exactly the records before the barrier on every input. Unaligned checkpoints let barriers overtake buffered records and save in-flight data, avoiding long alignment under backpressure.
+15. The sink commits its transaction only when a checkpoint completes, so output becomes visible once per interval.
+16. Lambda maintains the same logic in two systems; Kappa needs a correct stream engine and a log retaining enough history to replay fast enough.
+</details>
+
+## 29.14 Interview questions
+
+### Basic
+
+**Q1. Explain MapReduce with word count.** **Answer.** Map emits `(word, 1)` per word; a combiner sums locally; pairs are hash-partitioned by word, sorted and shuffled so every count for a word reaches one reducer, which sums them and writes the result. Failed tasks rerun because inputs are immutable.
+
+**Q2. Why is Spark faster than MapReduce for iterative jobs?** **Answer.** MapReduce writes each job's output to replicated storage and rereads it; Spark keeps reused datasets in memory, pipelines narrow transformations within a stage, and recovers lost partitions from lineage rather than replicas. Catalyst and code generation add CPU efficiency for DataFrames.
+
+### Intermediate
+
+**Q3. A Spark job's last task runs for an hour while others take a minute. Diagnose and fix.** **Answer.** Check the stage's task-duration and shuffle-read-size distributions. If one task reads far more data, it is key skew: find hot keys by sampling, filter junk keys, enable AQE skew-join handling, or salt and aggregate in two stages; broadcast the small side if one exists. If sizes are equal, it is a straggling node: enable speculation and check that machine.
+
+**Q4. Design per-minute click counts per page from mobile clients with delayed uploads.** **Answer.** Key by page, one-minute tumbling event-time windows, a bounded-out-of-orderness watermark (for example 10 s from measured delay), allowed lateness of hours with accumulating late firings upserted by (page, window), a side output for later events, a nightly batch reconciliation if needed, Kafka source with checkpointed offsets, and an idempotent or transactional sink.
+
+### Advanced
+
+**Q5. How does Flink provide exactly-once results end to end with Kafka?** **Answer.** Sources store Kafka offsets in checkpoints; barriers create consistent snapshots of all operator state; on failure, state and offsets roll back together. The Kafka sink writes inside a transaction per checkpoint, pre-commits on the barrier, and commits when the checkpoint completes; consumers read with `read_committed`. External side effects outside this protocol still need idempotency keys.
+
+**Q6. Estimate the shuffle time of a 20 TB join on 200 nodes with 25 Gb/s NICs, 10 racks and 4:1 oversubscription.** **Answer.** NIC: 100 GB per node at 2.19 GB/s ≈ 46 s. Uplinks: 20 racks × … no, 10 racks; cross-rack $20 \times 0.9 = 18$ TB, 1.8 TB per rack through $20 \times 3.125/4 = 15.6$ GB/s ≈ 115 s. Disk (2 GB/s): 200 GB per node ≈ 100 s. Bound ≈ 2 minutes; expect 4–6 minutes. Then question the shuffle: can one side be broadcast or pre-bucketed?

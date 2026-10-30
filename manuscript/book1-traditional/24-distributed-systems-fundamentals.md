@@ -1129,3 +1129,263 @@ The same-replica flaw above led to **dotted version vectors** (DVVs) [Preguiça 
 | Version vector | $n$ entries (replicas) per key | Yes | No | Conflict detection in replicated stores |
 | Dotted version vector | Replica entries plus one dot | Yes, including same-replica writes | No | Riak-style key-value stores |
 | Hybrid logical clock | 64 bits | No | Yes, within skew | Timestamps for MVCC and snapshot reads |
+
+## 24.12 Hybrid logical clocks
+
+### 24.12.1 Why combine physical and logical time
+
+Databases with multi-version concurrency control (§11.7) need timestamps that (1) respect causality, so that a read never misses a write it depends on, (2) are close to real time, so that "read as of 10:00" means something, and (3) fit in a fixed 64-bit field. Lamport clocks give (1) and (3) but drift arbitrarily far from real time; physical clocks give (2) and (3) but not (1). Kulkarni et al.'s **hybrid logical clock** (HLC) provides all three [Kulkarni et al. 2014].
+
+::: definition
+**Definition — Hybrid logical clock.** A timestamp $(l, c)$ where $l$ is the largest physical clock value the node has seen (from its own clock or from any message) and $c$ is a logical counter that orders events sharing the same $l$. Timestamps compare lexicographically: first by $l$, then by $c$.
+:::
+
+### 24.12.2 The algorithm
+
+For a local or send event at a node with physical clock $pt$: set $l' \leftarrow l$, $l \leftarrow \max(l', pt)$; if $l = l'$ then $c \leftarrow c + 1$, else $c \leftarrow 0$.
+
+For a receive of a message stamped $(l_m, c_m)$: set $l \leftarrow \max(l', l_m, pt)$; then $c \leftarrow \max(c, c_m)+1$ if $l$ equals both $l'$ and $l_m$; $c \leftarrow c+1$ if $l = l'$ only; $c \leftarrow c_m + 1$ if $l = l_m$ only; otherwise $c \leftarrow 0$.
+
+The paper proves that if $e \to f$ then $\text{hlc}(e) < \text{hlc}(f)$; that $l$ never exceeds the largest clock in the system, so $l - pt \le \varepsilon$ where $\varepsilon$ is the clock skew; and that $c$ stays small. Packing $l$ into 48 bits and $c$ into 16 bits gives a 64-bit timestamp that can sit in a field designed for physical time.
+
+**Figure 24.13 — HLC keeps causal order when node A's clock runs 100 ms fast.**
+
+```mermaid
+sequenceDiagram
+  participant A as Node A, wall = true + 100
+  participant B as Node B, wall = true
+  Note over A: true 1000, wall 1100, hlc 1100,0
+  A->>B: m stamped 1100,0
+  Note over B: true 1001, wall 1001, hlc 1100,1
+  Note over B: local write, hlc 1100,2
+  B->>A: m2 stamped 1100,3
+  Note over A: wall 1104, hlc 1104,0
+  Note over B: true 1150, wall 1150, hlc 1150,0
+```
+
+**Reading the diagram.** Times are in milliseconds. A's message reaches B when B's wall clock reads 1001, *earlier* than the send time 1100; a physical timestamp would order the receipt before the send. B's HLC instead adopts $l = 1100$ and counts with $c$, so the receipt and B's next write are ordered after the send. Messages are asynchronous; there is no storage boundary in the clock itself. When B's wall clock passes 1100 (at 1150), $l$ returns to physical time and $c$ resets. The failure point is unbounded skew: a node with a wildly fast clock drags every HLC in the cluster forward with it, which is why production systems bound and monitor the offset.
+
+### 24.12.3 Code example
+
+```python
+"""Hybrid logical clock (Kulkarni et al. 2014) on two nodes whose clocks disagree by 100 ms."""
+
+
+class HLC:
+    def __init__(self, physical_clock):
+        self.pt = physical_clock      # function returning this node's wall clock, in ms
+        self.l, self.c = 0, 0         # l: largest physical time seen; c: logical counter
+
+    def now(self):
+        """Timestamp a local or send event."""
+        old_l = self.l
+        self.l = max(old_l, self.pt())
+        self.c = self.c + 1 if self.l == old_l else 0
+        return (self.l, self.c)
+
+    def update(self, msg):
+        """Timestamp a receive event for a message stamped msg = (l_m, c_m)."""
+        l_m, c_m = msg
+        old_l = self.l
+        self.l = max(old_l, l_m, self.pt())
+        if self.l == old_l == l_m:
+            self.c = max(self.c, c_m) + 1
+        elif self.l == old_l:
+            self.c += 1
+        elif self.l == l_m:
+            self.c = c_m + 1
+        else:
+            self.c = 0
+        return (self.l, self.c)
+
+
+def pack(ts):
+    """48 bits of milliseconds plus a 16-bit counter fit in one 64-bit integer."""
+    l, c = ts
+    assert c < 2**16
+    return (l << 16) | c
+
+
+if __name__ == "__main__":
+    true_ms = 1000
+    a = HLC(lambda: true_ms + 100)    # node A's clock runs 100 ms fast
+    b = HLC(lambda: true_ms)          # node B's clock is correct
+
+    def show(event, node, ts, wall):
+        print(f"true={true_ms} {event:<15} {node}: wall={wall}  hlc={ts}")
+
+    ts = a.now()
+    show("A sends m", "A", ts, true_ms + 100)
+    true_ms += 1
+    ts = b.update(ts)
+    show("B receives m", "B", ts, true_ms)
+    true_ms += 1
+    ts = b.now()
+    show("B local write", "B", ts, true_ms)
+    true_ms += 1
+    ts = b.now()
+    show("B sends m2", "B", ts, true_ms)
+    true_ms += 1
+    ts = a.update(ts)
+    show("A receives m2", "A", ts, true_ms + 100)
+    true_ms = 1150
+    ts = b.now()
+    show("B local", "B", ts, true_ms)
+    print("packed:", hex(pack(ts)), "->", ts == (pack(ts) >> 16, pack(ts) & 0xFFFF))
+```
+
+Output:
+
+```text
+true=1000 A sends m       A: wall=1100  hlc=(1100, 0)
+true=1001 B receives m    B: wall=1001  hlc=(1100, 1)
+true=1002 B local write   B: wall=1002  hlc=(1100, 2)
+true=1003 B sends m2      B: wall=1003  hlc=(1100, 3)
+true=1004 A receives m2   A: wall=1104  hlc=(1104, 0)
+true=1150 B local         B: wall=1150  hlc=(1150, 0)
+packed: 0x47e0000 -> True
+```
+
+What to notice:
+
+- `update` is the only place causality enters: taking the maximum with $l_m$ guarantees the receipt is stamped after the send.
+- $l$ never runs ahead of the fastest physical clock (1100 here), so HLC timestamps stay within the skew of real time.
+- Like a Lamport clock, an HLC is a scalar and cannot detect concurrency.
+
+### 24.12.4 HLC in production: uncertainty intervals
+
+HLC orders causally related events, but two *unrelated* transactions on different nodes are ordered only up to the clock skew. CockroachDB, which uses HLC timestamps, handles this with a configured **maximum clock offset** (500 ms by default, as of 2026) and an **uncertainty interval** [Cockroach Labs Docs; Kimball 2016].
+
+::: formula
+**Read uncertainty interval**
+
+$$t_r < t_w \le t_r + \varepsilon_{\max} \;\Rightarrow\; \text{restart the read at } t_w$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $t_r$ | The reading transaction's HLC timestamp | s |
+| $t_w$ | Commit timestamp of a value found by the read | s |
+| $\varepsilon_{\max}$ | Configured maximum clock offset between any two nodes | s |
+:::
+
+A value with $t_w$ in that window *might* have committed before the read started in real time, because the writer's clock may have been ahead. The read cannot tell, so it moves its timestamp up to $t_w$ and retries; values beyond the window certainly happened later and are ignored.
+
+::: example
+**Worked example — A read meets uncertain writes.**
+
+1. $\varepsilon_{\max} = 500$ ms; a read starts at $t_r = $ 10:00:00.000.
+2. It finds a value at 10:00:00.300: inside $(t_r, t_r + 0.5]$, so it restarts at $t_r' = $ 10:00:00.300 and returns that value.
+3. A value at 10:00:00.700 lies beyond the window: it definitely happened after the read began, and is ignored.
+
+Interpretation: correctness now depends on the *configured* bound actually holding, so CockroachDB nodes monitor their offset against peers and shut themselves down rather than serve with an offset close to the maximum. Engineering implication: better clock synchronization buys performance directly; halving $\varepsilon_{\max}$ halves the window in which contended reads restart. Spanner pushes this further with TrueTime's millisecond-scale bounds and commit wait (§28.8).
+:::
+
+::: industry
+**MongoDB and CockroachDB.** MongoDB's causal consistency sessions use a cluster-wide logical clock of the hybrid type, a (seconds, counter) pair gossiped on every message and signed to prevent malicious advancement [Tyulenev et al. 2019]. CockroachDB stamps every transaction with an HLC and uses the uncertainty interval above.
+*Evidence: Primary* — [Tyulenev et al. 2019; Cockroach Labs Docs]
+:::
+
+## 24.13 The FLP impossibility result
+
+### 24.13.1 The statement
+
+::: definition
+**Definition — FLP impossibility.** In a fully asynchronous message-passing system with reliable links, no *deterministic* protocol can solve **consensus** (all correct processes decide the same value, the value was proposed by some process, and every correct process eventually decides) if even one process may crash-stop [Fischer et al. 1985].
+:::
+
+The result is surprising because the assumptions are generous: messages are never lost, and at most one process fails, by stopping cleanly. The only thing missing is a bound on delay.
+
+### 24.13.2 Intuition
+
+Call a system state **bivalent** if both decisions (0 and 1) are still reachable, and **univalent** once the outcome is fixed. FLP shows that (1) some initial state is bivalent, and (2) from any bivalent state, an adversarial scheduler can always deliver messages in an order that keeps the state bivalent. The key step is that there is always some pending message whose delivery would decide the outcome; the scheduler delays it. Because the system is asynchronous, a delayed message is indistinguishable from a crashed sender, so the protocol cannot safely decide without it, and the scheduler can repeat the trick forever.
+
+**Figure 24.14 — The adversary keeps the protocol undecided.**
+
+```mermaid
+flowchart LR
+  B0["Bivalent state<br/>0 or 1 still possible"] -->|"deliver harmless message"| B1["Still bivalent"]
+  B1 -->|"critical message pending"| Q{"Slow or crashed?"}
+  Q -->|"wait for it"| W["No progress<br/>if sender crashed"]
+  Q -->|"decide without it"| U["Unsafe if it was<br/>only slow"]
+  B1 -->|"adversary delays it,<br/>delivers others"| B2["Still bivalent"]
+  B2 -->|repeat forever| B1
+```
+
+**Reading the diagram.** Nodes are global states of the protocol; edges are message deliveries chosen by the adversarial scheduler, which is how the asynchronous network is modeled. When a critical message is pending, the protocol faces the decision box: waiting risks blocking forever if the sender crashed, deciding risks disagreement if the sender was merely slow. The adversary always picks the delivery that keeps the system bivalent. There are no storage boundaries; the failure point is the inability to tell slow from crashed, and adding processes does not help.
+
+### 24.13.3 What FLP does and does not forbid
+
+**Table 24.11 — Reading FLP correctly.**
+
+| FLP forbids | FLP does not forbid | How real systems escape |
+|---|---|---|
+| A deterministic protocol that *guarantees* termination in every asynchronous execution with one crash | Protocols that are always *safe* and terminate when the network behaves | **Partial synchrony** [Dwork et al. 1988]: Paxos and Raft never decide inconsistently and make progress after GST |
+| | Protocols that terminate with probability 1 | **Randomization** [Ben-Or 1983]: coin flips defeat the adversarial schedule |
+| | Protocols that use an oracle to suspect failures | **Failure detectors** [Chandra and Toueg 1996]: an eventually accurate detector suffices |
+| | Solving weaker problems | Eventual consistency and CRDTs avoid consensus altogether (§27.14) |
+
+In practice, FLP explains a behavior you will see: during a partition or a storm of slow messages, a Raft cluster may fail to elect a leader for a while. It stays *safe* throughout, and recovers once messages flow normally. Raft's randomized election timeouts are a practical use of randomness to break symmetry and make progress quickly, though not Ben-Or's algorithm [Ongaro and Ousterhout 2014].
+
+::: mistake
+**Mistake — "FLP proves consensus is impossible, so systems like etcd cannot work."** FLP rules out a *guarantee of termination* in a purely asynchronous model. Real systems keep safety unconditionally and obtain liveness from timeouts, i.e., from the assumption that the network is eventually timely. FLP is also distinct from CAP (§25.8), which concerns availability of reads and writes during a partition.
+:::
+
+## 24.14 The end-to-end argument
+
+### 24.14.1 The principle
+
+Saltzer, Reed and Clark's 1984 paper asks where in a layered system a function such as reliable delivery should be implemented [Saltzer et al. 1984]. Their answer, paraphrased: a function that can be implemented completely and correctly only with knowledge held by the application at the endpoints cannot be provided as a feature of the communication system alone. A lower layer may still provide a partial version, but only as a *performance optimization*.
+
+Their example is **careful file transfer**. A file moves from disk on host A, through A's memory and network stack, across the network, through B's stack and memory, onto B's disk. The network may guarantee reliable delivery, but a bit can still be corrupted in A's memory, in a buffer copy, or on B's disk. Only a check performed by the application at both ends (compare a checksum of the file as stored at B with one computed at A, and retry on mismatch) covers every step.
+
+**Figure 24.15 — Where errors can enter a file transfer, and which check covers them.**
+
+```mermaid
+flowchart LR
+  DA[(Disk A)] -->|read| MA["Memory and<br/>app on host A"]
+  MA -->|copy| NA["Network stack A"]
+  NA -->|"TCP segments,<br/>per-hop CRC"| NB["Network stack B"]
+  NB -->|copy| MB["Memory and<br/>app on host B"]
+  MB -->|write| DB[(Disk B)]
+  DB -.->|"end-to-end checksum<br/>compared with A"| MA
+```
+
+**Reading the diagram.** Data flows left to right through two storage boundaries (the disks) and several memory copies; every arrow is a place where corruption or loss can occur. TCP's checksum and the link layer's CRC protect only the middle arrow. The dotted arrow is the application's asynchronous end-to-end verification: B computes a checksum of what it actually stored and A compares it with the original, retrying on mismatch. It covers every failure point, including the disks and memory, and it scales because it costs one checksum per file regardless of path length.
+
+::: formula
+**Undetected-corruption probability over many transfers**
+
+$$P_{\text{bad}} = 1 - (1 - q)^N$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $q$ | Probability that one transfer suffers corruption no lower layer catches | dimensionless |
+| $N$ | Number of transfers | count |
+| $P_{\text{bad}}$ | Probability that at least one transfer is silently corrupted | dimensionless |
+:::
+
+::: example
+**Worked example — Rare errors at fleet scale.**
+
+1. Assume, for illustration, that one transfer in $10^{10}$ suffers corruption missed by TCP and link checks: $q = 10^{-10}$.
+2. PhotoShare's replication moves $N = 10^9$ blocks per day: $P_{\text{bad}} = 1 - (1 - 10^{-10})^{10^9} \approx 1 - e^{-0.1} \approx 0.095$.
+3. Over a year: $N = 3.65 \times 10^{11}$, $P_{\text{bad}} \approx 1 - e^{-36.5} \approx 1$.
+
+Interpretation: a probability that looks negligible per transfer becomes a near-certainty at scale. Engineering implication: verify integrity end to end (checksums stored with the data and checked on read). Stone and Partridge measured that real Internet traffic contains errors the TCP checksum fails to catch at rates far above what checksum theory predicts [Stone and Partridge 2000].
+:::
+
+::: industry
+**Amazon S3, July 2008.** A single corrupted bit in messages of S3's internal gossip protocol, which carried no checksum of its own, spread incorrect server-state information through the system and caused a multi-hour outage. AWS's remedy included adding checksums to that internal state and its messages [AWS 2008].
+*Evidence: Primary* — [AWS 2008]
+:::
+
+### 24.14.2 Applying the argument
+
+- **Delivery versus processing.** A TCP acknowledgment means the peer's kernel buffered the bytes (§7.7), not that the application processed them. A message broker should be acknowledged *after* processing (Chapters 30–31).
+- **Exactly-once effects.** No network can deliver exactly once; the endpoint achieves *effectively-once* processing with at-least-once delivery plus deduplication by idempotency key (§22.15).
+- **Security.** Encryption hop by hop leaves data exposed at every intermediary; end-to-end encryption does not (Chapter 10).
+- **Where lower layers still help.** Wi-Fi retransmits lost frames locally because waiting for an end-to-end TCP retransmission would be far slower. This is the "performance optimization" the argument allows.
+
+::: mistake
+**Mistake — "The network (or storage system) is reliable, so the application needn't check."** Each layer's guarantee covers only that layer. If the requirement is "the user's photo is stored intact and saved once", only the application can verify it.
+:::

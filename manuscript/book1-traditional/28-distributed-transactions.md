@@ -37,7 +37,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Picture a wedding ceremony. The officiant asks each partner "Do you?" Each partner, before answering, must be *certain* they can follow through, because after saying "I do" they may not back out on their own. Only when both have said yes does the officiant pronounce the marriage, and from that moment it is binding on both. If the officiant faints after hearing two yeses but before pronouncing, the couple stands at the altar unable to leave and unable to celebrate. That picture, which Gray used, is two-phase commit, including its weakness [Gray 1978].
+Picture a wedding ceremony. The officiant asks each partner "Do you?" Each partner, before answering, must be *certain* they can follow through, because after saying "I do" they may not back out on their own. Only when both have said yes does the officiant pronounce the marriage, and from that moment it is binding on both. If the officiant faints after hearing two yeses but before pronouncing, the couple stands at the altar unable to leave and unable to celebrate. That picture, used by Gray, is two-phase commit, weakness included [Gray 1978].
 
 The single-server version is easy because there is one log and one decision. One `fsync` of a commit record is the instant at which the whole transaction becomes durable. Across servers there is no shared instant. Each server can promise only things about its own log, and it learns about the others solely through messages that may be delayed, lost or never sent because the sender died.
 
@@ -71,7 +71,7 @@ sequenceDiagram
   Note over A,B: 100 dollars destroyed - sum went from 500 to 400
 ```
 
-**Reading the diagram.** The transfer service talks to each shard over its own synchronous SQL connection; each shard has its own write-ahead log, so there are two independent storage boundaries. Shard A's commit is durable before the service even sends B's commit. The service crashes (the crossed arrow), B's session times out and B rolls back its half. Committing B first fails symmetrically, creating money. Retrying blindly does not help: after a timeout the service cannot know whether A's commit happened. No ordering of two independent commits is safe; scaling the shards changes nothing, because the flaw is in the protocol, not the capacity.
+**Reading the diagram.** The transfer service talks to each shard over its own synchronous SQL connection; each shard has its own write-ahead log, so there are two independent storage boundaries. Shard A's commit is durable before the service even sends B's commit. The service crashes (the crossed arrow), B's session times out and B rolls back its half. Committing B first fails symmetrically, creating money. No ordering of two independent commits is safe, and scaling changes nothing: the flaw is in the protocol.
 
 Three facts make the problem hard:
 
@@ -151,7 +151,7 @@ sequenceDiagram
   C->>C: write END record, not forced
 ```
 
-**Reading the diagram.** Three logs are involved: the coordinator's and each participant's, and every self-arrow is a write to one of them. Prepare messages go out in parallel, so phase 1 costs one round trip plus the slowest participant's forced write, not the sum. The coordinator may answer the application as soon as its commit record is durable: the outcome is now decided, and phase 2 only propagates it. Phase 2 messages are retried until acknowledged, so participants must treat duplicate `COMMIT`s as no-ops. The failure point is the interval between a participant's `YES` and its receipt of the decision (Figure 28.4). Scaling: messages grow as $4k$ for $k$ participants, but latency stays two round trips because each phase is a parallel fan-out.
+**Reading the diagram.** Three logs are involved: the coordinator's and each participant's, and every self-arrow is a write to one of them. Prepare messages go out in parallel, so phase 1 costs one round trip plus the slowest participant's forced write, not the sum. The coordinator may answer the application as soon as its commit record is durable: the outcome is now decided, and phase 2 only propagates it. Phase 2 messages are retried until acknowledged, so participants must treat duplicate `COMMIT`s as no-ops. The failure point is the interval between a participant's `YES` and its receipt of the decision (Figure 28.4). Messages grow as $4k$ for $k$ participants; latency stays two round trips.
 
 ### 28.4.2 What must be logged, and when
 
@@ -233,7 +233,7 @@ sequenceDiagram
   C->>B: COMMIT t1 if logged, else ABORT t1
 ```
 
-**Reading the diagram.** Both participants are in PREPARED and their locks are durable promises. A asks the coordinator (no answer), then tries the **cooperative termination protocol**: asking other participants. If any participant had not yet voted, or had already received a decision, A could decide. Here B is equally in doubt, and neither can tell whether the coordinator logged commit before dying; deciding either way could contradict a decision the coordinator already made. Unrelated client X now waits on account 7 for as long as the coordinator is down. The storage boundary that matters is the coordinator's log: only it holds the answer. Making that log highly available (§28.4.8) is the scaling and availability fix.
+**Reading the diagram.** Both participants are in PREPARED and their locks are durable promises. A asks the coordinator (no answer), then tries the **cooperative termination protocol**: asking other participants. If any participant had not yet voted, or had already received a decision, A could decide. Here B is equally in doubt, and neither can tell whether the coordinator logged commit before dying; deciding either way could contradict a decision the coordinator already made. Unrelated client X now waits on account 7 for as long as the coordinator is down. The storage boundary that matters is the coordinator's log: only it holds the answer. Replicating that log (§28.4.8) is the fix.
 
 How likely is this? A transaction is exposed while any participant is in doubt: from the first `YES` until every participant has the decision.
 
@@ -337,8 +337,6 @@ The argument is short. Under PA the coordinator forgets an aborted transaction i
 | Read-only participant | 0 for that participant | 2 for that participant | — | — | Votes READ in phase 1 and drops out of phase 2 |
 | One participant | 1 local commit | 2 | — | — | Skip 2PC entirely ("one-phase commit") |
 
-The counts in Table 28.2 follow Mohan et al.'s accounting for a single level of subordinates, counting a participant's prepare record and its outcome record; real systems shave further with group commit and by piggybacking messages.
-
 Three other optimizations matter in practice:
 
 1. **Read-only participants.** A participant that only read data has nothing to commit; it releases its read locks and votes READ, and the coordinator omits it from phase 2. If every participant is read-only, nothing is logged at all.
@@ -363,7 +361,7 @@ flowchart LR
   TM --> TL[("TM log - decisions")]
 ```
 
-**Reading the diagram.** The application sends ordinary work directly to each resource manager, tagged with a global transaction ID; the transaction manager never sees the data. At commit, the TM runs 2PC over the XA interface and keeps its decisions in its own durable log, a separate storage boundary from every RM. All arrows are synchronous calls. Failure points: the TM log (lose it and in-doubt XIDs must be resolved by hand) and any RM that cannot answer `xa_recover`. Scaling is limited by the TM, which is usually embedded in an application server; Java's JTA is the best-known binding of this model.
+**Reading the diagram.** The application sends ordinary work directly to each resource manager, tagged with a global transaction ID; the transaction manager never sees the data. At commit, the TM runs 2PC over the XA interface and keeps its decisions in its own durable log, a separate storage boundary from every RM. All arrows are synchronous calls. Failure points: the TM log (lose it and in-doubt XIDs must be resolved by hand) and any RM that cannot answer `xa_recover`. Java's JTA is the best-known binding of this model.
 
 PostgreSQL exposes the participant side directly. `PREPARE TRANSACTION 'gid'` performs phase 1, writing the transaction's state durably and dissociating it from the session; `COMMIT PREPARED` or `ROLLBACK PREPARED` performs phase 2, from any session; the view `pg_prepared_xacts` lists in-doubt transactions. The feature is disabled by default (`max_prepared_transactions = 0`) because orphaned prepared transactions are dangerous [PostgreSQL Docs: PREPARE TRANSACTION]. MySQL offers `XA START`, `XA END`, `XA PREPARE`, `XA COMMIT` and `XA RECOVER` [MySQL Docs: XA Transactions].
 
@@ -671,9 +669,9 @@ What to notice:
 
 - The only thing that survives a coordinator crash is `self.log`, and recovery reads nothing else. A `COMMIT` without `END` is re-driven; any other transaction is aborted by presumption, which is why `test_no_vote_aborts_without_coordinator_log` can assert an empty log.
 - `test_crash_before_decision_blocks_then_aborts` reproduces Figure 28.4: while the coordinator is down, `resolve` returns `False` and a competing transaction on account 7 is refused because the in-doubt transaction still holds the lock.
-- `test_crash_mid_phase2_is_completed` shows a moment where A has committed and B has not. That is not an atomicity violation: the outcome was decided at the commit record, and recovery converges B to it. Readers that need to see "both or neither" during that interval need a snapshot mechanism (§28.7, §28.8).
-- `outcome` is correct only for transactions the coordinator is not still running. A real coordinator first consults its in-memory table of active transactions, and answers "unknown, ask later" for those.
-- `finish` is idempotent because phase 2 messages are retried; the same discipline as idempotency keys (§22.15).
+- `test_crash_mid_phase2_is_completed` shows a moment where A has committed and B has not. This is not an atomicity violation: the outcome was fixed at the commit record and recovery converges B to it.
+- `outcome` is valid only for transactions the coordinator is no longer running; a real coordinator answers "ask later" for active ones.
+- `finish` is idempotent because phase 2 messages are retried (§22.15).
 
 ### 28.4.8 Two-phase commit over consensus groups
 
@@ -699,18 +697,13 @@ flowchart LR
   L3 -.->|"YES after quorum write"| CL
 ```
 
-**Reading the diagram.** Each subgraph is a consensus group of three replicas, typically in three availability zones; "forcing a log record" now means replicating it to a quorum (two of three) of the group. The coordinator is the leader of one group, often a group that is also a participant. Solid arrows are synchronous requests; the dotted votes are replies that arrive only after the participant's prepared record is replicated. Failure points move from nodes to groups: losing one replica of any group is invisible to the transaction; losing a majority of one group blocks the transactions that touch it, as for any consensus system. Scaling: more groups means more parallelism, but each transaction still pays for its slowest group's quorum write, twice.
+**Reading the diagram.** Each subgraph is a consensus group of three replicas, typically in three availability zones; "forcing a log record" now means replicating it to a quorum (two of three) of the group. The coordinator is the leader of one group, often a group that is also a participant. Solid arrows are synchronous requests; the dotted votes are replies that arrive only after the participant's prepared record is replicated. Failure points move from nodes to groups: losing one replica of any group is invisible to the transaction; losing a majority of one group blocks the transactions that touch it, as for any consensus system. Each transaction pays its slowest group's quorum write, twice.
 
 Gray and Lamport generalized the idea as **Paxos Commit**, which runs one Paxos instance per participant's vote and tolerates $F$ failures of the acceptors with $2F+1$ acceptors; with $F = 0$ it reduces to 2PC [Gray and Lamport 2006]. Most production systems use the simpler structure of Figure 28.6, and so does nearly every system in the rest of this chapter.
 
 ::: industry
 **Apache Kafka — 2PC with a replicated coordinator log.** Kafka transactions let a producer write atomically to several partitions and commit consumer offsets. A *transaction coordinator* records each transaction's state in the internal, replicated `__transaction_state` topic: it writes a prepare-commit entry (the commit point), then writes commit markers into every partition involved, then a completion entry. If the coordinator broker fails, a new leader for that `__transaction_state` partition reads the log and finishes the markers. Consumers in `read_committed` mode skip data whose markers are not yet written. See §31.11.
 *Evidence: Primary* — [Kafka KIP-98 2017]
-:::
-
-::: industry
-**Amazon DynamoDB — transactions over replicated partitions.** DynamoDB's `TransactWriteItems` runs a two-phase protocol driven by transaction coordinators, with timestamp ordering rather than locks to serialize conflicting transactions, over storage partitions that are each replicated with Multi-Paxos. Coordinators record transaction progress in a durable ledger so that another coordinator can finish a transaction whose coordinator failed. The authors report that adding transactions did not slow down the non-transactional reads and writes that make up most traffic.
-*Evidence: Primary* — [Idziorek et al. 2023]
 :::
 
 ### 28.4.9 Advantages, disadvantages and failure scenarios
@@ -1110,7 +1103,6 @@ What to notice:
 
 - Scenario 3 is the heart of the protocol: the client "dies" right after deleting the primary lock, yet the next reader returns (400, 100) because `_cleanup` finds the primary's `write` record and rolls `acct9` forward.
 - Scenario 4 is the mirror image: with the primary lock still present, the reader rolls the whole transaction back. No coordinator was needed in either case.
-- `_prewrite` rejects any `write` at or after `start_ts`: that is snapshot isolation's "first committer wins" rule, which scenario 2 exercises.
 - Scenario 5 is write skew (§28.3.3). The two transactions write disjoint rows, so no write-write check fires, and the customer ends \$300 overdrawn. TiDB users avoid this with `SELECT ... FOR UPDATE` on both rows.
 
 ::: industry
@@ -1211,7 +1203,6 @@ $$T_{\text{wait}} \approx 2\,\bar{\varepsilon} \qquad T_{\text{commit}} \approx 
 1. Regional configuration, replicas 1 ms apart, $T_{\text{Paxos}} \approx 2$ ms; with $\bar{\varepsilon} = 4$ ms, $T_{\text{wait}} = 8$ ms. $T_{\text{commit}} = \max(2, 8) = 8$ ms: commit wait dominates.
 2. Multi-region configuration, quorum RTT 50 ms: $T_{\text{commit}} = \max(50, 8) = 50$ ms: commit wait is hidden entirely.
 3. Clock trouble widens $\bar{\varepsilon}$ to 100 ms: $T_{\text{wait}} = 200$ ms in both configurations, and hot-row throughput under locking falls to at most $1/0.2 = 5$ commits/s.
-4. Better clocks shrinking $\bar{\varepsilon}$ to 1 ms: $T_{\text{wait}} = 2$ ms, now below regional Paxos time.
 
 **Interpretation.** Spanner converts clock uncertainty directly into commit latency, so the quality of the time infrastructure is a performance parameter. **Engineering implication.** Commodity NTP with tens to hundreds of milliseconds of worst-case error (§24.9) would make commit wait unacceptable; this is why systems without TrueTime-class clocks use HLCs and uncertainty intervals instead (§28.10).
 :::
@@ -1237,7 +1228,7 @@ A read-only transaction takes $s_{\text{read}} =$ `TT.now().latest` and reads at
 
 ### 28.8.5 Spanner and the CAP theorem
 
-CAP (§25.8) says that during a network partition a system must give up either consistency or availability. Spanner chooses consistency: a minority side of a partition cannot commit. Brewer argues that Spanner is nevertheless "effectively CA": partitions are rare on Google's private network, and Spanner's measured availability exceeds five nines, so users experience a system that is both consistent and available. In the incident data he reports, network problems were a small minority of Spanner's outages, below user error, overload and bugs [Brewer 2017]. The lesson for designers is not that CAP was wrong, but that availability is an engineering number, and a strongly consistent system on a well-engineered network can beat a weakly consistent one on a poor network.
+CAP (§25.8) says that during a network partition a system must give up either consistency or availability. Spanner chooses consistency: a minority side of a partition cannot commit. Brewer argues that Spanner is nevertheless "effectively CA": partitions are rare on Google's private network, and Spanner's measured availability exceeds five nines, so users experience a system that is both consistent and available. In the incident data he reports, network problems were a small minority of Spanner's outages, below user error, overload and bugs [Brewer 2017]. The lesson: availability is an engineering number, and a consistent system on a well-run network can beat a weakly consistent one on a poor network.
 
 ::: industry
 **Google F1 on Spanner — the AdWords backend.** Google migrated its advertising backend from a sharded MySQL deployment to F1, a distributed SQL system built on Spanner, to get cross-shard transactions, consistent secondary indexes and resharding without application changes. The authors describe higher commit latency than MySQL and how they compensated with hierarchical schemas that cluster related rows and with heavy batching and parallelism in the client.
@@ -1398,8 +1389,6 @@ TiDB, described in §28.7.3, runs Percolator over Raft Regions with a central ti
 | Use cases | Global financial, advertising, inventory systems | Multi-region OLTP with data residency | Migrating PostgreSQL apps that outgrew one node | Migrating sharded MySQL; real-time analytics on OLTP data |
 | Choose when | You are on Google Cloud and need strict serializability globally | You need serializable SQL across regions on any cloud | You need PostgreSQL semantics at scale | You run MySQL and want to drop manual sharding |
 
-Product details change quickly; check licenses, defaults and managed offerings against current documentation.
-
 ::: industry
 **CockroachDB — geo-distributed OLTP.** Taft and colleagues describe the design goals as surviving zone and region failures without manual intervention while keeping serializable SQL, and controlling data placement per table or row for latency and residency. The paper evaluates its commit protocols and reports that parallel commits and pipelined writes reduce latency most in multi-region deployments.
 *Evidence: Primary* — [Taft et al. 2020]
@@ -1432,7 +1421,7 @@ flowchart TD
   Q1 -->|"no"| Q2{Same database system<br/>that supports distributed txns?}
   Q2 -->|"yes"| Q3{Must intermediate states<br/>be invisible?}
   Q3 -->|"yes"| A2["2PC over consensus groups:<br/>Spanner, CockroachDB, TiDB"]
-  Q3 -->|"no, but atomic"| A2
+  Q3 -->|"no"| Q4
   Q2 -->|"no: separate services"| Q4{Is each step<br/>compensable?}
   Q4 -->|"yes"| A3["Saga with compensations<br/>Ch 32"]
   Q4 -->|"no"| Q5{Is it one write plus<br/>notifying others?}
@@ -1440,7 +1429,7 @@ flowchart TD
   Q5 -->|"no"| A5["Rethink the boundary:<br/>merge services or use XA"]
 ```
 
-**Reading the diagram.** Decision nodes are questions about the data and the business, not the technology. The first question removes most distributed transactions: if a customer's orders and order lines share `customer_id` as partition key (§14.7), the transaction is local. Inside one distributed database, the database's own 2PC over consensus groups is the right tool, since it is tested, recoverable and non-blocking in practice. Across services with separate databases, sagas (asynchronous, compensating) and the outbox (atomic local write plus at-least-once publication) replace atomic commitment with eventual, semantic consistency. Explicit XA across heterogeneous systems is the last resort.
+**Reading the diagram.** Decision nodes are questions about the data and the business, not the technology. The first question removes most distributed transactions: if a customer's orders and order lines share `customer_id` as partition key (§14.7), the transaction is local. Inside one distributed database, its own 2PC over consensus groups is the right tool when intermediate states must stay invisible; if they may be visible, the cheaper cross-service patterns also apply. Across services with separate databases, sagas (asynchronous, compensating) and the outbox (atomic local write plus at-least-once publication) replace atomic commitment with eventual, semantic consistency. Explicit XA across heterogeneous systems is the last resort.
 
 **Table 28.7 — Transaction strategies compared.**
 
@@ -1459,3 +1448,131 @@ flowchart TD
 ::: example
 **Worked example — A wallet service.** Each user's wallet and transaction history share partition key `user_id`, so a purchase is single-partition (step 1). Peer-to-peer transfers touch two users. At 500 transfers/s in one region on CockroachDB, a parallel commit adds one consensus round, about 2 ms, which is acceptable, so native transactions are chosen (step 2). Paying out to an external bank cannot join any transaction, so the payout is a saga: debit the wallet, call the bank, and refund on rejection; the debit and the "payout requested" event are written together with an outbox (step 3).
 :::
+
+## 28.12 Summary and revision notes
+
+::: summary
+- **Atomic commitment** needs every participant to reach the same irreversible decision, with any one able to veto. Partial failure and ambiguous silence make independent local commits unsafe (Figure 28.1).
+- **2PC**: participants force a PREPARED record and vote; the coordinator forces the COMMIT record (the commit point) and propagates it. A prepared participant cannot decide alone, so a coordinator crash **blocks** in-doubt transactions and their locks.
+- Exposure per crash is $N_{\text{doubt}} = Xw$ with $w \approx \text{RTT} + t_{f,c}$; latency is about $2\,\text{RTT} + 2t_f$; availability is $A^k$.
+- **Presumed abort** removes forced writes and acknowledgments for aborts; read-only and one-phase optimizations remove 2PC for many transactions. XA and PostgreSQL `PREPARE TRANSACTION` expose 2PC; heuristic decisions break atomicity.
+- **3PC** avoids blocking only with perfect failure detection; partitions make it inconsistent. Production systems run **2PC over consensus groups** instead.
+- **Sagas** trade isolation for availability with compensations (Chapter 32).
+- **Percolator** builds SI transactions from single-row atomicity: a timestamp oracle, prewrite locks pointing to a primary, and the primary's `write` record as commit point; readers roll abandoned transactions forward or back. TiDB uses it over Raft.
+- **Spanner** assigns commit timestamps from TrueTime and waits about $2\bar{\varepsilon}$ before exposing a commit, yielding external consistency and lock-free snapshot reads.
+- **Calvin** agrees on input order first and executes deterministically, eliminating 2PC at the cost of declared read/write sets and batching delay.
+- **CockroachDB** uses HLCs, uncertainty intervals, transaction records and parallel commits (one consensus round); YugabyteDB uses hybrid time and a status tablet.
+- Snapshot isolation distributes cheaply but permits **write skew**; serializability needs read locks or read validation.
+- Prefer single-partition design, then native distributed transactions, then sagas and the outbox; use XA last.
+:::
+
+## 28.13 Knowledge checkpoint
+
+1. Why can a participant abort unilaterally before voting yes but not after?
+2. Which two log writes must be forced in 2PC's commit path, and what goes wrong if each is not?
+3. What does a recovering coordinator do with a COMMIT record that has no END record?
+4. Under presumed abort, why may the coordinator forget an aborted transaction immediately?
+5. A coordinator handles 5,000 distributed transactions/s with RTT 1 ms and a 2 ms forced write. How many are left in doubt by a crash?
+6. What is the availability of a transaction spanning 4 partitions at 99.9 % each?
+7. Why does 3PC become unsafe under a network partition?
+8. What is Percolator's commit point, and how does a reader resolve a lock left by a dead client?
+9. Why must Spanner's coordinator perform commit wait?
+10. With $\bar{\varepsilon} = 3$ ms and regional Paxos latency 4 ms, what is Spanner's approximate commit latency?
+11. How does Calvin avoid 2PC, and what does it require from transactions?
+12. What makes a CockroachDB transaction "implicitly committed"?
+13. Why does snapshot isolation allow write skew across partitions?
+14. Give the first strategy to try before any distributed transaction.
+
+<details><summary>Answers</summary>
+
+1. Before voting, no decision can include its yes vote, so abort is safe. After voting yes, the coordinator may already have logged commit.
+2. The participant's PREPARED record (else a crash loses the promise and the participant might later be unable to commit) and the coordinator's COMMIT record (else a recovered coordinator could presume abort while some participant has committed).
+3. Resends COMMIT to every listed participant until all acknowledge, then writes END.
+4. Inquiries about a transaction it has no record of are answered "abort", which is correct for aborted transactions.
+5. $w = 1 + 2 = 3$ ms; $N = 5{,}000 \times 0.003 = 15$.
+6. $0.999^4 \approx 0.996$, about 173 minutes of unavailability per 30 days.
+7. Each side runs the termination protocol; one side may see a pre-committed node and commit while the other sees only uncertain nodes and aborts.
+8. Writing the primary cell's `write` record and erasing its lock. A reader checks the primary: lock still present means roll back; a `write` record for that start timestamp means roll the secondary forward.
+9. To guarantee that its timestamp $s$ is in the past everywhere before anyone sees the commit, so any later transaction gets a larger timestamp (external consistency).
+10. $\max(4, 2 \times 3) = 6$ ms.
+11. It fixes a global input order before execution and executes deterministically, so there are no nondeterministic aborts to vote on. Transactions must declare read and write sets in advance.
+12. A STAGING transaction record and all intents it lists are durably written at the staged timestamp.
+13. SI checks only write-write conflicts; the two transactions write different keys, and the read-write dependencies span partitions that never compare notes.
+14. Choose partition keys so the entities written together share a partition, making the transaction local.
+
+</details>
+
+## 28.14 Interview questions
+
+### Basic
+
+**Q1. Explain two-phase commit and its main weakness.**
+**Answer.** A coordinator sends prepare; each participant forces a prepared record and votes; if all vote yes, the coordinator forces a commit record and tells everyone to commit, otherwise abort. The weakness is blocking: participants that voted yes cannot decide if the coordinator fails, and hold locks until it recovers. Also mention two round trips, two forced writes and $A^k$ availability.
+
+**Q2. When would you use a saga instead of 2PC?**
+**Answer.** When the steps cross service or organizational boundaries, run for seconds to days, involve external APIs that cannot participate in 2PC, or must stay available when one service is down. Each step must have a compensation and be idempotent, and the business must tolerate visible intermediate states.
+
+### Intermediate
+
+**Q3. How does Percolator achieve atomicity without a coordinator process?**
+**Answer.** The primary lock stores the coordinator's state. Prewrite locks every cell, each secondary lock pointing to the primary. Committing writes the primary's `write` record at the commit timestamp in one single-row transaction; that is the commit point. Any reader finding a stale secondary lock looks at the primary to roll forward or back. Timestamps from the oracle give snapshot isolation; costs are two oracle calls and SI's write skew.
+
+**Q4. Your XA-based order system has rows locked for 20 minutes after a deploy. Diagnose.**
+**Answer.** Likely in-doubt prepared transactions: the deploy killed the transaction manager after participants voted yes. Check `pg_prepared_xacts` or `XA RECOVER` for old XIDs; bring the transaction manager back with its log so it re-drives outcomes; if the log is lost, resolve manually by auditing each XID. Prevent with graceful shutdown that drains transactions, a durable replicated TM log, and alerts on prepared-transaction age.
+
+### Advanced
+
+**Q5. Explain why Spanner's commit wait gives external consistency, and its cost.**
+**Answer.** The coordinator picks $s \ge$ `TT.now().latest` and does not expose the commit until `TT.after(s)`, so $s$ is in the past when anyone can observe it. A transaction starting later gets a timestamp at least its own `TT.now().latest`, which exceeds true time and therefore $s$. Cost: about $2\bar{\varepsilon}$ per commit with locks held, overlapped with Paxos replication; it grows if clock uncertainty grows.
+
+**Q6. Design transfers between accounts in a multi-region bank where most accounts are regional.**
+**Answer.** Partition by home region and customer so most transfers are regional single- or multi-range transactions in a distributed SQL database with serializable isolation and parallel commits. Cross-region transfers either pay one cross-region consensus round, or become a saga through a regional clearing account with idempotent steps and an outbox. Quantify: regional commit about 2–5 ms, cross-region 70+ ms. Discuss write skew on overdraft checks and hot merchant accounts.
+
+## 28.15 Practical exercises
+
+1. Extend the simulation in §28.4.7 with a cooperative termination protocol: an in-doubt participant asks the others, and decides if any knows the outcome or has not voted. Add a test where it succeeds.
+2. Convert the simulation to presumed commit and count forced writes and messages in both outcomes; compare with Table 28.2.
+3. Repeat the PostgreSQL session of §28.4.6 and measure how long an unrelated `UPDATE` waits; then watch `age(datfrozenxid)` while a prepared transaction stays open.
+4. Modify the Percolator model to prevent write skew in scenario 5 by having each transaction also lock the row it only read.
+5. Compute Spanner commit latency for $\bar{\varepsilon} \in \{1, 4, 10\}$ ms against Paxos latencies of 2, 20 and 80 ms, and identify where commit wait matters.
+
+## 28.16 Design challenges
+
+1. **Ticketing flash sale.** 100,000 buyers compete for 5,000 seats in one stadium. Compare Calvin-style deterministic ordering, a single-partition design and 2PC across seat partitions on contention and latency.
+2. **Cross-service checkout.** Order, inventory, payment and shipping services each own a database. Design checkout using sagas and an outbox; list each compensation and the isolation anomalies you accept.
+3. **Global ledger.** A ledger must be strictly serializable across three continents with p99 commit below 200 ms. Choose a database, data placement and transaction pattern, and estimate latency.
+
+## 28.17 References
+
+1. Gray, J. *Notes on Data Base Operating Systems*. In *Operating Systems: An Advanced Course*, LNCS 60, Springer, 1978.
+2. Bernstein, P. A., Hadzilacos, V., Goodman, N. *Concurrency Control and Recovery in Database Systems*. Addison-Wesley, 1987. Free online from Microsoft Research.
+3. Skeen, D. *Nonblocking Commit Protocols*. ACM SIGMOD, 1981.
+4. Mohan, C., Lindsay, B., Obermarck, R. *Transaction Management in the R\* Distributed Database Management System*. ACM Transactions on Database Systems 11(4), 1986.
+5. Gray, J., Lamport, L. *Consensus on Transaction Commit*. ACM Transactions on Database Systems 31(1), 2006.
+6. The Open Group (X/Open). *Distributed Transaction Processing: The XA Specification*. 1991.
+7. Garcia-Molina, H., Salem, K. *Sagas*. ACM SIGMOD, 1987.
+8. Peng, D., Dabek, F. *Large-scale Incremental Processing Using Distributed Transactions and Notifications*. USENIX OSDI, 2010.
+9. Corbett, J. C., et al. *Spanner: Google's Globally-Distributed Database*. USENIX OSDI, 2012.
+10. Brewer, E. *Spanner, TrueTime and the CAP Theorem*. Google, 2017.
+11. Shute, J., et al. *F1: A Distributed SQL Database That Scales*. PVLDB 6(11), 2013.
+12. Thomson, A., Diamond, T., Weng, S.-C., Ren, K., Shao, P., Abadi, D. J. *Calvin: Fast Distributed Transactions for Partitioned Database Systems*. ACM SIGMOD, 2012.
+13. Ren, K., Li, D., Abadi, D. J. *SLOG: Serializable, Low-latency, Geo-replicated Transactions*. PVLDB 12(11), 2019.
+14. Taft, R., et al. *CockroachDB: The Resilient Geo-Distributed SQL Database*. ACM SIGMOD, 2020.
+15. Cockroach Labs. *Parallel Commits: An Atomic Commit Protocol for Globally Distributed Transactions*. Cockroach Labs Blog, 2019. https://www.cockroachlabs.com/blog/parallel-commits/
+16. Huang, D., et al. *TiDB: A Raft-based HTAP Database*. PVLDB 13(12), 2020.
+17. PingCAP. *TiDB Documentation: Transactions Overview; Pessimistic Transaction Mode*. https://docs.pingcap.com/tidb/stable/transaction-overview
+18. Yugabyte. *YugabyteDB Documentation: Distributed Transactions*. https://docs.yugabyte.com/
+20. Apache Kafka. *KIP-98: Exactly Once Delivery and Transactional Messaging*. 2017. https://cwiki.apache.org/confluence/display/KAFKA/KIP-98+-+Exactly+Once+Delivery+and+Transactional+Messaging
+21. Cahill, M. J., Röhm, U., Fekete, A. D. *Serializable Isolation for Snapshot Databases*. ACM SIGMOD, 2008.
+22. PostgreSQL Global Development Group. *PostgreSQL 16 Documentation: PREPARE TRANSACTION; pg_prepared_xacts*. https://www.postgresql.org/docs/16/sql-prepare-transaction.html
+23. Oracle. *MySQL 8.4 Reference Manual: XA Transactions*. https://dev.mysql.com/doc/refman/8.4/en/xa.html
+24. Fauna. *Fauna Service End of Life FAQ*. https://docs.fauna.com/fauna/current/eol-faq
+25. Kleppmann, M. *Designing Data-Intensive Applications* (Ch. 7 "Transactions", Ch. 9 "Consistency and Consensus"). O'Reilly, 2017.
+
+## 28.18 Open verification items
+
+- Table 28.2 forced-write and message counts for presumed abort and presumed commit, against Mohan et al. 1986.
+- Percolator oracle throughput (~2 million timestamps/s) and the 50 % document-age reduction.
+- Brewer 2017: exact share of Spanner incidents attributed to the network (a secondary source says under 8 %).
+- Calvin's near-linear scaling to 100 machines; FaunaDB's description as Calvin-inspired.
+- Defaults as of 2026: CockroachDB range size (512 MiB), max offset (500 ms); YugabyteDB YSQL default isolation; TiDB async commit and 1PC status.

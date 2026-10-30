@@ -2,9 +2,9 @@
 
 > **Level:** 3 · **Track:** A (Traditional) · **Estimated reading time:** 6 h
 
-Chapter 14 introduced replication as a database scaling tool: one primary, a few read replicas, and a choice between synchronous and asynchronous commit (§14.3–§14.5). That picture is enough for a single PostgreSQL cluster. It stops being enough when you ask harder questions. What happens when the primary dies at the wrong moment? How does anyone *know* it died? Can a store keep accepting writes while half its nodes are unreachable, and what does it give up to do so? When two copies disagree, which one is right?
+Chapter 14 introduced replication as a database scaling tool: one primary, a few read replicas, and a choice between synchronous and asynchronous commit (§14.3–§14.5). That picture stops being enough when you ask harder questions. What happens when the primary dies at the wrong moment? How does anyone *know* it died? Can a store keep accepting writes while half its nodes are unreachable, and what does it give up to do so? When two copies disagree, which one is right?
 
-This chapter answers those questions for distributed systems in general. It surveys the five families of replication strategy, then works through each in turn: primary–backup, chain replication, multi-leader and leaderless (Dynamo-style) replication. It then treats the machinery that keeps replicas alive and consistent: quorums, hinted handoff, failure detection, failover, recovery, anti-entropy and conflict resolution with conflict-free replicated data types (CRDTs). Consensus algorithms are summarized only where needed, because Chapter 26 owns them; consistency definitions belong to Chapter 25 and distributed transactions to Chapter 28.
+This chapter surveys the five families of replication strategy, works through primary–backup, chain, multi-leader and leaderless replication, and then treats the machinery that keeps replicas alive and consistent: quorums, hinted handoff, failure detection, failover, recovery, anti-entropy and conflict-free replicated data types (CRDTs). Consensus belongs to Chapter 26, consistency definitions to Chapter 25 and distributed transactions to Chapter 28.
 
 ## 27.1 Learning objectives
 
@@ -309,10 +309,6 @@ $$T_{\text{write}} \approx (n + 1)\,d + n\,s \qquad X_{\text{read}}^{\text{CR}} 
 
 Chain replication gives linearizable reads and writes, balanced network load and simple recovery rules. Its costs are write latency proportional to chain length, a single slow node slowing every write (there is no "fastest $k$ of $n$"), and dependence on an external master for every reconfiguration.
 
-::: mistake
-**Mistake — "Chain replication needs no consensus."** The chain itself runs no consensus protocol, but the master that decides membership must be fault tolerant and must never present two different chains. In practice it is a Paxos- or Raft-replicated service (Chapter 26).
-:::
-
 ## 27.6 Multi-leader replication
 
 ### 27.6.1 Use cases and topologies
@@ -367,24 +363,6 @@ flowchart LR
 
 **Reading the diagram.** Every arrow is asynchronous replication of committed writes, typically a log stream over TCP. In the circular topology each write travels through every other leader in turn, so one failed or slow leader stops propagation for everyone downstream until the ring is reconfigured. In the star, the hub is a single point of failure for replication (though not for local writes). All-to-all has no single point of failure but sends every write along $m(m-1)$ links for $m$ leaders and allows writes to overtake each other on different paths. Each leader stores a full copy. Scaling beyond a handful of leaders multiplies both links and potential conflicts.
 
-**Figure 27.6 — An all-to-all causality violation.**
-
-```mermaid
-sequenceDiagram
-  participant A as Leader A
-  participant B as Leader B
-  participant C as Leader C
-  A->>A: insert row 9
-  A-)B: insert row 9, fast link
-  B->>B: update row 9 to paid
-  B-)C: update row 9, fast link
-  Note over C: update arrives for a row it lacks
-  A-)C: insert row 9, slow link
-  Note over C: insert arrives late
-```
-
-**Reading the diagram.** All messages between leaders are asynchronous. Leader B receives A's insert quickly and updates the row; B's update reaches C before A's insert, because the A→C link is slow. C sees an update to a row it has never seen. Ordering by timestamps does not fix this; tracking causality does: tagging each write with a version vector lets C buffer the update until it has the insert it depends on. The failure point is any design that assumes FIFO delivery across different paths.
-
 #### Mathematical foundations
 
 How often do conflicts happen? Two writes to the same item conflict if they are made at different leaders within one replication delay of each other.
@@ -425,11 +403,6 @@ $$\kappa \approx 2\,\lambda_A\,\lambda_B\,\Delta \qquad (\lambda_A \Delta \ll 1,
 *Evidence: Primary* — [Apache CouchDB Docs: Replication and Conflict Model]
 :::
 
-::: industry
-**Figma multiplayer.** Figma's editor sends each property change to a server that is the authority for a document; concurrent changes to the same property are resolved by the server's ordering (last write to reach the server wins), an approach its authors describe as inspired by CRDTs but simplified because a central server exists.
-*Evidence: Primary* — [Wallace 2019]
-:::
-
 #### Failure scenarios
 
 **Table 27.3 — Failure scenarios in multi-leader replication.**
@@ -441,9 +414,6 @@ $$\kappa \approx 2\,\lambda_A\,\lambda_B\,\Delta \qquad (\lambda_A \Delta \ll 1,
 | Uniqueness violated | Two leaders accept same username | Duplicate detected after sync | Rename or merge manually | Route uniqueness checks to one home leader |
 | Writes echo forever | Origin tag lost in transformation | Replication volume climbs | Drop duplicates by origin and version | Preserve origin IDs end to end |
 
-::: mistake
-**Mistake — "Multi-leader gives active–active strong consistency."** Each leader acknowledges before the others know. A read in region B can miss a write acknowledged in region A, and two acknowledged writes can later be merged or discarded.
-:::
 
 ## 27.7 Leaderless replication
 
@@ -469,7 +439,7 @@ Amazon built Dynamo for the shopping cart, where refusing an "add to cart" durin
 4. **Read.** The coordinator asks the replicas and waits for $R$ responses. If the versions differ, it returns the newest, or all causally concurrent versions for the client to reconcile (§27.14), and it may repair stale replicas (§27.13).
 5. **Background repair.** Hinted handoff (§27.9) and Merkle-tree anti-entropy (§27.13) bring replicas that missed writes back into agreement.
 
-**Figure 27.7 — A Dynamo-style write with N = 3 and W = 2.**
+**Figure 27.6 — A Dynamo-style write with N = 3 and W = 2.**
 
 ```mermaid
 flowchart LR
@@ -533,7 +503,7 @@ $$|S_R \cap S_W| \;\ge\; R + W - N \qquad f_{\text{read}} = N - R \qquad f_{\tex
 
 ### 27.8.2 What R + W > N does not guarantee
 
-The overlap argument says that *some* replica in every read set holds the latest *completed* write. It is tempting to conclude that quorum reads are linearizable (§25.3). They are not, for five reasons [Kleppmann 2017, ch. 5; Bailis et al. 2012]:
+The overlap argument says that *some* replica in every read set holds the latest *completed* write. It is tempting to conclude that quorum reads are linearizable (§25.3). They are not, for five reasons [Kleppmann 2017, ch. 5]:
 
 1. **Concurrent writes.** Two clients write the same key at the same time and their writes reach replicas in different orders. Overlap guarantees you see both, not that there is an agreed winner. With timestamps (last-writer-wins), one write is silently dropped (§27.14).
 2. **A write concurrent with a read.** If a write has reached only some replicas when a read arrives, the read may or may not see it.
@@ -541,7 +511,7 @@ The overlap argument says that *some* replica in every read set holds the latest
 4. **Sloppy quorums.** If writes may go to substitute nodes outside the key's $N$ home replicas (§27.9), the read and write sets need not intersect at all.
 5. **Lost replicas.** If a replica holding the new value fails and is rebuilt from a replica with the old value, the number of copies of the new value can fall below $W$.
 
-**Figure 27.8 — R = W = 2, N = 3, and a read that goes back in time.**
+**Figure 27.7 — R = W = 2, N = 3, and a read that goes back in time.**
 
 ```mermaid
 sequenceDiagram
@@ -669,15 +639,9 @@ What to notice:
 
 - `min_overlap` checks every pair of read and write sets by brute force, confirming that the overlap is positive exactly when $R + W > N$.
 - The simulated means match the harmonic-sum formula to three digits.
-- The tail model, not the mean, is where quorum size matters most: the mean grows from 1.67 to 3.67 ms, but the probability of a slow operation grows a hundredfold.
-
-::: industry
-**Probabilistically bounded staleness.** Bailis et al. modeled partial quorums ($R + W \le N$) using latency distributions measured from production Cassandra-style deployments and showed that, in their measurements, such configurations usually return the latest value within a short time after a write while cutting tail latency substantially; they call the measure probabilistically bounded staleness (PBS).
-*Evidence: Primary* — [Bailis et al. 2012]
-:::
 
 ::: mistake
-**Mistake — "QUORUM reads and writes make Cassandra linearizable."** They give overlap, not linearizability: concurrent writes are resolved by timestamp, failed writes are not rolled back, and only blocking read repair prevents the read anomaly of Figure 27.8. Compare-and-set needs Cassandra's Paxos-based lightweight transactions.
+**Mistake — "QUORUM reads and writes make Cassandra linearizable."** They give overlap, not linearizability: concurrent writes are resolved by timestamp, failed writes are not rolled back, and only blocking read repair prevents the read anomaly of Figure 27.7. Compare-and-set needs Cassandra's Paxos-based lightweight transactions.
 :::
 
 ## 27.9 Sloppy quorums and hinted handoff
@@ -699,7 +663,7 @@ A neighbor is away, so the courier leaves the parcel with the house next door, t
 3. The stand-in periodically checks whether the owner is reachable again and, when it is, replays the hint and deletes it.
 4. If the owner stays down longer than a configured **hint window**, the stand-in stops collecting hints, and Merkle-tree repair (§27.13) must restore the replica.
 
-**Figure 27.9 — A sloppy quorum write and later handoff.**
+**Figure 27.8 — A sloppy quorum write and later handoff.**
 
 ```mermaid
 sequenceDiagram
@@ -918,7 +882,7 @@ $$T_{\text{rounds}} \approx \log_{1+f} n + \frac{\ln n}{f} \qquad \text{(for } f
 3. If still no ack, marks $M_j$ **suspect**, rather than dead, and spreads the suspicion. $M_j$ can refute it by gossiping an "alive" message with a higher **incarnation number**; if nobody refutes it within a suspicion timeout, $M_j$ is declared failed.
 4. Membership updates (joins, suspicions, failures) are **piggybacked** on ping and ack messages, so dissemination costs no extra messages.
 
-**Figure 27.10 — A SWIM protocol period with an indirect probe.**
+**Figure 27.9 — A SWIM protocol period with an indirect probe.**
 
 ```mermaid
 sequenceDiagram
@@ -1045,11 +1009,6 @@ What to notice:
 - Push–pull halves the rounds because pull mops up the last uninformed nodes quadratically fast.
 - SWIM's simulated detection time matches $e/(e-1)$ periods.
 
-::: industry
-**HashiCorp memberlist.** HashiCorp's memberlist library, used by Consul and Nomad for cluster membership, implements SWIM with suspicion and piggybacked dissemination, plus the Lifeguard extensions that make a member that is itself slow less likely to accuse others.
-*Evidence: Primary* — [Dadgar et al. 2017; HashiCorp memberlist]
-:::
-
 ::: mistake
 **Mistake — "A failure detector tells you a node is dead."** It tells you a node is *suspected*. A suspected primary may still be running and writing. Every action taken on suspicion, such as promoting a replica, must fence the suspect (§26.13).
 :::
@@ -1064,7 +1023,7 @@ What to notice:
 
 Leaderless systems need no failover for writes; primary–backup, chain and consensus systems do. Each step consumes part of the availability budget.
 
-**Figure 27.11 — A failover time budget with DNS redirection.**
+**Figure 27.10 — A failover time budget with DNS redirection.**
 
 ```mermaid
 gantt
@@ -1114,17 +1073,10 @@ $$T_{\text{fo}} = T_{\text{detect}} + T_{\text{elect}} + T_{\text{reconfig}} + T
 
 - **Split brain.** If the old primary is merely slow or partitioned, it may still accept writes. Both "primaries" then diverge (§26.12). Only fencing, by lease expiry, a fencing token checked by storage, or cutting power, makes promotion safe.
 - **Data loss with asynchronous replication.** The promoted replica lacks the last $r_w \ell$ writes (§27.4). Worse, when the old primary returns, its unreplicated writes conflict with new writes that reused the same keys or IDs.
-- **Cascading failover.** The new primary inherits the load that killed the old one and fails too; automatic failover should rate-limit itself and page a human after the first attempt.
-- **Flapping.** A timeout set too short triggers failovers on transient pauses, each costing $T_{\text{fo}}$ of unavailability.
 
 ::: industry
 **GitHub, October 2018.** A 43-second loss of connectivity between GitHub's US East Coast network hub and its primary East Coast datacenter led its MySQL failover tooling (Orchestrator) to promote replicas in the US West Coast. When connectivity returned, the East Coast databases held writes not present in the West and vice versa, so GitHub could not simply fail back. It chose data integrity over speed and ran degraded for 24 hours and 11 minutes while reconciling; its follow-ups included preventing automatic cross-region promotion.
 *Evidence: Primary* — [GitHub 2018]
-:::
-
-::: industry
-**MongoDB rollback.** When a MongoDB primary fails, the replica set elects a new primary; writes that the old primary accepted but that had not reached a majority are rolled back when it rejoins, and saved to rollback files for manual handling. Writes made with write concern `"majority"` are not rolled back.
-*Evidence: Primary* — [MongoDB Docs: Rollbacks During Replica Set Failover]
 :::
 
 ## 27.12 Recovery
@@ -1141,7 +1093,7 @@ $$T_{\text{fo}} = T_{\text{detect}} + T_{\text{elect}} + T_{\text{reconfig}} + T
 2. **Snapshot plus log.** If the log has been truncated past the node's position, it installs a snapshot taken at a known log position and replays from there. PostgreSQL's `pg_basebackup` and Raft's `InstallSnapshot` (§26.7) work this way.
 3. **Rebuild.** A replacement node in a leaderless store streams its token ranges from the surviving replicas; with virtual nodes (§14.8), many peers send in parallel. New writes for those ranges go to the joining node while it streams.
 
-**Figure 27.12 — Choosing a recovery path.**
+**Figure 27.11 — Choosing a recovery path.**
 
 ```mermaid
 flowchart TD
@@ -1200,10 +1152,10 @@ The second term is the catch-up time of §14.4.2 applied to the backlog accumula
 
 Hinted handoff repairs short outages, but hints can be lost and only cover writes made while the stand-in knew of the failure. Two further mechanisms close the gaps:
 
-1. **Read repair.** On a read the coordinator compares versions, usually by requesting full data from one replica and digests (hashes) from the others. On a mismatch it fetches full data, computes the newest version, returns it and writes it back to the stale replicas. **Blocking** read repair finishes the write-back before replying, which is what prevents the anomaly of Figure 27.8; **asynchronous** read repair replies first. Read repair only fixes keys that are read, so rarely read keys can stay divergent indefinitely.
+1. **Read repair.** On a read the coordinator compares versions, usually by requesting full data from one replica and digests (hashes) from the others. On a mismatch it fetches full data, computes the newest version, returns it and writes it back to the stale replicas. **Blocking** read repair finishes the write-back before replying, which is what prevents the anomaly of Figure 27.7; **asynchronous** read repair replies first. Read repair only fixes keys that are read, so rarely read keys can stay divergent indefinitely.
 2. **Merkle-tree anti-entropy.** Each replica builds a hash tree over each key range (§17.8). Two replicas compare roots, descend only into differing subtrees and stream only the divergent leaf ranges. For two replicas of a million-leaf tree that differ in two leaves, this compares about 80 hashes instead of the whole data set (§17.8).
 
-**Figure 27.13 — Blocking read repair with R = 2.**
+**Figure 27.12 — Blocking read repair with R = 2.**
 
 ```mermaid
 sequenceDiagram
@@ -1224,15 +1176,6 @@ sequenceDiagram
 ```
 
 **Reading the diagram.** All calls are synchronous. Asking one replica for data and others for digests saves bandwidth when replicas agree, the common case. On a mismatch the coordinator fetches B's value, picks the newer one by timestamp (or by version vector), writes it to B and only then replies, so any later quorum read must meet a replica holding v2. The storage boundary is each replica's local store. Failure points: the extra round trips on mismatches inflate read tail latency, and a write-back racing a newer concurrent write must not overwrite it, which version comparison prevents.
-
-**Table 27.4 — Repair mechanisms in leaderless stores.**
-
-| | Hinted handoff | Read repair | Merkle anti-entropy |
-|---|---|---|---|
-| Triggered by | Write to unreachable replica | Read finding a mismatch | Schedule or operator |
-| Covers | Writes during short outages | Keys that are read | All data |
-| Cost | Hint storage, replay | Extra read round trips | Tree building (disk scan), streaming |
-| Misses | Long outages, lost hints | Cold keys | Nothing, if run within the tombstone grace period |
 
 ::: industry
 **Cassandra repair.** Cassandra's `nodetool repair` builds Merkle trees per token range on each replica, compares them and streams mismatched ranges; incremental repair limits the work to data written since the last repair. Operators are told to repair every node within `gc_grace_seconds` so that tombstones reach every replica before they are purged.
@@ -1288,7 +1231,7 @@ $$V \le V' \iff \forall i:\ V[i] \le V'[i] \qquad V \parallel V' \iff V \not\le 
 **Interpretation.** No write was lost, but the application had to merge, and a union merge re-adds an item that one sibling had deleted. **Engineering implication.** Siblings move conflict resolution into application code; give that code a deterministic, tested merge, or use a CRDT.
 :::
 
-**Figure 27.14 — Version vectors creating and resolving siblings.**
+**Figure 27.13 — Version vectors creating and resolving siblings.**
 
 ```mermaid
 flowchart LR
@@ -1487,7 +1430,6 @@ What to notice:
 - Each `merge` is a lattice join: per-slot `max`, set union, or the larger stamp. That is why all three laws hold on every random history, including histories with partial gossip between replicas.
 - `SumCounter` looks plausible but is not idempotent: a duplicated gossip message doubles the count. Idempotence is what lets state-based CRDTs ride on unreliable, repeating gossip.
 - The OR-Set keeps "milk" after a concurrent remove and re-add, matching user intent; the LWW register replays the clock-skew example of §27.14.1 and drops the later add.
-- The OR-Set's `removes` set only grows; production implementations bound it with version-vector summaries or causal stability.
 
 #### Real-world industry applications
 
@@ -1498,7 +1440,7 @@ What to notice:
 
 #### Alternatives and trade-offs
 
-**Table 27.5 — Conflict-resolution strategies.**
+**Table 27.4 — Conflict-resolution strategies.**
 
 | | Last-writer-wins | Version vectors + siblings | CRDTs |
 |---|---|---|---|
@@ -1511,7 +1453,7 @@ What to notice:
 
 #### Failure scenarios
 
-**Table 27.6 — Failure scenarios in conflict resolution.**
+**Table 27.5 — Failure scenarios in conflict resolution.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
@@ -1523,3 +1465,145 @@ What to notice:
 ::: mistake
 **Mistake — "CRDTs make every invariant safe."** CRDTs guarantee convergence, not application invariants. A PN-Counter for stock can converge to −3 because two regions each sold the last two items. Invariants such as "never below zero" or "unique username" still need coordination (Chapter 26) or escrow-style partitioning of the allowance.
 :::
+
+## 27.15 Summary and revision notes
+
+::: summary
+- A replication strategy decides who orders writes and how many copies must hold a write before it is acknowledged. Primary–backup, chain and consensus fix one order; multi-leader and leaderless let replicas diverge and repair afterwards.
+- Primary–backup ships state or operations; asynchronous failover loses $r_w \ell$ writes, and safe promotion needs fencing.
+- Chain replication: writes at the head, strong reads at the tail, $T_{\text{write}} \approx (n+1)d + ns$; CRAQ serves clean reads from any node.
+- Multi-leader serves multi-region, offline and collaborative writers; ring and star topologies have single points of failure, all-to-all reorders messages; conflicts per item $\approx 2\lambda_A\lambda_B\Delta$.
+- $R + W > N$ guarantees overlap with completed writes, not linearizability. Quorum latency is the $k$-th order statistic: 2-of-3 hides the slowest replica.
+- Sloppy quorums and hinted handoff trade overlap for write availability; hints grow linearly with downtime.
+- Phi-accrual turns silence into an error probability; SWIM detects in about $1.58\,T'$ with constant load per member; gossip spreads in $\approx \log_{1+f} n + \ln n / f$ rounds.
+- Failover time is detection + election + reconfiguration + redirection; redirection often dominates. Recovery time is copy time plus catch-up of the backlog.
+- Read repair fixes keys that are read; Merkle anti-entropy fixes everything, and must run within the tombstone grace period.
+- LWW loses concurrent writes silently; version vectors keep siblings; CRDTs converge because merge is commutative, associative and idempotent, but do not protect invariants.
+:::
+
+## 27.16 Knowledge checkpoint
+
+1. What is the difference between state transfer and operation shipping, and which needs determinism?
+2. An asynchronous backup lags by 300 ms when the primary, taking 4,000 writes/s, crashes. How many acknowledged writes are lost?
+3. Why are reads at the tail of a chain linearizable?
+4. In CRAQ, what does a node do when asked to read an object whose newest local version is dirty?
+5. Why can a circular multi-leader topology stop replicating when one node fails?
+6. For $N = 5$, what is the smallest $R$ that overlaps $W = 3$, and how many failures can each tolerate?
+7. Give two reasons why $R + W > N$ does not give linearizability.
+8. With $N = 3$ and each replica independently slow with probability 0.02, what fraction of $W = 2$ writes are slow?
+9. Why does a sloppy quorum weaken the overlap guarantee?
+10. Heartbeats have $\mu = 500$ ms and $\sigma = 50$ ms. What is $\varphi$ after 600 ms of silence?
+11. Why does SWIM use indirect probes?
+12. Estimate push-gossip rounds with fanout 1 for 4,096 nodes.
+13. Detection 4 s, election 2 s, reconfiguration 2 s, DNS TTL 60 s: what is the failover time, and what is the biggest lever?
+14. Why can a node that was down for two weeks resurrect deleted rows?
+15. Why must a state-based CRDT merge be idempotent?
+
+<details><summary>Answers</summary>
+
+1. State transfer sends resulting state; operation shipping sends the operation, which every replica must execute deterministically.
+2. $4{,}000 \times 0.3 = 1{,}200$ writes.
+3. The tail holds only updates every other chain node already has, and it is the only node that replies to writes and reads.
+4. It asks the tail for the latest committed version number and returns that version.
+5. Each write passes through every node in turn, so a failed node breaks the path until the ring is reconfigured.
+6. $R = 3$ ($3 + 3 > 5$); reads and writes each tolerate 2 unavailable replicas.
+7. Any two of: concurrent writes resolved by timestamp; writes concurrent with reads; failed writes not rolled back; sloppy quorums; replicas restored from stale copies.
+8. $p^3 + 3p^2(1-p) = 8 \times 10^{-6} + 3 \times 0.0004 \times 0.98 = 0.001184$, about 0.12%.
+9. Writes may be acknowledged by stand-ins outside the key's $N$ home replicas, so a read from home replicas may share no node with them.
+10. $z = 2$, $1 - \Phi(2) = 0.0228$, $\varphi = 1.64$.
+11. So that a lossy path between two particular members does not cause a false suspicion; other members probe on its behalf.
+12. $\log_2 4{,}096 + \ln 4{,}096 = 12 + 8.3 \approx 20$ rounds, plus about one.
+13. $4 + 2 + 2 + 60 = 68$ s; replace DNS redirection with a proxy, virtual IP or topology-aware client.
+14. Its copies predate the deletes, and other replicas have purged their tombstones after the grace period, so repair copies the old rows back.
+15. Gossip may deliver the same state many times; a non-idempotent merge (such as summing) would count it repeatedly.
+
+</details>
+
+## 27.17 Interview questions
+
+### Basic
+
+**Q1. What does R + W > N give you?**
+**Answer.** Every read set intersects every completed write's set, so a read sees at least one replica with that write. It does not order concurrent writes, roll back failed ones or prevent a later read seeing an older value without blocking read repair.
+
+**Q2. How do you detect a failed node?**
+**Answer.** Heartbeats or pings with a timeout, ideally adaptive (phi-accrual) and, in large clusters, SWIM-style probing with indirect pings, suspicion and gossip. A detector only suspects; actions taken on suspicion must fence.
+
+**Q3. What is last-writer-wins and when is it acceptable?**
+**Answer.** Keep the value with the greatest timestamp. It silently drops concurrent writes and depends on clocks, so use it for immutable or single-writer data.
+
+### Intermediate
+
+**Q4. Walk through a database failover and its time budget.**
+**Answer.** Detection (timeout), election (pick the most advanced replica or run consensus), reconfiguration (fence old primary, apply remaining log, promote), redirection (proxy, VIP or DNS). Quantify each term; redirection and detection usually dominate; add fencing against split brain and accept $r_w \ell$ loss if replication is asynchronous.
+
+**Q5. Chain replication or primary–backup?**
+**Answer.** Chain spreads network load evenly and gives strong reads at the tail, but write latency grows with chain length and one slow node slows every write. Primary–backup has constant-hop latency but the primary sends $n-1$ copies. Choose chain (or CRAQ) for high-throughput storage with a reliable master service.
+
+**Q6. Why contact all N replicas if you need only R?**
+**Answer.** Latency is the $R$-th order statistic of the replies; contacting all $N$ lets the fastest $R$ answer and keeps a slow replica off the tail.
+
+### Advanced
+
+**Q7. Design an inventory counter replicated in three regions with local writes.**
+**Answer.** A PN-Counter converges but cannot enforce "stock ≥ 0". Partition the stock into per-region allowances (escrow), sell locally within the allowance, and rebalance allowances with a coordinated transfer when one runs low; strong checks only at the boundary.
+
+**Q8. A Cassandra cluster shows deleted rows reappearing after a node replacement. Explain and fix.**
+**Answer.** A replica missed deletes and was not repaired within `gc_grace_seconds`; the others purged their tombstones, so repair copied the old rows back. Run repair on every node within the grace period, never return long-dead nodes without full repair, and alert on repair age.
+
+**Q9. Compare gossip dissemination and a consensus-backed store for cluster membership.**
+**Answer.** Gossip spreads changes in $O(\log n)$ rounds with constant per-node load and no single point of failure, but views differ briefly. A consensus store gives one agreed view and fencing at the cost of a quorum round trip and limited write throughput. Many systems use gossip for liveness and consensus for authoritative ownership.
+
+## 27.18 Practical exercises
+
+1. Extend the quorum program to estimate p99 read and write latency for $N = 5$ from a measured latency sample, for every $(R, W)$ with $R + W > N$.
+2. Add a suspicion timeout and incarnation numbers to the SWIM simulation and measure false positives with 5% packet loss.
+3. Implement a delta-state G-Counter that ships only changed slots and measure bytes sent against the full-state version.
+4. Implement an OR-Set that removes tombstones once every replica has acknowledged them, and test convergence with the law checker.
+
+## 27.19 Design challenges
+
+1. **Global shopping cart.** Three regions, writes always accepted, no lost additions. Choose replication, conflict resolution and repair, and explain deleted-item behavior.
+2. **Metadata store failover.** A primary–backup metadata service must fail over in under 10 s with zero acknowledged-write loss. Produce the time budget and fencing design.
+3. **Membership for 5,000 nodes.** Choose protocol parameters so a crash is declared within 10 s with a false-positive rate below one per day.
+
+## 27.20 References
+
+1. Almeida, P. S., Shoker, A., Baquero, C. *Delta State Replicated Data Types*. Journal of Parallel and Distributed Computing 111, 2018.
+2. Alsberg, P. A., Day, J. D. *A Principle for Resilient Sharing of Distributed Resources*. Proc. 2nd International Conference on Software Engineering (ICSE), 1976.
+3. Andersen, D. G., Franklin, J., Kaminsky, M., Phanishayee, A., Tan, L., Vasudevan, V. *FAWN: A Fast Array of Wimpy Nodes*. ACM SOSP, 2009.
+4. Akka. *Phi Accrual Failure Detector*. Akka documentation, accessed 2026.
+5. Apache Cassandra. *Documentation*: Dynamo architecture; Hints; Read repair; Repair; `cassandra.yaml`. Accessed 2026. https://cassandra.apache.org/doc/latest/
+6. Apache CouchDB. *Replication and Conflict Model*. CouchDB documentation, accessed 2026.
+7. Apache Kafka. *Documentation: Replication*. Accessed 2026. https://kafka.apache.org/documentation/
+8. Attiya, H., Bar-Noy, A., Dolev, D. *Sharing Memory Robustly in Message-Passing Systems*. Journal of the ACM 42(1), 1995.
+9. AWS. *Amazon DynamoDB Developer Guide: Global Tables*. Accessed 2026.
+10. Bieniusa, A., Zawirski, M., Preguiça, N., Shapiro, M., Baquero, C., Balegas, V., Duarte, S. *An Optimized Conflict-free Replicated Set*. arXiv, 2012.
+11. Budhiraja, N., Marzullo, K., Schneider, F. B., Toueg, S. *The Primary-Backup Approach*. In Mullender, S. (ed.), *Distributed Systems*, 2nd ed., ACM Press/Addison-Wesley, 1993.
+12. Chandra, T. D., Toueg, S. *Unreliable Failure Detectors for Reliable Distributed Systems*. Journal of the ACM 43(2), 1996.
+13. Dadgar, A., Phillips, J., Currey, J. *Lifeguard: SWIM-ing with Situational Awareness*. arXiv, 2017.
+14. Das, A., Gupta, I., Motivala, A. *SWIM: Scalable Weakly-consistent Infection-style Process Group Membership Protocol*. IEEE/IFIP DSN, 2002.
+15. DeCandia, G., Hastorun, D., Jampani, M., Kakulapati, G., Lakshman, A., Pilchin, A., Sivasubramanian, S., Vosshall, P., Vogels, W. *Dynamo: Amazon's Highly Available Key-value Store*. ACM SOSP, 2007.
+16. Demers, A., Greene, D., Hauser, C., Irish, W., Larson, J., Shenker, S., Sturgis, H., Swinehart, D., Terry, D. *Epidemic Algorithms for Replicated Database Maintenance*. ACM PODC, 1987.
+17. GitHub. *October 21 post-incident analysis*. GitHub Blog, 2018. https://github.blog/2018-10-30-oct21-post-incident-analysis/
+18. Hayashibara, N., Défago, X., Yared, R., Katayama, T. *The φ Accrual Failure Detector*. IEEE SRDS, 2004.
+19. Karp, R., Schindelhauer, C., Shenker, S., Vöcking, B. *Randomized Rumor Spreading*. IEEE FOCS, 2000.
+20. Kleppmann, M. *Designing Data-Intensive Applications*, ch. 5 "Replication". O'Reilly, 2017.
+21. Lakshman, A., Malik, P. *Cassandra: A Decentralized Structured Storage System*. ACM SIGOPS Operating Systems Review 44(2), 2010.
+22. Pittel, B. *On Spreading a Rumor*. SIAM Journal on Applied Mathematics 47(1), 1987.
+23. Preguiça, N., Baquero, C., Almeida, P. S., Fonte, V., Gonçalves, R. *Dotted Version Vectors: Logical Clocks for Optimistic Replication*. arXiv, 2010.
+24. Redis. *Active-Active geo-distributed Redis*. Redis Enterprise documentation, accessed 2026.
+25. Riak. *Riak KV documentation*: Conflict Resolution; Causal Context; Data Types. Accessed 2026.
+26. Scales, D. J., Nelson, M., Venkitachalam, G. *The Design of a Practical System for Fault-Tolerant Virtual Machines*. ACM SIGOPS Operating Systems Review 44(4), 2010.
+27. Shapiro, M., Preguiça, N., Baquero, C., Zawirski, M. *Conflict-free Replicated Data Types*. SSS 2011, LNCS 6976, 2011 (cited as 2011a).
+28. Shapiro, M., Preguiça, N., Baquero, C., Zawirski, M. *A Comprehensive Study of Convergent and Commutative Replicated Data Types*. INRIA Research Report RR-7506, 2011 (cited as 2011b).
+29. Terrace, J., Freedman, M. J. *Object Storage on CRAQ: High-throughput Chain Replication for Read-mostly Workloads*. USENIX ATC, 2009.
+30. van Renesse, R., Schneider, F. B. *Chain Replication for Supporting High Throughput and Availability*. USENIX OSDI, 2004.
+
+## 27.21 Open verification items
+
+- GitHub 2018 incident figures (43 s partition, 24 h 11 min degradation) confirmed only via search summaries; github.blog was unreachable from this session.
+- Cassandra's exponential-distribution phi model and the 3-hour default hint window should be checked against current (5.x) source and docs.
+- Dynamo's "99.94% of requests saw one version" figure and the ~10-entry vector-clock truncation threshold: check against the paper text.
+- DynamoDB global tables' LWW and strong-consistency mode wording (as of 2026).
+- Exact titles/URLs for Akka, CouchDB, Redis and Riak documentation pages.

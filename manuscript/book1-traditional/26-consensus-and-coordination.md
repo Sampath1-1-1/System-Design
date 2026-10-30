@@ -50,10 +50,10 @@ Many problems reduce to consensus: choosing one leader, committing or aborting a
 
 Section 24.13 introduced the **FLP result** [Fischer, Lynch and Paterson 1985]: in a fully *asynchronous* system, where message delays have no upper bound, no deterministic algorithm can guarantee consensus if even one process may crash. The reason is exactly Dana's silent phone: the algorithm can never distinguish "crashed" from "slow," and an adversarial schedule can keep it undecided forever.
 
-Practical algorithms escape FLP in a specific way. They **never compromise safety**, under any timing; they guarantee **termination only when the network behaves** for long enough, a model called **partial synchrony** [Dwork, Lynch and Stockmeyer 1988]. Paxos and Raft use timeouts to suspect failures and elect a new leader. A wrong suspicion costs time, never correctness. Keep this split in mind for the whole chapter: *safety from quorums, liveness from timeouts*.
+Practical algorithms **never compromise safety** under any timing, and guarantee **termination only when the network behaves** for long enough, a model called **partial synchrony** [Dwork, Lynch and Stockmeyer 1988]. Paxos and Raft use timeouts to suspect failures; a wrong suspicion costs time, never correctness.
 
 ::: concept
-**Key insight — Safety from quorums, liveness from timers.** In Paxos, Raft and ZAB, the rules that prevent two different decisions depend only on counting votes from overlapping majorities. Clocks and timeouts are used only to decide *when to try again*. That is why a badly tuned timeout makes these systems slow or unavailable but never inconsistent, and why designs that use clocks for safety (leases, §26.11) need separate scrutiny.
+**Key insight — Safety from quorums, liveness from timers.** In Paxos, Raft and ZAB, the rules preventing two different decisions depend only on counting votes from overlapping majorities; timeouts only decide *when to try again*. A badly tuned timeout makes these systems slow, never inconsistent. Designs that use clocks for safety (leases, §26.11) need separate scrutiny.
 :::
 
 The failure model matters. Paxos and Raft assume **crash-recovery** faults (§24.6): nodes stop, may restart with their durable state intact, and never lie. Tolerating **Byzantine** nodes that send arbitrary or malicious messages needs different algorithms and $3f+1$ nodes; that is the subject of Chapter 45.
@@ -90,7 +90,7 @@ flowchart LR
 
 **Reading the diagram.** The client sends a command to the consensus module on the leader (Node 1). The module appends the command to its durable log (subroutine shape) and replicates it, over RPC, to the modules on the other nodes, which append it to their own logs. When a majority of logs contain the entry, it is **committed**; each node then feeds committed entries, in order, to its state machine (cylinder), and the leader returns the result. Write-path arrows are synchronous: the client waits until a majority has stored the entry. Node 3 is one entry behind, which is allowed, because a majority (Nodes 1 and 2) holds entry 4. Storage: each node owns its log and state; nothing is shared. Failure points: if Node 1 crashes, Nodes 2 and 3 elect a new leader whose log contains every committed entry. Scaling: adding nodes improves fault tolerance but not write throughput, because every node stores every entry.
 
-Two consequences follow. First, the state machine must be **deterministic**: no reading the local clock, random numbers or unordered hash iteration inside `apply`. The leader picks such values and writes them into the command. Second, the log, not the state, is the source of truth; the state is a cache of "the log applied so far," which is why snapshots (§26.7.8) can replace the log prefix.
+Two consequences follow. The state machine must be **deterministic** (no local clock, random numbers or unordered iteration inside `apply`; the leader writes such values into the command). And the log is the source of truth; state is a cache of "the log applied so far," which is why snapshots (§26.7.8) can replace the log prefix.
 
 ::: mistake
 **Misconception — "Consensus makes the system faster or more scalable."** Consensus makes a service *fault-tolerant*, not fast. Every write waits for a majority round trip and a disk flush, and every node does every write. A 5-node etcd cluster has lower write throughput than a single node. Systems that need scale partition the data into many independent consensus groups (CockroachDB ranges, TiKV regions, Spanner splits), each small (§14.6, §28.10).
@@ -289,7 +289,7 @@ sequenceDiagram
 
 ### 26.5.2 Why election alone does not give safety
 
-Every algorithm above produces a node that *believes* it is the leader. None of them can make a deposed leader *stop believing it*. The old leader may be partitioned, paused for a garbage collection, or simply slow to notice that its lease expired. During that window there are two self-declared leaders, and if both act on shared state, you have split brain (§26.12).
+Every algorithm above produces a node that *believes* it leads; none can make a deposed leader *stop believing it*. A partitioned, paused or slow old leader overlaps with its successor, and if both act on shared state you have split brain (§26.12).
 
 Safe systems therefore add one of two mechanisms on top of election:
 
@@ -381,7 +381,7 @@ sequenceDiagram
   Note over P1,P2: repeats forever unless one backs off
 ```
 
-**Reading the diagram.** The acceptors are drawn as one participant to keep the picture readable; each arrow stands for messages to and replies from a majority. P1's prepare (1.1) succeeds, but before its accept arrives, P2's higher prepare (1.2) raises every acceptor's promise, so P1's accept is rejected. P1 retries with 2.1, which in turn invalidates P2's accept, and so on. No value is ever accepted by a majority, so nothing wrong is ever decided, but nothing is decided at all: this is the FLP adversarial schedule (§24.13) made concrete. The fixes are liveness mechanisms only: randomized back-off before retrying, and above all a single **distinguished proposer** (leader) chosen by a failure detector, which is exactly what Multi-Paxos and Raft provide.
+**Reading the diagram.** The acceptors are drawn as one participant; each arrow stands for messages to and replies from a majority. Before P1's accept arrives, P2's higher prepare (1.2) raises every promise, so P1's accept is rejected; P1's retry (2.1) then invalidates P2's accept, and so on. Nothing wrong is decided, but nothing is decided at all: the FLP adversarial schedule (§24.13) made concrete. The fixes are liveness mechanisms: randomized back-off and, above all, a single **distinguished proposer** (leader), which Multi-Paxos and Raft provide.
 
 ### 26.6.2 Multi-Paxos
 
@@ -407,7 +407,7 @@ sequenceDiagram
   L-->>C: result of c2
 ```
 
-**Reading the diagram.** After becoming leader with number 5.3, the leader prepares every slot from 8 onward in one exchange (synchronous RPC to a majority). Promises report values already accepted in those slots; here slot 8 had one, so the leader re-proposes it before using new slots. Each client command then costs one `Accept`/`Accepted` round trip to a majority plus a durable write on each acceptor. The leader applies commands to its state machine in slot order and replies. Failure points: if the leader fails, another node runs phase 1 with a higher number and must fill any **gaps**, slots that were never chosen, with a no-op. Scaling: throughput is improved by batching many commands into one slot and pipelining several slots in flight.
+**Reading the diagram.** The new leader (5.3) prepares every slot from 8 onward in one synchronous exchange with a majority. Promises report values already accepted there; slot 8 had one, so the leader re-proposes it first. Each client command then costs one `Accept`/`Accepted` round trip plus a durable write per acceptor, and the leader applies commands in slot order. Failure point: a successor leader must fill **gaps** (slots never chosen) with no-ops. Scaling: batch commands per slot and pipeline slots.
 
 #### Paxos in production
 
@@ -564,7 +564,7 @@ flowchart LR
   L4 ==>|"overwrite 4:t2"| F4
 ```
 
-**Reading the diagram.** Each box is a log entry labeled `index : term`. The follower holds entries 3 and 4 from term 2 that were never committed (a term-2 leader wrote them and crashed). The leader first sends AppendEntries with `prev 4:t5`; the follower has no such entry, so it fails; the leader backs off to `prev 3:t3` (fails) and then `prev 2:t1` (dotted arrow: the consistency check succeeds). The follower then truncates after index 2 and accepts the leader's entries 3 and 4 (thick arrows). Data flows only from leader to follower. Failure point: a follower that has been offline for a long time costs many round trips if the leader backs off one entry at a time; real implementations let the follower return its conflicting term and the first index of that term so the leader skips a whole term per round trip, or send a snapshot (§26.7.8).
+**Reading the diagram.** Each box is a log entry labeled `index : term`. The follower holds uncommitted entries 3 and 4 from a term-2 leader that crashed. The leader's AppendEntries with `prev 4:t5` fails, then `prev 3:t3` fails, then `prev 2:t1` succeeds (dotted arrow). The follower truncates after index 2 and takes the leader's entries 3 and 4 (thick arrows). Data flows only leader to follower. Failure point: backing off one entry per round trip is slow for long-lagging followers, so implementations skip a whole conflicting term per round trip or send a snapshot (§26.7.8).
 
 ### 26.7.5 The commit rule and the "current term only" subtlety
 
@@ -583,7 +583,7 @@ flowchart TB
   F --> Y["S5 can no longer win:<br/>majority has last term 4"]
 ```
 
-**Reading the diagram.** Read top to bottom. In (c), the term-2 entry at index 2 sits on a majority (S1, S2, S3), so a naive leader would call it committed. But S5's log ends with a term-3 entry, which is "more up-to-date" than term 2, so in (d) S5 can collect votes from S2, S3 and S4 and overwrite index 2 everywhere: the "committed" entry vanishes. Under Raft's rule (e), S1 must first get an entry of its own term 4 onto a majority. Those nodes now have last term 4, will refuse to vote for S5, and index 2 is committed safely as a prefix of index 3. The practical consequence is that a new leader immediately appends a **no-op entry** in its term so that earlier entries commit promptly; the simulator in §26.7.7 does exactly that.
+**Reading the diagram.** Read top to bottom. In (c), the term-2 entry at index 2 sits on a majority (S1, S2, S3), so a naive leader would call it committed. But S5's last entry has term 3, "more up-to-date" than term 2, so in (d) S5 wins votes from S2, S3 and S4 and overwrites index 2: the "committed" entry vanishes. Under Raft's rule (e), S1 first puts a term-4 entry on a majority; those nodes refuse to vote for S5, and index 2 commits safely as a prefix of index 3. Hence a new leader immediately appends a **no-op entry** in its term, as the simulator in §26.7.7 does.
 
 ### 26.7.6 Why Raft is safe
 
@@ -860,12 +860,12 @@ A log that grows forever exhausts disk and makes restarts replay hours of histor
 
 ### 26.7.9 Membership changes
 
-Replacing a failed node or growing from 3 to 5 voters changes the quorum definition, and switching all nodes at once is unsafe: during the transition some nodes may count majorities of the old configuration and others of the new, and two disjoint majorities could elect two leaders in the same term.
+Changing the voter set changes the quorum definition. Switching all nodes at once is unsafe: during the transition some nodes count old-configuration majorities and others new ones, and two disjoint majorities could elect two leaders in one term.
 
 - **Joint consensus** (Raft paper). The leader first commits a configuration entry $C_{\text{old,new}}$; while it is in effect, every election and every commit needs a majority of $C_{\text{old}}$ *and* a majority of $C_{\text{new}}$. Once $C_{\text{old,new}}$ is committed, the leader commits $C_{\text{new}}$. Any change, including replacing several nodes at once, is safe.
 - **Single-server changes** (thesis). If you add or remove only *one* voter at a time, every majority of the old configuration intersects every majority of the new one, so no joint phase is needed. Each configuration takes effect as soon as it is appended (not committed), and only one change may be in progress. In 2015 Ongaro reported a bug in the original single-server description that could lose a committed entry when changes overlapped with leader changes; the fix is that a new leader must commit an entry in its own term (the same no-op as in §26.7.5) before starting a membership change.
 
-Production systems add **learners** (non-voting members in etcd, observers in ZooKeeper): a new node first catches up as a learner, which does not affect the quorum, and is promoted to voter only when its log is current. Without this, adding an empty node to a 3-node cluster (making it 4, quorum 3) means one slow catch-up plus one unrelated failure blocks all writes.
+Production systems add **learners** (etcd) or observers (ZooKeeper): a new node catches up without affecting the quorum and is promoted when current. Otherwise adding an empty fourth node (quorum 3) plus one unrelated failure blocks all writes.
 
 ### 26.7.10 Linearizable reads: ReadIndex and lease reads
 
@@ -1069,10 +1069,10 @@ Leases appear throughout this book: GFS chunk leases (§15.5.1), Chubby sessions
 
 #### Causes
 
-- **Failover without a quorum.** A two-node primary–standby pair loses its heartbeat link; each side sees the other as dead and promotes itself. With two nodes, neither side can tell a partition from a crash.
-- **A paused or slow primary.** As in the chapter opening, the old primary resumes after being replaced and keeps serving, because nothing stops it.
-- **Asymmetric partitions.** A can reach B but B cannot reach A, so the nodes disagree about who is alive.
-- **Operator error.** Manually promoting a replica while the old primary is still reachable by some clients.
+- **Failover without a quorum.** A two-node pair loses its heartbeat link and each side promotes itself; neither can tell a partition from a crash.
+- **A paused primary** resumes after being replaced and keeps serving (the chapter opening).
+- **Asymmetric partitions.** A reaches B but not vice versa, so they disagree about who is alive.
+- **Operator error.** Promoting a replica while the old primary is still reachable.
 
 #### Prevention
 
@@ -1178,7 +1178,7 @@ flowchart LR
   TS -->|"tablet data"| GFS[(GFS chunkservers)]
 ```
 
-**Reading the diagram.** Solid arrows are synchronous RPCs; the dotted arrow is an asynchronous event subscription. Bigtable's master acquires an exclusive lock so at most one master acts; GFS elects its master the same way. Each tablet server creates and locks a uniquely named file in a servers directory; the Bigtable master watches that directory to discover servers and, if a server loses its lock, reassigns its tablets after deleting the file to ensure the server cannot serve again. Clients bootstrap by reading the root tablet's location from Chubby, then talk to tablet servers directly, which store data in GFS. Chubby is off the data path. Failure point: if Chubby is unavailable for long, Bigtable becomes unavailable; the Bigtable paper measured this effect as small but nonzero [Chang et al. 2006]. Scaling: clients cache Chubby data, and Chubby proxies can aggregate KeepAlives.
+**Reading the diagram.** Solid arrows are synchronous RPCs; the dotted arrow is an asynchronous event subscription. Bigtable's and GFS's masters each hold an exclusive lock so at most one master acts. Each tablet server locks a uniquely named file in a servers directory; the Bigtable master watches it to discover servers and, when one loses its lock, deletes its file and reassigns its tablets. Clients read the root tablet's location from Chubby, then talk to tablet servers, which store data in GFS; Chubby is off the data path. Failure point: if Chubby is unavailable for long, Bigtable becomes unavailable; the Bigtable paper measured this effect as small but nonzero [Chang et al. 2006]. Scaling: clients cache Chubby data, and Chubby proxies can aggregate KeepAlives.
 
 ::: industry
 **Chubby as Google's name service.** Burrows reports that Chubby's most popular use was not locking but naming: storing small files mapping service names to addresses, where Chubby's consistent caching outperformed time-based DNS caching. Trade-off: this concentrated a great deal of read load on one service, handled by caching and proxies.
@@ -1201,7 +1201,7 @@ flowchart LR
 | Use cases | Hadoop, HBase, older Kafka, Solr | Kubernetes, CoreDNS, Vitess topology, many cloud-native systems | Service mesh, discovery, config, locks | GFS, Bigtable master election; naming |
 | Choose when | You run the Hadoop ecosystem or need its recipes | You build on Kubernetes or need watches with history | You need discovery and health checking with locks | (Model for your designs) |
 
-Two more options deserve a sentence. Many systems now **embed** Raft (via libraries such as etcd's `raft` package or HashiCorp's `raft`) instead of depending on an external service, as Kafka did with KRaft. And cloud providers offer managed primitives (conditional writes in DynamoDB or object storage) that can serve as leases or fencing points for coarse coordination without running any quorum yourself.
+Many systems now **embed** a Raft library (etcd's `raft`, HashiCorp's `raft`) instead of running an external service, as Kafka did with KRaft; and conditional writes in managed stores can serve as leases or fencing points without running a quorum yourself.
 
 ## 26.15 Summary and revision notes
 
