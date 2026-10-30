@@ -152,7 +152,7 @@ flowchart LR
 
 #### Advantages and disadvantages
 
-Good decomposition makes reasoning, scaling, failure isolation and team ownership easier. It also has costs. Every boundary that crosses a network turns a function call (~nanoseconds) into a remote call (~0.5 ms or more within a datacenter, see §4.17), and that call can fail independently. Data split across components loses cross-component transactions (Chapter 28). Too many components multiply operational load: more deployments, dashboards and on-call rotations.
+Good decomposition makes reasoning, scaling, failure isolation and team ownership easier. It also has costs. Every boundary that crosses a network turns a function call (~nanoseconds) into a remote call (~0.1–0.5 ms or more within a datacenter, see §4.17), and that call can fail independently. Data split across components loses cross-component transactions (Chapter 28). Too many components multiply operational load: more deployments, dashboards and on-call rotations.
 
 #### Alternatives and trade-offs
 
@@ -747,7 +747,7 @@ Alternatives to a weighted matrix include simple **pros/cons lists** (fine for t
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Matrix theatre | Scores reverse-engineered to justify a choice already made | Justifications are vague | Re-score independently | Have two people score blind |
+| Matrix theater | Scores reverse-engineered to justify a choice already made | Justifications are vague | Re-score independently | Have two people score blind |
 | Missing option | The best option was never listed | A reviewer proposes it late | Add and re-score | Always include "simplest thing" and a hybrid |
 | Analysis paralysis on a two-way door | One process for every decision | Weeks of debate on reversible items | Time-box; pick and measure | Classify reversibility first |
 | Rushed one-way door | Treated like a quick choice | Expensive migration later | Migration project | Figure 2.5 before deciding |
@@ -959,7 +959,7 @@ $$S = n_{day} \times s \times T \times k \qquad N = \left\lceil \frac{R_{peak}}{
 
 | Resource | Rough capacity | Note |
 |---|---|---|
-| Round trip within one datacenter | ~0.5 ms | See §4.17 and Appendix F for dated values |
+| Round trip within one datacenter | ~0.1–0.5 ms | See §4.17 and Appendix F for dated values |
 | Round trip across a continent | ~50–100 ms | Bounded by the speed of light in fiber |
 | Stateless API node, simple JSON requests | ~10³ RPS | Varies by 10× with language and work per request |
 | Relational DB primary, simple indexed writes | ~10³–10⁴ writes/s | Depends on fsync, schema, hardware |

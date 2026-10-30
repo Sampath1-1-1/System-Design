@@ -860,7 +860,7 @@ flowchart LR
   S -->|completed| D([Departures rate λ])
 ```
 
-**Reading the diagram.** Jobs flow left to right. Arrivals come from many independent clients at average rate $\lambda$ (requests/s); the queue (subroutine shape) is a buffer, typically in memory, with no limit in this model; the single server processes one job at a time at average rate $\mu$. In steady state, departures equal arrivals ($\lambda$), so throughput is set by demand, not by the server, as long as $\lambda < \mu$. The failure point is the queue itself: if $\lambda \geq \mu$ it grows without bound until memory or timeouts intervene. Scaling options are a faster server (raise $\mu$), more servers (M/M/c, §4.10.5) or less demand (caching, load shedding).
+**Reading the diagram.** Jobs flow left to right. Arrivals come from many independent clients at average rate $\lambda$ (requests/s); the queue (subroutine shape) is a buffer, typically in memory, with no limit in this model; the single server processes one job at a time at average rate $\mu$. In steady state, departures equal arrivals ($\lambda$), so throughput is set by demand, not by the server, as long as $\lambda < \mu$. The failure point is the queue itself: if $\lambda \geq \mu$ it grows without bound until memory or timeouts intervene. Scaling options are a faster server (raise $\mu$), more servers (M/M/c, §4.10.4) or less demand (caching, load shedding).
 
 ::: formula
 **M/M/1 results**
@@ -1553,10 +1553,10 @@ A table of hardware and network latencies popularized by Jeff Dean around 2009�
 | Main memory reference | 100 ns | ~80–120 ns | Has changed little in 15 years |
 | Compress 1 KB with a fast compressor (Zippy/Snappy) | 3 µs | ~1–3 µs | |
 | Send 1 KB over a network link | 10 µs (1 Gbps) | ~1 µs (10 Gbps) | Serialization time only |
-| Read 4 KB randomly from SSD | 150 µs (SATA era) | ~20–100 µs (NVMe) | |
-| Read 1 MB sequentially from memory | 250 µs | ~25–100 µs | Depends on bandwidth per core |
+| Read 4 KB randomly from SSD | 150 µs (SATA era) | ~50–100 µs (NVMe) | |
+| Read 1 MB sequentially from memory | 250 µs | ~50–100 µs | One thread; depends on bandwidth per core |
 | Round trip within one datacenter | 500 µs | ~50–500 µs | Kernel bypass can be much lower |
-| Read 1 MB sequentially from SSD | 1 ms | ~0.15–0.5 ms (NVMe) | |
+| Read 1 MB sequentially from SSD | 1 ms | ~0.15–0.3 ms (NVMe) | |
 | Disk (HDD) seek | 10 ms | ~4–10 ms | Mechanical; unchanged |
 | Read 1 MB sequentially from HDD | 20 ms | ~5 ms | ~200 MB/s sequential |
 | Packet round trip California ↔ Netherlands | 150 ms | ~140–150 ms | Bounded by the speed of light in fiber |
@@ -1629,7 +1629,7 @@ In a *closed* system, where a fixed number of clients each wait for a reply befo
 
 ### 4.18.3 Replication ↔ durability (and cost and write latency)
 
-From §4.16, each extra replica improves durability by about $1/(\lambda T)$ but costs a full copy of storage and, for synchronous replication, adds the slowest acknowledgement to every write.
+From §4.16, each extra replica improves durability by about $1/(\lambda T)$ but costs a full copy of storage and, for synchronous replication, adds the slowest acknowledgment to every write.
 
 ::: example
 **Worked example — Paying for nines.** With AFR 2% and $T = 24$ h (Table 4.8):

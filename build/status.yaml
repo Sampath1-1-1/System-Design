@@ -1,12 +1,12 @@
 # Manual review status per chapter: todo | wip | done | revise
 # Keys: research, draft, diagrams, review, final
-1: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-2: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-3: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-4: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-5: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-6: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-7: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-8: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-9: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-10: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+1: {research: done, draft: done, diagrams: done, review: done, final: todo}
+2: {research: done, draft: done, diagrams: done, review: done, final: todo}
+3: {research: done, draft: done, diagrams: done, review: done, final: todo}
+4: {research: done, draft: done, diagrams: done, review: done, final: todo}
+5: {research: done, draft: done, diagrams: done, review: done, final: todo}
+6: {research: done, draft: done, diagrams: done, review: done, final: todo}
+7: {research: done, draft: done, diagrams: done, review: done, final: todo}
+8: {research: done, draft: done, diagrams: done, review: done, final: todo}
+9: {research: done, draft: done, diagrams: done, review: done, final: todo}
+10: {research: done, draft: done, diagrams: done, review: done, final: todo}

@@ -36,18 +36,21 @@ vertical-align: middle;
 --navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
 --green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
 --grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+color-scheme: dark;
 }
 }
 :root[data-theme="dark"] {
 --navy: #A9C1EC; --blue: #7FB0F0; --blue-bg: #17243A; --teal: #6CC7C7; --teal-bg: #12302F;
 --green: #8CCB98; --green-bg: #15291A; --amber: #E8B562; --amber-bg: #33280F;
 --grey: #9AA4B2; --grey-bg: #1E2228; --text: #E6E8EB; --muted: #A8B0BA; --rule: #333A44; --page-bg: #121519;
+color-scheme: dark;
 }
 html { font-size: 16px; }
 body {
 font-family: "Source Serif 4", "Source Serif Pro", Georgia, "DejaVu Serif", serif;
 color: var(--text); background: var(--page-bg);
-line-height: 1.6; max-width: 48rem; margin: 0 auto; padding: 2rem 1rem 4rem;
+line-height: 1.6; max-width: 48rem; margin: 0 auto; padding-block: 2rem 4rem;
+padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
 hyphens: auto; -webkit-hyphens: auto; overflow-wrap: break-word;
 }
 h1, h2, h3, h4, h5 { font-family: Inter, "DejaVu Sans", Helvetica, Arial, sans-serif; color: var(--navy); line-height: 1.25; }
@@ -70,6 +73,7 @@ th { background: var(--blue-bg); color: var(--navy); text-align: left; font-weig
 th, td { padding: .4rem .55rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
 tbody tr:nth-child(even) { background: color-mix(in srgb, var(--grey-bg) 60%, transparent); }
 .table-wrap { overflow-x: auto; }
+@media (max-width: 600px) { table { display: block; overflow-x: auto; } }
 
 figure, p > img { text-align: center; }
 img { max-width: 100%; height: auto; }
@@ -115,7 +119,7 @@ nav#TOC > ul { padding-left: 0; }
 nav#TOC > ul > li { margin-top: .5rem; font-weight: 600; }
 nav#TOC > ul > li li { font-weight: 400; }
 nav#TOC a { text-decoration: none; color: var(--text); }
-@media (max-width: 600px) { body { padding: 1rem 16px 3rem; } h1 { font-size: 1.6rem; } table { font-size: .75rem; } }
+@media (max-width: 600px) { body { padding-block: 1rem 3rem; } h1 { font-size: 1.6rem; } table { font-size: .75rem; } }
 
 @page { size: A4; margin: 22mm 20mm 24mm 20mm; }
 @media print {
@@ -154,6 +158,7 @@ A — Glossary</a>
 <li><a href="#g" id="toc-g">G</a></li>
 <li><a href="#h" id="toc-h">H</a></li>
 <li><a href="#i" id="toc-i">I</a></li>
+<li><a href="#j" id="toc-j">J</a></li>
 <li><a href="#k" id="toc-k">K</a></li>
 <li><a href="#l" id="toc-l">L</a></li>
 <li><a href="#m" id="toc-m">M</a></li>
@@ -179,6 +184,12 @@ Canonical usage rules are in
 <code>docs/project/terminology.md</code>.</p>
 </blockquote>
 <h2 id="a">A</h2>
+<p><strong>Access-control model</strong> — A rule system that answers
+“may subject <em>S</em> perform action <em>A</em> on resource <em>R</em>
+(in context <em>C</em>)?” The three models in common use differ in what
+the rules are written in terms of: <strong>roles</strong> (RBAC),
+<strong>attributes</strong> (ABAC) or <strong>relationships</strong>
+(ReBAC). <em>(§8.12.1)</em></p>
 <p><strong>Active recall</strong> — Deliberately retrieving information
 from memory without looking at the source, for example by answering a
 question, drawing a diagram or explaining aloud. Its measured benefit
@@ -230,6 +241,11 @@ reordering of past entries can be detected. <em>(§10.12)</em></p>
 <strong>tag</strong> that decryption checks before releasing any
 plaintext. AES-GCM and ChaCha20-Poly1305 are AEAD schemes.
 <em>(§10.4.2)</em></p>
+<p><strong>Authentication (AuthN)</strong> — Verifying <em>who</em> a
+client is. <strong>Authorization (AuthZ)</strong> is deciding
+<em>what</em> that verified identity may do (§8.12). AuthN failures
+return <code>401</code>; AuthZ failures return <code>403</code>.
+<em>(§8.11)</em></p>
 <p><strong>Availability</strong> — The fraction of time (or of requests)
 for which a system serves correctly:
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><mtext mathvariant="normal">uptime</mtext><mi>/</mi><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">uptime</mtext><mo>+</mo><mtext mathvariant="normal">downtime</mtext><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">A = \text{uptime}/(\text{uptime} + \text{downtime})</annotation></semantics></math>,
@@ -361,6 +377,12 @@ sender’s estimate of what the network path can absorb. The sender may
 have at most
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo>min</mo><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">cwnd</mtext><mo>,</mo><mtext mathvariant="normal">rwnd</mtext><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\min(\text{cwnd}, \text{rwnd})</annotation></semantics></math>
 bytes outstanding. <em>(§7.7.7)</em></p>
+<p><strong>Connection gateway</strong> — A dedicated, thin service tier
+whose only job is to terminate long-lived client connections (WebSocket,
+SSE, long polling), authenticate them, track which user and topics each
+connection belongs to, and move messages between those connections and
+back-end services through a messaging layer. It contains no business
+logic. <em>(§9.9.1)</em></p>
 <p><strong>Consistent hashing</strong> — A way of assigning keys to
 nodes so that, when a node is added or removed, only about
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>K</mi><mi>/</mi><mi>N</mi></mrow><annotation encoding="application/x-tex">K/N</annotation></semantics></math>
@@ -416,7 +438,7 @@ resistance</strong>). <em>(§10.4.1)</em></p>
 client needs an RPC to complete. gRPC transmits it as a remaining
 timeout; when it passes, the client stops waiting with
 <code>DEADLINE_EXCEEDED</code> and the server can see that the call was
-cancelled [gRPC Docs: Deadlines]. <em>(§8.8.4)</em></p>
+canceled [gRPC Docs: Deadlines]. <em>(§8.8.4)</em></p>
 <p><strong>Deadlock</strong> — A state in which each thread in a set is
 waiting for a resource held by another thread in the same set, so none
 can ever proceed. <em>(§6.11.1)</em></p>
@@ -481,6 +503,12 @@ used for main memory. Each bit is stored as charge in a tiny capacitor
 that leaks and must be <strong>refreshed</strong> every few tens of
 milliseconds. DRAM is <strong>volatile</strong>: its contents are lost
 when power is removed. <em>(§5.5.1)</em></p>
+<p><strong>Durability</strong> — The probability that data, once
+acknowledged as written, is not lost over a given period (usually a
+year). It is quoted in nines like availability: “eleven nines of
+durability” means an annual loss probability of
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msup><mn>10</mn><mrow><mo>−</mo><mn>11</mn></mrow></msup><annotation encoding="application/x-tex">10^{-11}</annotation></semantics></math>
+per object. <em>(§4.16.1)</em></p>
 <h2 id="e">E</h2>
 <p><strong>Encapsulation</strong> — The process by which each layer of
 the stack prepends its own header (and sometimes appends a trailer) to
@@ -492,6 +520,10 @@ receiver. <em>(§7.3.1)</em></p>
 encrypting (“wrapping”) the DEK with a KEK held in a KMS, and storing
 the wrapped DEK alongside the ciphertext [AWS Docs: KMS concepts].
 <em>(§10.9.2)</em></p>
+<p><strong>Event loop</strong> — A single thread that repeatedly waits
+for events (ready sockets, expired timers, completed tasks) using an I/O
+multiplexing call, and dispatches each event to a short, non-blocking
+handler. <em>(§6.13.4)</em></p>
 <p><strong>Expected value</strong> — The probability-weighted average
 outcome of a random quantity
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>X</mi><annotation encoding="application/x-tex">X</annotation></semantics></math>:
@@ -558,6 +590,11 @@ external dependencies), their responsibilities, the interfaces and
 protocols between them, data flows, and deployment topology — at a level
 of detail where each component is a box whose internals are not yet
 specified. <em>(§1.5.1)</em></p>
+<p><strong>HTTP cookie</strong> — A small name–value pair that a server
+asks the browser to store, via the <code>Set-Cookie</code> response
+header, and that the browser automatically returns in the
+<code>Cookie</code> request header on later requests to matching URLs
+[RFC 6265]. <em>(§8.10.1)</em></p>
 <h2 id="i">I</h2>
 <p><strong>Idempotent method</strong> — A method for which the intended
 effect on the server of sending the same request
@@ -590,6 +627,12 @@ network interface that the Internet Protocol uses to deliver packets. An
 is 128 bits, written as eight groups of four hexadecimal digits
 separated by colons (<code>2001:db8:0:1::25</code>) [RFC 8200].
 <em>(§7.4.1)</em></p>
+<h2 id="j">J</h2>
+<p><strong>JSON Web Token (JWT)</strong> — A compact, URL-safe string
+representing a set of <strong>claims</strong> (statements about a
+subject) as a JSON object, digitally signed (JWS) or encrypted (JWE) so
+its integrity can be verified [RFC 7519]. This section covers the signed
+form, which is by far the most common. <em>(§8.13.1)</em></p>
 <h2 id="k">K</h2>
 <p><strong>Key management service (KMS)</strong> — A managed service,
 backed by hardware security modules (HSMs), that generates and stores
@@ -719,6 +762,18 @@ all memory in the machine, but accessing its <strong>local</strong>
 memory is faster than accessing <strong>remote</strong> memory attached
 to another socket. <em>(§5.10)</em></p>
 <h2 id="o">O</h2>
+<p><strong>OAuth 2.0</strong> — An authorization framework that lets a
+third-party application obtain <em>limited</em> access to an HTTP
+service on behalf of a resource owner, by obtaining an <strong>access
+token</strong> from an authorization server instead of using the owner’s
+credentials [RFC 6749]. <em>(§8.14.1)</em></p>
+<p><strong>OpenAPI Specification (OAS)</strong> — A vendor-neutral,
+machine-readable format (YAML or JSON) for describing HTTP APIs: paths,
+operations, parameters, request and response bodies (as JSON Schema),
+status codes and security schemes [OpenAPI Specification]. It grew out
+of Swagger and is maintained by the OpenAPI Initiative; version 3.1
+aligned its schemas with JSON Schema, and version 3.2.0 was released in
+September 2025. <em>(§8.16)</em></p>
 <p><strong>Operating system (OS)</strong> — The software layer that
 manages a computer’s hardware (CPU, memory, storage, network) and
 provides running programs with safe, shared, abstract access to it. The
@@ -763,6 +818,13 @@ of the measurements fall. Latency percentiles are written
 latency value below which the given percentage of requests fall. If p99
 latency is 300 ms, 99% of requests completed in 300 ms or less and 1%
 took longer. p50 is the median. <em>(§1.7.1)</em></p>
+<p><strong>PKCE (Proof Key for Code Exchange, “pixy”)</strong> — An
+extension in which the client creates a random secret, the <strong>code
+verifier</strong>, sends only its SHA-256 hash, the <strong>code
+challenge</strong>, with the authorization request, and must present the
+verifier when redeeming the authorization code. An attacker who
+intercepts the code cannot redeem it without the verifier [RFC 7636].
+<em>(§8.14.3)</em></p>
 <p><strong>Priority inversion</strong> — A situation in which a
 high-priority thread is blocked waiting for a lock held by a
 low-priority thread, while a medium-priority thread, which needs no
@@ -813,7 +875,7 @@ CA</strong> certificate in its local <strong>trust store</strong>.
 <h2 id="q">Q</h2>
 <p><strong>Queueing system</strong> — A model in which
 <strong>jobs</strong> (requests, messages, packets) arrive at a
-<strong>service centre</strong>, wait in a <strong>queue</strong> if all
+<strong>service center</strong>, wait in a <strong>queue</strong> if all
 <strong>servers</strong> are busy, receive service, and depart. The
 <strong>arrival rate</strong>
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>λ</mi><annotation encoding="application/x-tex">\lambda</annotation></semantics></math>
@@ -836,6 +898,21 @@ inside a core, typically 64 bits wide for general-purpose registers.
 x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A
 (AArch64) exposes 31. Reading a register costs essentially nothing
 beyond the instruction that uses it. <em>(§5.3.2)</em></p>
+<p><strong>Reliability, MTBF, MTTR and failure rate</strong> —
+<strong>Reliability</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>R</mi><mrow><mo stretchy="true" form="prefix">(</mo><mi>t</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">R(t)</annotation></semantics></math>
+is the probability that a component operates without failure for a
+period of length
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>t</mi><annotation encoding="application/x-tex">t</annotation></semantics></math>.
+The <strong>mean time between failures (MTBF)</strong> is the average
+operating time from the end of one repair to the next failure (for
+non-repairable parts the same quantity is called <strong>MTTF</strong>,
+mean time to failure). The <strong>mean time to repair (MTTR)</strong>
+is the average time from failure to restored service, including
+detection, diagnosis and repair. The <strong>failure rate</strong>
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>λ</mi><annotation encoding="application/x-tex">\lambda</annotation></semantics></math>
+is the average number of failures per unit of operating time.
+<em>(§4.15.1)</em></p>
 <p><strong>Remote procedure call (RPC)</strong> — A mechanism that lets
 a program call a function in another process, usually on another
 machine, with syntax that resembles a local function call. Generated
@@ -910,6 +987,9 @@ reconnects automatically, resuming from the last received event ID
 complete HTML for each request; the browser displays it immediately and
 then loads JavaScript to make it interactive
 (<strong>hydration</strong>). <em>(§8.4.2)</em></p>
+<p><strong>Session</strong> — Server-recognized state that links a
+series of requests to one authenticated user (or anonymous visitor) over
+time, typically identified by a cookie. <em>(§8.10.2)</em></p>
 <p><strong>Set-associative cache</strong> — A cache divided into
 <math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>S</mi><annotation encoding="application/x-tex">S</annotation></semantics></math>
 sets of

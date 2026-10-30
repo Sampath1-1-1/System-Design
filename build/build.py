@@ -296,6 +296,10 @@ def main():
         lo, hi = vol["chapters"] or (0, -1)
         nums = sorted((set(vol.get("include", [])) | set(range(lo, hi + 1))) - set(vol.get("exclude", [])))
         extra = [ROOT / e for e in vol.get("extra", [])]
+        chapters_by_num = {c[0]: c for c in manifest["chapters"]}
+        if hi >= lo and not any(chapter_files(n, chapters_by_num[n][3]) for n in range(lo, hi + 1)):
+            print(f"- {key}: none of chapters {lo}-{hi} written yet, skipped")
+            continue
         build_volume(key, vol["title"], nums, manifest, formats, extra=extra)
     if not args.volume or args.volume.startswith("D4"):
         build_volume("D4-architecture-diagram-collection", "Architecture Diagram Collection", [], manifest,

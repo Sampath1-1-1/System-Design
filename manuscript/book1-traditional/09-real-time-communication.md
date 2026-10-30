@@ -964,7 +964,7 @@ If every app kept its own background WebSocket, heartbeats would wake the cellul
 
 1. **Registration.** On launch, the app asks the OS for a push **token** (APNs device token, FCM registration token). The token identifies *this app on this device* to the push service.
 2. **Token upload.** The app sends the token, with the user ID and a timestamp, to your backend, which stores it (a user typically has several tokens: phone, tablet, reinstalls).
-3. **Send.** When an event occurs, your **notification service** (Chapter 52.4 designs one) looks up the user's tokens and calls the provider:
+3. **Send.** When an event occurs, your **notification service** (§52.4 designs one) looks up the user's tokens and calls the provider:
    - **APNs:** an HTTP/2 `POST /3/device/<token>` to `api.push.apple.com` (or `api.sandbox.push.apple.com` for development), authenticated by a JWT signed with your `.p8` key (token-based) or by a TLS client certificate. Headers include `apns-topic` (the app bundle ID), `apns-push-type` (`alert`, `background`, `voip`, …), `apns-priority` (10 = send immediately, 5 = send at a power-efficient time), `apns-expiration` and `apns-collapse-id` [Apple: Sending notification requests to APNs].
    - **FCM:** an HTTPS `POST https://fcm.googleapis.com/v1/projects/<project>/messages:send` (the HTTP v1 API) with an OAuth 2.0 access token from a service account. The JSON body names the token (or a topic) and carries `notification` and/or `data` payloads plus platform options such as `android.collapse_key`, `android.ttl` and `android.priority` [FCM Docs].
 4. **Store and forward.** If the device is offline, the provider stores the message for a limited time and delivers it when the device reconnects — with strict limits (below).
@@ -1548,4 +1548,4 @@ Tasks: (a) write a client with `websockets.asyncio.client.connect` that joins a 
 - Default idle timeouts (AWS ALB 60 s, NGINX `proxy_read_timeout` 60 s) and Kubernetes `terminationGracePeriodSeconds` 30 s — stable for years but flagged "as of 2024".
 - Authors of RFC 8489 and RFC 8656 reference entries; exact URL of Russell 2006 post.
 - Per-connection memory figures in Table 9.12 are Illustrative and should be replaced with measured values (Exercise 9.3).
-- Runnable programmes should also be copied to `code/ch09/` per style guide §8 (not done; out of this author's file scope).
+- Runnable programs should also be copied to `code/ch09/` per style guide §8 (not done; out of this author's file scope).

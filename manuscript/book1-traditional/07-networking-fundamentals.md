@@ -211,7 +211,7 @@ You are given the VPC range `10.0.0.0/16` and want equal subnets across three av
 4. Usable per subnet on AWS: $4096 - 5 = 4{,}091$.
 5. Membership test: is `10.0.37.200` in `10.0.32.0/20`? The block covers third-octet values 32–47 (32 + 16 − 1). 37 is in that range, so **yes**; its range is `10.0.32.0`–`10.0.47.255`.
 
-Interpretation: a `/20` per subnet sounds generous, but container platforms that give every pod its own VPC address (for example, the AWS VPC CNI for Kubernetes) can consume thousands of addresses per subnet. Running out of IPs in a subnet is a common production incident; size for pods, not for nodes (§42.9).
+Interpretation: a `/20` per subnet sounds generous, but container platforms that give every pod its own VPC address (for example, the AWS VPC CNI for Kubernetes) can consume thousands of addresses per subnet. Running out of IPs in a subnet is a common production incident; size for pods, not for nodes (Ch 42).
 :::
 
 ::: example
@@ -250,7 +250,7 @@ Some ranges are reserved and never routed on the public Internet. The most impor
 | 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 | 256 each | Documentation examples (RFC 5737); used in this book |
 | `::1/128` | 1 | IPv6 loopback |
 | `fe80::/10` | — | IPv6 link-local |
-| `fc00::/7` | — | IPv6 unique local addresses (RFC 4193), the IPv6 analogue of private space |
+| `fc00::/7` | — | IPv6 unique local addresses (RFC 4193), the IPv6 analog of private space |
 | `2000::/3` | — | IPv6 global unicast |
 | `2001:db8::/32` | — | IPv6 documentation (RFC 3849) |
 
@@ -494,7 +494,7 @@ Because a DNS answer can differ per query, DNS is the coarsest and cheapest load
 
 - **Round-robin DNS.** Return several A records, rotating their order. Clients typically try the first.
 - **Weighted answers.** Return each address in proportion to configured weights.
-- **Geo-DNS / latency-based DNS.** Answer based on the resolver's (or, with the EDNS Client Subnet extension, the client's) location, pointing users to a nearby region (§44, §19.9).
+- **Geo-DNS / latency-based DNS.** Answer based on the resolver's (or, with the EDNS Client Subnet extension, the client's) location, pointing users to a nearby region (Ch 44, §19.9).
 - **Health-checked DNS.** Remove addresses whose health checks fail.
 
 The limits are fundamental, not implementation details:
@@ -1025,7 +1025,7 @@ sequenceDiagram
     S-->>C: encrypted HTTP response
 ```
 
-**Reading the diagram.** Step 1, the **ClientHello**, carries a random nonce, the cipher suites the client supports, its ephemeral Diffie–Hellman **key share**, the **Server Name Indication (SNI)** naming the host it wants (so one IP address can serve many sites), and the **ALPN** list of application protocols it speaks (`h2`, `http/1.1`). Steps 2–6 are the server's single flight. From the ServerHello onward, both sides can derive handshake keys, so everything after it, including the certificate, is encrypted (in TLS 1.2 the certificate travelled in clear text). CertificateVerify proves the server holds the private key for the certificate; Finished proves nobody tampered with the handshake. In step 7 the client sends its Finished and, in step 8, its first request, all after **one RTT**. Steps 9–10 arrive later: a session ticket for faster resumption, and the response. Everything is synchronous request/response over the already-established TCP connection. Failure points: certificate validation (expired, wrong name, untrusted issuer) aborts the handshake; mismatched protocol versions or cipher suites fail at step 2. Scaling consideration: the server's signature in step 5 is the main CPU cost of a handshake, which is a reason to reuse connections (§7.16) and resume sessions.
+**Reading the diagram.** Step 1, the **ClientHello**, carries a random nonce, the cipher suites the client supports, its ephemeral Diffie–Hellman **key share**, the **Server Name Indication (SNI)** naming the host it wants (so one IP address can serve many sites), and the **ALPN** list of application protocols it speaks (`h2`, `http/1.1`). Steps 2–6 are the server's single flight. From the ServerHello onward, both sides can derive handshake keys, so everything after it, including the certificate, is encrypted (in TLS 1.2 the certificate traveled in clear text). CertificateVerify proves the server holds the private key for the certificate; Finished proves nobody tampered with the handshake. In step 7 the client sends its Finished and, in step 8, its first request, all after **one RTT**. Steps 9–10 arrive later: a session ticket for faster resumption, and the response. Everything is synchronous request/response over the already-established TCP connection. Failure points: certificate validation (expired, wrong name, untrusted issuer) aborts the handshake; mismatched protocol versions or cipher suites fail at step 2. Scaling consideration: the server's signature in step 5 is the main CPU cost of a handshake, which is a reason to reuse connections (§7.16) and resume sessions.
 
 ### 7.10.3 Certificates and the chain of trust
 
@@ -1039,7 +1039,7 @@ A **certificate** binds a public key to one or more names (in the Subject Altern
 
 Operationally, the most common TLS outage is mundane: **an expired certificate**. Publicly trusted certificates have a maximum lifetime of 398 days as of 2025, and the CA/Browser Forum has adopted a schedule to shorten it further over the coming years; ACME-based automation (as popularized by Let's Encrypt) is the only sane response. Monitor expiry dates of every certificate, including internal ones.
 
-**Mutual TLS (mTLS)**, in which the client also presents a certificate, is the standard way to authenticate services to each other inside a zero-trust network (§10.10).
+**Mutual TLS (mTLS)**, in which the client also presents a certificate, is the standard way to authenticate services to each other inside a zero-trust network (§10.10). PKI design — issuance, revocation and private CAs — is covered in §10.5.
 
 **Table 7.11 — TLS 1.2 versus TLS 1.3.**
 
@@ -1131,7 +1131,7 @@ flowchart LR
 | Examples | Squid, corporate secure web gateways, egress proxies in VPCs | NGINX, HAProxy, Envoy, cloud load balancers, CDNs, API gateways |
 | System-design relevance | Controlled egress from private networks | Nearly every web architecture's front door |
 
-A reverse proxy that distributes load is a **load balancer** (Chapter 19); one that adds authentication, quotas and API management is an **API gateway** (§22); one deployed beside every service instance is a **sidecar** in a **service mesh**. Proxies that terminate TCP also shield back-ends from slow clients: the proxy buffers a slowly uploaded request and hands the application a complete one, so the application's limited workers are not tied up for seconds.
+A reverse proxy that distributes load is a **load balancer** (Chapter 19); one that adds authentication, quotas and API management is an **API gateway** (§34.6); one deployed beside every service instance is a **sidecar** in a **service mesh**. Proxies that terminate TCP also shield back-ends from slow clients: the proxy buffers a slowly uploaded request and hands the application a complete one, so the application's limited workers are not tied up for seconds.
 
 ::: warning
 **The client IP problem.** Behind a reverse proxy, the application sees the proxy's IP as the source. Proxies pass the original address in the `X-Forwarded-For` or standard `Forwarded` header (RFC 7239), or at L4 via the PROXY protocol. Trust these headers only when they were set by your own proxy; otherwise clients can forge them to evade rate limits or IP allow-lists.
@@ -1242,7 +1242,7 @@ The great-circle distance between New York and London is about 5,570 km.
 3. Even in a vacuum at $c \approx 299{,}792$ km/s, the RTT would be $2 \times 5{,}570 / 299{,}792 \approx 37.2$ ms.
 4. Real cables do not follow the great circle, and routers, transmission and queuing add more, so measured RTTs are noticeably higher than 55.7 ms (often in the 70 ms range).
 
-Interpretation: no engineering can make a New York–London round trip faster than about 56 ms over fiber. A user in London calling a single-region service in New York pays at least that on every round trip, and a page needing five sequential round trips pays at least 280 ms. Engineering implication: for global users, reduce round trips (connection reuse, TLS 1.3, QUIC) and move content and computation closer (CDNs, §21; multi-region, §44).
+Interpretation: no engineering can make a New York–London round trip faster than about 56 ms over fiber. A user in London calling a single-region service in New York pays at least that on every round trip, and a page needing five sequential round trips pays at least 280 ms. Engineering implication: for global users, reduce round trips (connection reuse, TLS 1.3, QUIC) and move content and computation closer (CDNs, Ch 21; multi-region, Ch 44).
 :::
 
 ::: example
@@ -1514,7 +1514,7 @@ Figure 7.13 shows the protocol messages. Several steps happen around them:
 4. **NAT (§7.13).** For IPv4, the home router rewrites the private source address (for example `192.168.1.23`) to its public address and records the mapping; the ISP may add carrier-grade NAT.
 5. **Routing (§7.5).** ISP routers forward by longest-prefix match, and BGP delivers the anycast destination to a nearby edge site.
 6. **Edge admission (§7.14, Chapter 19).** DDoS filtering and an L4 load balancer (ECMP plus consistent hashing) pick the server running the reverse proxy.
-7. **Behind the edge (Chapters 8 and 21).** On a cache miss, the origin's reverse proxy routes the request to an application server, which may call caches and databases across a leaf–spine fabric (§7.17).
+7. **Behind the edge (§8.5, Chapter 21).** On a cache miss, the origin's reverse proxy routes the request to an application server, which may call caches and databases across a leaf–spine fabric (§7.17).
 8. **After the response.** The browser discovers CSS, JavaScript and images and fetches them as concurrent streams on the same connection, ramping up under slow start (§7.7.7). An `Alt-Svc` header may advertise HTTP/3 for later connections.
 
 ::: example

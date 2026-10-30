@@ -92,7 +92,7 @@
 
 ## D
 
-**Deadline** — An absolute point in time by which a client needs an RPC to complete. gRPC transmits it as a remaining timeout; when it passes, the client stops waiting with `DEADLINE_EXCEEDED` and the server can see that the call was cancelled [gRPC Docs: Deadlines]. *(§8.8.4)*
+**Deadline** — An absolute point in time by which a client needs an RPC to complete. gRPC transmits it as a remaining timeout; when it passes, the client stops waiting with `DEADLINE_EXCEEDED` and the server can see that the call was canceled [gRPC Docs: Deadlines]. *(§8.8.4)*
 
 **Deadlock** — A state in which each thread in a set is waiting for a resource held by another thread in the same set, so none can ever proceed. *(§6.11.1)*
 
@@ -258,7 +258,7 @@
 
 ## Q
 
-**Queueing system** — A model in which **jobs** (requests, messages, packets) arrive at a **service centre**, wait in a **queue** if all **servers** are busy, receive service, and depart. The **arrival rate** $\lambda$ is the average number of jobs arriving per second; the **service rate** $\mu$ is the average number of jobs one server can complete per second when it is never idle, so the average **service time** is $S = 1/\mu$. *(§4.10.1)*
+**Queueing system** — A model in which **jobs** (requests, messages, packets) arrive at a **service center**, wait in a **queue** if all **servers** are busy, receive service, and depart. The **arrival rate** $\lambda$ is the average number of jobs arriving per second; the **service rate** $\mu$ is the average number of jobs one server can complete per second when it is never idle, so the average **service time** is $S = 1/\mu$. *(§4.10.1)*
 
 ## R
 

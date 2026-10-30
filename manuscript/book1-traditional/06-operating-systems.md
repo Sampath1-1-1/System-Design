@@ -118,7 +118,7 @@ stateDiagram-v2
   Terminated --> [*]: parent reaps exit status
 ```
 
-**Reading the diagram.** A process is **New** while the kernel builds its PCB and address space, then **Ready**: runnable but waiting for a CPU. The scheduler (§6.5) **dispatches** one ready task per core to **Running**. A running process leaves the CPU in three ways: it is **preempted** (slice expired or a higher-priority task woke) and returns to Ready; it waits for something not yet available (disk, network packet, lock, timer) and becomes **Blocked**; or it **exits**. When the awaited event occurs, usually signalled by a hardware interrupt (§5.7), the process returns to Ready, *not* straight to Running. A **Terminated** process whose parent has not collected its exit status is a **zombie**. Every transition is made by the kernel.
+**Reading the diagram.** A process is **New** while the kernel builds its PCB and address space, then **Ready**: runnable but waiting for a CPU. The scheduler (§6.5) **dispatches** one ready task per core to **Running**. A running process leaves the CPU in three ways: it is **preempted** (slice expired or a higher-priority task woke) and returns to Ready; it waits for something not yet available (disk, network packet, lock, timer) and becomes **Blocked**; or it **exits**. When the awaited event occurs, usually signaled by a hardware interrupt (§5.7), the process returns to Ready, *not* straight to Running. A **Terminated** process whose parent has not collected its exit status is a **zombie**. Every transition is made by the kernel.
 
 Linux reports these states in `ps` and `top` with single letters: **R** (running *or* ready, Linux does not distinguish them), **S** (interruptible sleep, the normal blocked state), **D** (uninterruptible sleep, usually waiting on disk or network file system I/O, cannot be killed until the I/O completes), **T** (stopped by a signal or debugger) and **Z** (zombie). On Linux, tasks in **D** count toward the **load average** along with R tasks, which is why a server with a hung NFS mount can show a load average of 200 while its CPUs are idle [Gregg 2020].
 
@@ -1202,7 +1202,7 @@ sequenceDiagram
   App->>CQ: read completion entries, no syscall
 ```
 
-**Reading the diagram.** The application writes request entries (opcode, descriptor, buffer, user tag) into the shared submission ring with plain memory writes, then submits any number with *one* `io_uring_enter` call. The kernel performs them, files and sockets alike, and posts results asynchronously to the completion ring (dotted arrow), possibly out of order; the tag matches results to requests. Reaping completions needs no system call, and in **SQPOLL** mode a kernel thread polls the submission ring so submission needs none either. Costs: a more complex programming model and a large new kernel attack surface. Google reported in 2023 that most kernel exploits submitted to its bug-bounty programme involved io_uring and that it had restricted io_uring on ChromeOS, Android apps and its production servers [Google Security Blog 2023]; some container runtimes block it by default.
+**Reading the diagram.** The application writes request entries (opcode, descriptor, buffer, user tag) into the shared submission ring with plain memory writes, then submits any number with *one* `io_uring_enter` call. The kernel performs them, files and sockets alike, and posts results asynchronously to the completion ring (dotted arrow), possibly out of order; the tag matches results to requests. Reaping completions needs no system call, and in **SQPOLL** mode a kernel thread polls the submission ring so submission needs none either. Costs: a more complex programming model and a large new kernel attack surface. Google reported in 2023 that most kernel exploits submitted to its bug-bounty program involved io_uring and that it had restricted io_uring on ChromeOS, Android apps and its production servers [Google Security Blog 2023]; some container runtimes block it by default.
 
 **Table 6.6 — I/O models compared.**
 
@@ -1379,7 +1379,7 @@ What to notice:
 
 - 10,000 one-second waits overlap on one thread: this is concurrency without parallelism (§6.8).
 - Replace `await asyncio.sleep(1.0)` with `time.sleep(1.0)` and the program takes about 10,000 seconds: one blocking call inside a coroutine blocks the whole loop.
-- async is "contagious": a function that awaits must itself be `async`, so libraries split into synchronous and asynchronous versions (the "function colour" problem).
+- async is "contagious": a function that awaits must itself be `async`, so libraries split into synchronous and asynchronous versions (the "function color" problem).
 
 ### 6.15.6 Comparison and capacity
 

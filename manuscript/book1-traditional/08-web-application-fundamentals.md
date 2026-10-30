@@ -206,7 +206,7 @@ Before your restaurant order is cooked, someone must find the restaurant's addre
 
 #### How it works internally
 
-Take `GET https://shop.example.com/api/v1/orders/42` from a browser.
+Take `GET https://shop.example.com/api/v1/orders/42` from a browser. (§7.18 follows a similar journey at the packet level; here the focus is the server side.)
 
 1. **URL parsing and cache check.** The browser splits the URL into scheme (`https`), host (`shop.example.com`), path and query. If a fresh copy is in the HTTP cache (`Cache-Control: max-age`), it stops here (§20.5).
 2. **DNS resolution** (§7.6). The browser asks the OS stub resolver, which asks a recursive resolver, which (on a cache miss) walks root → `.com` → `example.com` authoritative servers. The answer is an IP address, often of a CDN edge or a regional load balancer, cached for its TTL.
@@ -1061,7 +1061,7 @@ Streams are flow-controlled by HTTP/2, so a slow receiver applies backpressure t
 ### 8.8.4 Deadlines and their propagation
 
 ::: definition
-**Definition — Deadline.** An absolute point in time by which a client needs an RPC to complete. gRPC transmits it as a remaining timeout; when it passes, the client stops waiting with `DEADLINE_EXCEEDED` and the server can see that the call was cancelled [gRPC Docs: Deadlines].
+**Definition — Deadline.** An absolute point in time by which a client needs an RPC to complete. gRPC transmits it as a remaining timeout; when it passes, the client stops waiting with `DEADLINE_EXCEEDED` and the server can see that the call was canceled [gRPC Docs: Deadlines].
 :::
 
 Without deadlines, a slow dependency makes callers wait indefinitely, holding threads, memory and connections until the whole call graph is exhausted (Chapter 22). gRPC's default is **no deadline**, so you must set one on every call. A deadline, unlike a per-hop timeout, should be **propagated**: if the front end has 300 ms left and has already spent 40 ms, it passes the remaining ~260 ms downstream, minus a margin for its own post-processing, so no service keeps working on an answer nobody is waiting for.
@@ -1427,25 +1427,25 @@ At a hotel, the front desk checks your passport (authentication) and gives you a
 
 **Authentication factors** fall into three classes: something you **know** (password, PIN), something you **have** (phone, hardware security key), something you **are** (fingerprint, face). **Multi-factor authentication (MFA)** requires factors from at least two classes, so a phished or leaked password alone is not enough.
 
-**Passwords.** Never store passwords, or fast hashes of them. Store the output of a deliberately slow, salted **password-hashing function** (Argon2id, scrypt, bcrypt or PBKDF2), tuned so one guess costs tens to hundreds of milliseconds; §10.6 covers parameters and the arithmetic of offline cracking. Compare in constant time, rate-limit login attempts per account and per IP, and check new passwords against lists of breached passwords, as NIST's guidance recommends [NIST SP 800-63B].
+**Passwords.** Never store passwords, or fast hashes of them. Store the output of a deliberately slow, salted **password-hashing function** (Argon2id, scrypt, bcrypt or PBKDF2), tuned so one guess costs tens to hundreds of milliseconds; §10.6 covers parameters and the arithmetic of offline cracking. Compare in constant time, rate-limit login attempts per account and per IP, and check new passwords against lists of breached passwords, as NIST's guidance recommends [NIST SP 800-63B-4].
 
 ```python
 import hashlib, hmac, os
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)                                    # unique per user
-    dk = hashlib.scrypt(password.encode(), salt=salt, n=2**15, r=8, p=1,
-                        maxmem=64 * 1024 * 1024)             # ~32 MiB of memory per guess
-    return f"scrypt$32768$8$1${salt.hex()}${dk.hex()}"
+    dk = hashlib.scrypt(password.encode(), salt=salt, n=2**17, r=8, p=1,
+                        maxmem=256 * 1024 * 1024)            # ~128 MiB of memory per guess
+    return f"scrypt$131072$8$1${salt.hex()}${dk.hex()}"
 
 def verify_password(password: str, stored: str) -> bool:
     _, n, r, p, salt_hex, dk_hex = stored.split("$")
     dk = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex),
-                        n=int(n), r=int(r), p=int(p), maxmem=64 * 1024 * 1024)
+                        n=int(n), r=int(r), p=int(p), maxmem=256 * 1024 * 1024)
     return hmac.compare_digest(dk, bytes.fromhex(dk_hex))
 ```
 
-What to notice: the parameters are stored with the hash so they can be raised later; on a typical server core this takes on the order of 100 ms per call, which is negligible for one login and crippling for an attacker trying billions of guesses.
+What to notice: the parameters ($N = 2^{17}$, $r = 8$, $p = 1$, the OWASP minimum for scrypt listed in Table 10.8) are stored with the hash so they can be raised later; on a typical server core this takes a few hundred milliseconds per call, which is negligible for one login and crippling for an attacker trying billions of guesses.
 
 **Second factors**, from weakest to strongest:
 
@@ -2151,7 +2151,7 @@ There are two workflows. In **design-first**, teams write and review the OpenAPI
 15. Denniss, W., Bradley, J., Jones, M., Tschofenig, H. *OAuth 2.0 Device Authorization Grant*. RFC 8628, IETF, 2019. https://www.rfc-editor.org/rfc/rfc8628
 16. Sakimura, N., Bradley, J., Jones, M., de Medeiros, B., Mortimore, C. *OpenID Connect Core 1.0*. OpenID Foundation, 2014. https://openid.net/specs/openid-connect-core-1_0.html
 17. M'Raihi, D., Machani, S., Pei, M., Rydell, J. *TOTP: Time-Based One-Time Password Algorithm*. RFC 6238, IETF, 2011. https://www.rfc-editor.org/rfc/rfc6238
-18. Grassi, P. A., et al. *Digital Identity Guidelines: Authentication and Lifecycle Management*. NIST Special Publication 800-63B, 2017. https://pages.nist.gov/800-63-3/sp800-63b.html
+18. NIST. *SP 800-63B-4: Digital Identity Guidelines — Authentication and Authenticator Management*. National Institute of Standards and Technology, 2025. https://pages.nist.gov/800-63-4/sp800-63b.html
 19. Wilde, E. *The Sunset HTTP Header Field*. RFC 8594, IETF, 2019. https://www.rfc-editor.org/rfc/rfc8594
 20. Dalal, S., Wilde, E. *The Deprecation HTTP Response Header Field*. RFC 9745, IETF, 2025. https://www.rfc-editor.org/rfc/rfc9745
 21. GraphQL Foundation. *GraphQL Specification*, September 2025 Edition. 2025. https://spec.graphql.org/September2025/
@@ -2176,7 +2176,7 @@ There are two workflows. In **design-first**, teams write and review the OpenAPI
 - Zanzibar throughput: the chapter says "millions of authorization checks per second"; confirm the exact figure in the paper's abstract (secondary sources quote "more than 10 million client queries per second").
 - `SameSite` default: confirm current (2026) behavior of Chromium, Firefox and Safari for cookies without a `SameSite` attribute, and the publication status of RFC 6265bis.
 - OAuth 2.1: re-check the draft revision (or RFC number, if published) at the time of book publication; -16 was current in September 2026.
-- NIST SP 800-63B: check whether revision 4 has superseded the 2017 revision cited, and update the reference.
+- NIST SP 800-63B-4: reference aligned with Chapter 10 (§10.6); confirm final wording at publication time.
 - Exact URLs and titles of [Byron 2015], the GitHub GraphQL rate-limit page, and the Stripe pagination page.
 - Table 8.3 latency ranges are illustrative estimation figures; cross-check against Appendix F when it is written.
-- The "~100 ms per scrypt hash" figure was measured once (N = 2¹⁵, r = 8, p = 1) on a single cloud vCPU in 2026; Chapter 10 should own the authoritative parameter guidance.
+- The "few hundred milliseconds per scrypt hash" figure was measured once (≈0.4 s at N = 2¹⁷, r = 8, p = 1) on a single cloud vCPU in 2026; Chapter 10 (§10.6.2) owns the authoritative parameter guidance.

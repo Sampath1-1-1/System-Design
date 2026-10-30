@@ -137,11 +137,11 @@ You apply STRIDE **per element** of the DFD: for each process, data store and fl
 ::: example
 **Worked example — STRIDE pass over Figure 10.1.**
 
-*Step 1 — Assets.* User credentials and session tokens; private photos; payment tokens returned by the provider; admin capabilities (delete any account); the database master credentials; the TLS private keys.
+*Step 1 — Assets.* User credentials and session tokens; private photos; payment tokens returned by the provider; admin capabilities (delete any account); the database administrator credentials; the TLS private keys.
 
 *Step 2 — Walk each boundary-crossing element.* The table below shows a representative (not exhaustive) result.
 
-*Step 3 — Rank.* Score each threat for likelihood and impact on a 1–3 scale (see §10.3.6) and fix high scores first.
+*Step 3 — Rank.* Score each threat for likelihood and impact on a 1–3 scale (see the risk-score formula below) and fix high scores first.
 
 *Step 4 — Record.* The result is a short table in the design document, owned by the team, revisited whenever the DFD changes.
 :::
@@ -154,7 +154,7 @@ You apply STRIDE **per element** of the DFD: for each process, data store and fl
 | T2 | Web API | E | User changes `photo_id` in URL and reads another user's private photo (IDOR) | Object-level authorization check on every read, enforced in a shared data-access layer | 3 × 3 = 9 |
 | T3 | Web API → Object store | I | Bucket accidentally made public | Block public access at account level; serve via short-lived signed URLs | 2 × 3 = 6 |
 | T4 | Thumbnail worker | E | Malicious image exploits image-parsing library, attacker runs code in worker | Sandbox worker (no network, minimal IAM role), patch libraries, separate account | 2 × 3 = 6 |
-| T5 | Payment webhook | S | Attacker forges "payment succeeded" webhook | Verify provider's HMAC signature and timestamp (§10.4.7) | 2 × 3 = 6 |
+| T5 | Payment webhook | S | Attacker forges "payment succeeded" webhook | Verify provider's HMAC signature and timestamp (§10.4.6) | 2 × 3 = 6 |
 | T6 | Admin → Web API | R | Admin deletes an account and later denies it | Append-only, tamper-evident audit log of admin actions (§10.12) | 1 × 2 = 2 |
 | T7 | Upload endpoint | D | Attacker uploads thousands of 1 GB files | Size limits, per-user quotas, rate limits | 2 × 2 = 4 |
 | T8 | Web API → DB | T | SQL injection modifies rows | Parameterized queries; DB user without DDL rights | 2 × 3 = 6 |
@@ -212,7 +212,7 @@ Cryptography is the toolbox that turns security goals into mathematics. As a sys
 | Prove a message came from someone holding a shared secret, unchanged | MAC | Shared secret | HMAC-SHA-256 | Wax seal pressed with a ring both parties own |
 | Keep data secret *and* detect tampering, between parties sharing a key | Authenticated (AEAD) symmetric encryption | Shared secret | AES-256-GCM, ChaCha20-Poly1305 | Locked box with a tamper seal |
 | Let anyone send you a secret without a pre-shared key | Asymmetric encryption / KEM | Public + private key | RSA-OAEP, ECIES, ML-KEM | Padlock you hand out open; only you hold its key |
-| Agree on a shared secret over a public channel | Key exchange | Ephemeral key pairs | ECDHE (X25519, P-256) | Mixing paint colors (see §10.4.5) |
+| Agree on a shared secret over a public channel | Key exchange | Ephemeral key pairs | ECDHE (X25519, P-256) | Mixing paint colors (see §10.4.4) |
 | Prove to *anyone* that a specific key holder approved a message | Digital signature | Private key signs, public key verifies | Ed25519, ECDSA P-256, RSA-PSS | Notarized handwritten signature |
 | Produce unpredictable keys, nonces, tokens | CSPRNG | Seeded by OS | `/dev/urandom`, `getrandom()`, `secrets` | Fair dice nobody can watch |
 
@@ -369,7 +369,7 @@ sequenceDiagram
   C->>S: Application data under AES-GCM session keys
 ```
 
-**Reading the diagram.** All messages flow synchronously over one TCP (or QUIC) connection, and the full handshake completes in one round trip before application data flows. The ephemeral public values travel in the clear; the shared secret never crosses the network. From the ServerHello onward, everything is encrypted with keys derived from that secret, including the certificate (hiding which certificate the server uses from passive observers). The server proves it owns the certificate's private key by **signing** the handshake transcript (CertificateVerify); the client validates the certificate chain (§10.5). The Finished messages are MACs over everything exchanged so far, so a man-in-the-middle who altered any earlier message is detected. Failure points: an expired or untrusted certificate (handshake aborts), a client and server with no common cipher suite, or clock skew on the client breaking validity checks.
+**Reading the diagram.** All messages flow synchronously over one TCP (or QUIC) connection, and the full handshake completes in one round trip before application data flows (round-trip costs and 0-RTT resumption are covered in §7.10). The ephemeral public values travel in the clear; the shared secret never crosses the network. From the ServerHello onward, everything is encrypted with keys derived from that secret, including the certificate (hiding which certificate the server uses from passive observers). The server proves it owns the certificate's private key by **signing** the handshake transcript (CertificateVerify); the client validates the certificate chain (§10.5). The Finished messages are MACs over everything exchanged so far, so a man-in-the-middle who altered any earlier message is detected. Failure points: an expired or untrusted certificate (handshake aborts), a client and server with no common cipher suite, or clock skew on the client breaking validity checks.
 
 ### 10.4.5 Digital signatures
 
@@ -1431,7 +1431,7 @@ Use this table in every design document and design review — and in interviews,
 **Answer.** Never in plaintext or reversibly encrypted. Hash each password with a slow, memory-hard password-hashing function — Argon2id by default (at least m = 19 MiB, t = 2, p = 1 per OWASP), otherwise scrypt or bcrypt — with a unique random salt of at least 16 bytes. Store algorithm and parameters with the hash so you can raise cost later and rehash on next login. Optionally apply a pepper (a secret key in a KMS/HSM) so a database-only leak is not attackable. Compare in constant time, rate-limit login, check new passwords against breached lists, and offer MFA. Size the login fleet for the hashing cost.
 
 **Q2. What is the difference between encryption, hashing and signing?**
-**Answer.** Encryption provides confidentiality and is reversible with a key. Hashing is a keyless one-way fingerprint for integrity against a trusted reference. Signing uses a private key to produce a tag anyone can verify with the public key, providing integrity, authenticity and non-repudiation. A MAC is the shared-key analogue of a signature without non-repudiation. AEAD encryption combines confidentiality with integrity.
+**Answer.** Encryption provides confidentiality and is reversible with a key. Hashing is a keyless one-way fingerprint for integrity against a trusted reference. Signing uses a private key to produce a tag anyone can verify with the public key, providing integrity, authenticity and non-repudiation. A MAC is the shared-key analog of a signature without non-repudiation. AEAD encryption combines confidentiality with integrity.
 
 ### Intermediate
 
@@ -1456,7 +1456,7 @@ Use this table in every design document and design review — and in interviews,
 3. **Envelope encryption.** Extend the `FakeKMS` example in §10.9.2 with a per-tenant KEK and a `delete_tenant` operation. Show that encrypted objects for a deleted tenant can no longer be decrypted while other tenants are unaffected. Then replace `FakeKMS` with a real KMS client in a sandbox account if you have one.
 4. **Brute-force calculator.** Write a function that takes alphabet size, length, guesses per second and number of GPUs and prints expected time. Use it to compare a 4-word and a 6-word Diceware passphrase (7,776 words) against bcrypt and against unsalted SHA-256.
 5. **Tamper-evident log.** Modify the audit log in §10.12 so that every 100 entries the head is signed with an Ed25519 key (§10.4.8). Write a verifier that accepts only chains whose signed heads verify.
-6. **Threat model.** Draw a DFD for a URL shortener (Ch 52.1) with trust boundaries and produce a STRIDE table with at least eight threats ranked by $L \times I$.
+6. **Threat model.** Draw a DFD for a URL shortener (§52.1) with trust boundaries and produce a STRIDE table with at least eight threats ranked by $L \times I$.
 
 ## 10.18 Design challenges
 

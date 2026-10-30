@@ -463,7 +463,7 @@ stateDiagram-v2
   M --> I: another core writes, write back first
 ```
 
-**Reading the diagram.** Each box is the state of *one* 64-byte line in *one* core's cache; every core runs this machine independently for every line. "Local" events come from this core's own instructions; "another core" events arrive as coherence messages over the on-chip interconnect (a ring or mesh linking cores, caches and memory controllers) or, between sockets, over the socket-to-socket link. Transitions caused by our own reads and writes are synchronous with the instruction; invalidations and write-backs triggered by other cores arrive asynchronously. Note the two expensive arcs: moving from Shared to Modified requires invalidating every other copy and waiting for acknowledgements, and a remote read of a Modified line forces a write-back. When two cores repeatedly write the same line, it ping-pongs between their caches, each transfer costing tens of nanoseconds on one chip and more across sockets. Coherence traffic is the reason "just add cores" stops scaling for shared, frequently written data.
+**Reading the diagram.** Each box is the state of *one* 64-byte line in *one* core's cache; every core runs this machine independently for every line. "Local" events come from this core's own instructions; "another core" events arrive as coherence messages over the on-chip interconnect (a ring or mesh linking cores, caches and memory controllers) or, between sockets, over the socket-to-socket link. Transitions caused by our own reads and writes are synchronous with the instruction; invalidations and write-backs triggered by other cores arrive asynchronously. Note the two expensive arcs: moving from Shared to Modified requires invalidating every other copy and waiting for acknowledgments, and a remote read of a Modified line forces a write-back. When two cores repeatedly write the same line, it ping-pongs between their caches, each transfer costing tens of nanoseconds on one chip and more across sockets. Coherence traffic is the reason "just add cores" stops scaling for shared, frequently written data.
 
 ### 5.4.7 False sharing
 
@@ -1035,8 +1035,8 @@ Jeff Dean's list of "numbers everyone should know", presented in 2009 and buildi
 | Read 1 MB sequentially from memory | 250 µs | ~50–100 µs per thread | Bandwidth grew ~3–5× |
 | Disk seek | 10 ms | ~4–10 ms | Mechanics barely changed |
 | Read 1 MB sequentially from disk | 20 ms | ~5 ms | Higher areal density |
-| Random read from SSD | Not in 2009 list | ~50–100 µs | SSDs became mainstream |
-| Read 1 MB sequentially from NVMe SSD | Not in 2009 list | ~0.15–0.3 ms | New tier |
+| Random read from SSD | Not in 2009 list (150 µs in later versions) | ~50–100 µs | SSDs became mainstream |
+| Read 1 MB sequentially from NVMe SSD | Not in 2009 list (1 ms for SSD in later versions) | ~0.15–0.3 ms | New tier |
 
 Versions of Dean's list differ slightly in individual entries; the durable lesson is the *shape*: memory latency stuck, bandwidth up, disks still mechanical, flash filling the gap between them.
 

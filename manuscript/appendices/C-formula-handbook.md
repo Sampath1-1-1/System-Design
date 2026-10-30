@@ -367,6 +367,22 @@ $$\bar{x} = \frac{1}{n}\sum_{i=1}^{n} x_i \qquad \sigma^2 = \frac{1}{n}\sum_{i=1
 | $\sigma$ | Standard deviation: typical distance from the mean | ms |
 :::
 
+*From §4.7.2*
+
+::: formula
+**Tail formulas for three skewed distributions**
+
+$$\text{Exponential: } P(T > t) = e^{-\lambda t},\ E[T] = \frac{1}{\lambda} \qquad \text{Log-normal: median} = e^{\mu},\ \text{mean} = e^{\mu + s^2/2} \qquad \text{Pareto: } P(X > x) = \left(\frac{x_m}{x}\right)^{\alpha}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\lambda$ | Event rate of the exponential distribution | events/second |
+| $t$ | Elapsed time | seconds |
+| $\mu, s$ | Mean and standard deviation of $\ln X$ for a log-normal $X$ | ln of the unit of $X$ |
+| $x_m$ | Pareto minimum (scale) value | unit of $X$ (e.g. bytes) |
+| $\alpha$ | Pareto tail index: smaller means heavier tail | dimensionless |
+:::
+
 *From §4.8.2*
 
 ::: formula
