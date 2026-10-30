@@ -509,7 +509,7 @@ What to notice:
 
 ### 19.4.5 Simulation: algorithms on heterogeneous servers
 
-Theory assumes identical servers; real fleets are mixed. The simulation below has ten FIFO servers, five of rate 1 and five of rate 2 (total capacity 15 requests per time unit), Poisson arrivals and exponential service times. For every request it records the **queue length it finds** at its chosen server and its latency, then reports mean, p99 and maximum after discarding a warm-up. The third experiment gives load-aware policies a view of queue lengths refreshed only every 2 time units, which models many balancers sharing periodic load reports.
+Real fleets are mixed. The simulation below has ten FIFO servers, five of rate 1 and five of rate 2 (capacity 15 requests per time unit), Poisson arrivals and exponential service. It records the **queue length each request finds** at its chosen server and its latency, and reports mean, p99 and maximum after a warm-up. The third experiment refreshes the load view only every 2 time units, modeling many balancers that share periodic load reports.
 
 ```python
 """Compare load-balancing policies on heterogeneous servers.
@@ -653,10 +653,7 @@ PowerOfTwo              2.53         8        15      2.58    11.26
 
 What to notice:
 
-- **Load-oblivious policies fail on mixed fleets.** At 60% total load, random and round robin send 0.9 requests per time unit to each slow server, so the slow servers run at 90% while the fast ones idle at 45%. The p99 queue length is 19 for RR and 35 for random, against 1 to 4 for the others. At 85%, they send 1.275 per time unit to servers that can do 1.0: those queues grow without bound, and the numbers simply reflect how long the run was.
-- **Least connections with a live, global view is best**, with p99 queue length 1 at 60% and 3 at 85%. It is the shared-queue ideal of §4.10.4, achievable by a single balancer.
-- **With a 2-second-old view, least connections is the worst load-aware policy** (p99 queue 27, p99 latency 25.4) because of the herd effect; P2C degrades only from 6 to 8, and still beats a perfectly tuned weighted RR (15).
-- Weighted RR is excellent only while weights match capacity, which in production drifts with noisy neighbors, cache warm-up and GC.
+- **Load-oblivious policies fail on mixed fleets.** At 60% load, random and round robin send 0.9 requests per time unit to each slow server (90% busy) while fast ones idle at 45%: p99 queue 19 for RR and 35 for random, against 1 to 4 for the others. At 85% they send 1.275 to servers that can do 1.0; those queues grow without bound, so the numbers only reflect the run length.
 
 ### 19.4.6 Consistent hashing for request routing
 
@@ -1321,7 +1318,7 @@ Client-side balancing gives per-call balancing for gRPC, saves a hop (often 0.1�
 | AWS Network Load Balancer | L4 managed (TCP, UDP, TLS) | Flow hash | Active per target group | Static IP per zone, client IP preserved, very high scale | Non-HTTP, extreme volume, static IPs |
 | Google Maglev | L4 software, in-house | Maglev hashing + connection tracking | Backend health drives table | ECMP + BGP, GRE to backends, DSR; underlies Google Cloud's network load balancing | Not a product you run; the reference design for software L4 |
 
-Two other open designs are worth knowing: IPVS (in the Linux kernel, used by keepalived and by `kube-proxy` in IPVS mode) and eBPF/XDP balancers such as Katran and Cilium's.
+Also worth knowing: IPVS (in the Linux kernel, used by keepalived and `kube-proxy`) and eBPF/XDP balancers such as Katran.
 
 ## 19.12 Summary and revision notes
 
@@ -1385,7 +1382,7 @@ Two other open designs are worth knowing: IPVS (in the Linux kernel, used by kee
 **Answer.** Sample two random backends and pick the less loaded. The maximum load drops from about $\ln n/\ln\ln n$ to $\ln\ln n/\ln 2$, and queue tails fall doubly exponentially. "Least loaded" needs a global, fresh view; with many balancers and stale reports they all pick the same backend (herding). P2C's randomness scatters choices, needs no coordination and tolerates staleness: in our simulation its p99 queue was 8 versus 27 for least connections with 2-second-old data.
 
 **Q4. Design health checking for 300 backends behind a fleet of balancers.**
-**Answer.** Active HTTP readiness checks (2–5 s interval, fall 3, rise 2) testing the backend's own ability to serve, plus passive outlier detection (eject after 5 consecutive 5xx, exponential ejection time, at most 10% ejected). A panic threshold fails open if more than half look unhealthy. Slow start on recovery. Retries of idempotent requests on another backend. Watch probe volume and prefer passive signals at mesh scale.
+**Answer.** Active readiness checks (2–5 s interval, fall 3, rise 2) that test the backend's own ability to serve; passive outlier detection (eject after 5 consecutive 5xx, ejection time growing with repeats, at most 10% ejected); a panic threshold that fails open; slow start on recovery; retries of idempotent requests elsewhere. At mesh scale, prefer passive signals to limit probe volume.
 
 ### Advanced
 

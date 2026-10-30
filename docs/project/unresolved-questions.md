@@ -121,3 +121,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-114 | 21 | "10–20%" rebuffer reduction in Huang et al. (SIGCOMM 2014) | Open | |
 | UQ-115 | 21 | Illustrative 2026 prices ($0.05/GB origin egress, $0.01/GB CDN delivery) | Accepted | Labeled illustrative |
 | UQ-116 | 21 | CloudFront Functions / Lambda@Edge limits; Low-Latency HLS details; ESI 1.0 W3C note title and authors | Open | Time-sensitive |
+| UQ-117 | 19 | Maglev paper (Eisenbud et al. 2016): GRE encapsulation wording, table size ≥100× backends guidance, author list (usenix.org unreachable) | Open | |
+| UQ-118 | 19 | AWS ALB health-check defaults (30 s interval, 5/2 thresholds, 300 s deregistration delay); Envoy outlier-detection defaults | Open | Version-dependent |
+| UQ-119 | 19 | HAProxy default number of draws for `balance random` | Open | |
+| UQ-120 | 19 | Vimeo bounded-loads post (Rodland 2016) title/date/results; Google Cloud Pub/Sub use of bounded loads | Open | |
+| UQ-121 | 19 | Facebook Katran blog post authors and date; subset sizes 20–100 in Google SRE book ch. 20 | Open | |

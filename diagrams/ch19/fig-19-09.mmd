@@ -1,6 +1,6 @@
 %% Figure 19.9 — A layered, redundant front end
 flowchart LR
-  C([Clients]) -->|DNS answer| DNS{{GSLB DNS}}
+  C([Clients]) -->|DNS query| DNS{{GSLB DNS}}
   C -->|anycast VIP| E1[Edge site A]
   C -->|anycast VIP| E2[Edge site B]
   E1 -->|ECMP| L4A[L4 Maglev tier]
