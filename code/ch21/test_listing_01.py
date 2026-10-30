@@ -1,10 +1,10 @@
-# Tests for listing-02-s21_5_5.py (two-tier CDN simulation). Run: python3 -m unittest -v test_listing_02.py
+# Tests for listing-01-s21_5_5.py (two-tier CDN simulation). Run: python3 -m unittest -v test_listing_01.py
 import importlib.util
 import unittest
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
-    "cdn_sim", Path(__file__).with_name("listing-02-s21_5_5.py"))
+    "cdn_sim", Path(__file__).with_name("listing-01-s21_5_5.py"))
 sim = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sim)
 

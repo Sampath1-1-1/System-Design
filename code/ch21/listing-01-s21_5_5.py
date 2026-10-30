@@ -1,4 +1,4 @@
-# Extracted from manuscript/book1-traditional/21-content-delivery-networks.md §21.5.5 (listing 2). Edit the manuscript, not this file.
+# Extracted from manuscript/book1-traditional/21-content-delivery-networks.md §21.5.5 (listing 1). Edit the manuscript, not this file.
 # Two-tier CDN simulation: how much traffic reaches the origin with and
 # without an origin shield. Edge PoPs and the shield are byte-capacity LRU caches;
 # object popularity follows a Zipf distribution.

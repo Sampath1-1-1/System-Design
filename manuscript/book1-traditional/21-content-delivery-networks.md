@@ -21,7 +21,7 @@ After this chapter you should be able to:
 
 - Anycast, BGP, DNS resolution and TTLs — §7.5–§7.6 (both request-routing methods build on them).
 - TCP handshake, slow start, TLS 1.3, HTTP/2 and HTTP/3 — §7.7, §7.9, §7.10 (the latency a CDN removes is round trips).
-- HTTP methods, status codes, `ETag` and conditional requests — §8.7–§8.8.
+- HTTP methods, status codes, `ETag` and conditional requests — §8.6.3–§8.6.4; cookies — §8.10.1.
 - Cache hit ratio, TTL, eviction and stampedes — §20.3, §20.8, §20.9, §20.11 (a CDN is a cache; this chapter does not repeat the general theory).
 - Consistent hashing — §14.8 (used inside each CDN site).
 - Units: **MB/GB/TB/PB** are powers of ten; bit rates use **Mb/s** and **Gb/s** (10⁶ and 10⁹ bits per second). One byte is eight bits.
@@ -42,7 +42,7 @@ A bestselling author lives in one city. If every reader had to travel there to b
 
 A CDN solves four problems at once:
 
-1. **Latency.** Light in fiber covers about 200 km per millisecond, so a Sydney user talking to a server in Virginia pays roughly 200 ms per round trip, and a fresh HTTPS fetch needs several round trips (§7.15). An edge 10 ms away cuts each round trip twentyfold.
+1. **Latency.** Light in fiber covers about 200 km per millisecond, so a Sydney user talking to a server in Virginia pays roughly 200 ms per round trip, and a fresh HTTPS fetch needs several round trips (§7.15; [Grigorik 2013]). An edge 10 ms away cuts each round trip twentyfold.
 2. **Origin load.** A hit is served without touching the origin, so the origin is sized for misses, not for total traffic.
 3. **Egress cost and backbone capacity.** Bytes served from inside or near the user's network do not cross expensive long-haul links or the origin's metered egress.
 4. **Surges and attacks.** Hundreds of sites with terabits of aggregate capacity absorb flash crowds and DDoS floods that would saturate any single data center (§10.11).
@@ -230,7 +230,7 @@ Edges must be numerous and close to users, so each one is small relative to the 
 The origin can be **object storage** (static assets, images, video files; §15.4), an **application tier** behind a load balancer (HTML, APIs), or a **media packager** (live video). Whatever it is, the origin should accept traffic only from the CDN: allow-list the CDN's address ranges or require a shared secret header or mutual TLS on origin pulls (§21.11), otherwise attackers bypass the cache and hit the origin directly.
 
 ::: industry
-**Akamai, Amazon CloudFront and Cloudflare tiering.** Akamai's 2010 description of its platform includes **tiered distribution**: edge clusters fetch from a smaller set of well-provisioned "parent" clusters rather than from the origin, which Akamai reports dramatically reduces origin load for content with a long tail [Nygren et al. 2010]. CloudFront documents **regional edge caches** between its edge locations and the origin, and an optional **Origin Shield** layer through which all requests for an origin pass [AWS Docs: CloudFront Origin Shield]. Cloudflare documents **Tiered Cache**, in which lower-tier data centers fetch from upper-tier data centers instead of the origin [Cloudflare Docs: Tiered Cache].
+**Akamai, Amazon CloudFront and Cloudflare tiering.** Akamai's 2010 description of its platform includes **tiered distribution**: edge clusters fetch from a smaller set of well-provisioned "parent" clusters rather than from the origin, which Akamai reports substantially reduces origin load, especially for less popular content [Nygren et al. 2010]. CloudFront documents **regional edge caches** between its edge locations and the origin, and an optional **Origin Shield** layer through which all requests for an origin pass [AWS Docs: CloudFront Origin Shield]. Cloudflare documents **Tiered Cache**, in which lower-tier data centers fetch from upper-tier data centers instead of the origin [Cloudflare Docs: Tiered Cache].
 *Evidence: Primary* — [Nygren et al. 2010]; [AWS Docs: CloudFront Origin Shield]; [Cloudflare Docs: Tiered Cache]
 :::
 
@@ -486,7 +486,7 @@ What to notice:
 - The edge hit ratio is identical in all three runs: the shield does not change what edges see, only where their misses go.
 - A shield holding 30% of the catalog absorbs $1 - 156{,}952 / 417{,}280 = 62\%$ of edge misses and cuts origin egress from 132.4 GB to 49.5 GB. It aggregates 20 PoPs' long tails, so objects that are rare at each PoP are popular at the shield.
 - `put` is byte-based, so one 1 MB object evicts fifty 20 KB ones; size-aware policies (§20.9) can do better.
-- Tests in `code/ch21/test_listing_02.py` check LRU eviction, that shield hits plus origin fetches equal edge misses, that a shield never increases origin fetches, and that with unlimited caches the origin sees one fetch per object with a shield but one per (PoP, object) pair without.
+- Tests in `code/ch21/test_listing_01.py` check LRU eviction, that shield hits plus origin fetches equal edge misses, that a shield never increases origin fetches, and that with unlimited caches the origin sees one fetch per object with a shield but one per (PoP, object) pair without.
 
 #### Advantages, disadvantages and failure scenarios
 
@@ -503,7 +503,7 @@ A shield adds a hop (cheap if it sits near the origin) and concentrates traffic,
 A CDN is a **shared cache** in the vocabulary of RFC 9111, which defines HTTP caching: it stores responses and reuses them for many users. The origin controls that reuse with response headers.
 
 ::: definition
-**Definition — Freshness and validation.** A stored response is **fresh** while its age is below its **freshness lifetime** and may then be served without contacting the origin; once **stale**, it must normally be **revalidated**, by sending a conditional request (`If-None-Match` with the stored `ETag`, or `If-Modified-Since`), to which the origin answers `304 Not Modified` (keep using the copy) or `200 OK` with a new body [RFC 9111].
+**Definition — Freshness and validation.** A stored response is **fresh** while its age is below its **freshness lifetime** and may then be served without contacting the origin; once **stale**, it must normally be **revalidated**, by sending a conditional request (`If-None-Match` with the stored `ETag`, or `If-Modified-Since`), to which the origin answers `304 Not Modified` (keep using the copy) or `200 OK` with a new body [RFC 9111; RFC 9110].
 :::
 
 **Table 21.4 — Caching directives a CDN designer uses.**
@@ -846,7 +846,7 @@ $$\hat{C} = \frac{n}{\sum_{i=1}^{n} 1/c_i}, \quad R_{\text{tput}} = \max\{b_r \l
 ::: example
 **Worked example — Both rules on the ladder above.** Throughput rule: the last five segments downloaded at 8, 7, 6, 2 and 8 Mb/s.
 
-1. Harmonic mean: $5 / (0.125 + 0.143 + 0.167 + 0.5 + 0.125) = 5 / 1.060 = 4.72$ Mb/s; $\times 0.8 = 3.77$ → choose 3.0 Mb/s.
+1. Harmonic mean: $5 / (0.125 + 0.143 + 0.167 + 0.5 + 0.125) = 5 / 1.060 = 4.72$ Mb/s; $\times 0.8 = 3.78$ → choose 3.0 Mb/s.
 2. The arithmetic mean would be 6.2 Mb/s; $\times 0.8 = 4.96$ → 4.5 Mb/s, betting on a link that just delivered 2 Mb/s.
 
 BBA with $x_r = 10$ s, $x_c = 30$ s: at a 25 s buffer, $0.4 + (15/30)(5.6) = 3.2$ → 3.0 Mb/s; at 8 s → 0.4 Mb/s; at 45 s → 6.0 Mb/s.
@@ -1009,7 +1009,7 @@ flowchart LR
   AWS -->|2 URLs of chosen OCAs| C
   C -->|3 HTTPS video segments| OCA1[Embedded OCA in ISP]
   C -.->|fallback| OCA2[OCA at exchange point]
-  S3[(Origin storage in AWS)] -.->|nightly fill window| OCA2
+  S3[(Origin storage in AWS)] -.->|off-peak fill window| OCA2
   OCA2 -.->|tier fill| OCA1
   OCA1 -.->|health, cache contents| AWS
 ```

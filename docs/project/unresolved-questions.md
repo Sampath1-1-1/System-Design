@@ -116,3 +116,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-109 | 18 | Stack Overflow server counts and URL of Craver (2016) architecture post | Open | |
 | UQ-110 | 18 | Publication years of Weiss & Furr and Netflix Scryer posts; exact title of AWS cell-based architecture whitepaper | Open | |
 | UQ-111 | 18 | Whether cited SRE book chapters contain the N+2 guidance and Auxon description | Open | |
+| UQ-112 | 21 | Fastly ~150 ms global purge time; date of the Betts blog post | Open | fastly.com unreachable |
+| UQ-113 | 21 | Netflix Open Connect facts (OCAs free to ISPs, control plane in AWS, fill order, 2012 launch) | Open | openconnect.netflix.com unreachable |
+| UQ-114 | 21 | "10–20%" rebuffer reduction in Huang et al. (SIGCOMM 2014) | Open | |
+| UQ-115 | 21 | Illustrative 2026 prices ($0.05/GB origin egress, $0.01/GB CDN delivery) | Accepted | Labeled illustrative |
+| UQ-116 | 21 | CloudFront Functions / Lambda@Edge limits; Low-Latency HLS details; ESI 1.0 W3C note title and authors | Open | Time-sensitive |

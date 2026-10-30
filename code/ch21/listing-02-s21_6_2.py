@@ -1,4 +1,4 @@
-# Extracted from manuscript/book1-traditional/21-content-delivery-networks.md §21.6.2 (listing 1). Edit the manuscript, not this file.
+# Extracted from manuscript/book1-traditional/21-content-delivery-networks.md §21.6.2 (listing 2). Edit the manuscript, not this file.
 # Cache-key normalization: map many equivalent requests to one cache key.
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
