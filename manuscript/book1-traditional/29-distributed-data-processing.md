@@ -135,7 +135,7 @@ For word count, map receives one line of text and emits `(word, 1)` for each wor
 
 #### Why does this exist?
 
-Google in the early 2000s ran hundreds of special-purpose programs over crawled documents and request logs. Each one reimplemented parallelization, data distribution and failure handling, which buried a few lines of logic under thousands of lines of plumbing. MapReduce extracted the plumbing into a library so that engineers without distributed-systems experience could use thousands of machines, and Google rewrote its production indexing system on it [Dean and Ghemawat 2004]. Hadoop MapReduce, the open-source reimplementation on HDFS, brought the same model to the rest of the industry.
+Google in the early 2000s ran hundreds of special-purpose programs over crawled documents and request logs. Each reimplemented parallelization, data distribution and failure handling. MapReduce moved that plumbing into a library so engineers without distributed-systems experience could use thousands of machines, and Google rewrote its production indexing system on it [Dean and Ghemawat 2004]. Hadoop MapReduce, the open-source reimplementation on HDFS, brought the same model to the rest of the industry.
 
 ### 29.4.2 Execution: splits, map, partition, sort and spill, shuffle, reduce
 
@@ -448,7 +448,7 @@ $$P(\text{at least one straggler}) = 1 - (1 - p)^{n} \approx 1 - e^{-np}$$
 :::
 
 ::: industry
-**Google MapReduce (2004).** The original paper describes clusters of commodity PCs with 2–4 GB of RAM, 100 Mb/s or 1 Gb/s networking and local IDE disks, with GFS storing input and output. In the paper's sort benchmark ($10^{10}$ 100-byte records, about 1 TB, on roughly 1,800 machines), normal execution took 891 s; with backup tasks disabled it took 1,283 s, 44% longer; and deliberately killing 200 worker processes mid-job increased the time by only about 5%, because the lost tasks were simply re-executed.
+**Google MapReduce (2004).** The paper describes commodity PCs with 2–4 GB of RAM, 100 Mb/s or 1 Gb/s networking and local disks, with GFS storing input and output. In its sort benchmark ($10^{10}$ 100-byte records, about 1 TB, on roughly 1,800 machines), normal execution took 891 s; with backup tasks disabled it took 1,283 s, 44% longer; and deliberately killing 200 worker processes mid-job increased the time by only about 5%, because the lost tasks were simply re-executed.
 *Evidence: Primary* — [Dean and Ghemawat 2004]
 :::
 
@@ -538,7 +538,7 @@ A recipe card is cheaper to keep than a fridge full of prepared dishes. If someo
 
 #### Why does this exist?
 
-MapReduce writes every job's output to the replicated distributed file system, and multi-step pipelines are chains of jobs. That is fine for one pass but wasteful for **iterative** algorithms (logistic regression, k-means, PageRank) that read the same data ten or a hundred times, and for **interactive** analysis where an analyst asks one question after another of the same dataset. Replicating in-memory data instead would cost network bandwidth comparable to the writes it saved. Lineage gives fault tolerance by logging the *coarse-grained* transformation once per dataset rather than every record [Zaharia et al. 2012].
+MapReduce writes every job's output to the replicated distributed file system, and multi-step pipelines are chains of jobs. That is wasteful for **iterative** algorithms (logistic regression, k-means, PageRank) that reread the same data many times, and for **interactive** analysis. Replicating in-memory data instead would cost network bandwidth comparable to the writes it saved. Lineage gives fault tolerance by logging the *coarse-grained* transformation once per dataset rather than every record [Zaharia et al. 2012].
 
 #### How it works internally
 
@@ -625,7 +625,7 @@ $$S = \frac{k \,(T_{\text{load}} + T_{\text{iter}})}{T_{\text{load}} + k \, T_{\
 :::
 
 ::: industry
-**RDD paper and the 100 TB sort.** The RDD paper reported Spark up to 20× faster than Hadoop for iterative applications and interactive queries over a 1 TB dataset in 5–7 s [Zaharia et al. 2012]. In 2014 Databricks reported sorting 100 TB with Spark in 23 minutes on 206 cloud machines, against a previous Hadoop MapReduce record of 72 minutes on 2,100 machines, crediting a sort-based shuffle and network-optimized transfers more than memory caching, since a sort of that size is disk- and network-bound [Xin 2014].
+**RDD paper and the 100 TB sort.** The RDD paper reported Spark up to 20× faster than Hadoop for iterative applications and interactive queries over a 1 TB dataset in 5–7 s [Zaharia et al. 2012]. In 2014 Databricks reported sorting 100 TB with Spark in 23 minutes on 206 cloud machines, against a previous Hadoop MapReduce record of 72 minutes on 2,100 machines; the run did not rely on in-memory caching but on a new sort-based shuffle and network layer [Xin 2014].
 *Evidence: Primary* — [Zaharia et al. 2012; Xin 2014]
 :::
 
@@ -1212,7 +1212,7 @@ Windows, joins, deduplication and per-user features all need **state** that outl
 Engines achieve **exactly-once state semantics** (effectively-once) by periodically taking a **consistent distributed snapshot** of all operator state plus source offsets and, on failure, rolling back to it and replaying input from those offsets. Events may be *processed* twice, but each affects state once. The classic algorithm is Chandy and Lamport's: a **marker** travels along every channel; a process records its state at the first marker and records in-flight messages on channels whose markers have not arrived, yielding a consistent global state without stopping the system [Chandy and Lamport 1985]. Flink's adaptation is in §29.9.2. External results are exactly-once only with idempotent or transactional sinks (§32.9; Kafka transactions in Chapter 31).
 
 ::: industry
-**Google MillWheel and Cloud Dataflow.** MillWheel, Google's earlier stream processor, introduced low watermarks computed from the oldest pending work across the pipeline, per-key persistent state, and exactly-once delivery through deduplicating record IDs [Akidau et al. 2013]. The Dataflow Model paper generalized these ideas into windowing, triggers and accumulation modes, and describes them as the model behind Google Cloud Dataflow; Apache Beam is its open-source SDK [Akidau et al. 2015].
+**Google MillWheel and Cloud Dataflow.** MillWheel, Google's earlier stream processor, introduced low watermarks computed from the oldest pending work, per-key persistent state, and exactly-once delivery by deduplicating record IDs [Akidau et al. 2013]. The Dataflow Model generalized these ideas and underlies Google Cloud Dataflow; Apache Beam is its open-source SDK [Akidau et al. 2015].
 *Evidence: Primary* — [Akidau et al. 2013; Akidau et al. 2015]
 :::
 
@@ -1322,7 +1322,7 @@ $$T_{\text{opt}} \approx \sqrt{2\, C\, M_f}, \qquad T_{\text{catch-up}} \approx 
 1. Young's interval: $\sqrt{2 \times 2 \times 86{,}400} = \sqrt{345{,}600} = 588$ s, about 10 minutes.
 2. Catch-up at $T = 600$ s: backlog $= 200{,}000 \times (300 + 20 + 40) = 7.2 \times 10^{7}$ events; $7.2 \times 10^{7} / 300{,}000 = 240$ s. Results are stale for $20 + 40 + 240 = 300$ s.
 3. At $T = 60$ s: backlog $= 200{,}000 \times 90 = 1.8 \times 10^{7}$; catch-up 60 s; stale for 120 s. Overhead rises to $2/60 = 3.3\%$ of throughput, from 0.3%.
-4. With a transactional sink, output becomes visible only when a checkpoint completes, so $T = 600$ s would add up to 10 minutes of end-to-end latency.
+4. With a transactional sink, output is visible only at checkpoint completion, so $T = 600$ s adds up to 10 minutes of latency.
 
 **Interpretation.** Young's formula ignores two streaming costs: catch-up, which grows with $T$ and explodes as $\lambda \to \mu$, and sink visibility latency, which equals $T$. **Engineering implication.** Checkpoint every 10 s to a few minutes, keep $\mu \ge 2\lambda$, use incremental checkpoints and local recovery to cut $T_{\text{restore}}$, and alert when checkpoint duration nears the interval.
 :::
@@ -1494,7 +1494,7 @@ The micro-batch and continuous-mode figures are from the Spark documentation [Ap
 2. Add speculative execution to the engine: give each map task a random duration with 1% stragglers at 5×, and measure job time with and without backup tasks.
 3. Run the PySpark program with `spark.sql.autoBroadcastJoinThreshold=-1` and without the broadcast hint; compare the physical plans and count the `Exchange` operators.
 4. Add session windows (gap $g$) to the windowing simulator, including merging two sessions when a late event bridges them.
-5. Measure the late fraction in the simulator with lognormal delays of the same mean, and explain why the exponential model underestimates it.
+5. Rerun the simulator with lognormal delays of the same mean and compare the late fraction with the exponential model.
 
 ## 29.16 Design challenges
 

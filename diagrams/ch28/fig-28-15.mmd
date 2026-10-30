@@ -5,7 +5,7 @@ flowchart TD
   Q1 -->|"no"| Q2{Same database system<br/>that supports distributed txns?}
   Q2 -->|"yes"| Q3{Must intermediate states<br/>be invisible?}
   Q3 -->|"yes"| A2["2PC over consensus groups:<br/>Spanner, CockroachDB, TiDB"]
-  Q3 -->|"no, but atomic"| A2
+  Q3 -->|"no"| Q4
   Q2 -->|"no: separate services"| Q4{Is each step<br/>compensable?}
   Q4 -->|"yes"| A3["Saga with compensations<br/>Ch 32"]
   Q4 -->|"no"| Q5{Is it one write plus<br/>notifying others?}

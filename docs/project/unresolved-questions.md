@@ -169,3 +169,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-162 | 24 | Attribution of fallacies 1–4 to Joy & Lyon and the year Gosling added the eighth | Open | |
 | UQ-163 | 24 / 28 | CockroachDB 500 ms default max clock offset and node self-shutdown rule | Open | Merge with UQ-148 |
 | UQ-164 | 24 | Meta PTP post details; AWS 2023 microsecond-accurate time announcement; Riak 2.0 dotted version vectors; AWS 2008/2011 post-mortem URLs | Open | |
+| UQ-165 | 29 | MapReduce (OSDI 2004) sort figures: 891 s; 1,283 s without backup tasks; ~5% slower with 200 workers killed; ~1,800 machines | Open | |
+| UQ-166 | 29 | Databricks 2014 100 TB sort (23 min on 206 machines vs 72 min on 2,100) — blog title and URL | Open | |
+| UQ-167 | 29 | RDD paper (NSDI 2012): "up to 20×" speedup and 5–7 s interactive queries | Open | |
+| UQ-168 | 29 | Magnet push-based shuffle shipped in Spark 3.2; author list | Open | |
+| UQ-169 | 29 | Flink 2.0 ForSt state backend; unaligned checkpoints since Flink 1.11; Structured Streaming latency (~100 ms micro-batch, ~1 ms continuous) | Open | Version-dependent |
+| UQ-170 | 15 / 29 | S3 per-prefix request rates | Open | Merge with Ch 15 items |
