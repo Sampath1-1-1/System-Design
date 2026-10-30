@@ -45,3 +45,5 @@ The learner must come to understand, for every technology: why it exists, what p
 | 2026-10-30 | American spelling throughout | Consistency (terminology.md) |
 | 2026-10-30 | Decimal units (KB=10³) for estimation, binary (KiB) where precision matters, always stated | Matches common interview practice while staying precise |
 | 2026-10-30 | Ten deliverables composed from shared chapters rather than duplicated text | Avoids divergence between volumes |
+| 2026-10-30 | Wave 1 chapters ran 12–23k words (≈1.5× targets). Accepted for the foundations (Ch 1–10) because cuts would remove template elements; later waves get firmer length targets and the "deep treatment in owner chapter only" rule is enforced at briefing | Keeps the full set at a printable size |
+| 2026-10-30 | Runnable listings are extracted automatically to `code/chNN/` by `build/extract_code.py` rather than maintained by hand | One source of truth |

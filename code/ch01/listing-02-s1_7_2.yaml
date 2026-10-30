@@ -1,0 +1,12 @@
+# Extracted from manuscript/book1-traditional/01-what-is-system-design.md §1.7.2 (listing 2). Edit the manuscript, not this file.
+# illustrative SLO specification for the PhotoShare feed service
+service: feed-api
+slos:
+  - name: feed-availability
+    sli: "fraction of GET /v1/feed requests returning non-5xx"
+    objective: 0.999          # 99.9 %
+    window: 30d               # rolling 30-day window
+  - name: feed-latency
+    sli: "fraction of GET /v1/feed requests completing in <= 300 ms"
+    objective: 0.99           # i.e. p99 <= 300 ms
+    window: 30d
