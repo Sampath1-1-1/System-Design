@@ -224,3 +224,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-217 | 39 | AWS Compute SLA credit tiers below 99.0%; GitLab 2017 incident figures (~300 GB deleted, ~6 h data loss) | Open | |
 | UQ-218 | 39 | Originator of the 3-2-1 backup rule; SRE Workbook error-budget policy wording (20% threshold, escalation path) | Open | |
 | UQ-219 | 39 | DR cost percentages in Table 39.7 are illustrative planning figures | Accepted | Labeled in text |
+| UQ-220 | 40 | OpenTelemetry per-language signal status; profiles signal maturity; reported 2026 CNCF graduation | Open | Time-sensitive |
+| UQ-221 | 40 | Prometheus native histograms stable in 3.8 (Dec 2025); W3C Trace Context Level 2 status; OTel `ot=th:` sampling key | Open | Time-sensitive |
+| UQ-222 | 40 | Honeycomb founders' use of Scuba via Parse; SRE book guidance of ~2 incidents per on-call shift | Open | |
+| UQ-223 | 40 | ~4 KB memory per series and ~1% continuous-profiling overhead are planning assumptions | Accepted | Labeled in text |
