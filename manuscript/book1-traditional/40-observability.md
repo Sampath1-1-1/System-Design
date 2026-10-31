@@ -2,7 +2,7 @@
 
 > **Level:** 3 · **Track:** A (Traditional) · **Estimated reading time:** 6 h
 
-At 19:42 on a Friday, QuickBite's checkout error rate climbs from 0.1% to 1.8%. The dashboards are green: CPU, memory and request rate all look normal. One engineer greps logs on three machines, another restarts the payment service, and a third posts screenshots in chat. Forty minutes later someone notices that every failing order comes from the newest Android app version paying with one card network. Nothing in the dashboards could have shown that, because nobody had thought to chart "errors by app version by card network" in advance.
+At 19:40 on a Friday, QuickBite's checkout error rate climbs from 0.1% to 9%. The infrastructure dashboards are green: CPU, memory and request rate all look normal. One engineer greps logs on three machines, another restarts the payment service, and a third posts screenshots in chat. Forty minutes later someone notices that every failing order comes from the newest Android app version paying with one card network. Nothing in the dashboards could have shown that, because nobody had thought to chart "errors by app version by card network" in advance.
 
 This chapter is about building systems that can answer questions nobody thought to ask. It covers the three classic telemetry signals (logs, metrics and traces) and what each costs, then the tools that dominate practice in 2026: OpenTelemetry for instrumentation, Prometheus for metrics, Grafana for dashboards and Alertmanager for routing alerts. It ends with the workflow that ties them together: alert, dashboard, trace, logs and profile. The chapter owns the deep treatment of distributed tracing; §34.9 gave only an introduction. QuickBite, the food-delivery platform of Chapter 2, is the running example, and all QuickBite numbers are assumptions made for teaching.
 
@@ -27,7 +27,7 @@ After this chapter you should be able to:
 - Time-series databases and Gorilla compression — §12.8 (storage internals behind Prometheus).
 - Microservices and the introduction to tracing — §34.8, §34.9.
 - Message brokers and Kafka as a buffer — Chapters 30 and 31.
-- SLIs, SLOs and error budgets — §39.6, §39.7 (burn-rate alerts build on them).
+- SLIs, SLOs, error budgets and burn rates — §39.6, §39.7 (burn-rate alerts build on them).
 
 ## 40.3 Monitoring versus observability
 
@@ -1024,7 +1024,7 @@ A hospital monitor alarms when a patient's oxygen saturation drops, not when one
 
 ### 40.10.2 Burn-rate alerts
 
-A threshold such as "error ratio > 1% for 5 minutes" is either too sensitive for brief blips or too slow for total outages. **Burn-rate alerts**, derived in §39.7, page when the error budget is being consumed much faster than the SLO allows.
+A threshold such as "error ratio > 1% for 5 minutes" is either too sensitive for brief blips or too slow for total outages. **Burn-rate alerts**, derived in §39.7.3, page when the error budget is being consumed much faster than the SLO allows.
 
 ::: formula
 **Burn rate and budget consumed**
@@ -1047,7 +1047,7 @@ $$\beta = \frac{e}{1 - \text{SLO}} \qquad \text{budget consumed in time } t = \f
 2. One hour at this rate consumes $14.4 \times 1 / 720 = 2\%$ of the monthly budget; the whole budget would last $720 / 14.4 = 50$ hours.
 3. The Site Reliability Workbook pairs this long window (1 h) with a short window (5 min) at the same burn rate, so the alert fires only if the problem is still happening, and resets quickly after recovery [Beyer et al. 2018, ch. 5].
 
-**Interpretation.** A 1.44% error ratio sounds small, but it would empty a month's budget in about two days. **Engineering implication.** Page on fast burns (for example 14.4× over 1 h and 6× over 6 h) and open tickets on slow burns (1× over 3 days); §39.7 derives these thresholds.
+**Interpretation.** A 1.44% error ratio sounds small, but it would empty a month's budget in about two days. **Engineering implication.** Page on fast burns (for example 14.4× over 1 h and 6× over 6 h) and open tickets on slow burns (1× over 3 days); §39.7.3 derives these thresholds and their detection times.
 :::
 
 ### 40.10.3 Alertmanager: routing, deduplication and inhibition
@@ -1159,7 +1159,7 @@ sequenceDiagram
   participant TS as Trace store
   participant LS as Log store
   participant CD as Deploy system
-  AM->>OC: 19:44 page, checkout fast burn 18x
+  AM->>OC: 19:49 page, checkout fast burn
   OC->>GF: open checkout dashboard
   GF-->>OC: 5xx up since 19:40, no backend deploy
   OC->>GF: click exemplar on p99 panel
@@ -1173,18 +1173,18 @@ sequenceDiagram
   CD-->>OC: error ratio back to 0.1 percent by 20:01
 ```
 
-**Reading the diagram.** Messages run top to bottom in time. The burn-rate page (asynchronous notification) reaches the on-call engineer four minutes after errors start, because both the 1-hour and 5-minute windows must exceed the threshold. Each subsequent exchange is a synchronous query: the dashboard rules out a backend deploy; an exemplar leads to one failing trace; the trace's ID retrieves its logs, which carry `card_network`; a grouped query over wide events or span attributes shows the failures concentrate in one app version and one card network. The mitigation is a feature-flag change, not a deploy (§43.7); nobody restarted healthy services or grepped machines.
+**Reading the diagram.** Messages run top to bottom in time. The burn-rate page (asynchronous notification) reaches the on-call engineer nine minutes after errors start: the 5-minute window exceeds 1.44% almost at once, but the 1-hour average needs $t$ minutes of 9% errors, where $(0.09\,t + 0.001\,(60 - t))/60 = 0.0144$, so $t \approx 9$ (§39.7.3). Each subsequent exchange is a synchronous query: the dashboard rules out a backend deploy; an exemplar leads to one failing trace; the trace's ID retrieves its logs, which carry `card_network`; a grouped query over wide events or span attributes shows the failures concentrate in one app version and one card network. The mitigation is a feature-flag change, not a deploy (§43.7); nobody restarted healthy services or grepped machines.
 
 ::: example
-**Worked example — What the incident cost.** Checkout serves 300 orders/s; errors ran at 1.8% instead of 0.1% from 19:40 to 20:01 (21 minutes, 1,260 s). SLO 99.9% over 30 days.
+**Worked example — What the incident cost.** Checkout serves 300 orders/s; errors ran at 9% instead of 0.1% from 19:40 to 20:01 (21 minutes, 1,260 s). SLO 99.9% over 30 days.
 
 1. Requests in the window: $300 \times 1{,}260 = 378{,}000$.
-2. Excess failures: $378{,}000 \times (0.018 - 0.001) = 6{,}426$ orders.
-3. Monthly budget: $300 \times 2{,}592{,}000 \times 0.001 = 777{,}600$ allowed failures; this incident used $378{,}000 \times 0.018 / 777{,}600 = 0.87\%$ of it.
-4. Burn rate during the incident: $0.018/0.001 = 18$.
-5. Without the tooling (40 minutes to mitigate as in the opening), excess failures would have been roughly $300 \times 2{,}400 \times 0.017 = 12{,}240$.
+2. Excess failures: $378{,}000 \times (0.09 - 0.001) = 33{,}642$ orders.
+3. Monthly budget: $300 \times 2{,}592{,}000 \times 0.001 = 777{,}600$ allowed failures; this incident used $378{,}000 \times 0.09 / 777{,}600 = 4.4\%$ of it.
+4. Burn rate during the incident: $0.09/0.001 = 90$; a whole month's budget would last $720/90 = 8$ hours.
+5. Without the tooling (40 minutes to mitigate as in the opening), excess failures would have been roughly $300 \times 2{,}400 \times 0.089 = 64{,}080$.
 
-**Interpretation.** The burn is small against the budget but large in lost orders; halving time to mitigate halved the damage. **Engineering implication.** Mean time to mitigate is dominated by investigation, and investigation time is what linked signals buy. Measure detection and mitigation times in every postmortem.
+**Interpretation.** Twenty-one minutes cost 4.4% of the monthly budget and tens of thousands of orders; halving time to mitigate roughly halved the damage. **Engineering implication.** Mean time to mitigate is dominated by investigation, and investigation time is what linked signals buy. Measure detection and mitigation times in every postmortem.
 :::
 
 ## 40.12 Profiling in production

@@ -293,7 +293,7 @@ Coal miners once carried a canary into the mine; the bird reacted to toxic gas b
 
 #### Why does this exist?
 
-Testing before production is never complete. Production has traffic mixes, data shapes, configuration and dependency behavior that no staging environment reproduces. Some bugs only appear under real load (a slow query on a hot partition), with real data (a customer name with an emoji), or at real scale (a cache stampede). Blue–green verifies the new version before exposure, but then exposes everyone at once. A canary accepts that production is the only full test and limits how many users the test can hurt.
+No staging environment reproduces production's traffic mix, data and scale; some bugs appear only under real load (a slow query on a hot partition) or real data (a name with an emoji). Blue–green verifies before exposure but then exposes everyone at once. A canary accepts production as the only full test and limits how many users it can hurt.
 
 #### How it works internally
 
@@ -326,9 +326,9 @@ flowchart TD
 
 The canary weight can be enforced at several layers:
 
-- **By instance count.** Run 1 canary pod next to 19 old pods behind the same Service; a round-robin balancer sends about 5% of requests to the canary. Simple, but weights are limited to multiples of $1/N$ and change with autoscaling.
-- **By weighted routing.** A service mesh (§34.10), gateway or load balancer sends an exact percentage to each version, independent of instance counts. This is how Argo Rollouts, Flagger and cloud load balancers implement fine-grained canaries.
-- **By request attribute.** Route by header, user cohort, region or tenant: for example, employees first, then one city. This gives a sticky, well-defined population, so one user does not alternate between versions on every request.
+- **By instance count.** Run 1 canary pod next to 19 old pods behind the same Service; a round-robin balancer sends about 5% of requests to the canary. Weights are limited to multiples of $1/N$.
+- **By weighted routing.** A service mesh (§34.10), gateway or load balancer sends an exact percentage to each version, independent of instance counts. Argo Rollouts and Flagger work this way.
+- **By request attribute.** Route by header, user cohort, region or tenant (employees first, then one city), giving a sticky population so users do not alternate between versions.
 
 **Figure 43.7 — Canary and baseline traffic split by a weighted router.**
 
@@ -456,11 +456,11 @@ Time to decide at $\lambda = 2{,}000$ requests/s:
 
 The required $n$ falls quickly as the effect grows: about 6,000 requests per group to catch a doubling (0.5% → 1%), and 48 to catch the 0.5% → 20% break of §43.6.3. It rises quickly as the effect shrinks: about 110,000 for a 20% relative increase.
 
-*Interpretation:* small regressions in rare events need a lot of traffic. *Engineering implication:* choose the smallest regression worth catching, then set weight and interval so each step collects $n$ requests; for low-traffic services, canary on more sensitive metrics (latency, which every request reports), lengthen steps, or accept that the canary only catches large breaks. Note that $B \approx \lambda w \Delta p \times n/(\lambda w) = n\,\Delta p$ when detection is sample-limited: about $19{,}946 \times 0.0025 \approx 50$ extra failures here, whatever the weight. A smaller weight hurts fewer users per second but for longer.
+*Interpretation:* small regressions in rare events need a lot of traffic. *Engineering implication:* choose the smallest regression worth catching and set weight and interval so each step collects $n$ requests; low-traffic services should also judge latency (every request reports it), lengthen steps, or accept catching only large breaks. Note that $B \approx \lambda w \Delta p \times n/(\lambda w) = n\,\Delta p$ when detection is sample-limited: about $19{,}946 \times 0.0025 \approx 50$ extra failures here, whatever the weight. A smaller weight hurts fewer users per second but for longer.
 :::
 
 ::: warning
-**Warning — Peeking inflates false positives.** If the judge re-runs the test every minute and fails the canary the first time $p < \alpha$, the chance of a false failure over many looks is much larger than $\alpha$. Either test once at the planned sample size, divide $\alpha$ across the planned looks (a Bonferroni correction: 10 looks at $\alpha = 0.001$ each keeps the total below 0.01), or use a sequential test designed for repeated looks. The same issue appears in A/B testing (Chapter 57).
+**Warning — Peeking inflates false positives.** If the judge re-runs the test every minute and fails the canary the first time $p < \alpha$, the chance of a false failure over many looks is much larger than $\alpha$. Either test once at the planned sample size, divide $\alpha$ across the planned looks (a Bonferroni correction: 10 looks at $\alpha = 0.001$ each keeps the total at or below 0.01), or use a sequential test designed for repeated looks. The same issue appears in A/B testing (Chapter 57).
 :::
 
 #### Code example: a canary judge
@@ -568,15 +568,13 @@ print("all tests passed")
 
 What to notice:
 
-- The test is **one-sided**: the judge only cares whether the canary is *worse*. A two-sided test would waste power on detecting improvements.
-- The pooled rate is used in the standard error because the null hypothesis says both groups share one error rate.
+- The test is **one-sided** (only *worse* matters) and uses the pooled rate, because the null hypothesis says both groups share one error rate.
 - The decision is three-way. A non-significant result on too little data is `INCONCLUSIVE`, not `PASS`; "no evidence of harm" is not "evidence of no harm".
-- The guard for `se == 0` handles intervals with no errors in either group, which are common at low traffic.
-- The simulation is the real test of a statistical judge: it checks the error rates the design promises, not just the arithmetic.
+- The simulation checks the error rates the design promises, not just the arithmetic.
 
 ### 43.6.5 Kayenta-style judging
 
-Real canaries are judged on many metrics at once, not only on error rate: latency percentiles, CPU, memory, garbage-collection time, and business signals. In 2018 Netflix and Google released **Kayenta**, an open-source automated canary analysis service integrated with the Spinnaker continuous-delivery platform [Graff and Sanden 2018; Google Cloud 2018]. Its published design works as follows:
+Real canaries are judged on many metrics at once, not only on error rate: latency percentiles, CPU, memory, garbage-collection time, and business signals. In 2018 Netflix and Google released **Kayenta**, an open-source automated canary analysis service integrated with the Spinnaker continuous-delivery platform [Graff and Sanden 2018; Google Cloud 2018; Spinnaker Docs: Canary]. Its published design works as follows:
 
 1. **Metric retrieval.** For each metric in a canary configuration, Kayenta queries the metrics store (Prometheus, Datadog, Stackdriver and others) for the baseline and canary time series over the analysis interval.
 2. **Per-metric classification.** The default Netflix judge compares the two series with a nonparametric test, the **Mann–Whitney U test**, which does not assume normally distributed values (important for latency). Each metric is classified as *Pass*, *High* or *Low*; a configured direction says whether only increases, only decreases, or either count as failures.
@@ -608,7 +606,7 @@ sequenceDiagram
 **Reading the diagram.** The pipeline stage calls the judge with a configuration and interval. For each metric the judge fetches both series from the metrics store, classifies the metric with a statistical test, then combines the results into a weighted score and returns pass or fail. A canary stage runs several intervals and judges each one. Failure points: missing data (configurable as a failure), a metrics store outage (the rollout should pause, not pass), and noisy system metrics dominating the score. Scaling: queries grow with metrics × intervals, so configurations keep tens of metrics.
 
 ::: industry
-**Netflix and Google: Kayenta.** Netflix had run automated canary analysis internally for years before open-sourcing Kayenta with Google in 2018. The Netflix announcement describes comparing the canary against a freshly deployed baseline cluster of the same size rather than against the existing production cluster, classifying each metric with a Mann–Whitney U test and producing a weighted score that gates the Spinnaker pipeline [Graff and Sanden 2018]. Google's own guidance on canarying, in *The Site Reliability Workbook*, makes the same points about comparing against a control population and choosing metrics that reflect user-visible health [Beyer et al. 2018].
+**Netflix and Google: Kayenta.** Netflix ran automated canary analysis internally for years before open-sourcing Kayenta with Google in 2018. Its announcement describes a fresh, equal-size baseline cluster, per-metric Mann–Whitney classification and a weighted score that gates the Spinnaker pipeline [Graff and Sanden 2018]. Google's own guidance on canarying, in *The Site Reliability Workbook*, makes the same points about comparing against a control population and choosing metrics that reflect user-visible health [Beyer et al. 2018].
 *Evidence: Primary* — [Graff and Sanden 2018; Google Cloud 2018; Beyer et al. 2018]
 :::
 
@@ -618,12 +616,10 @@ sequenceDiagram
 |---|---|---|---|---|
 | Bad canary passes | Metrics miss the failure (for example correct HTTP 200 with wrong content) | Business metric drops after promotion | Roll back | Include business and correctness metrics; synthetic checks |
 | Healthy canary fails repeatedly | Comparing against long-running production; noisy metrics | Many failed canaries with no real bug | Re-run with fresh baseline | Fresh equal-size baseline; drop noisy metrics |
-| Every step inconclusive | Weight too small for the traffic | Steps time out | Raise weight or lengthen step | Size $n$ in advance (§43.6.4) |
 | Canary contaminates shared state | New version writes bad data read by everyone | Data validation errors in old version | Roll back and repair data | Expand–contract; validate writes; limit canary to read paths first |
-| User flips between versions | Per-request random split | Inconsistent UI reports | Sticky routing | Split by user or session hash |
 
 ::: mistake
-**Mistake — "The canary passed, so the release is safe."** A canary tests the new version on a sample of current traffic for a short time. It cannot catch problems that appear only at 100% load (a shared database saturating), only after hours (a memory leak), or only for rare request types the sample did not include. Keep observing after promotion, and keep the ability to roll back.
+**Mistake — "The canary passed, so the release is safe."** A short canary on a sample cannot catch problems that appear only at 100% load (a saturated shared database), after hours (a memory leak) or for rare requests. Keep observing after promotion.
 :::
 
 ## 43.7 Feature flags
@@ -636,9 +632,9 @@ sequenceDiagram
 **Definition — Deploy versus release.** To **deploy** is to install a version of the code in production. To **release** is to let users experience a change. Feature flags make them separate events.
 :::
 
-A light switch does not install the wiring; an electrician does that once, and then anyone can turn the light on and off in a second. Deployment is the wiring, done by engineers through the pipeline. The flag is the switch, which a product manager can flip for 1% of users on Tuesday and everyone on Friday, and which an on-call engineer can flip off at 3 a.m. without a rollback.
+Deployment is the electrician installing wiring; the flag is the light switch, which a product manager can flip for 1% of users on Tuesday and everyone on Friday, and an on-call engineer can flip off at 3 a.m. without a rollback.
 
-Flags exist because the alternatives couple two different risks. Without flags, a new checkout flow reaches users at the moment its code deploys, so every deploy is also a product launch, and undoing the launch means undoing the deploy (and every other change in it). With trunk-based development (§43.3.2), unfinished features must be merged daily, which is only possible if they can be turned off.
+Without flags every deploy is also a product launch, and undoing the launch means undoing the deploy and every other change in it. With trunk-based development (§43.3.2), unfinished features must be merged daily, which is only possible if they can be turned off.
 
 Hodgson classifies flags by how long they live and how dynamic they are [Hodgson 2017]:
 
