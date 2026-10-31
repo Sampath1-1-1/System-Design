@@ -46,11 +46,11 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 36 | SOLID Principles | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 11,710 | 17 | 10 | 0 |
 | 37 | Design Patterns | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,753 | 21 | 4 | 0 |
 | 38 | UML and Low-Level Design | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,982 | 23 | 10 | 0 |
-| 39 | Reliability and Resilience | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 40 | Observability | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 41 | Cloud Computing | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 42 | Containers and Kubernetes | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 43 | Deployment and Infrastructure | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 39 | Reliability and Resilience | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 40 | Observability | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 41 | Cloud Computing | 2 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 42 | Containers and Kubernetes | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 43 | Deployment and Infrastructure | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 44 | Multi-Region and Global Systems | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 45 | Advanced Consistency and Byzantine Fault Tolerance | 5 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 46 | Distributed Scheduling and Cluster Management | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |

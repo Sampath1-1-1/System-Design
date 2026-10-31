@@ -86,10 +86,25 @@ def render_diagrams(found):
     return errors
 
 
+def compact_png(png):
+    """Palette-quantized copy of a diagram PNG for the Word file (about 60% smaller, visually identical
+    for flat-colored line art); cached next to the original."""
+    out = png.with_suffix(".docx.png")
+    if not out.exists():
+        from PIL import Image
+        im = Image.open(png).convert("RGB")
+        if im.width > 1800:
+            im = im.resize((1800, round(im.height * 1800 / im.width)), Image.LANCZOS)
+        im.quantize(colors=64, method=Image.Quantize.MEDIANCUT).save(out, optimize=True)
+    return out
+
+
 def replace_mermaid(text, fmt):
     def sub(m):
         h = hashlib.sha1(m.group(1).encode()).hexdigest()[:12]
         img = CACHE / f"{h}.{'png' if fmt == 'docx' else 'svg'}"
+        if fmt == "docx" and img.exists():
+            img = compact_png(img)
         if not img.exists():
             return "::: warning\n**Diagram failed to render.** Source:\n\n```text\n" + m.group(1) + "```\n:::"
         return f"![]({img}){{.diagram}}"
