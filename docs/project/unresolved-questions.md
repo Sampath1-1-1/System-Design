@@ -215,3 +215,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-208 | 42 / 47 | Firecracker figures (~125 ms boot, <5 MiB overhead) from Agache et al. 2020 | Open | |
 | UQ-209 | 42 | kube-scheduler percentageOfNodesToScore default (50% at 100 nodes, 5% floor); Borg figures quoted from Verma et al. 2015 | Open | |
 | UQ-210 | 42 | Image sizes, node reservations and cloud prices in worked examples are illustrative | Accepted | Labeled |
+| UQ-211 | 41 | Cloud prices used (NAT, egress tiers, cross-zone, Transit Gateway, PrivateLink, public IPv4, instance and RDS rates) | Accepted | Labeled "illustrative, as of 2026" |
+| UQ-212 | 41 | Aurora figures (35× / 7.7×, 10 s segment repair) from Verbitski et al. 2017; Firecracker figures (125 ms, <5 MiB, 150/s) | Open | Merge with UQ-208 |
+| UQ-213 | 41 | Commitment/spot discount ranges; spot notice periods on GCP and Azure | Open | Time-sensitive |
+| UQ-214 | 41 | Existence and naming (as of 2026): Aurora DSQL, DynamoDB multi-Region strong consistency, Google Titanium, Azure Boost, GCP Managed Lustre, Managed Kafka services | Open | Time-sensitive |
+| UQ-215 | 41 | S3 Block Public Access on by default for new buckets since April 2023 | Open | |
