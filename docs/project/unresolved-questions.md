@@ -208,3 +208,5 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-201 | 38 | Page reference for Fowler quoting Rumbaugh's "modeling placebo" remark | Open | |
 | UQ-202 | 38 | GitHub Mermaid support announcement date (believed 14 Feb 2022) and URL | Open | |
 | UQ-203 | 38 | CPython lru_cache implementation details and ~100–200 bytes/entry estimate; Redis expiry and transaction behavior (2026 docs) | Open | Version-dependent |
+| UQ-204 | 35 | Coupling kinds/order in Stevens, Myers & Constantine (1974) vs later works; venue of Hitz & Montazeri (1995, LCOM4) | Open | |
+| UQ-205 | 35 | Years of Fowler bliki "TellDontAsk" (2013?) and "AnemicDomainModel" (2003?); *Effective Java* 3rd ed. item numbers cited (10–11, 17–20, 49–50) | Open | |

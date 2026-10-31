@@ -1404,13 +1404,13 @@ Bloch's advice combines the two: define the type as an interface, and optionally
 
 #### First-principles explanation
 
-A desktop computer is not a "keyboard-mouse-monitor"; it *has* a keyboard, a mouse and a monitor, connected through standard plugs. You can swap the keyboard for a different one without rebuilding the computer. Inheritance is like casting the keyboard into the case: the parts are fused at manufacture.
+A computer *has* a keyboard plugged in through a standard socket; you can swap it without rebuilding the computer. Inheritance is like casting the keyboard into the case.
 
-The shop's orders now vary in two independent ways. Shipping can be standard (free over 50, else 4.99) or express (12.99). Packaging can be a plain box or gift wrap (3.50). With inheritance, every *combination* needs its own subclass: `StandardPlainOrder`, `StandardGiftOrder`, `ExpressPlainOrder`, `ExpressGiftOrder`. Add a third shipping option (pickup) and you need two more; add a third packaging (eco box) and the grid grows again. And a customer who upgrades to express after placing the order cannot change the class of an existing object.
+Orders now vary two independent ways: shipping (standard: free over 50, else 4.99; express: 12.99) and packaging (plain box, or gift wrap at 3.50). With inheritance every *combination* is a subclass (`StandardPlainOrder`, `ExpressGiftOrder`, ...), each new option multiplies the grid, and a customer who upgrades to express cannot change an existing object's class.
 
 #### Why does this exist?
 
-Inheritance is a compile-time, single-axis, white-box relationship. Real requirements vary along several axes at once, change at run time, and come from teams who should not have to read each other's internals. Composition answers all three: each axis becomes a separate part behind a small interface; parts can be replaced at run time; and the whole knows each part only through its public methods (**black-box reuse** in GoF terms).
+Inheritance is compile-time, single-axis and white-box. Requirements vary along several axes, change at run time, and come from teams who should not read each other's internals. Composition makes each axis a part behind a small interface, replaceable at run time and known only through its public methods (**black-box reuse**).
 
 #### How it works internally
 
@@ -1441,11 +1441,10 @@ classDiagram
 
 **Reading the diagram.**
 
-- **Components.** One abstract `Order` and six concrete subclasses, one per (shipping, packaging) pair for 3 shipping options and 2 packagings.
-- **Relationships and direction.** All arrows are inheritance pointing to the parent.
+- **Components and direction.** One abstract `Order` and six subclasses, one per (shipping, packaging) pair for 3 × 2 options; all arrows are inheritance.
 - **Sync/async and storage.** In-process only.
-- **Failure points.** The gift-wrap price is duplicated in three subclasses and the express rule in two; a price change must be made in several places, and missing one gives inconsistent totals. An order cannot switch shipping after creation.
-- **Scaling.** The number of classes grows as the *product* of the options per axis (formula below). This is the "class explosion" that composition removes.
+- **Failure points.** The gift-wrap price is duplicated in three subclasses; missing one in a price change gives inconsistent totals. Orders cannot switch shipping.
+- **Scaling.** Classes grow as the *product* of options per axis: the "class explosion".
 
 **Figure 35.8 — After: an order composed of a shipping policy and a packaging.**
 
@@ -1477,12 +1476,11 @@ classDiagram
 
 **Reading the diagram.**
 
-- **Components.** `Order` holds one `ShippingPolicy` and one `Packaging`. Each axis has its own small family of classes.
-- **Relationships.** Hollow diamonds (`o--`) mean "has a"; dotted triangles mean "implements". `Order` depends only on the two interfaces.
-- **Direction and sync.** `Order.total_cents()` synchronously calls `shipping.cost_cents(...)` and `packaging.cost_cents()`, then adds the results: delegation.
-- **Storage.** In memory; in a database the order row would store the chosen shipping and packaging *codes*, and a factory would rebuild the objects on load (Ch 37).
-- **Failure points.** Each price rule now exists once. The remaining risk is a missing part (a `None` shipping policy), which the constructor should reject.
-- **Scaling.** A new shipping option is one class; the order and packaging code do not change. Classes grow as the *sum* of options.
+- **Components.** `Order` has (`o--`) one `ShippingPolicy` and one `Packaging`, each an interface with its own family of classes.
+- **Direction and sync.** `total_cents()` synchronously calls both parts and adds the results: delegation.
+- **Storage.** A database row would store the chosen *codes*; a factory rebuilds the objects (Ch 37).
+- **Failure points.** Each price rule exists once; a missing part should be rejected by the constructor.
+- **Scaling.** A new option is one class; classes grow as the *sum* of options.
 
 #### Mathematical foundations
 
@@ -1503,19 +1501,19 @@ $$N_{\text{inherit}} = \prod_{i=1}^{a} k_i \qquad N_{\text{compose}} = 1 + \sum_
 **Worked example — Adding payment timing as a third axis.**
 
 1. Current axes: shipping has $k_1 = 3$ options (standard, express, pickup), packaging $k_2 = 2$ (plain, gift).
-2. Inheritance: $N = 3 \times 2 = 6$ subclasses. Composition: $N = 1 + 3 + 2 = 6$ classes. At this size the two are equal in class count; composition already wins on duplication and run-time change.
-3. The business adds payment timing with $k_3 = 3$ options (pay now, pay on delivery, pay in installments) and an eco box as a third packaging, so $k_2 = 3$.
+2. Inheritance: $3 \times 2 = 6$ subclasses. Composition: $1 + 3 + 2 = 6$ classes. Equal counts, but composition already wins on duplication and run-time change.
+3. Add payment timing, $k_3 = 3$ (now, on delivery, installments), and an eco box, so $k_2 = 3$.
 4. Inheritance: $N = 3 \times 3 \times 3 = 27$ subclasses. Composition: $N = 1 + 3 + 3 + 3 = 10$ classes.
 5. One more shipping option ($k_1 = 4$): inheritance needs $4 \times 3 \times 3 = 36$, that is 9 *new* classes; composition needs 11, that is 1 new class.
 
-**Interpretation.** With one axis, inheritance and composition cost the same. Each additional independent axis multiplies the inheritance count but only adds to the composition count.
+**Interpretation.** Each additional axis multiplies the inheritance count but only adds to the composition count.
 
-**Engineering implication.** As soon as you notice a second independent axis of variation, stop subclassing along it. The moment to refactor is when $N_{\text{inherit}}$ is still small, before callers depend on dozens of combination classes.
+**Engineering implication.** At the second independent axis, stop subclassing along it, while $N_{\text{inherit}}$ is still small.
 :::
 
 #### Code example
 
-The same file also fixes the fragile `CountingCart` of §35.5.2. Instead of *being* a cart, it *has* a cart and forwards to it. Bloch calls this a **wrapper class** with **forwarding** methods [Bloch 2018, Item 18]. Because the inner cart's `add_all` calls the inner cart's own `add`, never the wrapper's, the count is right, and it stays right whatever the cart team does with `add_all` internally.
+The code also fixes §35.5.2's `CountingCart`: instead of *being* a cart it *has* one and forwards to it, a **wrapper class** [Bloch 2018, Item 18]. The inner cart's `add_all` calls the inner `add`, never the wrapper's, so the count is right whatever the cart team changes.
 
 ```python
 # --- Parts: each varies independently -------------------------------------
@@ -1670,9 +1668,8 @@ class Main {
 
 What to notice:
 
-- `upgrade_shipping` changes behavior of an existing order. With inheritance you would have to create a new object of a different class and copy every field.
-- The wrapper implements the same `CartOps` interface as `Cart`, so callers cannot tell it apart; it is substitutable without inheriting any code. The cost is boilerplate: one forwarding method per interface method.
-- `Order` uses the parts only through their methods, so the shipping team can change how `StandardShipping` computes its price without the order team noticing.
+- `upgrade_shipping` changes an existing order's behavior; inheritance would need a new object of another class.
+- The wrapper implements `CartOps` like `Cart`, so it is substitutable without inheriting code, at the cost of one forwarding method per interface method.
 
 **Table 35.7 — Inheritance versus composition.**
 
@@ -1689,12 +1686,12 @@ What to notice:
 #### Real-world industry applications
 
 ::: industry
-**Java collection wrappers.** `Collections.unmodifiableList`, `Collections.synchronizedList` and `Collections.checkedList` each return a wrapper that holds the original list and forwards calls, adding read-only behavior, locking or type checks. Because they compose rather than subclass, each works with *any* `List` implementation and the three can be stacked, which subclassing `ArrayList` could not achieve.
+**Java collection wrappers.** `Collections.unmodifiableList`, `synchronizedList` and `checkedList` return wrappers that hold the original list and forward calls, adding read-only behavior, locking or type checks. Because they compose, each works with *any* `List` and they can be stacked, which subclassing `ArrayList` could not achieve.
 *Evidence: Primary* — [Oracle: java.util.Collections API documentation]; [Bloch 2018, Item 18]
 :::
 
 ::: industry
-**Shop order variants.** The order refactor above, from six combination subclasses to an order composed of a shipping policy and a packaging, is a teaching example for this chapter's running domain, not a description of any particular company's system.
+**Shop order variants.** The refactor from six combination subclasses to a composed order is a teaching example, not any company's system.
 *Evidence: Illustrative* — hypothetical design.
 :::
 
@@ -1706,11 +1703,10 @@ What to notice:
 |---|---|---|---|---|
 | `None`/`null` part causes crash at checkout | Part not supplied | Error on first total | Supply a default part | Validate parts in the constructor |
 | Wrapper forgets a newly added method | Interface grew, wrapper not updated | Compile error (Java); `AttributeError` (Python) | Add the forwarder | Keep interfaces small; tests on wrappers |
-| Identity checks fail | Wrapper is a different object than the wrapped one | `is`/`==` comparisons false | Compare by ID | Do not rely on identity across wrappers |
 | Too many tiny objects | Composition applied where nothing varies | Hard-to-follow wiring code | Inline unused parts | Compose along *real* axes only |
 
 ::: mistake
-**Misconception — "Composition over inheritance means never inherit."** The GoF principle says *favor*, not *forbid*. Implementing an interface, extending an abstract class designed for extension, and true is-a subtypes with one axis of variation are all fine. Composition is the default when you are unsure, because it is easier to change later.
+**Misconception — "Composition over inheritance means never inherit."** The GoF say *favor*. Implementing interfaces, extending classes designed for extension, and true single-axis subtypes are fine; composition is the default when unsure.
 :::
 
 ## 35.9 Interfaces and contracts
@@ -1723,21 +1719,21 @@ What to notice:
 
 #### First-principles explanation
 
-A courier company's terms read: "If the parcel weighs at most 30 kg and is properly addressed, we deliver it within two days." The first half is the customer's obligation (precondition); the second half is the courier's promise (postcondition). If you send a 40 kg parcel, the courier owes you nothing, and it does not need to have a plan for 40 kg parcels. Both sides know where responsibility lies, so neither checks everything twice.
+A courier promises: "If the parcel weighs at most 30 kg and is properly addressed, we deliver within two days." The first half is your obligation (precondition), the second the courier's promise (postcondition). Send 40 kg and the courier owes you nothing.
 
-Method signatures alone are a weak interface. `reserve(sku: str, quantity: int)` tells you the types but not that `quantity` must be positive, that you cannot reserve more than is available, or that available stock goes down by exactly `quantity` afterwards. A contract makes those rules part of the interface, so that the caller, the implementer and the tests agree on them.
+`reserve(sku: str, quantity: int)` gives types but not that `quantity` must be positive and at most what is available, or that availability drops by exactly `quantity`. A contract makes those rules part of the interface.
 
 #### Why does this exist?
 
-Meyer's argument [Meyer 1997] targets two failure modes. Without contracts, either nobody checks (and bad inputs corrupt state far from the cause) or everybody checks ("defensive programming" everywhere), which bloats code and still leaves gaps because each layer guesses differently. A contract assigns each check to exactly one side. It also gives inheritance a precise meaning: a subclass must honor the contract of its parent, which is the idea Liskov and Wing later formalized as **behavioral subtyping** [Liskov & Wing 1994] and which Ch 36 develops as the Liskov Substitution Principle (§36.5).
+Without contracts, either nobody checks (bad input corrupts state far from the cause) or every layer checks differently, bloating code and still leaving gaps [Meyer 1997]. A contract assigns each check to one side. It also defines correct inheritance: a subclass must honor its parent's contract, formalized as **behavioral subtyping** [Liskov & Wing 1994] and developed in §36.5.
 
 #### How it works internally
 
-1. **Preconditions** are checked on entry. In public APIs, check them explicitly and fail fast with a clear exception: `ValueError` in Python, `IllegalArgumentException` (or `NullPointerException` via `Objects.requireNonNull`) in Java [Bloch 2018, Item 49].
-2. **Postconditions** describe the result in terms of the inputs and the *old* state. Capture the old value before the change and assert the relation after it.
-3. **Invariants** are checked at the end of the constructor and of every public method that changes state.
-4. **Assertions** (`assert` in both languages) document and check internal conditions. They can be switched off: Python skips them under `python -O`, and Java runs them only when the JVM is started with `-ea`. Therefore never put a check that must always run, such as validating user input, in an `assert`.
-5. **Contracts and inheritance (Meyer's rule).** A redefined method in a subclass may **weaken** (accept more than) the precondition and **strengthen** (promise more than) the postcondition, never the reverse, and it must preserve the parent's invariant. Eiffel enforces this with `require else` and `ensure then`.
+1. **Preconditions** are checked on entry; public APIs fail fast with `ValueError` or `IllegalArgumentException` [Bloch 2018, Item 49].
+2. **Postconditions** relate the result to the inputs and the *old* state: save the old value, assert afterwards.
+3. **Invariants** are checked at the end of the constructor and every state-changing public method.
+4. **Assertions** can be switched off (`python -O`; Java without `-ea`), so never validate user input with `assert`.
+5. **Meyer's rule.** A subclass may **weaken** the precondition and **strengthen** the postcondition, never the reverse, and must keep the invariant. Eiffel enforces this with `require else` and `ensure then`.
 
 #### Architecture diagram
 
@@ -1760,18 +1756,17 @@ classDiagram
   }
   Inventory <|-- FlashSaleInventory
   Checkout ..> Inventory : relies on contract
-  note for Inventory "invariant: 0 <= reserved <= on_hand\nreserve pre: 1 <= qty <= available\nreserve post: available drops by qty"
-  note for FlashSaleInventory "adds pre: qty <= 2\nstrengthened precondition"
+  note for Inventory "invariant: 0 ≤ reserved ≤ on_hand\nreserve pre: 1 ≤ qty ≤ available\nreserve post: available drops by qty"
+  note for FlashSaleInventory "adds pre: qty ≤ 2\nstrengthened precondition"
 ```
 
 **Reading the diagram.**
 
-- **Components.** `Inventory` tracks stock on hand and stock reserved for unpaid orders. `FlashSaleInventory` is a subclass. `Checkout` is client code.
-- **Notes.** The notes record the contract: one invariant, plus the precondition and postcondition of `reserve`. The subclass note shows the extra condition it adds.
-- **Direction and sync.** `Checkout` calls `available` then `reserve` synchronously. It was written against `Inventory`'s contract and is handed a `FlashSaleInventory` at run time.
-- **Storage.** In memory here. In production the counts live in a database, and the "check then reserve" pair must be atomic, for example a single `UPDATE ... WHERE available >= qty` (Ch 11), or two concurrent checkouts can both pass the check.
-- **Failure point.** The subclass rejects a call the parent's contract allows. `Checkout` checked the parent's precondition, so from its point of view the failure is impossible, and it has no handling for it.
-- **Scaling.** Contracts scale with the team: every new caller and every new subclass can be checked against the same written rules.
+- **Components.** `Inventory` tracks stock on hand and reserved; the notes record its contract and the subclass's extra condition. `Checkout` is client code.
+- **Direction and sync.** `Checkout` calls `available` then `reserve` synchronously, written against `Inventory`'s contract but handed a `FlashSaleInventory`.
+- **Storage.** In production "check then reserve" must be atomic in the database, for example one `UPDATE ... WHERE available >= qty` (Ch 11), or concurrent checkouts both pass.
+- **Failure point.** The subclass rejects a call the parent allows; `Checkout` has no handling for an "impossible" failure.
+- **Scaling.** Every new caller and subclass is checked against the same written rules.
 
 #### Code example
 
@@ -1936,14 +1931,13 @@ class Main {
 
 What to notice:
 
-- Preconditions are explicit `if` checks that always run; postconditions and invariants use `assert`, which documents intent and runs in tests (`-ea` was set when this Java was run).
-- The postcondition refers to the *old* value of `available`, captured before the change. Eiffel has an `old` keyword for this; in Python and Java you save it in a local variable.
-- `FlashSaleInventory` compiles, passes its own unit tests, and still breaks `checkout`. Type systems check method *signatures*; only the contract (and tests written against it) catches the change in *behavior*. A correct design would make the flash-sale limit part of the base contract (for example, `max_per_reservation(sku)` that callers can query) rather than a hidden extra rule.
+- Preconditions always run; postconditions and invariants use `assert` (Java was run with `-ea`). Eiffel's `old` keyword is a local variable here.
+- `FlashSaleInventory` compiles and passes its own tests yet breaks `checkout`: types check *signatures*, only contracts catch *behavior*. Put the limit in the base contract instead (a queryable `max_per_reservation(sku)`).
 
 #### Real-world industry applications
 
 ::: industry
-**Eiffel and mainstream languages.** Eiffel builds contracts into the language: `require` clauses, `ensure` clauses with `old`, and class `invariant` sections, monitored at run time according to a compilation setting, and inherited automatically by subclasses. Mainstream languages approximate this with conventions: Java documents preconditions in Javadoc and checks them with exceptions or `Objects.requireNonNull`, and uses `assert` for internal conditions that are disabled by default in production.
+**Eiffel and mainstream languages.** Eiffel has `require`, `ensure` (with `old`) and `invariant` clauses, monitored at run time per a compilation setting and inherited by subclasses. Java approximates this with Javadoc, exceptions, `Objects.requireNonNull`, and `assert` (off by default).
 *Evidence: Primary* — [Meyer 1997]; [Bloch 2018, Item 49]
 :::
 
@@ -1959,7 +1953,7 @@ What to notice:
 | Each layer re-validates differently | No written contract | Conflicting error messages | Document and centralize | One owner per check |
 
 ::: mistake
-**Misconception — "A subclass that adds a safety check is always safer."** Adding a check to the *precondition* is exactly what breaks substitutability: callers that obey the parent's contract now fail. Extra checks on *outputs* (a stronger postcondition) are safe; extra demands on *inputs* are not.
+**Misconception — "A subclass that adds a safety check is always safer."** Extra demands on *inputs* break callers that obey the parent's contract; extra guarantees on *outputs* are safe.
 :::
 
 ## 35.10 Cohesion and coupling
