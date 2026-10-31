@@ -41,7 +41,7 @@ An architect does not hand a builder a written essay about a house; they hand ov
 
 #### Why does this exist?
 
-By the early 1990s there were dozens of competing object-oriented notations. Grady Booch, James Rumbaugh and Ivar Jacobson merged their methods at Rational Software, and OMG adopted the result as UML 1.1 in 1997. UML 2.0 (2005) reworked sequence and activity diagrams substantially, and 2.5 (2015) simplified the specification without changing most notation [OMG 2017; Fowler 2003].
+By the early 1990s there were dozens of competing object-oriented notations. Grady Booch, James Rumbaugh and Ivar Jacobson merged their methods at Rational Software, and OMG adopted the result as UML 1.1 in 1997. UML 2.0 (2005) reworked sequence and activity diagrams substantially, and 2.5 (2015) simplified the specification without changing most notation [OMG 2017; Fowler 2003; Rumbaugh et al. 2004].
 
 Fowler distinguishes three ways people use UML: as a **sketch** (informal, partial diagrams to communicate an idea), as a **blueprint** (complete diagrams that a programmer implements) and as a **programming language** (diagrams compiled to code) [Fowler 2003]. Almost all industry use, and all interview use, is sketching. The goal is not to satisfy the 790-page specification; it is to make the important decisions visible and unambiguous. This chapter follows the standard notation where it matters (relationships, multiplicity, message kinds) and relaxes it where it does not (exact fonts, every adornment).
 
@@ -113,7 +113,7 @@ Relationships carry most of the meaning in a class diagram. UML defines more, bu
 | Realization | Dashed line, hollow triangle at the interface | A class implements an interface's contract | `class S3Store(BlobStore)` with ABC | `Interface <\|.. Impl` |
 | Dependency | Dashed line, open arrowhead | Transient use: a parameter, local variable or return type | `def render(self, c: Canvas)` | `A ..> B` |
 
-The relationships form a scale of coupling strength. From weakest to strongest: dependency (uses it for one call), association (remembers it), aggregation (contains it, shared), composition (owns it exclusively), and generalization (*is* it — the strongest coupling of all, which is why §35.8 recommends composition over inheritance). Realization couples only to a contract, so it is the relationship that the Dependency Inversion Principle (§36.7) wants you to draw most often.
+The relationships form a scale of coupling strength. From weakest to strongest: dependency (uses it for one call), association (remembers it), aggregation (contains it, shared), composition (owns it exclusively), and generalization (*is* it — the strongest coupling of all, which is why §35.8 recommends composition over inheritance). Realization couples only to a contract, so it is the relationship that the Dependency Inversion Principle (§36.7) wants you to draw most often [Martin 2002; Martin 2017].
 
 **Figure 38.1 — Class diagram notation: visibility, multiplicity and the six relationships.**
 
@@ -626,7 +626,7 @@ The interviewer is assessing whether you can turn a vague request into a clean o
 4. **Draw relationships as a class diagram (5–7 min).** Add multiplicities and choose composition, association or inheritance deliberately (§38.8). Keep it to the 6–12 classes that matter.
 5. **Define key interfaces (3–5 min).** Write the signatures of the public operations and the interfaces at variation points (allocation strategy, fee policy, storage). This is where Dependency Inversion (§36.7) shows.
 6. **Sequence the main flows (3–5 min).** One sequence diagram (or a state diagram if the problem is lifecycle-heavy, such as a vending machine) for the most important use case. It validates the class diagram: every message must land on a class that owns that responsibility.
-7. **Name the patterns you applied (2 min).** Strategy, State, Observer, Factory, Singleton: say *why* each earns its place and which change it absorbs. Do not add patterns to collect them.
+7. **Name the patterns you applied (2 min).** Strategy, State, Observer, Factory, Singleton: say *why* each earns its place and which change it absorbs [Gamma et al. 1994]. Do not add patterns to collect them.
 8. **Address concurrency and extensibility (3–5 min).** Identify the shared mutable state, the critical sections and the lock granularity; then walk through two likely changes (a new vehicle type, a new pricing rule) and show which classes change.
 9. **Code the core classes (12–15 min).** Write the domain model, the main operation end to end, and one test or driver that exercises it. Prefer correct and readable over complete.
 
@@ -2642,3 +2642,109 @@ Fool's mate, after d8h4: checkmate
 
 **Patterns and follow-ups.** Polymorphism over a small class hierarchy; validation as a separate policy object (it could become a chain of rules for variants such as Chess960). The 20 opening moves match the known count for the initial position, a quick correctness check. Follow-ups: castling and en passant need *history* (has the king moved? what was the last move?), so the board state grows into a `Position` with castling rights and an en-passant square; promotion turns a move into a value object with an optional piece; undo and replay come from storing moves as **Commands** (§37.12); draw by threefold repetition needs a position hash (Zobrist hashing); and online play turns `Game` into a server-side aggregate whose moves are validated on the server, never trusted from the client.
 
+## 38.11 Summary and revision notes
+
+::: summary
+- **UML is a sketching language for design decisions.** UML 2.5.1 defines 14 diagram types; class, sequence, component, state machine and activity diagrams cover nearly all practical needs. Draw only what carries a decision.
+- **Class diagrams:** visibility `+ - # ~`; multiplicity `1`, `0..1`, `*`, `1..*` read from the opposite end; six relationships from weakest to strongest coupling: dependency (dashed arrow), association (line), aggregation (hollow diamond), composition (filled diamond), and generalization (hollow triangle); realization (dashed line, hollow triangle) couples only to a contract.
+- **Sequence diagrams** show one scenario over time: lifelines, activations, synchronous calls (filled arrowhead), replies (dashed), asynchronous messages (open arrowhead), and `alt`/`opt`/`loop`/`par` fragments. Always draw one unhappy path.
+- **Component diagrams** show replaceable parts and their provided and required interfaces; **state machines** show legal events per state with `trigger [guard] / effect` and entry/exit actions; **activity diagrams** show workflows with decisions, forks, joins and swimlanes. Mermaid approximates component and activity notation with flowcharts.
+- **Composition** means exclusive ownership and shared lifetime; **aggregation** is a shared whole–part link of debated value; **association** is a lasting peer link. Value types are attributes; entities are relationships; links with data become association classes.
+- **LLD interview method:** clarify → use cases → entities → class diagram → interfaces → sequence or state diagram → patterns → concurrency and extensibility → code, in about 45 minutes with code starting by minute 30.
+- **Exercise lessons:** put variation behind interfaces (allocation, pricing, dispatch, rate-limit algorithm); keep check-then-act inside one critical section; separate title from copy, pseudo-legal from legal, car movement from dispatch; use the State pattern when behavior differs per state; LRU is a hash map plus a doubly linked list with sentinels; TTL needs lazy plus active expiry; transactions need private write buffers and atomic, validated commits.
+:::
+
+## 38.12 Knowledge checkpoint
+
+1. What do `#` and `~` mean in front of a class member, and how is a static member shown?
+2. In `Order "1" --> "1..*" LineItem`, how many line items can an order have, and how many orders can a line item belong to?
+3. Give the line and end symbol for realization and for dependency.
+4. What three tests distinguish composition from aggregation?
+5. When should a relationship between two classes become a class of its own?
+6. In a sequence diagram, how do synchronous and asynchronous messages differ in notation and meaning?
+7. What is the difference between `alt` and `opt`?
+8. In a state machine, what happens when an event arrives and the guard is false?
+9. Why does a join after a decision node deadlock an activity?
+10. In the LLD method, by what minute should you normally be coding in a 45-minute interview, and why?
+11. Why does the LRU cache need a *doubly* linked list, and why must `get` take an exclusive lock?
+12. Using Formula 38.2 with $t_{\text{floor}} = 2$ s and $t_{\text{stop}} = 10$ s, an idle car is 9 floors away and another car moving toward the caller in the right direction is 3 floors away with 2 stops in between. Which is dispatched?
+13. Why is `Book` separate from `BookCopy` in the library design?
+14. Why is the vending machine a better fit for the State pattern than for a transition table?
+15. What are pseudo-legal moves, and why validate legality on a copy of the board?
+
+<details><summary>Answers</summary>
+
+1. `#` is protected (class and subclasses), `~` is package visibility. Static members are underlined (Mermaid: a trailing `$`).
+2. One or more line items per order; exactly one order per line item. Multiplicity is written at the far end and read from the near class.
+3. Realization: dashed line with a hollow triangle at the interface. Dependency: dashed line with an open arrowhead at the used class.
+4. Lifetime (does the part die with the whole?), sharing (can the part belong to two wholes?), creation (does only the whole create it and keep it private?). Yes, no, yes means composition.
+5. When the link has data of its own, such as a due date or a grade; it becomes an association class (`Loan`, `Enrollment`).
+6. Synchronous: solid line, filled arrowhead; the caller waits for the reply (dashed line). Asynchronous: solid line, open arrowhead; the caller continues without waiting.
+7. `alt` has two or more guarded operands, exactly one of which runs (if/else); `opt` has one operand that runs or not (if without else).
+8. The transition does not fire; the object stays in its current state, and no exit, effect or entry behavior runs.
+9. Only one branch receives a token after a decision, but a join waits for tokens on all incoming edges, so it never fires. Use a merge instead.
+10. Around minute 30; the last 13–15 minutes are needed to write and exercise working code, which is part of the evaluation.
+11. Unlinking a node in $O(1)$ needs its predecessor, which only a doubly linked node stores. `get` moves the node to the front, which mutates the list, so concurrent `get`s would race.
+12. Idle car: $9 \times 2 = 18$ s. Moving car: $3 \times 2 + 2 \times 10 = 26$ s. The idle car (18 s) is dispatched.
+13. A title has many physical copies with different statuses; loans attach to copies, holds attach to titles. Merging them cannot represent either correctly.
+14. Its states differ substantially in behavior (accepting coins, computing change, ignoring input while dispensing); one class per state keeps each set of rules cohesive and makes adding a state a local change.
+15. Moves that follow a piece's movement rules without considering whether the own king is left in check. Applying the move to a copy and testing for check handles pins, discovered checks and king moves uniformly without undo logic.
+</details>
+
+## 38.13 Interview questions
+
+### Basic
+
+**Q1. Explain the difference between aggregation and composition, with an example in code.** **Answer.** Both are whole–part associations. In composition the whole exclusively owns its parts and controls their lifetime: an `Order` creates its `LineItem`s, never shares them, and deleting the order deletes them (filled diamond; `ON DELETE CASCADE`). In aggregation the parts exist independently and may be shared: a `Playlist` references `Song`s that exist in the catalog and in other playlists (hollow diamond). In code, composition shows as the whole constructing the parts privately and exposing values or copies; aggregation as references passed in from outside. Many practitioners model aggregation as a plain association because its semantics are loosely defined.
+
+**Q2. Which diagrams would you draw to explain a checkout flow to a new team member?** **Answer.** A sequence diagram of the purchase scenario, including the payment-declined `alt` branch and the retry loop with an idempotency key; a state machine for the order lifecycle so they know which transitions are legal; and, if they are joining one module of several, a component diagram showing which interfaces their module provides and requires. A class diagram of the order aggregate helps if they will change the domain model.
+
+### Intermediate
+
+**Q3. Design a parking lot. How do you keep two entry gates from assigning the same spot?** **Answer.** Follow §38.10.1: a `ParkingLot` facade composing levels and spots, `Size` enum for vehicles and spots, `AllocationStrategy` and `FeePolicy` interfaces, immutable `Ticket`s. Finding a spot and marking it occupied must be one critical section; otherwise both gates can see the same spot as free (check-then-act). Use one lock for the lot, or a lock per level with the strategy claiming atomically within that level. In a database-backed design, claim with a conditional update (`WHERE occupied = false`) and check the row count.
+
+**Q4. Implement an LRU cache with O(1) operations. How would you scale it to many threads?** **Answer.** Hash map from key to node plus a doubly linked list in recency order with head and tail sentinels; `get` moves the node to the front; `put` inserts at the front and evicts the node before the tail when full. A single lock is correct because `get` also mutates. To scale, stripe the cache into $k$ independent segments by key hash (approximate global LRU), or use buffered access recording and batched reordering as high-performance libraries do; keep all of them behind one `Cache` interface.
+
+### Advanced
+
+**Q5. Design an elevator system for a 40-floor building with 6 cars. How do you choose which car answers a hall call, and how do you test it?** **Answer.** Separate the dispatcher (a Strategy) from each car's state machine (Idle, Moving, DoorsOpen, Maintenance with guarded transitions; the doors can never be open while moving). Dispatch by minimum estimated arrival time (Formula 38.2), not nearest car, because stops cost more than travel; add an age term against starvation and a zoning strategy for the morning peak. Make the controller deterministic with a discrete tick and injected time, so the worked cost example and full sweeps (LOOK ordering) become unit tests; simulate traffic to compare average and p95 waiting time between strategies.
+
+**Q6. Design an in-memory key-value store with TTL and transactions. What isolation do you provide?** **Answer.** Entries with optional expiry; lazy expiry on read plus an active sweep driven by a min-heap with a per-run budget. Per-client sessions hold a stack of write buffers for nested transactions with read-your-writes; outermost commit validates the read-set versions and applies all writes atomically under the store lock (optimistic concurrency), raising a conflict otherwise. Committed transactions are serializable in commit order; reads inside a transaction are not from a snapshot, so add MVCC if transactions must observe consistent data before commit. Discuss durability (append-only log), memory limits (eviction), and why Redis `MULTI`/`EXEC` has no rollback but `WATCH` provides the same optimistic check.
+
+## 38.14 Practical exercises
+
+1. Draw the class diagram of a codebase you know (8–12 classes) and mark every relationship as dependency, association, aggregation, composition, generalization or realization. Find one inheritance that should be composition.
+2. Add a `Maintenance` state to the vending machine that only an operator key can enter and leave; confirm that no existing state class changes except the transitions into it.
+3. Add direction-aware hall stops to the elevator code (`(floor, direction)` pairs) and write a test where a car moving up passes a floor with a pending *down* call without stopping.
+4. Replace the vending machine's greedy change-making with a dynamic-programming version that respects coin counts, and test the {one 25, three 10s} → 30 cents case.
+5. Extend the chess code with castling: add castling rights to the board state and verify that castling through an attacked square is rejected.
+
+## 38.15 Design challenges
+
+1. **Food-delivery order lifecycle.** Design the classes, state machine and two sequence diagrams for an order that moves through placement, restaurant acceptance, courier assignment, pickup, delivery and refunds, with partial cancellations of individual items. Show where the state is persisted and how concurrent events (customer cancels while courier picks up) are resolved.
+2. **Meeting-room booking system.** Rooms, recurring bookings, conflict detection, waitlists and calendar notifications for 2,000 rooms across 30 offices. Deliver the class diagram, the conflict-detection algorithm and its complexity, the concurrency strategy for two people booking the same slot, and three extension scenarios with their blast radius.
+
+## 38.16 References
+
+1. Object Management Group. *OMG Unified Modeling Language (OMG UML), Version 2.5.1* (formal/17-12-05). OMG, 2017. https://www.omg.org/spec/UML/2.5.1/
+2. Fowler, M. *UML Distilled: A Brief Guide to the Standard Object Modeling Language*, 3rd ed. Addison-Wesley, 2003.
+3. Rumbaugh, J., Jacobson, I., Booch, G. *The Unified Modeling Language Reference Manual*, 2nd ed. Addison-Wesley, 2004.
+4. Gamma, E., Helm, R., Johnson, R., Vlissides, J. *Design Patterns: Elements of Reusable Object-Oriented Software*. Addison-Wesley, 1994.
+5. Martin, R. C. *Agile Software Development, Principles, Patterns, and Practices*. Prentice Hall, 2002.
+6. Martin, R. C. *Clean Architecture: A Craftsman's Guide to Software Structure and Design*. Prentice Hall, 2017.
+7. GitHub. *Include diagrams in your Markdown files with Mermaid*. The GitHub Blog, February 2022. https://github.blog/2022-02-14-include-diagrams-markdown-files-mermaid/
+8. Mermaid contributors. *Mermaid documentation* (class, sequence, state diagram and flowchart syntax), accessed 2026. https://mermaid.js.org/
+9. Python Software Foundation. *functools — Higher-order functions and operations on callable objects* (documentation and `Lib/functools.py` source), accessed 2026. https://docs.python.org/3/library/functools.html
+10. Oracle. *Class LinkedHashMap<K,V>*. Java SE API documentation, accessed 2026. https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/LinkedHashMap.html
+11. Redis. *EXPIRE* (command documentation, including how keys expire), accessed 2026. https://redis.io/docs/latest/commands/expire/
+12. Redis. *Transactions* (MULTI, EXEC, DISCARD and WATCH), accessed 2026. https://redis.io/docs/latest/develop/interact/transactions/
+13. Fiekas, N. and contributors. *python-chess documentation*, accessed 2026. https://python-chess.readthedocs.io/
+14. IFLA Study Group on the Functional Requirements for Bibliographic Records. *Functional Requirements for Bibliographic Records: Final Report*. K. G. Saur, 1998.
+
+## 38.17 Open verification items
+
+- Exact wording and clause number in UML 2.5.1 stating that shared-aggregation semantics vary by application area and modeler; and the 790-page length of the specification PDF (approximate).
+- Fowler's quotation of Rumbaugh's "modeling placebo" remark on aggregation (*UML Distilled*, 3rd ed.), page reference not checked.
+- GitHub Mermaid announcement: exact publication date (believed 14 February 2022) and URL.
+- Current implementation details of CPython's `lru_cache` (C accelerator versus pure-Python fallback) and the per-entry memory overhead estimate of 100–200 bytes.
+- Redis expiry and transaction behavior as documented in 2026.

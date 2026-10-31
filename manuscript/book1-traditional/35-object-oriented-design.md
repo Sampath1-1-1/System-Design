@@ -261,23 +261,21 @@ The rule that trips people up: **equal objects must have equal hashes**. Hash ta
 
 #### First-principles explanation
 
-A bank teller sits behind a counter. You cannot walk into the vault and take money; you ask the teller, who checks your balance first. The counter is encapsulation. The rule "no account goes below zero" is an invariant, and it holds precisely because every withdrawal goes through the teller. If one side door lets people into the vault, the rule is no longer something the bank can promise; it becomes something every visitor must remember.
+You cannot walk into a bank vault; you ask the teller, who checks your balance first. The counter is encapsulation, and "no account goes below zero" holds precisely because every withdrawal goes through the teller. One side door into the vault, and the rule becomes something every visitor must remember.
 
-In the cart of Figure 35.1, `quantities` is a public dictionary. Any code can write `cart.quantities["SKU-MUG"] = -3`. The cart cannot promise anything about its own contents, so every function that reads the cart must defend itself. That cost is paid over and over, in every caller, and the one caller that forgets causes the bug.
+In Figure 35.1, any code can write `cart.quantities["SKU-MUG"] = -3`. The cart can promise nothing about its contents, so every reader must defend itself, and the one that forgets causes the bug.
 
 #### Why does this exist?
 
-Two reasons, one about correctness and one about change.
-
-1. **Correctness.** An invariant that any code can break is not an invariant. If the only way to change quantities is `add` and `remove`, then checking the rule in those two methods proves it for the whole program.
-2. **Change.** If callers read `cart.quantities` directly, you can never change how quantities are stored (a dict today, a list of line objects tomorrow, a database row later) without editing every caller. Parnas's argument in 1972 was exactly this: decompose a system by the decisions likely to change, and hide each one.
+1. **Correctness.** If the only way to change quantities is `add` and `remove`, checking the rule in those two methods proves it for the whole program.
+2. **Change.** If callers read `cart.quantities` directly, you cannot change how quantities are stored without editing every caller. Parnas's 1972 argument was exactly this: decompose by the decisions likely to change, and hide each one.
 
 #### How it works internally
 
-- **Java** enforces access in the compiler: `private` members are visible only inside the class, package-private (no modifier) inside the package, `protected` to subclasses and the package, `public` everywhere.
-- **Python** has no enforced privacy. A single leading underscore (`_lines`) is a convention meaning "internal; do not touch". A double underscore (`__lines`) triggers **name mangling** to `_Cart__lines`, which prevents accidental clashes in subclasses but does not stop a determined caller. Python relies on convention and code review.
-- In both languages the stronger tool is **immutability**: an object whose state cannot change after construction cannot have its invariants broken later. Python's `@dataclass(frozen=True)` and Java's `record` produce such objects cheaply.
-- When a method must return internal data, return a **copy** or a **read-only view**, never the internal collection itself.
+- **Java** enforces access in the compiler: `private` (class only), package-private (no modifier), `protected` (subclasses and package), `public`.
+- **Python** has no enforced privacy. A leading underscore (`_lines`) is a convention meaning "internal"; a double underscore triggers **name mangling** (`_Cart__lines`), which avoids clashes in subclasses but stops nobody determined.
+- The stronger tool in both is **immutability**: Python's `@dataclass(frozen=True)` and Java's `record` produce objects whose state cannot change after construction.
+- Return a **copy** or **read-only view** of internal data, never the internal collection.
 
 #### Architecture diagram
 
@@ -321,12 +319,11 @@ classDiagram
 
 **Reading the diagram.**
 
-- **Components.** `Cart` is the entity that enforces the rules. `Line`, `Coupon` and `Product` are immutable value objects (the `<<value object>>` label is a free-text stereotype).
-- **Visibility.** `-` marks private members. Nothing outside `Cart` can reach `_lines` or `_coupon`; the only doors are the seven public methods.
-- **Relationships.** The filled diamond (`*--`) means the cart *owns* its lines: lines are created and discarded by the cart. The hollow diamond (`o--`) means the cart *uses* a coupon that exists independently. Ch 38 covers these symbols in depth.
-- **Sync/async and storage.** All calls are synchronous and in memory.
-- **Failure points.** The invariants can now be broken only by a bug inside `Cart` itself, which is one class to test. `lines()` returns an immutable snapshot, so a caller cannot use it as a side door.
-- **Scaling.** The internal dictionary could become a database-backed store without changing any caller, because callers only see methods.
+- **Components.** `Cart` is the entity that enforces the rules; `Line`, `Coupon` and `Product` are immutable value objects (`<<value object>>` is a free-text label). `-` marks private members: the only doors into `Cart` are its public methods.
+- **Relationships.** The filled diamond (`*--`) means the cart *owns* its lines; the hollow diamond (`o--`) means it *uses* a coupon that exists independently (Ch 38 covers the notation).
+- **Sync/async and storage.** Synchronous, in memory.
+- **Failure points.** Only a bug inside `Cart` can break the invariants, and `lines()` returns an immutable snapshot, not a side door.
+- **Scaling.** The dictionary could become a database-backed store without changing any caller.
 
 #### Code example
 
@@ -502,18 +499,18 @@ class Main {
 What to notice:
 
 - The cart stores no `total` field. The total is *derived* from the lines and the coupon each time it is asked for, so it can never disagree with them. When the tea is removed, the subtotal falls to 2,598 cents, below the 5,000-cent minimum, and the discount disappears automatically. A stored total updated through a setter would have kept the stale 500-cent discount.
-- Both invariants are enforced in exactly one place. Adding 9 more mugs to a line that already has 2 is refused because 11 > 10.
-- `lines()` returns a tuple of frozen dataclasses in Python and `List.copyOf` of records in Java. A caller can read everything and change nothing.
+- Both invariants are enforced in one place: adding 9 mugs to a line of 2 is refused because 11 > 10.
+- `lines()` returns frozen dataclasses or records in an immutable collection: callers can read everything and change nothing.
 
 ### 35.4.2 Getters and setters: the pitfalls
 
-A **getter** returns a field (`get_price()`), a **setter** assigns one (`set_price(x)`). Many beginners are taught to make every field private and generate a getter and setter for each. That satisfies the letter of encapsulation and defeats its purpose: a public setter for every field is a public field with extra typing. Three specific problems follow.
+A **getter** returns a field (`get_price()`), a **setter** assigns one (`set_price(x)`). Generating both for every private field satisfies the letter of encapsulation and defeats its purpose: a setter for every field is a public field with extra typing.
 
-1. **Setters bypass invariants.** `cart.set_total(0)` or `line.set_quantity(-3)` lets callers put the object into a state no business rule permits. If a field may change, expose a method named after the business operation (`apply_coupon`, `remove`), which can check the rule.
+1. **Setters bypass invariants.** `line.set_quantity(-3)` creates a state no business rule permits. Expose operations named after the business action (`apply_coupon`, `remove`), which can check the rule.
 2. **Getters leak representation.** `get_lines()` returning the internal mutable list is a side door: `cart.get_lines().clear()` empties the cart without going through any method. Bloch's example is a `Period` class whose start and end are mutable `java.util.Date` objects: a caller who keeps a reference can move the end before the start. His remedy is **defensive copying** of mutable inputs and outputs [Bloch 2018, Item 50].
-3. **Getters invite logic to move outside.** If every caller can read `quantity`, `price` and `coupon`, every caller starts computing totals itself, and the discount rule ends up copied into the checkout page, the email template and the invoice generator.
+3. **Getters invite logic to move outside.** Callers that can read `quantity`, `price` and `coupon` start computing totals themselves, and the discount rule is copied into the checkout page, the email and the invoice.
 
-Getters are not forbidden. Read-only access to immutable values (`product.sku`, `line.quantity` on a frozen `Line`) is harmless and often necessary for display. The test is whether the caller then *makes a decision* the object should have made.
+Read-only access to immutable values (`product.sku`) is harmless and needed for display. The test is whether the caller then *makes a decision* the object should have made.
 
 ### 35.4.3 Tell, don't ask
 
@@ -538,7 +535,7 @@ if (cart.subtotalCents() >= 5000) cart.setDiscountCents(500);
 cart.applyCoupon(new Coupon("SAVE5", 5000, 500));
 ```
 
-The asking version has two defects visible in §35.4.1's run: the cart needs a writable discount field, and when the tea is later removed nobody re-checks the minimum spend. The telling version re-evaluates the rule every time because the rule is inside the cart.
+The asking version needs a writable discount field, and when the tea is removed nobody re-checks the minimum spend. The telling version re-evaluates the rule every time because it lives inside the cart.
 
 #### Real-world industry applications
 
@@ -549,8 +546,8 @@ The asking version has two defects visible in §35.4.1's run: the cart needs a w
 
 #### Advantages and disadvantages
 
-- **Advantages.** Invariants are checked in one place; internal representation can change without touching callers; immutable values can be shared freely, including across threads.
-- **Disadvantages.** More methods to design up front; immutable objects require creating new objects for each change (cheap for small values, a real cost for large collections updated often); Python's privacy depends on discipline.
+- **Advantages.** Invariants checked in one place; representation can change freely; immutable values can be shared, even across threads.
+- **Disadvantages.** More methods to design; immutability means a new object per change (costly for large, often-updated collections); Python's privacy depends on discipline.
 
 #### Failure scenarios
 
@@ -561,10 +558,9 @@ The asking version has two defects visible in §35.4.1's run: the cart needs a w
 | Negative quantity reaches the invoice | Public field or setter | Data-quality checks, customer complaint | Correct data, add the check | Business-named methods with validation |
 | Cart emptied by a report job | Getter returned the internal list | Hard to trace "spooky" changes | Return a copy | Copies or read-only views |
 | Stale discount after item removal | Derived value stored and set from outside | Totals disagree with lines | Recompute | Derive, don't store |
-| Same rule implemented three ways | Callers ask and decide | Inconsistent totals across pages | Move the rule into the class | Tell, don't ask |
 
 ::: mistake
-**Misconception — "Private fields plus getters and setters equals encapsulation."** Encapsulation is about who is allowed to make which state changes. A setter for every field hands that decision back to every caller. Ask instead: which *operations* does the business allow on this object? Expose those.
+**Misconception — "Private fields plus getters and setters equals encapsulation."** Encapsulation is about who may make which state changes. Ask which *operations* the business allows on the object, and expose those.
 :::
 
 ## 35.5 Inheritance

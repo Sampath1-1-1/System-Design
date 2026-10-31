@@ -279,57 +279,6 @@ A **context map** shows the bounded contexts and their relationships. Each relat
 **Figure 34.3 — QuickBite context map.**
 
 ```mermaid
-classDiagram
-  class Order {
-    <<aggregate root>>
-    +OrderId id
-    +CustomerId customerId
-    +RestaurantId restaurantId
-    +OrderStatus status
-    +int version
-    +addItem(menuItemId, qty, price)
-    +place()
-    +accept()
-    +cancel(reason)
-  }
-  class OrderLine {
-    <<entity>>
-    +LineId id
-    +MenuItemId menuItemId
-    +int quantity
-  }
-  class Money {
-    <<value object>>
-    +Decimal amount
-    +String currency
-  }
-  class DeliveryAddress {
-    <<value object>>
-    +String street
-    +GeoPoint location
-  }
-  class Restaurant {
-    <<separate aggregate>>
-    +RestaurantId id
-  }
-  Order "1" *-- "1..*" OrderLine : contains
-  OrderLine --> Money : unitPrice
-  Order --> Money : total
-  Order --> DeliveryAddress : deliverTo
-  Order ..> Restaurant : by id only
-```
-
-**Reading the diagram.** Arrows run from upstream to downstream and are labelled with the pattern; this models influence and translation, not request direction. Catalog's **open host service** publishes a menu schema that Ordering consumes. Ordering is a **supplier** to Delivery and Kitchen, which consume its events asynchronously. Billing receives order events through Ordering's open host service and shields itself from the payment provider with an **anticorruption layer**; Kitchen does the same for many restaurant point-of-sale systems. Delivery is **conformist** toward the maps provider, whose geometry types are acceptable. Identity and Ordering share a tiny **kernel**. Each box is a storage and ownership boundary. Failure points: Kitchen's ACL must stop malformed POS data; a maps model change forces Delivery to change. Each context scales independently.
-
-### 34.5.3 The anticorruption layer in code
-
-::: definition
-**Definition — Anticorruption layer (ACL).** A layer owned by a downstream context that translates between an upstream model and its own, so the upstream's concepts, codes and quirks never appear in the downstream model [Evans 2003].
-:::
-
-The payment provider speaks in statuses such as `AUTHORISED`, `CAPTURED`, `REFUSED` and `PENDING_3DS`, numeric refusal codes and string amounts in minor units. Billing knows three outcomes: authorized, declined (with a business reason) and "customer must act". The ACL below is the only code that knows the provider's vocabulary.
-
-```mermaid
 flowchart LR
   subgraph Core["Core domain"]
     ORD[Ordering]
@@ -345,7 +294,15 @@ flowchart LR
   ID[Identity] -->|"shared kernel:<br/>CustomerId, auth claims"| ORD
 ```
 
-Running it with `python3` prints:
+**Reading the diagram.** Arrows run from upstream to downstream and are labelled with the pattern; this models influence and translation, not request direction. Catalog's **open host service** publishes a menu schema that Ordering consumes. Ordering is a **supplier** to Delivery and Kitchen, which consume its events asynchronously. Billing receives order events through Ordering's open host service and shields itself from the payment provider with an **anticorruption layer**; Kitchen does the same for many restaurant point-of-sale systems. Delivery is **conformist** toward the maps provider, whose geometry types are acceptable. Identity and Ordering share a tiny **kernel**. Each box is a storage and ownership boundary. Failure points: Kitchen's ACL must stop malformed POS data; a maps model change forces Delivery to change. Each context scales independently.
+
+### 34.5.3 The anticorruption layer in code
+
+::: definition
+**Definition — Anticorruption layer (ACL).** A layer owned by a downstream context that translates between an upstream model and its own, so the upstream's concepts, codes and quirks never appear in the downstream model [Evans 2003].
+:::
+
+The payment provider speaks in statuses such as `AUTHORISED`, `CAPTURED`, `REFUSED` and `PENDING_3DS`, numeric refusal codes and string amounts in minor units. Billing knows three outcomes: authorized, declined (with a business reason) and "customer must act". The ACL below is the only code that knows the provider's vocabulary.
 
 ```python
 from dataclasses import dataclass
@@ -450,6 +407,14 @@ if __name__ == "__main__":
     print("all ACL tests passed")
 ```
 
+Running it with `python3` prints:
+
+```text
+rejected: missing merchant_reference
+rejected: unknown provider status 'PARTIALLY_AUTHORISED'
+all ACL tests passed
+```
+
 What to notice:
 
 - **Two upstream words, one meaning.** `AUTHORISED` and `CAPTURED` both become `PaymentAuthorized`.
@@ -472,10 +437,22 @@ What to notice:
 
 **Figure 34.4 — Event-storming output for QuickBite's order flow (simplified).**
 
-```text
-rejected: missing merchant_reference
-rejected: unknown provider status 'PARTIALLY_AUTHORISED'
-all ACL tests passed
+```mermaid
+flowchart LR
+  A1([Customer]) --> C1[/Place order/]
+  C1 --> E1[OrderPlaced]
+  E1 --> P1{{"Policy: when placed,<br/>authorize payment"}}
+  P1 --> C2[/Authorize payment/]
+  C2 --> E2[PaymentAuthorized]
+  E2 --> P2{{"Policy: when paid,<br/>send to kitchen"}}
+  P2 --> E3[TicketCreated]
+  A2([Restaurant staff]) --> C3[/Accept ticket/]
+  E3 -.-> C3
+  C3 --> E4[TicketAccepted]
+  E4 --> E5[CourierAssigned]
+  E5 --> E6[OrderPickedUp]
+  E6 --> E7[OrderDelivered]
+  E7 --> H1["HOTSPOT: when is<br/>an order final?"]
 ```
 
 **Reading the diagram.** This is a modelling artifact: arrows show causality, not network calls. Stadiums are actors, parallelograms commands, rectangles domain events and hexagons policies. A customer's *Place order* produces `OrderPlaced`; a policy reacts with *Authorize payment*, and so on. The dotted arrow marks a human waiting step, where latency and timeouts will appear in the system. The vocabulary shifts around `PaymentAuthorized` (Billing), at "ticket" (Kitchen) and at "courier" (Delivery): these are the candidate boundaries of Figure 34.3. The final hotspot (support says delivery, finance says 14 days later) becomes a design decision instead of a production bug.
@@ -591,22 +568,20 @@ With **self-registration**, an instance registers on start-up, sends heartbeats 
 **Figure 34.6 — Client-side and server-side service discovery.**
 
 ```mermaid
-flowchart LR
-  M([Mobile app]) -->|HTTPS| GW[Edge API gateway]
-  W([Web app]) -->|HTTPS| GW
-  P([Partner systems]) -->|HTTPS| GW
-  GW -->|HTTP/2| BM[Mobile BFF]
-  GW -->|HTTP/2| BW[Web BFF]
-  GW -->|HTTP/2| BP[Partner API]
-  BM -->|gRPC| CAT[Catalog]
-  BM -->|gRPC| ORD[Ordering]
-  BM -->|gRPC| DLV[Delivery]
-  BW -->|gRPC| CAT
-  BW -->|gRPC| ORD
-  BP -->|gRPC| ORD
-  CAT --> CDB[(Catalog DB)]
-  ORD --> ODB[(Order DB)]
-  DLV --> DDB[(Delivery DB)]
+flowchart TB
+  subgraph ClientSide["Client-side discovery"]
+    O1[Ordering instance] -->|1. lookup payment| R1[(Service registry)]
+    O1 -->|"2. gRPC to chosen instance"| P1A[Payment 10.0.1.7]
+    O1 -.->|other calls| P1B[Payment 10.0.2.9]
+    P1A -.->|heartbeat| R1
+    P1B -.->|heartbeat| R1
+  end
+  subgraph ServerSide["Server-side discovery"]
+    O2[Ordering instance] -->|"1. call payment.svc VIP"| LB2[Router or load balancer]
+    LB2 -->|2. forward| P2A[Payment pod A]
+    LB2 -->|2. forward| P2B[Payment pod B]
+    CP2[(Registry or control plane)] -.->|endpoint updates| LB2
+  end
 ```
 
 **Reading the diagram.** Client-side (top): Ordering queries the registry (a replicated store, the storage boundary), caches the list, picks an instance with a client-side policy (§19.10) and calls it directly over gRPC; instances heartbeat asynchronously (dotted). Server-side (bottom): Ordering calls one stable name or virtual IP; a router (load balancer, `kube-proxy` rules or a sidecar) receives endpoint updates asynchronously and forwards the request. Failure points: stale entries send traffic to dead instances in both designs; the server-side router is an extra hop that must be redundant. Scaling: registries are read-heavy and serve cached lookups; clients must keep working on their last-known list if the registry is unreachable.
@@ -635,17 +610,21 @@ A service mesh (§34.10) blurs the line: the sidecar balances client-side on the
 #### Mathematical foundations: how long does a dead instance keep receiving traffic?
 
 ::: formula
-**Latency of sequential and parallel call sequences**
+**Stale-endpoint window and failed requests**
 
-$$L_{\text{seq}} = \sum_{i=1}^{n} \left(R_i + s_i\right) \qquad L_{\text{par}} = \max_{i} \left(R_i + s_i\right)$$
+$$T_{\text{stale}} \le k \cdot h + t_{\text{prop}} + t_{\text{cache}} \qquad F \approx \frac{\lambda}{m} \cdot T_{\text{stale}} \cdot (1 - q)$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $n$ | Number of calls needed to build one response | calls |
-| $R_i$ | Network round-trip time of call $i$ (including connection reuse) | ms |
-| $s_i$ | Server processing time of call $i$ | ms |
-| $L_{\text{seq}}$ | Total latency when each call waits for the previous one | ms |
-| $L_{\text{par}}$ | Total latency when independent calls run concurrently | ms |
+| $h$ | Heartbeat or health-check interval | s |
+| $k$ | Consecutive missed checks before the instance is removed | count |
+| $t_{\text{prop}}$ | Time for the registry change to reach clients or routers | s |
+| $t_{\text{cache}}$ | Maximum additional client cache age | s |
+| $T_{\text{stale}}$ | Worst-case time a dead instance stays in some client's list | s |
+| $\lambda$ | Total request rate to the service | requests/s |
+| $m$ | Number of instances (traffic share of the dead one is $1/m$) | count |
+| $q$ | Fraction of failed calls rescued by a retry on another instance or by passive ejection | dimensionless |
+| $F$ | Requests that fail during the window | requests |
 :::
 
 ::: example
@@ -675,10 +654,8 @@ $$L_{\text{seq}} = \sum_{i=1}^{n} \left(R_i + s_i\right) \qquad L_{\text{par}} =
 
 ### 34.8.1 Synchronous versus asynchronous
 
-Every interaction between services is either a request that waits for an answer or a message that does not. Chapter 30 treats the mechanics; here the question is which to choose for a given pair of services.
-
 ::: definition
-**Definition — Synchronous and asynchronous inter-service communication.** In **synchronous** communication the caller sends a request (REST over HTTP, gRPC) and blocks, or at least cannot complete its own work, until it receives a response; caller and callee must both be available at the same time. In **asynchronous** communication the sender publishes a message (an event or command) to a broker or log and continues; the receiver processes it later, so the two need not be available simultaneously (§30.3).
+**Definition — Synchronous and asynchronous inter-service communication.** In **synchronous** communication the caller sends a request (REST, gRPC) and cannot complete its work until the response arrives, so caller and callee must be available at the same time. In **asynchronous** communication the sender publishes a message (event or command) to a broker or log and continues; the receiver processes it later (§30.3).
 :::
 
 **Figure 34.7 — Placing an order: synchronous chain versus event-driven flow.**
@@ -710,78 +687,73 @@ sequenceDiagram
   B--)N: OrderConfirmed
 ```
 
-**Reading the diagram.** In the first half, Ordering calls Payment, Kitchen and Notification synchronously in sequence; the client's response waits for all three, so latencies add and the request fails if any of the four services is down or slow. In the second half, Ordering keeps only the payment authorization on the synchronous path (the customer genuinely needs to know whether the card worked), commits the order and an outbox row in one local transaction (§32.5), and returns. A relay publishes `OrderConfirmed` to the broker, the durable storage boundary between services, and Kitchen and Notification consume it asynchronously (open arrowheads) at their own pace; if Notification is down for ten minutes, confirmations are late but orders still succeed. The cost is eventual consistency: for a moment the order exists but the kitchen has not seen it, and failures after the response must be handled by retries, dead-letter queues and, where business steps can fail, sagas (§32.7). Scaling: the broker absorbs bursts, so Kitchen and Notification scale on their own backlog.
+**Reading the diagram.** In the first half, Ordering calls Payment, Kitchen and Notification synchronously in sequence; latencies add, and the request fails if any of four services is down. In the second half only payment authorization stays synchronous (the customer must know whether the card worked); Ordering commits the order and an outbox row in one local transaction (§32.5) and responds. A relay publishes `OrderConfirmed` to the broker, the durable boundary between services, and Kitchen and Notification consume it asynchronously (open arrowheads); if Notification is down for ten minutes, confirmations are late but orders still succeed. The cost is eventual consistency, and failures after the response need retries, dead-letter queues and, where steps can fail, sagas (§32.7). Consumers scale on their backlog.
 
 **Table 34.5 — Choosing a communication style.**
 
-| | Synchronous (REST, gRPC) | Asynchronous (events, commands via broker) |
+| | Synchronous (REST, gRPC) | Asynchronous (events via broker) |
 |---|---|---|
-| Use for | Queries; commands whose result the caller needs now | Propagating facts; work the caller need not wait for |
-| Advantages | Simple mental model; immediate errors | Temporal decoupling; load leveling; easy fan-out to new consumers |
-| Disadvantages | Availability and latency compound along chains | Eventual consistency; harder debugging; ordering and duplicates |
-| Failure handling | Timeouts, retries, circuit breakers (Chapter 22) | Retries, idempotent consumers, dead-letter queues (§30.10–30.11, §32.10) |
-| Typical protocols | HTTP/JSON at the edge; gRPC/Protobuf internally | Kafka, RabbitMQ, SQS/SNS, Pub/Sub (Chapters 30–31) |
+| Use for | Queries; commands whose result is needed now | Propagating facts; work nobody waits for |
+| Advantages | Simple model; immediate errors | Temporal decoupling; load leveling; easy new consumers |
+| Disadvantages | Availability and latency compound along chains | Eventual consistency; duplicates; harder debugging |
+| Failure handling | Timeouts, retries, circuit breakers (Chapter 22) | Idempotent consumers, dead-letter queues (§30.11, §32.10) |
 
-REST over HTTP/JSON is the common choice at the edge and for public APIs, where readability and tooling matter. **gRPC** over HTTP/2 with Protocol Buffers (§8.8) is common between internal services: binary encoding, generated client stubs in many languages, streaming, and deadline propagation built in. For async, the deciding factors are replay and ordering needs (a log such as Kafka) versus per-message routing and work queues (a broker such as RabbitMQ; §30.12).
+REST over HTTP/JSON dominates at the edge; **gRPC** with Protocol Buffers (§8.8) is common internally for its compact encoding, generated stubs, streaming and built-in deadlines. For asynchronous paths, choose a log such as Kafka when you need replay and per-key ordering, and a broker such as RabbitMQ for routed work queues (§30.12).
 
 ::: recommendation
-**Recommendation — Keep one synchronous call on the critical path where you can.** Ask of each synchronous call: does the caller need the answer *before it can respond to its own caller*? If not, publish an event. If it needs data rather than an action (a restaurant's name to show on an order), consider keeping a local, event-fed copy of that data (§34.11.3) instead of calling on every request.
+**Recommendation — Keep one synchronous call on the critical path where you can.** For each synchronous call, ask whether the caller needs the answer before it can respond. If not, publish an event. If it needs data rather than an action (a restaurant's name), keep a local event-fed copy (§34.11.2).
 :::
 
 ### 34.8.2 Chatty calls
 
-A design that was a cheap function call in a monolith can be an expensive pattern across a network: the **N+1 call problem**. QuickBite's order-history page shows the last 50 orders. A naive Ordering service, having moved menu data to Catalog, calls Catalog once per order line to fetch item names.
+A function call in a monolith can become an expensive **N+1 call** pattern across the network. QuickBite's order-history page shows 50 orders, and a naive Ordering service calls Catalog once per order line for item names.
 
 ::: example
-**Worked example — Chatty versus batched calls inside the datacenter.** Each call to Catalog costs a round trip of $R = 0.5$ ms plus $s = 2$ ms of processing; a batched call for many items costs $R = 0.5$ ms plus $s = 5$ ms. The page shows 50 orders averaging 3 lines each: 150 lines.
+**Worked example — Chatty versus batched calls.** A Catalog call costs $R = 0.5$ ms plus $s = 2$ ms; a batched call costs $0.5 + 5$ ms. The page has 150 order lines.
 
-1. One call per line, sequential: $L = 150 \times (0.5 + 2) = 375$ ms (formula of §34.6.2).
-2. One call per line, 10 concurrent: about $\lceil 150 / 10 \rceil \times 2.5 = 15 \times 2.5 = 37.5$ ms, but now Catalog receives 150 calls per page view; at 200 page views/s that is 30,000 RPS on Catalog for this one page.
-3. One batched call `GetItems(ids)`: $L = 0.5 + 5 = 5.5$ ms and 200 RPS on Catalog.
-4. Local copy of item names kept current by `MenuItemChanged` events: about 0 ms of network and 0 RPS on Catalog at read time.
+1. One call per line, sequential: $L = 150 \times 2.5 = 375$ ms (formula of §34.6.2).
+2. Ten concurrent: $15 \times 2.5 = 37.5$ ms, but at 200 page views/s Catalog receives $150 \times 200 = 30{,}000$ RPS for this one page.
+3. One batched `GetItems(ids)` call: $L = 5.5$ ms and 200 RPS.
+4. A local copy of item names fed by `MenuItemChanged` events: no network call at read time.
 
-**Interpretation.** The batched call is 68 times faster than the naive loop and puts 150 times less load on Catalog. **Engineering implication.** Design inter-service APIs for the caller's access pattern: batch lookups, coarse-grained operations, and pagination. If a page needs dozens of calls to one service, either the API is too fine-grained or the boundary is in the wrong place.
+**Interpretation.** Batching is 68 times faster and puts 150 times less load on Catalog. **Engineering implication.** Design inter-service APIs for the caller's access pattern (batch lookups, coarse operations, pagination). Dozens of calls to one service per page signal an API that is too fine-grained or a misplaced boundary.
 :::
 
 ### 34.8.3 Fan-out and tail latency
 
-A BFF or composer that calls $N$ services in parallel waits for the slowest. Section 4.8.4 derived the law: if each dependency is fast with probability $p$, all $N$ are fast with probability $p^N$.
+A composer that calls $N$ services in parallel waits for the slowest. By §4.8.4, if each is fast with probability $p$, all are fast with probability $p^N$.
 
 ::: example
-**Worked example — The home-screen fan-out.** The Mobile BFF of §34.6 calls 6 services in parallel, each with p99 = 50 ms, and waits for all.
+**Worked example — The home-screen fan-out.** The Mobile BFF calls 6 services in parallel, each with p99 = 50 ms.
 
 1. $P(\text{all six} \le 50 \text{ ms}) = 0.99^6 = 0.9415$.
-2. So about $1 - 0.9415 = 5.9\%$ of home-screen requests wait longer than 50 ms for at least one dependency: the BFF's p94 is roughly the dependencies' p99.
-3. At 100-way fan-out the same arithmetic gives $0.99^{100} = 0.366$, the *Tail at Scale* example of §4.8.4.
+2. So $5.9\%$ of requests wait longer than 50 ms for some dependency: the BFF's p94 is roughly the dependencies' p99.
+3. At 100-way fan-out, $0.99^{100} = 0.366$, the *Tail at Scale* example of §4.8.4.
 
-**Interpretation.** Each additional parallel dependency moves the overall tail toward the dependencies' tails. **Engineering implication.** Give each dependency call a deadline below the page budget, mark which calls are optional and render without them when late, and consider hedged requests for idempotent reads (§23.6). Fewer dependencies per request is the most effective fix.
+**Interpretation.** Each parallel dependency pulls the overall tail toward the dependencies' tails. **Engineering implication.** Give each call a deadline, render without optional data when it is late, hedge idempotent reads (§23.6), and above all reduce the number of dependencies per request.
 :::
 
 ### 34.8.4 API versioning across services
 
-Independent deployability requires that a provider can change without all its consumers changing at the same moment. The rules of §8.15 apply between services with one twist: you usually know (or can find out) every internal consumer, so you can verify compatibility before deploying.
+The rules of §8.15 apply, with one advantage: you can know every internal consumer and verify compatibility before deploying.
 
-1. **Make additive, backward-compatible changes by default.** Add optional fields; never remove or rename a field, change its type or tighten validation in place. Consumers should be **tolerant readers** that ignore unknown fields [Fowler 2011: TolerantReader]. Protobuf supports this directly: new fields get new tag numbers, removed tags are marked `reserved` so they are never reused.
-2. **Use expand and contract for breaking changes.** Add the new field or endpoint (expand), migrate consumers, observe that the old one has no traffic, then remove it (contract). Each step is a separate, independently deployable release.
-3. **Version explicitly only when needed.** A major version in the path (`/v2/payments`) or package (`payments.v2`) lets old and new coexist; run both until traffic to the old one stops. Each live version is code to maintain, so keep at most two.
-4. **Version events too.** Event schemas outlive code: a consumer may replay last year's events. Use a schema registry with compatibility rules (for example Avro or Protobuf with backward-compatibility checks) and add an event version field (§8.9, §30.6).
+1. **Additive changes by default.** Add optional fields; never remove, rename, retype or tighten in place. Consumers are **tolerant readers** that ignore unknown fields [Fowler 2011: TolerantReader]. In Protobuf, removed tags are marked `reserved`.
+2. **Expand and contract** for breaking changes: add the new form, migrate consumers, confirm the old form has no traffic, then remove it, each step a separate release.
+3. **Explicit versions only when needed** (`/v2/payments`, `payments.v2`), keeping at most two alive.
+4. **Version events too.** Consumers may replay old events, so use a schema registry with compatibility checks (§8.9, §30.6).
 
 ### 34.8.5 Contract testing with consumer-driven contracts
 
-#### Why does this exist?
-
-How do you know that deploying Payment version 42 will not break Ordering? End-to-end tests that deploy every service together are slow, flaky and need every team's code in one environment, which reintroduces the coordination microservices were meant to remove. Unit tests with hand-written mocks are fast but test the consumer against the consumer's *assumptions* about the provider, which drift silently.
+End-to-end tests that deploy every service together are slow, flaky and reintroduce the coordination microservices were meant to remove. Hand-written mocks test the consumer only against its own assumptions, which drift.
 
 ::: definition
-**Definition — Consumer-driven contract (CDC).** A specification of the requests a consumer sends to a provider and the parts of the responses it relies on, written by the consumer (usually generated by the consumer's tests). The provider runs every consumer's contract against its real implementation in its own build, so a provider change that breaks any consumer fails the provider's pipeline before deployment [Robinson 2006; Pact Docs].
+**Definition — Consumer-driven contract (CDC).** A specification, generated by the consumer's tests, of the requests a consumer sends to a provider and the parts of the responses it relies on. The provider verifies every consumer's contract against its real implementation in its own build, so a breaking change fails before deployment [Robinson 2006; Pact Docs].
 :::
 
-#### How it works internally
-
-1. **Consumer test.** Ordering's tests describe each interaction ("given payment p-1 is authorized, `GET /payments/p-1` returns 200 with a `status` string and an integer `amount.minor`") and run Ordering's real client code against a mock provider generated from that description. The run produces a **contract** (a *pact* file in Pact's terminology).
-2. **Publish.** The contract is published to a **broker** tagged with the consumer's version and branch or environment.
-3. **Provider verification.** Payment's CI fetches every contract in which Payment is the provider, sets up each **provider state** ("payment p-1 is authorized") and replays each request against the real Payment service, checking that the response satisfies the contract. Matching is by *shape* where the consumer said so: any string for `status`, not the literal example.
-4. **Deployment gate.** Before deploying either side to an environment, the pipeline asks the broker whether this version is verified against the versions currently deployed there (Pact's `can-i-deploy` command) [Pact Docs].
+1. **Consumer test.** Ordering's tests run its real client code against a mock provider generated from declared interactions ("given payment p-1 is authorized, `GET /payments/p-1` returns 200 with a string `status`"), producing a contract (a *pact*).
+2. **Publish** the contract to a **broker**, tagged with the consumer's version.
+3. **Provider verification.** Payment's CI sets up each **provider state**, replays each request against the real service and checks the response, matching by type where the consumer asked.
+4. **Deployment gate.** Before deploying, ask the broker whether this version is verified against the versions deployed in the target environment (Pact's `can-i-deploy`) [Pact Docs].
 
 **Figure 34.8 — Consumer-driven contract testing workflow.**
 
@@ -801,11 +773,11 @@ sequenceDiagram
   BR-->>DP: yes - verified against deployed consumers
 ```
 
-**Reading the diagram.** The consumer's CI generates and publishes the contract (synchronous calls to the broker); the broker notifies the provider's CI asynchronously with a webhook; the provider's CI verifies the contract against the real service with its own test data and publishes the result. The broker is the storage boundary: it records which consumer versions are verified against which provider versions and which versions are deployed where. The deploy pipeline queries that matrix before each deployment. Failure points: a contract that over-specifies (exact values instead of types) fails on harmless changes, and a contract that under-specifies misses real breakage; the broker itself becomes a release dependency and needs to be available. Scaling: verification cost grows with the number of consumer–provider pairs, not the number of services squared, because only real interactions are tested.
+**Reading the diagram.** The consumer's CI publishes the contract synchronously; the broker notifies the provider's CI asynchronously by webhook; the provider verifies against its real service and publishes the result. The broker is the storage boundary recording which versions are verified and deployed where, and the deploy pipeline queries it. Failure points: over-specified contracts (literal values) fail on harmless changes, under-specified ones miss breakage, and the broker becomes a release dependency. Cost grows with real consumer–provider pairs, not with the square of the number of services.
 
 #### Code example
 
-The program below builds a tiny CDC framework in about 60 lines to show the mechanism (Pact provides the same ideas with many more matchers, HTTP mock servers, message contracts and a broker). The consumer's test produces a contract; the provider verifies it. Version 1 of the provider passes even though it returns extra fields; version 2 renames `status` to `state` in a "harmless refactoring" and the provider's own build fails.
+The program below implements the mechanism in about 60 lines (Pact adds many matchers, HTTP mock servers, message contracts and the broker). Provider version 1 passes despite returning extra fields; version 2 renames `status` to `state` and fails its own build.
 
 ```python
 import json
@@ -935,14 +907,14 @@ contract tests behave as expected
 
 What to notice:
 
-- **The consumer's real client code is exercised.** `fetch_payment_status` runs against a mock derived from the contract, so the contract cannot claim something the client does not actually use.
-- **Matching by type, not value.** The provider returns 9900 EUR while the consumer's example said 2450 USD; verification passes because the consumer declared `like(...)`. Over-specified literal values are the most common cause of brittle contracts.
-- **Extra fields are allowed.** `created_at` does not break the contract: the consumer is a tolerant reader. Only what the consumer relies on is checked.
-- **Provider states make verification repeatable.** `set_state` seeds the provider's data for each interaction, so the provider tests its real handler without the consumer's environment.
-- **The breaking change is caught in the provider's build.** The renamed field fails Payment's CI with a message naming the consumer's expectation, before anything is deployed.
+- **The consumer's real client code runs** against the mock, so the contract cannot claim what the client does not use.
+- **Matching by type.** The provider returns 9900 EUR against an example of 2450 USD and still passes, because the consumer declared `like(...)`. Literal values are the commonest cause of brittle contracts.
+- **Extra fields are allowed** (`created_at`): only what the consumer relies on is checked.
+- **Provider states** seed data per interaction, making verification repeatable.
+- **The breaking rename fails in Payment's build**, naming the consumer's expectation, before deployment.
 
 ::: mistake
-**Common misconception — "Contract tests replace functional tests of the provider."** A contract checks the *shape* of the interaction the consumer relies on, not that the provider's business logic is right. A contract will happily pass if Payment returns `AUTHORIZED` for a card that should be declined. Keep the provider's own functional tests; use contracts to replace most cross-service end-to-end tests, not unit tests [Pact Docs].
+**Common misconception — "Contract tests replace provider functional tests."** A contract checks shape, not business correctness: it passes if Payment returns `AUTHORIZED` for a card that should be declined. Contracts replace most cross-service end-to-end tests, not unit tests [Pact Docs].
 :::
 
 ## 34.9 Distributed tracing (introduction)
@@ -997,13 +969,19 @@ Every inter-service call needs discovery and balancing (§34.7), timeouts, retri
 **Figure 34.10 — Sidecar service mesh: data plane and control plane.**
 
 ```mermaid
-flowchart TB
-  S1["Span A: gateway POST /orders<br/>0 to 412 ms"] --> S2["Span B: mobile-bff placeOrder<br/>3 to 409 ms"]
-  S2 --> S3["Span C: ordering CreateOrder<br/>6 to 405 ms"]
-  S3 --> S4["Span D: ordering SQL insert<br/>8 to 14 ms"]
-  S3 --> S5["Span E: payment Authorize<br/>16 to 398 ms"]
-  S5 --> S6["Span F: provider HTTPS call<br/>20 to 395 ms"]
-  S3 -.->|"link, async"| S7["Span G: outbox relay publish<br/>420 to 425 ms"]
+flowchart LR
+  subgraph PodO["Pod: ordering"]
+    OA[Ordering app] -->|plain HTTP localhost| OS[Sidecar proxy]
+  end
+  subgraph PodP["Pod: payment"]
+    PS[Sidecar proxy] -->|plain HTTP localhost| PA[Payment app]
+  end
+  OS -->|mTLS HTTP/2| PS
+  CP["Control plane<br/>config, CA, discovery"] -.->|xDS config and certs| OS
+  CP -.->|xDS config and certs| PS
+  OS -.->|metrics and spans| TEL[(Telemetry backend)]
+  PS -.->|metrics and spans| TEL
+  K8S[(Kubernetes API)] -.->|services and endpoints| CP
 ```
 
 **Reading the diagram.** The Ordering application sends a plain request to localhost; its sidecar carries it over mutual TLS (HTTP/2) to the Payment sidecar, which checks identity and policy and forwards to the application. Solid arrows are the synchronous path: one logical call crosses two proxies. Dotted arrows are asynchronous: the control plane reads services and endpoints from the Kubernetes API (a storage boundary) and pushes configuration and certificates; proxies export telemetry. Failure points: if the control plane is down, proxies keep their last configuration, so traffic flows but deploys and certificate rotation stall; a bad pushed configuration can affect every service at once. Scaling: data-plane cost grows with pods; control-plane push cost grows with proxies times configuration size.
@@ -1027,13 +1005,18 @@ Sidecars cost one proxy per pod, two proxy traversals per call, pod restarts for
 **Figure 34.11 — Istio ambient mode: per-node ztunnel with an optional waypoint.**
 
 ```mermaid
-flowchart TB
-  S1["Span A: gateway POST /orders<br/>0 to 412 ms"] --> S2["Span B: mobile-bff placeOrder<br/>3 to 409 ms"]
-  S2 --> S3["Span C: ordering CreateOrder<br/>6 to 405 ms"]
-  S3 --> S4["Span D: ordering SQL insert<br/>8 to 14 ms"]
-  S3 --> S5["Span E: payment Authorize<br/>16 to 398 ms"]
-  S5 --> S6["Span F: provider HTTPS call<br/>20 to 395 ms"]
-  S3 -.->|"link, async"| S7["Span G: outbox relay publish<br/>420 to 425 ms"]
+flowchart LR
+  subgraph Node1["Node 1"]
+    OA[Ordering pod] --> Z1[ztunnel]
+  end
+  subgraph Node2["Node 2"]
+    Z2[ztunnel] --> PA[Payment pod]
+  end
+  Z1 -->|"HBONE mTLS tunnel"| WP["Waypoint proxy<br/>L7 policy for payment"]
+  WP -->|"HBONE mTLS tunnel"| Z2
+  CP[istiod control plane] -.->|config and certs| Z1
+  CP -.->|config and certs| Z2
+  CP -.->|config| WP
 ```
 
 **Reading the diagram.** Pods contain no proxy. Ordering's traffic is redirected to its node's ztunnel, which wraps it in an mTLS tunnel (HBONE) and, because Payment has L7 policy, sends it to Payment's waypoint, which applies HTTP routing, retries and authorization before forwarding through Node 2's ztunnel. Without L7 policy, traffic goes ztunnel to ztunnel. The control plane configures all three asynchronously. Failure points: a ztunnel failure affects every pod on its node, a larger blast radius than one sidecar; the waypoint is a shared hop to scale and replicate. Scaling: proxy count grows with nodes, not pods, and only services needing L7 pay for it.
@@ -1124,7 +1107,7 @@ Cross-service invariants then become **sagas**: a sequence of local transactions
 
 A support agent wants "all orders for customer X in the last month, with delivery times and refund status": data owned by three services. Two patterns exist [Richardson 2018]:
 
-- **API composition.** A composer (a BFF or query service) calls each owner and joins in memory. Simple and always fresh, but its latency is that of the slowest owner, its availability is the product of the owners' (§34.14.4), and large joins (all orders with any refund) need inefficient fan-out.
+- **API composition.** A composer (a BFF or query service) calls each owner and joins in memory. Simple and always fresh, but its latency is that of the slowest owner, its availability is the product of the owners' (§34.14.3), and large joins (all orders with any refund) need inefficient fan-out.
 - **CQRS view.** A dedicated read model, fed by events from the owners, stores the pre-joined answer (Figure 34.12). Queries are fast and independent of the owners' availability, at the cost of replication lag (typically under a second to seconds) and another datastore to run (§32.4).
 
 **Table 34.6 — Querying across services.**
