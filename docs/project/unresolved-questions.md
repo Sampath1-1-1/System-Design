@@ -220,3 +220,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-213 | 41 | Commitment/spot discount ranges; spot notice periods on GCP and Azure | Open | Time-sensitive |
 | UQ-214 | 41 | Existence and naming (as of 2026): Aurora DSQL, DynamoDB multi-Region strong consistency, Google Titanium, Azure Boost, GCP Managed Lustre, Managed Kafka services | Open | Time-sensitive |
 | UQ-215 | 41 | S3 Block Public Access on by default for new buckets since April 2023 | Open | |
+| UQ-216 | 39 | Google Cloud 12 June 2025 Service Control incident report: red-button and per-region recovery timings, remediation wording | Open | status.cloud.google.com unreachable |
+| UQ-217 | 39 | AWS Compute SLA credit tiers below 99.0%; GitLab 2017 incident figures (~300 GB deleted, ~6 h data loss) | Open | |
+| UQ-218 | 39 | Originator of the 3-2-1 backup rule; SRE Workbook error-budget policy wording (20% threshold, escalation path) | Open | |
+| UQ-219 | 39 | DR cost percentages in Table 39.7 are illustrative planning figures | Accepted | Labeled in text |
