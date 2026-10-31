@@ -1365,7 +1365,7 @@ flowchart LR
 1. Compute change coupling for every pair of top-level directories in a repository you know, using `git log --name-only`; list the five most coupled pairs.
 2. Extend the ACL of §34.5.3 with a refund response and outbound translation of a `ChargeRequest`; add tests.
 3. Extend the contract library of §34.8.5 with an array matcher (`each_like`) and a message (event) contract.
-4. Simulate the stale-endpoint window of §34.7.4 with 20 instances, one crash and passive ejection after 5 errors; compare failures with and without retries.
+4. Simulate the stale-endpoint window of §34.7.3 with 20 instances, one crash and passive ejection after 5 errors; compare failures with and without retries.
 5. Draw QuickBite's context map for a new "group ordering" feature and state each relationship pattern.
 
 ## 34.19 Design challenges
@@ -1393,26 +1393,25 @@ flowchart LR
 15. Newman, S. *Pattern: Backends For Frontends*. samnewman.io, 2015. https://samnewman.io/patterns/architectural/bff/
 16. Plotnicki, L. *BFF @ SoundCloud*. ThoughtWorks Insights, 2015. https://www.thoughtworks.com/insights/blog/bff-soundcloud
 17. Jacobson, D. *Embracing the Differences: Inside the Netflix API Redesign*. Netflix Technology Blog, 2012.
-18. Netflix Technology Blog. *Zuul 2: The Netflix Journey to Asynchronous, Non-Blocking Systems*. 2016.
-19. Netflix. *Eureka* (wiki and documentation). https://github.com/Netflix/eureka/wiki
-20. HashiCorp. *Consul Documentation: Service discovery; health checks*. https://developer.hashicorp.com/consul/docs
-21. Kubernetes. *Documentation: Services; DNS for Services and Pods; Liveness, Readiness and Startup Probes*. https://kubernetes.io/docs/
-22. Robinson, I. *Consumer-Driven Contracts: A Service Evolution Pattern*. martinfowler.com, 2006. https://martinfowler.com/articles/consumerDrivenContracts.html
-23. Pact Foundation. *Pact Documentation* (consumer tests, provider verification, provider states, can-i-deploy). https://docs.pact.io/
-24. Sigelman, B. H., et al. *Dapper, a Large-Scale Distributed Systems Tracing Infrastructure*. Google Technical Report dapper-2010-1, 2010.
-25. W3C. *Trace Context* (Recommendation). https://www.w3.org/TR/trace-context/
-26. Istio. *Documentation: Architecture; Distributed Tracing; Performance and Scalability*. https://istio.io/latest/docs/
-27. Istio. *Fast, Secure, and Simple: Istio's Ambient Mode Reaches General Availability in v1.24*. Istio Blog, 2024. https://istio.io/blog/2024/ambient-reaches-ga/
-28. Linkerd. *Documentation: Architecture*. https://linkerd.io/2/reference/architecture/
-29. Westeinde, K. *Deconstructing the Monolith: Designing Software that Maximizes Developer Productivity*. Shopify Engineering, 2019.
-30. GitHub. *Scientist: a Ruby library for carefully refactoring critical paths*. https://github.com/github/scientist
-31. Noonan, A. *Goodbye Microservices: From 100s of problem children to 1 superstar*. Segment Engineering Blog, 2018.
-32. Kolny, M. *Scaling up the Prime Video audio/video monitoring service and reducing costs by 90%*. Prime Video Tech Blog, 2023.
+18. Netflix. *Eureka* (wiki and documentation). https://github.com/Netflix/eureka/wiki
+19. HashiCorp. *Consul Documentation: Service discovery; health checks*. https://developer.hashicorp.com/consul/docs
+20. Kubernetes. *Documentation: Services; DNS for Services and Pods; Liveness, Readiness and Startup Probes*. https://kubernetes.io/docs/
+21. Robinson, I. *Consumer-Driven Contracts: A Service Evolution Pattern*. martinfowler.com, 2006. https://martinfowler.com/articles/consumerDrivenContracts.html
+22. Pact Foundation. *Pact Documentation* (consumer tests, provider verification, provider states, can-i-deploy). https://docs.pact.io/
+23. Sigelman, B. H., et al. *Dapper, a Large-Scale Distributed Systems Tracing Infrastructure*. Google Technical Report dapper-2010-1, 2010.
+24. W3C. *Trace Context* (Recommendation). https://www.w3.org/TR/trace-context/
+25. Istio. *Documentation: Architecture; Distributed Tracing; Performance and Scalability*. https://istio.io/latest/docs/
+26. Istio. *Fast, Secure, and Simple: Istio's Ambient Mode Reaches General Availability in v1.24*. Istio Blog, 2024. https://istio.io/blog/2024/ambient-reaches-ga/
+27. Linkerd. *Documentation: Architecture*. https://linkerd.io/2/reference/architecture/
+28. Westeinde, K. *Deconstructing the Monolith: Designing Software that Maximizes Developer Productivity*. Shopify Engineering, 2019.
+29. GitHub. *Scientist: a Ruby library for carefully refactoring critical paths*. https://github.com/github/scientist
+30. Noonan, A. *Goodbye Microservices: From 100s of problem children to 1 superstar*. Segment Engineering Blog, 2018.
+31. Kolny, M. *Scaling up the Prime Video audio/video monitoring service and reducing costs by 90%*. Prime Video Tech Blog, 2023.
 
 ## 34.21 Open verification items
 
 - Origin of the "BFF" name (Phil Calçado at SoundCloud) and exact dates of Plotnicki 2015 and Newman 2015.
-- Netflix API redesign (Jacobson 2012) and Zuul 2 post (2016): titles and dates.
+- Netflix API redesign post (Jacobson 2012): exact title and date.
 - Dapper's first production sampling rate of 1/1024.
 - Istio performance figures quoted in §34.10.3 (1.21, 1.22 and 1.24 measurements) for the current release.
 - Linkerd remaining sidecar-only as of 2026.

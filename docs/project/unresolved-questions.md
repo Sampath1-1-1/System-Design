@@ -200,3 +200,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-193 | 31 | Figures from Kreps (2014) benchmark post and Svingen (2017) NYT post; URLs for KIP-101, KIP-848 and the 4.0 release announcement | Open | |
 | UQ-194 | 36 | Source of the Xerox Job-class story behind ISP (Martin 2002?); URL of Martin's 2014 SRP post | Open | |
 | UQ-195 | 36 | Exact wording/page of Liskov's 1987 OOPSLA keynote quote; origin of the SOLID acronym (Feathers?) — chapter makes no claim | Open | |
+| UQ-196 | 34 | BFF term origin (Calçado/SoundCloud); dates of Plotnicki and Newman 2015 posts; Netflix API redesign post (Jacobson 2012) title/date | Open | |
+| UQ-197 | 34 / 40 | Dapper default sampling rate (1/1024) | Open | |
+| UQ-198 | 34 | Istio 1.21/1.22/1.24 performance figures vs current release; ambient mode GA in 1.24 (Nov 2024, via search); Linkerd sidecar-only status as of 2026 | Open | Time-sensitive |
+| UQ-199 | 34 | Eureka lease defaults and self-preservation behavior; author of 2023 Prime Video post | Open | Merge with UQ-178 |
