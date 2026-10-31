@@ -153,23 +153,7 @@ Now relate this to an error budget (§39.7). Over a 30-day month ($30/7 = 4.29$ 
 
 A rolling deployment repaints a bridge one lane at a time, without closing it. It is the default in Kubernetes, where a Deployment's `RollingUpdate` strategy creates new pods up to `maxSurge` above the desired count and removes old pods while keeping at most `maxUnavailable` below it; a new pod receives traffic only once its readiness probe passes. Chapter 42 covers the mechanism in depth (§42.8); this section adds what matters for release risk.
 
-::: formula
-**Approximate rolling-update duration**
-
-$$T_{\text{roll}} \approx \left\lceil \frac{N}{s} \right\rceil \times (t_{\text{ready}} + t_{\text{bake}})$$
-
-| Symbol | Meaning | Units |
-|---|---|---|
-| $T_{\text{roll}}$ | Time to replace all instances | seconds |
-| $N$ | Number of instances | instances |
-| $s$ | Instances replaced per wave (surge plus allowed unavailability) | instances |
-| $t_{\text{ready}}$ | Time for a new instance to start and pass readiness | seconds |
-| $t_{\text{bake}}$ | Extra wait per wave before continuing (for example `minReadySeconds`) | seconds |
-:::
-
-::: example
-**Worked example — Rolling the QuickBite order service.** The order service runs $N = 40$ pods with `maxSurge: 25%` (10 pods) and `maxUnavailable: 0`, so $s = 10$. Each pod takes $t_{\text{ready}} = 45$ s to start and pass readiness, and `minReadySeconds` adds $t_{\text{bake}} = 15$ s. Then $T_{\text{roll}} \approx \lceil 40/10 \rceil \times (45 + 15) = 4 \times 60 = 240$ s. *Interpretation:* a bug that readiness probes miss reaches every user in four minutes; a plain rolling update is a coarse canary with no judgment. *Engineering implication:* pause for analysis after the first wave (§43.6), or use a progressive-delivery controller such as Argo Rollouts or Flagger.
-:::
+Chapter 42 derives the capacity floor and approximate duration of a rollout from `maxSurge` and `maxUnavailable` (§42.8.1). For QuickBite's 10-pod ordering service with `maxSurge: 3` and `maxUnavailable: 0`, a rollout takes about four 45-second waves, roughly three minutes. Read that number as a release-risk figure: a bug that readiness probes miss reaches *every* user within three minutes, and after the first wave 30% of traffic already sees it. A plain rolling update is a coarse canary with no judgment, so add a pause with analysis after the first wave (§43.6), or use a progressive-delivery controller such as Argo Rollouts or Flagger.
 
 Rolling deployments are cheap (only the surge is extra capacity) and simple. Their weaknesses are that rollback is itself another rolling update (minutes, not seconds), that mixed versions serve simultaneously, and that exposure grows on a fixed schedule rather than on evidence.
 
@@ -335,9 +319,9 @@ The canary weight can be enforced at several layers:
 ```mermaid
 flowchart LR
   U([Users]) -->|HTTPS| R[Mesh or gateway<br/>weighted route]
-  R -->|90%| P[Production v41<br/>36 pods]
-  R -->|5%| BL[Baseline v41<br/>2 fresh pods]
-  R -->|5%| CN[Canary v42<br/>2 pods]
+  R -->|90%| P[Production v41<br/>10 pods]
+  R -->|5%| BL[Baseline v41<br/>1 fresh pod]
+  R -->|5%| CN[Canary v42<br/>1 pod]
   P -.->|metrics| M[(Metrics store)]
   BL -.->|metrics, tag baseline| M
   CN -.->|metrics, tag canary| M
@@ -368,14 +352,14 @@ $$B = \lambda \times w \times \Delta p \times (T_{\text{detect}} + T_{\text{roll
 :::
 
 ::: example
-**Worked example — All-at-once versus canary for a broken endpoint.** QuickBite's order service handles $\lambda = 2{,}000$ requests/s with a 0.5% baseline error rate. Version 42 breaks one endpoint and raises the error rate to 20%, so $\Delta p = 0.195$.
+**Worked example — All-at-once versus canary for a broken endpoint.** QuickBite's order service (all endpoints, including order-status polling) handles $\lambda = 2{,}000$ requests/s at midday with a 0.5% baseline error rate. Version 42 breaks one endpoint and raises the error rate to 20%, so $\Delta p = 0.195$.
 
 1. *All at once (or a fast rolling update):* $w = 1$. Humans notice through a symptom alert after $T_{\text{detect}} = 10$ min (600 s) and a redeploy of version 41 takes $T_{\text{rollback}} = 5$ min (300 s). $B = 2{,}000 \times 1 \times 0.195 \times 900 = 351{,}000$ failed requests.
 2. *Canary at 5%:* $w = 0.05$. An error-rate jump this large is significant within the first 60 s analysis interval, and setting the weight to 0 takes 30 s. $B = 2{,}000 \times 0.05 \times 0.195 \times 90 = 1{,}755$ failed requests.
 
 The canary's blast radius is $351{,}000 / 1{,}755 = 200$ times smaller: 20 times from exposure and 10 times from faster detection and rollback.
 
-*Against the error budget:* a 99.9% monthly SLO on $2{,}000 \times 2{,}592{,}000 = 5.18 \times 10^9$ requests allows $5.18 \times 10^6$ failures. The all-at-once deploy burns $351{,}000 / 5.18 \times 10^6 = 6.8\%$ of the month's budget in 15 minutes; the canary burns 0.034%.
+*Against the error budget:* a 99.95% monthly SLO (the order-placement target of §39.6) on $2{,}000 \times 2{,}592{,}000 = 5.18 \times 10^9$ requests allows $2.59 \times 10^6$ failures. The all-at-once deploy burns $351{,}000 / 2.59 \times 10^6 = 13.5\%$ of the month's budget in 15 minutes; the canary burns 0.068%.
 
 *Engineering implication:* the canary's value comes from *both* factors. A 5% canary watched by a human who notices after 10 minutes still loses $2{,}000 \times 0.05 \times 0.195 \times 900 = 17{,}550$ requests; automation contributes as much as the small weight.
 :::
