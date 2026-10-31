@@ -204,3 +204,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-197 | 34 / 40 | Dapper default sampling rate (1/1024) | Open | |
 | UQ-198 | 34 | Istio 1.21/1.22/1.24 performance figures vs current release; ambient mode GA in 1.24 (Nov 2024, via search); Linkerd sidecar-only status as of 2026 | Open | Time-sensitive |
 | UQ-199 | 34 | Eureka lease defaults and self-preservation behavior; author of 2023 Prime Video post | Open | Merge with UQ-178 |
+| UQ-200 | 38 | UML 2.5.1 clause on shared-aggregation semantics varying by application; spec page count (~790) | Open | |
+| UQ-201 | 38 | Page reference for Fowler quoting Rumbaugh's "modeling placebo" remark | Open | |
+| UQ-202 | 38 | GitHub Mermaid support announcement date (believed 14 Feb 2022) and URL | Open | |
+| UQ-203 | 38 | CPython lru_cache implementation details and ~100–200 bytes/entry estimate; Redis expiry and transaction behavior (2026 docs) | Open | Version-dependent |
