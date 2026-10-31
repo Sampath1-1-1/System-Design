@@ -573,28 +573,21 @@ The asking version needs a writable discount field, and when the tea is removed 
 
 #### First-principles explanation
 
-The shop now sells two kinds of product. A mug is physical: it has a weight and costs money to ship. An e-book is digital: it has a download link and ships for free. Both still have a SKU, a name and a price, and both appear in carts and invoices.
+The shop now sells a mug (physical: it has a weight and costs money to ship) and an e-book (digital: a download link, free shipping). Both have a SKU, name and price. Copying `Product` twice means every fix is made twice. Inheritance says "a physical product *is a* product, plus a weight and its own shipping rule": shared code is written once in the parent, and each child states only what differs.
 
-You could copy the `Product` class twice and edit each copy. Then a bug fix to price formatting must be made twice, and someone will forget one. Inheritance lets you say "a physical product *is a* product, plus a weight and its own shipping rule." The shared part is written once in the parent; each child states only what differs.
-
-The test for using inheritance is the **is-a** test applied to *behavior*, not to everyday language. "A physical product is a product" passes: everything the code does with a product (show it, price it, ship it) makes sense for a physical product. Section 35.9 makes this precise.
+The **is-a** test applies to *behavior*, not everyday language: everything the code does with a product must make sense for a physical product. §35.9 makes this precise.
 
 #### Why does this exist?
 
-Inheritance solves two problems at once, and the second is the important one.
-
-1. **Reuse.** Shared code lives in the parent.
-2. **Substitutability.** Code written for `Product` works unchanged for every subclass, including subclasses written years later. The checkout that sums `p.shipping_cents()` over a cart never needs to know that e-books exist. This is what makes polymorphism (§35.6) possible.
-
-The GoF authors call inheritance-for-reuse **white-box reuse**, because the subclass sees the parent's internals, and warn that "inheritance breaks encapsulation" for exactly that reason [Gamma et al. 1994, ch. 1]. Section 35.5.2 shows how.
+It provides **reuse** (shared code in the parent) and, more importantly, **substitutability**: code written for `Product` works unchanged for every subclass, including ones written years later. That makes polymorphism (§35.6) possible. The GoF call inheritance-for-reuse **white-box reuse**, because the subclass sees the parent's internals, and warn that "inheritance breaks encapsulation" [Gamma et al. 1994, ch. 1]. §35.5.2 shows how.
 
 #### How it works internally
 
-1. The subclass declaration names its parent: `class PhysicalProduct(Product)` in Python, `class PhysicalProduct extends Product` in Java. Java allows one parent class; Python allows several (multiple inheritance), resolved by a fixed order called the method resolution order.
-2. The subclass constructor must initialize the parent's part first by calling `super().__init__(...)` (Python) or `super(...)` (Java, which must be the first statement).
-3. When code calls `p.shipping_cents()`, the runtime looks for `shipping_cents` in the object's actual class first, then in its parent, and so on up the chain. The first match runs. That lookup is what lets an override replace inherited behavior.
-4. An override can still call the parent's version with `super().describe()` / `super.describe()` to extend rather than replace it.
-5. Java's `@Override` annotation asks the compiler to confirm that a parent method with that signature exists, which catches typos that would otherwise silently create a new, never-called method.
+1. The subclass names its parent: `class PhysicalProduct(Product)` or `extends Product`. Java allows one parent class; Python allows several, resolved by the method resolution order.
+2. The subclass constructor initializes the parent's part first with `super().__init__(...)` or `super(...)`.
+3. A call `p.shipping_cents()` looks for the method in the object's actual class, then its parent, up the chain; the first match runs. That is how an override replaces inherited behavior.
+4. An override can call the parent's version with `super` to extend rather than replace it.
+5. Java's `@Override` makes the compiler confirm a parent method exists, catching typos that would silently create a new method.
 
 #### Architecture diagram
 
@@ -623,12 +616,11 @@ classDiagram
 
 **Reading the diagram.**
 
-- **Components.** `Product` is the parent. `PhysicalProduct` adds a weight and overrides `shipping_cents`; `DigitalProduct` adds a download URL and overrides `describe`.
-- **Relationship and direction.** The hollow-triangle arrow (`<|--`) points from child to parent and reads "is a". Children depend on the parent; the parent does not know its children.
-- **Visibility.** `#` means protected: visible to subclasses. That visibility is the white-box coupling the GoF warn about.
+- **Components.** `PhysicalProduct` adds a weight and overrides `shipping_cents`; `DigitalProduct` adds a URL and overrides `describe`. `#` means protected (visible to subclasses): the white-box coupling.
+- **Direction.** The hollow triangle (`<|--`) points from child to parent and reads "is a"; the parent does not know its children.
 - **Sync/async and storage.** Synchronous in-process calls; no storage.
-- **Failure points.** Every change to `Product` reaches both children. A new parent method that assumes "all products have a weight" breaks `DigitalProduct` silently.
-- **Scaling.** A third kind of product (a gift card, a subscription) is one new subclass, as long as it genuinely behaves like a product. Variation along a *second* dimension is a different story (§35.8).
+- **Failure points.** Every change to `Product` reaches both children; a parent method assuming every product has a weight breaks `DigitalProduct`.
+- **Scaling.** A third kind of product is one subclass; a *second* axis of variation is a different story (§35.8).
 
 #### Code example
 
@@ -738,9 +730,8 @@ class Main {
 
 What to notice:
 
-- The loop is written against `Product` and never checks which kind it has; each object answers `shipping_cents()` its own way.
-- `DigitalProduct.describe` extends the parent's result with `super()`, so the price format is still defined once.
-- The parent's default `shipping_cents` returns 0. That is a design decision with a cost: a future physical subclass that forgets to override silently ships for free. §35.7 shows how an abstract method turns that silent bug into an error.
+- The loop never checks which kind of product it has; each object answers `shipping_cents()` its own way.
+- The parent's default `shipping_cents` returns 0, so a future physical subclass that forgets to override ships free. §35.7 turns that silent bug into an error with an abstract method.
 
 ### 35.5.2 The fragile base class problem
 
@@ -750,9 +741,7 @@ What to notice:
 
 #### First-principles explanation
 
-The analytics team wants to count every item a shopper ever puts into a cart, including items later removed. They subclass `Cart` and override both ways of adding items to increment a counter. Nobody told them that the cart's `add_all` is implemented by calling `add` once per item. The count comes out doubled.
-
-This is the shop version of Bloch's `InstrumentedHashSet`, which overrides `add` and `addAll` on a `HashSet` and reports 6 additions after adding 3 elements, because `HashSet.addAll` is implemented on top of `add` [Bloch 2018, Item 18].
+The analytics team subclasses `Cart` to count every item ever added, overriding both `add` and `add_all`. Nobody told them that `add_all` calls `add` once per item, so the count doubles. This is the shop version of Bloch's `InstrumentedHashSet`, which reports 6 additions after adding 3 elements [Bloch 2018, Item 18].
 
 **Figure 35.4 — How self-use double-counts in the subclass.**
 
@@ -774,11 +763,11 @@ sequenceDiagram
 
 **Reading the diagram.**
 
-- **Components.** One object, two layers of code: the `CountingCart` overrides and the inherited `Cart` methods. `Caller` is the analytics test.
-- **Direction and sync.** Every arrow is a synchronous method call on the *same* object. The crucial arrow is `Base->>CC`: when base code calls `self.add`, dynamic dispatch (§35.6) sends the call to the subclass override, not to the base `add`.
+- **Components.** One object, two layers of code: the `CountingCart` overrides and the inherited `Cart` methods.
+- **Direction and sync.** Every arrow is a synchronous call on the *same* object. In `Base->>CC`, base code calls `self.add` and dynamic dispatch (§35.6) sends it to the override.
 - **Storage.** None; the counter is an in-memory field.
-- **Failure point.** The base class's *internal* call from `add_all` to `add` is the hidden dependency. It is not in any documentation, yet the subclass's correctness depends on it.
-- **Scaling the problem.** Every subclass of `Cart` written by any team inherits the same exposure. The more subclasses exist, the harder it becomes to change `Cart`'s internals at all.
+- **Failure point.** The undocumented internal call from `add_all` to `add` is the hidden dependency.
+- **Scaling.** Every subclass of `Cart` shares this exposure; the more there are, the harder `Cart` is to change.
 
 ```python
 class Cart:
@@ -854,21 +843,19 @@ class Main {
 }
 ```
 
-The obvious patch, removing the `add_all` override from `CountingCart`, makes the count right *today*. Now suppose the cart team later rewrites `add_all` to update the dictionary directly, for speed. That change is correct for `Cart` and passes all of `Cart`'s tests, and `CountingCart` silently starts *under*counting. Either way, the subclass's correctness is tied to a private implementation choice in the parent. That is the fragility. The fix, composition with forwarding, is in §35.8.
-
-Bloch's guidance is to "design and document for inheritance or else prohibit it" [Bloch 2018, Item 19]: either document which overridable methods each method calls ("self-use"), or make the class `final` (Java) so nobody can subclass it. Python has no `final` for classes at run time, though `typing.final` lets type checkers flag subclassing.
+Removing the `add_all` override fixes the count *today*. If the cart team later rewrites `add_all` to update the dictionary directly, a change that passes all of `Cart`'s tests, `CountingCart` silently *under*counts. Either way the subclass depends on a private choice in the parent. The fix, composition with forwarding, is in §35.8. Bloch's rule: "design and document for inheritance or else prohibit it" [Bloch 2018, Item 19], by documenting self-use or declaring the class `final` (Python's `typing.final` lets type checkers flag subclassing).
 
 #### Real-world industry applications
 
 ::: industry
-**`java.util.Stack` and `java.util.Properties`.** In the Java platform libraries, `Stack` extends `Vector` and `Properties` extends `Hashtable`. A stack is not a vector, yet because of inheritance every `Stack` exposes `Vector`'s methods for inserting at arbitrary positions, which breaks the last-in, first-out guarantee. `Properties` is meant to hold strings, but the inherited `Hashtable.put` accepts any object. Bloch cites both as violations of the is-a test that cannot be fixed without breaking compatibility; the `Stack` API documentation itself now recommends the `Deque` interface instead.
+**`java.util.Stack` and `java.util.Properties`.** `Stack` extends `Vector`, so every stack exposes methods for inserting at arbitrary positions, breaking last-in, first-out. `Properties` extends `Hashtable`, whose inherited `put` accepts non-string objects. Bloch cites both as is-a violations that cannot be fixed without breaking compatibility; the `Stack` documentation now recommends `Deque` instead.
 *Evidence: Primary* — [Bloch 2018, Item 18]; [Oracle: java.util.Stack API documentation]
 :::
 
 #### Advantages and disadvantages
 
-- **Advantages.** Little code for genuine is-a variations; substitutability enables polymorphism; overriding with `super` lets a child extend parent behavior.
-- **Disadvantages.** Subclasses are coupled to the parent's implementation (white-box reuse); the relationship is fixed at compile time; Java allows only one parent; deep hierarchies make it hard to know which method actually runs.
+- **Advantages.** Little code for genuine is-a variations; substitutability enables polymorphism.
+- **Disadvantages.** White-box coupling to the parent; fixed at compile time; one parent in Java; deep hierarchies hide which method runs.
 
 #### Failure scenarios
 
@@ -878,11 +865,10 @@ Bloch's guidance is to "design and document for inheritance or else prohibit it"
 |---|---|---|---|---|
 | Counts doubled or missing | Fragile base class self-use | Metrics disagree with source data | Switch subclass to composition | Document self-use or make classes `final` |
 | Subclass exposes forbidden operations | Inherited methods break child's rules (Stack/Vector) | Misuse in code review or production | Hide behind a wrapper | Apply the behavioral is-a test |
-| Override never called | Typo in method name | Feature silently missing | Rename | `@Override` in Java, tests |
 | New physical product ships free | Default implementation inherited silently | Revenue leak in reports | Add override | Abstract method instead of default |
 
 ::: mistake
-**Misconception — "Inheritance is mainly for code reuse."** Reuse is the weakest reason to inherit; a helper object reused by composition gives the same reuse without the coupling. Inherit when callers need to treat the child *as* the parent, and when the child keeps every promise the parent makes (§35.9).
+**Misconception — "Inheritance is mainly for code reuse."** A helper object gives the same reuse without the coupling. Inherit when callers treat the child *as* the parent and the child keeps every promise the parent makes (§35.9).
 :::
 
 ## 35.6 Polymorphism
@@ -895,19 +881,19 @@ Bloch's guidance is to "design and document for inheritance or else prohibit it"
 
 #### First-principles explanation
 
-A shop assistant says "Please pay" to each customer in the queue. One taps a card, one hands over cash, one scans a phone. The assistant's instruction is the same; each customer carries it out their own way, and the assistant does not need a rule book listing every payment method that exists. If a new method appears next year, the assistant's instruction does not change.
+A cashier says "Please pay" to everyone in the queue; one taps a card, one hands over cash, one scans a phone. The instruction never changes, even when a new payment method appears.
 
-The shop's marketing team invents discount rules every month: 10% off everything, 5 off orders over 50, buy two mugs get one free. Without polymorphism the checkout grows a chain of `if rule.kind == "percent": ... elif rule.kind == "fixed": ...`, and every new rule means editing the checkout and retesting all the old branches. With polymorphism, each rule is an object with a `discount_cents(lines)` method, and the checkout just calls it.
+Marketing invents discount rules monthly: 10% off, 5 off orders over 50, buy two mugs get one free. Without polymorphism the checkout grows an `if rule.kind == "percent" ... elif ...` chain that must be edited and retested for every rule. With it, each rule is an object with a `discount_cents(lines)` method, and the checkout just calls it.
 
 #### Why does this exist?
 
-To let the set of variations grow without editing the code that uses them. The checkout that picks the best discount is written once and stays closed to change while new rules are added. Ch 36 names this the Open/Closed Principle (§36.4); polymorphism is the mechanism that makes it achievable.
+To let variations grow without editing the code that uses them: the Open/Closed Principle of §36.4, of which polymorphism is the mechanism.
 
 #### How it works internally
 
-1. **Java (static types, virtual methods).** Each class has a **method table** (often called a vtable): an array of pointers to the code for each overridable method. Every object holds a pointer to its class. A call `rule.discountCents(lines)` compiles to "load the object's class, load the entry for `discountCents`, jump to it": a couple of memory loads and an indirect jump. For interface calls the JVM uses a similar lookup. Just-in-time compilers observe that a given call site usually sees one or two classes and inline those directly, so the overhead is usually negligible in practice.
-2. **Python (dynamic types).** `rule.discount_cents` looks up the name at run time: first in the object's own attribute dictionary, then in its class and the class's parents in method-resolution order. There is no requirement that the classes share a parent at all.
-3. **Static versus dynamic type.** In Java, `DiscountRule rule = new PercentOff(10);` has static type `DiscountRule` (what the compiler checks) and dynamic type `PercentOff` (what actually runs). The compiler only lets you call methods `DiscountRule` declares; the runtime decides whose code runs.
+1. **Java.** Each class has a **method table** (vtable) of pointers to its overridable methods, and every object points to its class. `rule.discountCents(lines)` becomes "load the class, load the table entry, jump": a couple of memory loads and an indirect jump. Just-in-time compilers inline the one or two classes a call site usually sees, so the overhead is usually negligible.
+2. **Python.** `rule.discount_cents` is looked up by name at run time, in the object, then its class and parents. The classes need not share a parent.
+3. **Static versus dynamic type.** In `DiscountRule rule = new PercentOff(10);` the compiler checks against `DiscountRule` (static type); the runtime runs `PercentOff`'s code (dynamic type).
 
 #### Architecture diagram
 
@@ -944,11 +930,10 @@ classDiagram
 
 **Reading the diagram.**
 
-- **Components.** `DiscountRule` is an interface: a list of methods with no implementation. Three classes implement it. `Checkout` uses rules.
-- **Relationships.** The dotted line with a hollow triangle (`<|..`) means "implements". The dotted arrow from `Checkout` means "depends on": the checkout knows only the interface, never the concrete classes.
-- **Direction and sync.** Calls flow from `Checkout` to whichever rule objects it is handed, synchronously, through dynamic dispatch.
-- **Storage.** None here; in production the rule *parameters* (percentages, thresholds) would come from a database or configuration, and a factory would build the objects (Ch 37).
-- **Failure points.** A rule that returns a negative number or more than the subtotal would corrupt totals; the cart's invariant (§35.4) caps the discount, and §35.9 writes that expectation down as a postcondition.
+- **Components.** `DiscountRule` is an interface (methods without implementation), implemented by three classes (`<|..`). `Checkout` depends (`..>`) only on the interface.
+- **Direction and sync.** `Checkout` calls whichever rules it is handed, synchronously, via dynamic dispatch.
+- **Storage.** In production the rule parameters come from a database or configuration, and a factory builds the objects (Ch 37).
+- **Failure points.** A rule returning more than the subtotal would corrupt totals; the cart's invariant (§35.4) caps the discount.
 - **Scaling.** A fourth rule is a new class; `Checkout` and its tests do not change.
 
 #### Code example
@@ -1080,9 +1065,8 @@ class Main {
 
 What to notice:
 
-- `best_discount` / `bestDiscount` contains no `if` on the rule's kind. Adding a fourth rule touches no existing code.
-- In Python the three classes share no parent. `best_discount` works because each object *has* a `discount_cents` method. That is duck typing (§35.6.2). The `Protocol` class is optional documentation that type checkers can verify.
-- In Java the classes must declare `implements DiscountRule`; without it, the compiler refuses to put them in a `List<DiscountRule>`.
+- `best_discount` contains no `if` on the rule's kind.
+- In Python the classes share no parent; each simply *has* `discount_cents` (duck typing, §35.6.2). In Java each must declare `implements DiscountRule`.
 
 ### 35.6.2 Duck typing
 
@@ -1090,11 +1074,11 @@ What to notice:
 **Definition — Duck typing.** A style of polymorphism in which an object is acceptable wherever it supports the operations actually used, regardless of its declared class ("if it walks like a duck and quacks like a duck"). Checking happens when the method is called. **Structural typing** is the static version: a type checker accepts an object if its shape matches a declared protocol.
 :::
 
-Duck typing makes Python code short and flexible: any object with a `discount_cents(lines)` method is a discount rule, including a test double written in three lines. The price is that mistakes surface late. Pass an object without the method and you get `AttributeError` when the line runs, perhaps in production on the first Black Friday that uses that rule. Python's `typing.Protocol` [PEP 544] recovers much of the safety: a static checker such as mypy verifies, before the program runs, that every object passed where a `DiscountRule` is expected has a compatible method, without forcing the classes to inherit anything. Java takes the opposite default: **nominal typing**, where a class is a `DiscountRule` only if it says so.
+Duck typing is short and flexible: any object with `discount_cents(lines)` is a discount rule, including a three-line test double. The price is late errors: a missing method raises `AttributeError` only when the line runs, perhaps in production. `typing.Protocol` [PEP 544] recovers much of the safety: a static checker such as mypy verifies the shape before the program runs, without inheritance. Java's default is **nominal typing**: a class is a `DiscountRule` only if it says so.
 
 ### 35.6.3 Parametric polymorphism (generics), briefly
 
-A third kind of polymorphism works over *types themselves*. The function "return the cheapest item in a list" is the same whether the list holds products or shipping options. **Parametric polymorphism**, called **generics** in Java and Python, lets you write it once with a type parameter `T` and still have the type checker know that a list of products gives back a product.
+"Return the cheapest item in a list" is the same code for products or shipping options. **Parametric polymorphism** (**generics**) writes it once with a type parameter `T`, and the type checker still knows a list of products gives back a product.
 
 ```python
 from typing import Protocol, TypeVar
@@ -1156,7 +1140,7 @@ class Main {
 }
 ```
 
-What to notice: the **bound** (`bound=Priced`, `T extends Priced`) restricts `T` to types that have a price, so the body may call `price_cents`. Java checks generics at compile time and then erases them; Python's type hints are checked only by external tools and ignored at run time.
+What to notice: the **bound** (`bound=Priced`, `T extends Priced`) restricts `T` to priced types. Java checks generics at compile time; Python's hints are checked only by external tools.
 
 **Table 35.5 — Kinds of polymorphism.**
 
@@ -1171,15 +1155,15 @@ The classification follows Cardelli and Wegner [Cardelli & Wegner 1985], who dis
 
 #### Advantages and disadvantages
 
-- **Advantages.** New variants without editing callers; callers are simpler and testable with fakes; behavior can be chosen at run time from configuration.
-- **Disadvantages.** Reading a call site no longer tells you which code runs; you must know which objects flow there. Too many tiny polymorphic classes for variations that never change is over-engineering. Duck typing defers errors to run time.
+- **Advantages.** New variants without editing callers; easy fakes in tests; behavior chosen at run time.
+- **Disadvantages.** A call site no longer shows which code runs; tiny classes for variations that never change are over-engineering; duck typing defers errors.
 
 #### Alternatives and trade-offs
 
-For a *closed* set of variants that rarely grows but gains new *operations* often (for example, the fixed set of order states), a `match`/`switch` over a sealed set of types can be clearer than spreading each operation across classes. Java 21's sealed interfaces with pattern-matching `switch` make the compiler check that every case is handled. Rule of thumb: if new *kinds* arrive often, use polymorphism; if new *operations* arrive often over a fixed set of kinds, a checked `switch` is a reasonable choice.
+If new *kinds* arrive often, use polymorphism. If the kinds are fixed (say, order states) but new *operations* arrive often, a `switch` over a sealed set of types, which Java 21 checks for exhaustiveness, can be clearer.
 
 ::: mistake
-**Misconception — "Polymorphism means using inheritance."** Subtype polymorphism needs a shared *type*, which in Java can be an interface with no inherited code at all, and in Python need not be declared. The behavior-sharing part of inheritance is a separate, optional, and riskier feature.
+**Misconception — "Polymorphism means using inheritance."** It needs a shared *type*: a Java interface with no inherited code, or in Python nothing declared at all.
 :::
 
 ## 35.7 Abstraction
@@ -1192,21 +1176,21 @@ For a *closed* set of variants that rarely grows but gains new *operations* ofte
 
 #### First-principles explanation
 
-A car's pedals and steering wheel are an abstraction: you drive a petrol car and an electric car the same way, and the dashboard does not explain combustion or battery chemistry. Checkout code needs the same thing for payments. It needs to say "charge 25.98 to this payment method" and get a receipt. Whether that means talking to a card processor or deducting from a gift-card balance is a detail the checkout should not see.
+You drive a petrol car and an electric car with the same pedals. Checkout code wants the same for payments: "charge 25.98 to this method" and get a receipt, without seeing card processors or gift-card balances.
 
-Two kinds of shared things appear when you design payment methods. Some things are *common work*: every payment must check that the amount is positive and below a fraud limit, and must record what was charged. Other things are *capabilities* that only some methods have: a card payment can be refunded, but in this shop a gift card cannot. Common work with one varying step fits an abstract class. A capability that cuts across unrelated classes fits an interface.
+Payment methods share two kinds of things. *Common work*: every payment checks the amount against a limit and records what was charged. *Capabilities* only some have: cards can be refunded, gift cards here cannot. Common work with one varying step fits an abstract class; a capability across unrelated classes fits an interface.
 
 #### Why does this exist?
 
-- To **force** subclasses to supply the varying part. An abstract method turns "forgot to override" (the free-shipping bug of §35.5.1) into an error at class definition (Java) or instantiation (Python).
-- To let callers depend on a **stable, small surface**. "Program to an interface, not an implementation" is the first of the two principles the GoF state in their introduction [Gamma et al. 1994, ch. 1].
-- To let one class play **several roles**. Java permits one parent class but any number of interfaces.
+- To **force** subclasses to supply the varying part, turning the free-shipping bug of §35.5.1 into a compile error (Java) or instantiation error (Python).
+- To let callers depend on a **small, stable surface**: "Program to an interface, not an implementation" [Gamma et al. 1994, ch. 1].
+- To let one class play **several roles** (one parent class, many interfaces in Java).
 
 #### How it works internally
 
-- **Python.** Inherit from `abc.ABC` and mark methods with `@abstractmethod`. Calling the class raises `TypeError` while any abstract method is unimplemented. An "interface" in Python is just an abstract class with only abstract methods, or a `typing.Protocol` for structural checking.
-- **Java.** `abstract class` cannot be instantiated with `new`; `abstract` methods have no body. `interface` methods are implicitly public and abstract unless marked `default` or `static`. A class `extends` one class and `implements` any number of interfaces.
-- The common pattern below, where the parent fixes the order of steps in a `final` method and leaves one step abstract, is called the Template Method pattern (Ch 37, §37.15).
+- **Python.** Inherit from `abc.ABC` and mark methods `@abstractmethod`; instantiating raises `TypeError` while any remain unimplemented. A Python "interface" is an all-abstract ABC or a `typing.Protocol`.
+- **Java.** An `abstract class` cannot be instantiated; `interface` methods are public and abstract unless `default` or `static`.
+- A parent that fixes the steps in a `final` method and leaves one abstract is the Template Method pattern (§37.15).
 
 #### Architecture diagram
 
@@ -1240,12 +1224,11 @@ classDiagram
 
 **Reading the diagram.**
 
-- **Components.** `PaymentMethod` is abstract (it cannot be created on its own); the `*` after `_charge` marks it abstract. `Refundable` is an interface. `CardPayment` is both a payment method and refundable; `GiftCardPayment` is only a payment method.
-- **Relationships.** Solid triangles (`<|--`) are inheritance of a class; dotted triangles (`<|..`) are implementation of an interface.
-- **Direction and sync.** Checkout code calls `pay` (synchronous); `pay` calls the subclass's `_charge`. In production `_charge` would make a network call to a payment provider, which is the slow and failure-prone step.
-- **Storage.** `charged_cents` and `balance_cents` are in memory here; real balances live in a database or the provider.
-- **Failure points.** `pay` updates `charged_cents` only after `_charge` succeeds, so a declined charge leaves no trace. A real system must also handle "charged but the response was lost", which needs idempotency keys (§22.15).
-- **Scaling.** A new payment method is one subclass; a new capability (say `SupportsInstallments`) is one interface that any subset of methods can implement.
+- **Components.** `PaymentMethod` is abstract (`*` marks the abstract `_charge`); `Refundable` is an interface. `CardPayment` is both; `GiftCardPayment` only a payment method. Solid triangles are class inheritance, dotted ones interface implementation.
+- **Direction and sync.** Checkout calls `pay`, which calls the subclass's `_charge`, synchronously; in production `_charge` is a slow, failure-prone network call to a provider.
+- **Storage.** Balances are in memory here; really in a database or at the provider.
+- **Failure points.** `charged_cents` changes only after `_charge` succeeds. "Charged but response lost" needs idempotency keys (§22.15).
+- **Scaling.** A new method is one subclass; a new capability is one interface.
 
 #### Code example
 
@@ -1382,9 +1365,9 @@ class Main {
 
 What to notice:
 
-- `pay` is `final` in Java, so no subclass can skip the amount check. Python cannot enforce that; a convention and code review must.
-- The `isinstance` / `instanceof Refundable` check asks about a *capability*, not a concrete class. Checking `isinstance(m, CardPayment)` would have to be edited for every new refundable method.
-- The abstract class carries shared *state* (`charged_cents`). That is the main thing a Java interface cannot do.
+- `pay` is `final` in Java, so no subclass can skip the amount check; Python relies on convention.
+- The `Refundable` check asks about a *capability*, not a concrete class, so new refundable methods need no edits.
+- The abstract class carries shared *state*, which a Java interface cannot.
 
 **Table 35.6 — Abstract class versus interface.**
 
@@ -1403,12 +1386,12 @@ Bloch's advice combines the two: define the type as an interface, and optionally
 #### Real-world industry applications
 
 ::: industry
-**Java collections and Python's `collections.abc`.** The Java collections framework defines types as interfaces (`List`, `Set`, `Map`) and supplies skeletal abstract classes (`AbstractList`, `AbstractMap`) so that a new implementation writes only a few primitive methods. Python's `collections.abc` module does the same with abstract base classes: a class that subclasses `collections.abc.Sequence` and implements `__getitem__` and `__len__` receives `__contains__`, `__iter__`, `index` and `count` as mixin methods.
+**Java collections and Python's `collections.abc`.** Java defines collection types as interfaces (`List`, `Map`) with skeletal abstract classes (`AbstractList`, `AbstractMap`), so a new implementation writes only a few primitive methods. In Python, a subclass of `collections.abc.Sequence` that implements `__getitem__` and `__len__` receives `__contains__`, `__iter__`, `index` and `count` as mixin methods.
 *Evidence: Primary* — [Bloch 2018, Item 20]; [Python docs: collections.abc]
 :::
 
 ::: mistake
-**Misconception — "Abstraction means adding interfaces everywhere."** An interface with exactly one implementation and no test fake, introduced "for flexibility", is a cost with no benefit yet. Abstract at the points where variation is real or expected (payment providers, discount rules, storage), and keep the rest concrete.
+**Misconception — "Abstraction means adding interfaces everywhere."** An interface with one implementation and no test fake is cost without benefit. Abstract where variation is real (payment providers, discount rules, storage).
 :::
 
 ## 35.8 Composition over inheritance

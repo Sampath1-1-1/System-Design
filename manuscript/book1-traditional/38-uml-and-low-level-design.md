@@ -89,7 +89,7 @@ Each attribute is written `visibility name : Type [multiplicity] = default`, and
 | *italic* | Abstract class or operation | `ABC`, `@abstractmethod` | `<<abstract>>`, `method()*` |
 | <u>underline</u> | Static (class-level) member | class attribute, `@staticmethod` | `name$` |
 | `1` | Exactly one | required reference | `"1"` |
-| `0..1` | Zero or one (optional) | `X \| None` | `"0..1"` |
+| `0..1` | Zero or one (optional) | `Optional[X]` | `"0..1"` |
 | `*` or `0..*` | Zero or more | `list[X]`, `dict[K, X]` | `"*"` |
 | `1..*` | One or more | non-empty collection, checked in `__init__` | `"1..*"` |
 | `2..4` | A bounded range | collection with a validated size | `"2..4"` |
@@ -109,8 +109,8 @@ Relationships carry most of the meaning in a class diagram. UML defines more, bu
 | Association | Solid line; open arrowhead for navigability | A structural, lasting link: one object holds a reference to the other | Field `self.owner: Customer` | `A --> B` |
 | Aggregation | Solid line, hollow diamond at the whole | Whole–part where the part can be shared and outlives the whole | Field holding objects created elsewhere | `Whole o-- Part` |
 | Composition | Solid line, filled diamond at the whole | Whole–part with exclusive ownership; parts die with the whole | Whole creates parts privately | `Whole *-- Part` |
-| Generalization (inheritance) | Solid line, hollow triangle at the parent | "Is a kind of"; subclass inherits and may override | `class Car(Vehicle)` | `Parent <\|-- Child` |
-| Realization | Dashed line, hollow triangle at the interface | A class implements an interface's contract | `class S3Store(BlobStore)` with ABC | `Interface <\|.. Impl` |
+| Generalization (inheritance) | Solid line, hollow triangle at the parent | "Is a kind of"; subclass inherits and may override | `class Car(Vehicle)` | <code>Parent &lt;&#124;&#45;&#45; Child</code> |
+| Realization | Dashed line, hollow triangle at the interface | A class implements an interface's contract | `class S3Store(BlobStore)` with ABC | <code>Interface &lt;&#124;.. Impl</code> |
 | Dependency | Dashed line, open arrowhead | Transient use: a parameter, local variable or return type | `def render(self, c: Canvas)` | `A ..> B` |
 
 The relationships form a scale of coupling strength. From weakest to strongest: dependency (uses it for one call), association (remembers it), aggregation (contains it, shared), composition (owns it exclusively), and generalization (*is* it — the strongest coupling of all, which is why §35.8 recommends composition over inheritance). Realization couples only to a contract, so it is the relationship that the Dependency Inversion Principle (§36.7) wants you to draw most often [Martin 2002; Martin 2017].
@@ -162,7 +162,7 @@ classDiagram
 :::
 
 ::: industry
-**Diagrams as code on GitHub.** Since February 2022 GitHub renders Mermaid code blocks in Markdown files, issues and pull requests, so class and sequence diagrams can live in the repository next to the code and be reviewed as text diffs [GitHub 2022]. This is the main reason many teams moved from drawing tools to text-based UML sketches: a diagram that is versioned with the code is far more likely to be kept current.
+**Diagrams as code on GitHub.** Since February 2022 GitHub renders Mermaid code blocks in Markdown files, issues and pull requests, so diagrams can live next to the code and be reviewed as text diffs [GitHub 2022]. A diagram versioned with the code is far more likely to be kept current.
 *Evidence: Primary* — [GitHub 2022]
 :::
 
