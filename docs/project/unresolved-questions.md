@@ -195,3 +195,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-188 | 37 | Author list/date of "The 'Double-Checked Locking is Broken' Declaration"; PEP 318 author attribution | Open | |
 | UQ-189 | 37 | Spring docs wording recommending constructor injection; default proxy type (JDK dynamic proxy in Spring Framework vs CGLIB in Spring Boot) | Open | Version-dependent |
 | UQ-190 | 37 / 5 / 6 | PEP 703 free-threaded CPython still experimental as of 2026 | Open | Merge with UQ-028, UQ-063 |
+| UQ-191 | 31 | Kafka milestones (as of 2026): KRaft production-ready 3.3; ZooKeeper deprecated 3.5, removed 4.0; KIP-848 GA in 4.0 (group.protocol=consumer); tiered storage production-ready 3.9 | Open | Merge with UQ-154; kafka.apache.org unreachable |
+| UQ-192 | 31 | KIP-932 share-group maturity in current 4.x; defaults quoted (linger.ms 5 ms from 4.0; session.timeout.ms 45 s) | Open | Version-dependent; merge with UQ-175 |
+| UQ-193 | 31 | Figures from Kreps (2014) benchmark post and Svingen (2017) NYT post; URLs for KIP-101, KIP-848 and the 4.0 release announcement | Open | |
+| UQ-194 | 36 | Source of the Xerox Job-class story behind ISP (Martin 2002?); URL of Martin's 2014 SRP post | Open | |
+| UQ-195 | 36 | Exact wording/page of Liskov's 1987 OOPSLA keynote quote; origin of the SOLID acronym (Feathers?) — chapter makes no claim | Open | |

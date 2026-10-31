@@ -1540,7 +1540,7 @@ ISP's benefits are narrower blast radius for interface changes, no stub methods,
 
 #### First-principles explanation
 
-A company writes a job description ("must hold a forklift licence, work night shifts") and then hires someone who fits it. It does not rewrite its operations manual around whichever person it happened to hire. The job description is the abstraction, written in the company's terms and owned by the company; candidates conform to it. If the company instead wrote its procedures around one employee's personal habits, it could never replace that person.
+A company writes a job description ("must hold a forklift license, work night shifts") and then hires someone who fits it. It does not rewrite its operations manual around whichever person it happened to hire. The job description is the abstraction, written in the company's terms and owned by the company; candidates conform to it. If the company instead wrote its procedures around one employee's personal habits, it could never replace that person.
 
 In naive layered code the arrows run the other way: checkout imports the payment vendor's client, so checkout's source code names the vendor, its data shapes and its error codes. Every vendor change ripples upward into the business rules.
 
