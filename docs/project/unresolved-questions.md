@@ -228,3 +228,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-221 | 40 | Prometheus native histograms stable in 3.8 (Dec 2025); W3C Trace Context Level 2 status; OTel `ot=th:` sampling key | Open | Time-sensitive |
 | UQ-222 | 40 | Honeycomb founders' use of Scuba via Parse; SRE book guidance of ~2 incidents per on-call shift | Open | |
 | UQ-223 | 40 | ~4 KB memory per series and ~1% continuous-profiling overhead are planning assumptions | Accepted | Labeled in text |
+| UQ-224 | 43 | DORA 2024 performance-cluster thresholds; whether later reports changed the four-metric set | Open | Time-sensitive |
+| UQ-225 | 43 | Kayenta details ("critical" metric flag, marginal/pass semantics, effect-size settings); Google blog author/URL | Open | |
+| UQ-226 | 43 | Terraform S3 backend use_lockfile GA version (believed 1.11) and DynamoDB-locking deprecation; HCL example not validated with terraform; OpenTofu governance home (2026); Argo CD default 3-min polling | Open | Version-dependent |
+| UQ-227 | 1 / 43 | Knight Capital $460M loss wording in SEC order | Open | Merge with UQ-014 |
