@@ -322,7 +322,7 @@ $$\left|\hat{q} - q\right| \le u - l \qquad \frac{\left|\hat{q} - q\right|}{q} \
 
 1. p99 falls in the bucket (0.5, 1] s: the error bound is $u - l = 0.5$ s, or up to $0.5/0.5 = 100\%$ relative to the lower bound.
 2. p99.9 falls in (1, 2.5] s: bound $1.5$ s, up to 150% relative.
-3. With custom buckets every 0.1–0.2 s around the 300 ms SLO and up to 1.5 s, the bucket containing p99 is (0.8, 1.0] s: bound 0.2 s, about 25%.
+3. With custom buckets every 0.1–0.2 s around the latency thresholds (a 300 ms target, and the 800 ms place-order SLO of Table 39.4) and up to 1.5 s, the bucket containing p99 is (0.8, 1.0] s: bound 0.2 s, about 25%.
 4. A Prometheus **native histogram** with schema 3 uses exponential buckets with $\gamma = 2^{2^{-3}} = 2^{0.125} \approx 1.0905$, so the relative error is at most about 9% everywhere, with no bucket layout to choose [Prometheus Docs: Native histograms].
 
 **Interpretation.** The bound is a worst case; the simulation below shows typical errors of a few percent when buckets are dense and tens of percent when the quantile lands in a wide bucket. **Engineering implication.** Put bucket boundaries where your SLO thresholds and expected percentiles lie, or use native or exponential histograms; and alert on "fraction of requests slower than the SLO threshold" with a bucket boundary exactly at the threshold, which is exact rather than estimated.
@@ -334,7 +334,7 @@ import random
 
 # Prometheus client default buckets (seconds); +Inf is implicit.
 DEFAULT_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
-# Buckets chosen around a 300 ms SLO threshold.
+# Buckets chosen around 300 ms and 800 ms latency thresholds.
 SLO_BUCKETS = [0.025, 0.05, 0.075, 0.1, 0.125, 0.15, 0.2, 0.25, 0.3,
                0.4, 0.6, 0.8, 1.0, 1.5, 2.5]
 
@@ -1040,7 +1040,7 @@ $$\beta = \frac{e}{1 - \text{SLO}} \qquad \text{budget consumed in time } t = \f
 :::
 
 ::: example
-**Worked example — The 14.4× page.** Checkout's SLO is 99.9% over 30 days ($T = 720$ h). The error ratio over the last hour is 1.44%.
+**Worked example — The 14.4× page.** Checkout's SLO is 99.9% over 30 days ($T = 720$ h), a round figure used in all of this chapter's alerting examples; at QuickBite's negotiated 99.95% for placing orders (Table 39.4) every error-ratio threshold below halves, while the burn rates stay the same. The error ratio over the last hour is 1.44%.
 
 1. $\beta = 0.0144 / 0.001 = 14.4$.
 2. One hour at this rate consumes $14.4 \times 1 / 720 = 2\%$ of the monthly budget; the whole budget would last $720 / 14.4 = 50$ hours.
@@ -1096,6 +1096,7 @@ inhibit_rules:
 What to notice:
 
 - Two recording rules (§40.8.3) compute the error ratio over 5 minutes and 1 hour; the alert requires both to exceed 14.4 times the budget rate, and `runbook_url` travels with the alert.
+- `for: 2m` adds up to two minutes to the detection times of Table 39.6 (52 s for a total outage becomes about 3 minutes); the short window already filters blips, so keep `for` short or omit it.
 - `group_by` collapses 60 pods' identical alerts into one notification; `group_wait` waits 30 s to gather the group, `group_interval` throttles updates and `repeat_interval` re-notifies an unresolved alert every 4 hours (these three values are Alertmanager's defaults) [Prometheus Docs: Alertmanager configuration].
 - The routing tree sends pages for the payments team to its pager and everything else to a ticket queue.
 - The inhibition rule suppresses service pages in a region while a `RegionUnreachable` alert is firing for that same region, so responders see the cause, not 40 symptoms.
@@ -1183,15 +1184,15 @@ sequenceDiagram
 **Reading the diagram.** Messages run top to bottom in time. The burn-rate page (asynchronous notification) reaches the on-call engineer eleven minutes after errors start: the 5-minute window exceeds 1.44% almost at once, but the 1-hour average needs $t$ minutes of 9% errors, where $(0.09\,t + 0.001\,(60 - t))/60 = 0.0144$, so $t \approx 9$ (§39.7.3), plus the rule's 2-minute `for`. Each subsequent exchange is a synchronous query: the dashboard rules out a backend deploy; an exemplar leads to one failing trace; the trace's ID retrieves its logs, which carry `card_network`; a grouped query over wide events or span attributes shows the failures concentrate in one app version and one card network. The mitigation is a feature-flag change, not a deploy (§43.7); nobody restarted healthy services or grepped machines.
 
 ::: example
-**Worked example — What the incident cost.** Checkout serves 300 orders/s; errors ran at 9% instead of 0.1% from 19:40 to 20:01 (21 minutes, 1,260 s). SLO 99.9% over 30 days.
+**Worked example — What the incident cost.** Checkout serves 60 orders/s at the Friday dinner peak (§2.11) and about 15 million orders per 30-day month (500,000 per day, §39.3.2); errors ran at 9% instead of 0.1% from 19:40 to 20:01 (21 minutes, 1,260 s). SLO 99.9% over 30 days.
 
-1. Requests in the window: $300 \times 1{,}260 = 378{,}000$.
-2. Excess failures: $378{,}000 \times (0.09 - 0.001) = 33{,}642$ orders.
-3. Monthly budget: $300 \times 2{,}592{,}000 \times 0.001 = 777{,}600$ allowed failures; this incident used $378{,}000 \times 0.09 / 777{,}600 = 4.4\%$ of it.
+1. Requests in the window: $60 \times 1{,}260 = 75{,}600$.
+2. Excess failures: $75{,}600 \times (0.09 - 0.001) = 6{,}728$ orders.
+3. Monthly budget: $15{,}000{,}000 \times 0.001 = 15{,}000$ allowed failures; this incident used $75{,}600 \times 0.09 / 15{,}000 = 45\%$ of it. Counted in full-outage-equivalent minutes instead, $21 \times 0.09 = 1.89$ of 43.2 minutes is only 4.4%: an incident at peak costs about ten times its share of the clock, because peak traffic is about ten times the average (§18.11.3).
 4. Burn rate during the incident: $0.09/0.001 = 90$; a whole month's budget would last $720/90 = 8$ hours.
-5. Without the tooling (40 minutes to mitigate as in the opening), excess failures would have been roughly $300 \times 2{,}400 \times 0.089 = 64{,}080$.
+5. Without the tooling (40 minutes to mitigate as in the opening), excess failures would have been roughly $60 \times 2{,}400 \times 0.089 = 12{,}816$.
 
-**Interpretation.** Twenty-one minutes cost 4.4% of the monthly budget and tens of thousands of orders; halving time to mitigate roughly halved the damage. **Engineering implication.** Mean time to mitigate is dominated by investigation, and investigation time is what linked signals buy. Measure detection and mitigation times in every postmortem.
+**Interpretation.** Twenty-one minutes at peak cost 45% of the monthly budget and thousands of orders; halving time to mitigate roughly halved the damage. **Engineering implication.** Mean time to mitigate is dominated by investigation, and investigation time is what linked signals buy. Measure detection and mitigation times in every postmortem.
 :::
 
 ## 40.12 Profiling in production

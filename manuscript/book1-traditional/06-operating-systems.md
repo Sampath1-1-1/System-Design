@@ -1064,7 +1064,7 @@ Processes have private address spaces (§6.3.2), so they cooperate through kerne
 - **TCP/UDP sockets** — slower locally, but the same code works across machines (§7.7).
 - **Shared memory** — processes map the same physical pages (`shm_open` + `mmap`). Fastest, with no system calls after setup, but the processes must synchronize themselves. PostgreSQL's shared buffer pool uses it.
 - **Message queues** — POSIX `mq_open` keeps discrete, prioritized messages in the kernel, locally; distributed brokers (Chapter 30) generalize the idea.
-- **Signals** — asynchronous notifications carrying only a number: `SIGTERM` (please exit), `SIGKILL` (exit now, uncatchable), `SIGINT` (Ctrl-C), `SIGHUP` (often "reload"), `SIGCHLD` (child exited). Handlers interrupt the program anywhere, so they may call only **async-signal-safe** functions; set a flag and act in the main loop [Linux man-pages: signal(7)]. Kubernetes sends `SIGTERM`, waits a grace period (30 s by default), then `SIGKILL`, so services must handle `SIGTERM` to drain gracefully (§43.4).
+- **Signals** — asynchronous notifications carrying only a number: `SIGTERM` (please exit), `SIGKILL` (exit now, uncatchable), `SIGINT` (Ctrl-C), `SIGHUP` (often "reload"), `SIGCHLD` (child exited). Handlers interrupt the program anywhere, so they may call only **async-signal-safe** functions; set a flag and act in the main loop [Linux man-pages: signal(7)]. Kubernetes sends `SIGTERM`, waits a grace period (30 s by default), then `SIGKILL`, so services must handle `SIGTERM` to drain gracefully (§42.7.4).
 
 **Table 6.5 — IPC mechanisms compared.**
 

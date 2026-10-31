@@ -384,7 +384,7 @@ Other providers publish similar directions: Google's Titanium offload system and
 
 ### 41.8.4 Containers, microVMs and serverless
 
-Containers (Chapter 42) share one kernel among many isolated processes using namespaces and cgroups, which makes them start in milliseconds and pack densely, but makes the kernel a shared attack surface: unsafe for running *untrusted* code from different customers side by side. Full VMs give strong isolation but start in tens of seconds and cost hundreds of megabytes each.
+Containers (Chapter 42) share one kernel among many isolated processes using namespaces and cgroups, which makes them start in well under a second and pack densely, but makes the kernel a shared attack surface: unsafe for running *untrusted* code from different customers side by side. Full VMs give strong isolation but start in tens of seconds and cost hundreds of megabytes each.
 
 **Firecracker** is the microVM monitor AWS built to get VM isolation at container-like cost for Lambda and Fargate [Agache et al. 2020]. It is a KVM-based virtual machine monitor written in Rust with a deliberately minimal device model (virtio network and block, a serial console, a minimal keyboard controller used for reset, no PCI, no BIOS). The paper reports booting a microVM to user-space code in as little as 125 ms, a memory overhead below 5 MiB per microVM, and creation rates up to 150 microVMs per second per host. Each Lambda execution environment runs inside one microVM, and thousands run on one host. Chapter 47 compares isolation levels and Chapter 48 covers Lambda's internals.
 

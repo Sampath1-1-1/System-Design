@@ -60,6 +60,8 @@
 
 **Availability** — The fraction of time (or of requests) for which a system serves correctly: $A = \text{uptime}/(\text{uptime} + \text{downtime})$, or, request-based, $A = \text{successful requests} / \text{valid requests}$. It is commonly quoted in "nines": 99.9% is "three nines". *(§4.14.1)*
 
+**Availability, reliability, durability, resilience** — **Availability** is the fraction of time, or of valid requests, for which a system serves correctly (§4.14). **Reliability** is the probability that the system performs its required function correctly over a stated period, $R(t)$ (§4.15); in SRE usage the word is also used broadly for "the system does what users need", of which availability is the most-measured part [Beyer et al. 2016]. **Durability** is the probability that acknowledged data is not lost (§4.16). **Resilience** is the ability to absorb a fault, keep delivering an acceptable (possibly degraded) service, and recover to full service. *(§39.3.1)*
+
 ## B
 
 **Backend for frontend (BFF)** — A server-side component dedicated to one kind of user interface (iOS, web, partner API), owned by or aligned with that interface's team, which aggregates and reshapes downstream calls into exactly the API that interface needs [Newman 2015]. *(§34.6.2)*
@@ -67,6 +69,8 @@
 **Back-of-the-envelope estimation** — A quick calculation, done with round numbers and stated assumptions, that gives the order of magnitude of a system's load and resource needs (requests per second, storage, bandwidth, memory, number of nodes). The aim is to be within a factor of about 2–3 of the truth with a few minutes of arithmetic. This section introduces the method. Chapter 89 is the full handbook. *(§2.11.1)*
 
 **Backpressure** — A flow-control mechanism in which a slower downstream component signals upstream components to reduce their sending rate, by blocking, by advertising available capacity, or by rejecting, so that work in progress stays bounded instead of piling up in unbounded buffers. *(§22.10)*
+
+**Backup types** — A **full backup** copies the entire data set. An **incremental backup** copies what changed since the *previous backup of any type*. A **differential backup** copies what changed since the *last full backup*. A **snapshot** is a point-in-time image, usually copy-on-write, taken by the storage layer. *(§39.9.1)*
 
 **Backward and forward compatibility** — **Backward compatibility**: newer code can read data written by older code. **Forward compatibility**: older code can read data written by newer code [Kleppmann 2017, ch. 4]. *(§8.9.3)*
 
@@ -79,6 +83,8 @@
 **Block, file and object storage** — **Block storage** exposes a numbered array of fixed-size blocks (typically 512 B or 4 KiB) that a client reads and writes by offset; the client's own file system or database gives the blocks meaning. **File storage** exposes a hierarchical namespace of directories and byte-addressable files with POSIX-like operations (open, read at offset, write at offset, rename, lock), shared by many clients over a protocol such as NFS or SMB. **Object storage** exposes a flat namespace of immutable **objects**, each a byte string plus metadata addressed by a key within a **bucket**, accessed over HTTP with whole-object PUT, GET (optionally a byte range), DELETE and LIST. *(§15.3.1)*
 
 **Bloom filter** — A probabilistic data structure for set membership, introduced by Burton Bloom in 1970, that stores a set of $n$ items in an array of $m$ bits using $k$ hash functions [Bloom 1970]. A query answers either "definitely not in the set" or "probably in the set". It never gives a **false negative** (saying "no" for an item that was added), and gives a **false positive** (saying "yes" for an item that was not added) with a probability $p$ that depends on $m$, $n$ and $k$. *(§17.4.1)*
+
+**Blue–green deployment** — A deployment that runs two complete production environments, one live (say blue) and one idle (green). The new version is deployed to and tested on the idle environment, and then all traffic is switched to it at once at the routing layer; the old environment is kept, unchanged, for instant rollback [Fowler 2010]. *(§43.5.1)*
 
 **Bottleneck** — The resource whose capacity limits the throughput of the whole system for a given workload. Throughput cannot rise above the bottleneck's capacity no matter how much the other resources are improved. Formally, it is the resource with the highest **service demand** per request (defined below). *(§2.6.1)*
 
@@ -120,9 +126,13 @@
 
 **Cache tiers** — The **edge** tier is the set of PoPs that accept user connections. A **mid-tier** (also *parent*, *regional* or *upper-tier* cache) is a smaller set of larger caches that edges consult on a miss. An **origin shield** is a mid-tier designated as the single path to a given origin. The **origin** is the customer's own infrastructure that holds the authoritative content. *(§21.4.1)*
 
+**Canary release** — A deployment that sends a small, controlled fraction of production traffic to the new version, compares its behavior with the current version, and increases the fraction in steps only while the comparison stays healthy; otherwise traffic is returned to the old version [Sato 2014a]. *(§43.6.1)*
+
 **Capacity planning** — The recurring process of forecasting demand, translating it into the resources needed to serve it within the service-level objective with stated headroom and redundancy, and acquiring those resources before they are needed, allowing for the lead time to obtain them. *(§18.11.1)*
 
 **CAP theorem (Gilbert and Lynch)** — In an asynchronous network model, where messages may be delayed arbitrarily and there are no clocks, it is impossible to implement a read/write data object that guarantees both of the following in all fair executions, including those in which messages are lost: **Consistency (C):** the object is **atomic**, that is, linearizable (§25.3). **Availability (A):** every request received by a non-failing node must eventually result in a response. **Partition tolerance (P)** is not a property the system chooses; it is the assumption that the network may lose arbitrarily many messages between nodes. *(§25.8.1)*
+
+**Cardinality and dimensionality** — The **cardinality** of a field is the number of distinct values it takes: `http.method` has about 5, `user_id` may have millions. **Dimensionality** is the number of fields attached to each event. A **wide event** (also called a canonical log line) is one structured record per unit of work, typically per request per service, carrying dozens to hundreds of fields. *(§40.3.3)*
 
 **Causal consistency** — Writes that are **causally related** must be seen by every client in their causal order; writes that are **concurrent** (neither happens before the other) may be seen in different orders by different clients. Formally, each client's view must be a legal sequential history that respects the causal order induced by program order and reads-from [Ahamad et al. 1995]. *(§25.5.1)*
 
@@ -137,6 +147,8 @@
 **Chain replication** — Replicas are arranged in a linear **chain**. Every update enters at the **head** and is forwarded node by node to the **tail**; the tail replies to the client. Every query is answered by the tail. A separate, fault-tolerant **master** service detects failures and reconfigures the chain [van Renesse and Schneider 2004]. *(§27.5.1)*
 
 **Change data capture (CDC)** — Extracting every committed insert, update and delete from a database, in commit order, as a stream of change events that other systems consume. **Log-based CDC** reads the database's replication log (PostgreSQL's write-ahead log via logical decoding, MySQL's binary log) rather than querying tables. *(§32.6.1)*
+
+**Chaos engineering** — "The discipline of experimenting on a system in order to build confidence in the system's capability to withstand turbulent conditions in production" [Principles of Chaos Engineering]. *(§39.11)*
 
 **Choreography and orchestration** — In **choreography**, each service reacts to other services' events and publishes its own; the saga's control flow is distributed across the participants and exists nowhere as one piece of code. In **orchestration**, a dedicated **orchestrator** sends commands to participants, receives their replies and decides the next step; the control flow lives in one place [Richardson 2018]. *(§32.8)*
 
@@ -159,6 +171,8 @@
 **Client-side load balancing** — The calling process obtains the list of backend endpoints from service discovery (§34.7) and chooses a backend for each request itself, with no proxy in the path. A **lookaside** balancer is an external service that tells clients *which* backends to use (and with what weights) while the traffic still flows directly from client to backend. *(§19.10)*
 
 **Clock rate** — The frequency at which a core's internal circuitry steps from one state to the next, measured in hertz (cycles per second). A 4 GHz core has a **cycle time** of 1 / (4 × 10⁹) s = 0.25 ns. *(§5.3.2)*
+
+**Cloud computing** — "A model for enabling ubiquitous, convenient, on-demand network access to a shared pool of configurable computing resources (e.g., networks, servers, storage, applications, and services) that can be rapidly provisioned and released with minimal management effort or service provider interaction" [Mell and Grance 2011]. NIST lists five **essential characteristics**: on-demand self-service, broad network access, resource pooling, rapid elasticity and measured service; three **service models** (SaaS, PaaS, IaaS); and four **deployment models** (private, community, public, hybrid). *(§41.3.1)*
 
 **Clustered and secondary index** — In a **clustered index** (an index-organized table), the leaf level of the index *is* the table: rows are stored in key order inside the index's leaf pages. A table can have at most one. A **secondary index** stores, for each key, a pointer to the row; the table can have many. *(§11.7.2)*
 
@@ -212,6 +226,12 @@
 
 **Consumer lag** — For one partition, lag = **log end offset** (or high watermark) minus the group's **committed offset**: the number of records written but not yet processed by the group. Group lag is the sum over partitions. *(§31.7.3)*
 
+**Container** — A process (or group of processes) that the Linux kernel runs with a restricted *view* of the system, provided by **namespaces**, and a restricted *share* of its resources, enforced by **control groups (cgroups)**, starting from a root file system unpacked from an **image**. A container shares the host's kernel; it is not a virtual machine. *(§42.3.1)*
+
+**Container image** — An immutable, content-addressed package containing a root file system, stored as an ordered list of **layers** (each a compressed tar archive of file-system changes), plus a **configuration** (entry point, environment, user, working directory) and a **manifest** that lists them by cryptographic digest. The **OCI Image Specification** standardizes the format [OCI Image Spec]. *(§42.4.1)*
+
+**Container registry** — A content-addressed store for images and related artifacts, organized into repositories, that serves manifests by **tag** or **digest** and layers (blobs) by digest over the HTTP API standardized by the **OCI Distribution Specification** [OCI Distribution Spec]. *(§42.5.1)*
+
 **Content-defined chunking (CDC)** — Splitting a byte stream into variable-size chunks whose boundaries are chosen by the content itself: a rolling hash is computed over a small sliding window, and a boundary is declared wherever the hash matches a pattern (for example, its low 13 bits equal a fixed value). Each chunk is then identified by a cryptographic hash of its bytes, so identical chunks are stored once (**deduplication**). *(§15.8.3)*
 
 **Content delivery network (CDN)** — A distributed system of caching reverse proxies (§7.12) deployed in many network locations, which serves content on behalf of an **origin** (the authoritative server for the content) from the location nearest each user, fetching from the origin only on a cache miss. *(§21.3.1)*
@@ -220,7 +240,13 @@
 
 **Context switch** — The kernel operation that stops one thread running on a CPU core, saves its CPU state into its PCB, and loads the saved state of another thread so that it resumes where it left off. *(§6.4)*
 
+**Continuous integration (CI)** — The practice of merging every developer's work into a shared mainline at least daily, with each merge verified by an automated build and test run. **Definition — Continuous delivery (CD).** The practice of keeping the mainline always releasable, so that any commit that passes the automated pipeline *could* be deployed to production by pushing a button [Humble and Farley 2010]. **Definition — Continuous deployment.** Continuous delivery with the button removed: every commit that passes the pipeline is deployed to production automatically. *(§43.3.1)*
+
+**Control group (cgroup)** — A kernel mechanism that groups processes into a hierarchy and applies resource accounting and limits to each group through **controllers** (cpu, memory, io, pids). **cgroup v2** is the unified hierarchy, stable since Linux 4.5 (2016), in which every controller uses one tree and one set of interface files [Linux Docs: cgroup v2]. *(§42.3.2)*
+
 **Coordinated omission** — A measurement error in which the load generator, by waiting for slow responses before sending more requests, fails to send (and therefore fails to measure) the requests that would have experienced the slowness. The tester and the system "coordinate" to omit the worst samples. The term and diagnosis are due to Gil Tene [Tene, How NOT to Measure Latency]. *(§23.5.3)*
+
+**Correlation ID** — An identifier generated at the edge of the system for each incoming request (or taken from the client) and attached to every log line, span and downstream call made on that request's behalf, so that all records of one request can be retrieved together. When distributed tracing is in place, the **trace ID** serves as the correlation ID. *(§40.4.2)*
 
 **Cost-based optimizer** — The component that enumerates equivalent physical plans for a query (access paths, join orders, join algorithms), estimates each plan's cost from **statistics** about the data using a **cost model**, and returns the plan with the lowest estimated cost. *(§11.10.1)*
 
@@ -284,6 +310,8 @@
 
 **Direct server return (DSR)** — A forwarding mode in which the balancer delivers request packets to the backend but the backend sends responses **directly to the client**, using the VIP as its source address, bypassing the balancer on the return path. *(§19.3.1)*
 
+**Disaster recovery, RTO, RPO** — **Disaster recovery (DR)** is the set of plans and mechanisms for restoring service and data after an event that redundancy within the normal deployment cannot absorb: loss of a region, mass data corruption, ransomware, a destructive operator error. The **recovery time objective (RTO)** is the maximum acceptable time from disruption to restored service. The **recovery point objective (RPO)** is the maximum acceptable amount of data loss, measured as time before the disruption whose writes may be lost [AWS 2021]. *(§39.8.1)*
+
 **Distributed denial of service (DDoS)** — An attack that makes a service unavailable by overwhelming some finite resource — network bandwidth, packet-processing capacity, connection-state tables, or application CPU, memory and database capacity — with traffic from many sources at once, typically a **botnet** of compromised devices or abused open servers. *(§10.11)*
 
 **Distributed file system** — A file system whose namespace and data are spread across many machines, so that files can be larger than any one disk and throughput can grow with the number of machines, while clients still use file-like operations (create, open, read, write or append, delete). *(§15.5.1)*
@@ -328,6 +356,8 @@
 
 **Erasure code and RS(k, m)** — An **erasure code** transforms $k$ data fragments into $k + m$ fragments such that the original data can be rebuilt from some subset of them after the others are lost ("erased"). A **Reed–Solomon** code RS($k$, $m$) is a **maximum distance separable (MDS)** code: *any* $k$ of the $k+m$ fragments suffice, so it tolerates the loss of any $m$ fragments. A code is **systematic** when the first $k$ fragments are the unmodified data, so healthy reads need no decoding. *(§15.6.1)*
 
+**Error budget** — The amount of unreliability an SLO permits over its window: $1 - \text{SLO}$, expressed as a number of bad requests or bad minutes. While budget remains, the team may spend it on risk (releases, experiments, migrations); when it is exhausted, reliability work takes priority [Beyer et al. 2016]. *(§39.7.1)*
+
 **Event-driven architecture (EDA)** — A style in which components communicate mainly by producing and consuming **events**, immutable records of facts that happened ("OrderPlaced"), through a broker or log, so that producers do not know which consumers exist or when they will run. *(§33.8)*
 
 **Event loop** — A single thread that repeatedly waits for events (ready sockets, expired timers, completed tasks) using an I/O multiplexing call, and dispatches each event to a short, non-blocking handler. *(§6.13.4)*
@@ -337,6 +367,10 @@
 **Event storming** — A collaborative workshop technique created by Alberto Brandolini in which domain experts and developers place domain events (past tense, on sticky notes) along a timeline, then add commands, actors, policies ("whenever X, then Y"), external systems and hotspots (open questions), and group the result into aggregates and candidate bounded contexts [Brandolini: Introducing EventStorming]. *(§34.5.4)*
 
 **Eventual consistency** — If no new updates are made to an object, eventually all reads return the last updated value [Vogels 2009]. Equivalently, replicas that have received the same set of updates **converge** to the same state. **Strong eventual consistency** strengthens this: replicas that have received the same updates are in the same state immediately, with no further coordination, which is what conflict-free replicated data types (CRDTs) guarantee (§27.14). *(§25.7.1)*
+
+**Exemplar** — A reference from an aggregated metric sample to an individual event that contributed to it, typically a trace ID attached to one histogram bucket observation, with its value and timestamp [OpenMetrics; Prometheus Docs: Exemplars]. *(§40.11.2)*
+
+**Expand–contract (parallel change)** — A pattern for making a backward-incompatible change as a sequence of compatible steps: **expand** the schema or interface to support both old and new forms, **migrate** readers, writers and existing data to the new form, then **contract** by removing the old form once nothing uses it [Sato 2014b]. *(§43.13.2)*
 
 **Expected value** — The probability-weighted average outcome of a random quantity $X$: $E[X] = \sum_i x_i \, P(X = x_i)$. It is the long-run average over many repetitions. *(§4.6.3)*
 
@@ -353,6 +387,10 @@
 **Failure detector** — A component that outputs, for each monitored process, whether it currently **suspects** that process has crashed. It is **complete** if every crashed process is eventually suspected and **accurate** if live processes are not suspected. In an asynchronous network no detector can be both perfectly complete and perfectly accurate, because a slow process is indistinguishable from a dead one [Chandra and Toueg 1996]. *(§27.10.1)*
 
 **False sharing** — A performance problem in which threads on different cores write to *different* variables that happen to sit in the *same* cache line, so the coherence protocol bounces the line between cores as if they were sharing data. *(§5.4.7)*
+
+**Fault tolerance, redundancy and failure domain** — **Fault tolerance** is the ability to keep providing correct service despite faults in some components. **Redundancy** is extra capacity or extra copies that make this possible. A **failure domain** is a set of components that can fail together because they share something: a power feed, a rack switch, a zone, a region, a software version, a configuration system or an operator. *(§39.4.1)*
+
+**Feature flag (feature toggle)** — A runtime switch in the code that selects between code paths without a new deployment; its value is read from configuration or a flag service and can depend on the request context (user, tenant, region) [Hodgson 2017]. **Definition — Deploy versus release.** To **deploy** is to install a version of the code in production. To **release** is to let users experience a change. Feature flags make them separate events. *(§43.7.1)*
 
 **Fencing token** — A number, increasing with every grant of a lock or lease, that the holder attaches to every request to the protected resource. The resource remembers the highest token it has accepted and rejects any request carrying a lower one. *(§26.13)*
 
@@ -382,7 +420,11 @@
 
 **Geohash** — A string encoding of a latitude/longitude cell, published by Gustavo Niemeyer in 2008, formed by alternately bisecting the longitude and latitude ranges, interleaving the resulting bits (longitude first) and writing every 5 bits as one base-32 character [Niemeyer 2008]. Each additional character subdivides the cell into 32 smaller cells, so a geohash that is a prefix of another names a cell containing it. *(§17.9.2)*
 
+**GitOps** — An operating model in which the desired state of a system is declared in Git, and software agents running inside the target environment continuously pull that state and reconcile the live system to it. The OpenGitOps principles state that the desired state is **declarative**, **versioned and immutable**, **pulled automatically** and **continuously reconciled** [OpenGitOps 2021]. *(§43.10)*
+
 **Gossip protocol** — A protocol in which, every round, each node exchanges state with $f$ randomly chosen peers (the **fanout**). In **push** gossip informed nodes send updates; in **pull** gossip nodes ask peers for news; **push–pull** does both. **Anti-entropy** gossip exchanges full state; **rumor mongering** spreads only recent updates and stops after a while [Demers et al. 1987]. *(§27.10.3)*
+
+**Graceful degradation** — A design property in which, under failure or overload, a system keeps delivering its most important functions, possibly with reduced quality (staler data, fewer features, simpler results), instead of failing completely. *(§39.5.1)*
 
 **Graph database** — A database whose data model is a graph of **vertices** (nodes) and **edges** (relationships), optimized for traversing edges. In the **property graph** model, nodes carry labels, edges carry a type and a direction, and both carry key-value properties. In the **RDF** model, all data is a set of subject–predicate–object **triples**. *(§12.7.1)*
 
@@ -401,6 +443,8 @@
 **Hash function** — A deterministic function $h$ that maps an input of any length to a fixed-size integer (for example 32, 64 or 128 bits), called the **hash** or **digest**. A **non-cryptographic hash function** is designed for speed and statistical uniformity on ordinary inputs. A **cryptographic hash function** additionally resists an adversary who tries to find collisions or preimages (§10.4.1). *(§17.3.1)*
 
 **Hash slot (Redis Cluster)** — One of 16,384 buckets into which Redis Cluster divides the keyspace: `slot = CRC16(key) mod 16384`. Each primary owns a set of slots. If a key contains `{...}`, only the substring inside the braces (a **hash tag**) is hashed, so related keys can be forced into one slot [Redis Docs: Cluster specification]. *(§20.6.4)*
+
+**Head and tail sampling** — **Head sampling** decides at the root span, before the request runs, usually with a probability applied to the trace ID; the decision propagates in the sampled flag so that the whole trace is kept or dropped consistently. **Tail sampling** decides after the trace completes, when its duration, errors and attributes are known, by buffering all spans of each trace in a collector until a decision timer expires [OpenTelemetry Docs: Sampling]. *(§40.6.3)*
 
 **Health check** — A mechanism by which a balancer decides whether a backend should receive traffic. An **active** check sends synthetic probes (a TCP connect, an HTTP `GET /healthz`, a gRPC health RPC) on a timer. A **passive** check, also called **outlier detection**, watches real traffic for errors, timeouts or latency and **ejects** misbehaving backends for a period. *(§19.5.1)*
 
@@ -424,7 +468,13 @@
 
 **HyperLogLog (HLL)** — A probabilistic algorithm that estimates the number of distinct items (the **cardinality**) in a multiset using $m$ small registers, with relative standard error about $1.04/\sqrt{m}$, independent of the cardinality itself [Flajolet et al. 2007]. *(§17.5.1)*
 
+**Hypervisor** — Software (sometimes with hardware assistance) that runs multiple **guest** operating systems on one physical host, giving each the illusion of its own machine. A **type 1** hypervisor runs directly on hardware (Xen, KVM as part of Linux, Hyper-V); a **type 2** runs as an application on a host OS (VirtualBox). Modern CPUs provide hardware virtualization extensions (Intel VT-x, AMD-V, Arm virtualization extensions) so that guest instructions run natively and only privileged operations trap to the hypervisor. *(§41.8.2)*
+
 ## I
+
+**IAM building blocks** — A **principal** is an entity that makes requests: a human user, a workload, or a federated identity. A **policy** is a document of statements, each with an **Effect** (Allow or Deny), **Actions** (for example `s3:GetObject`), **Resources** (identified by ARN or resource path) and optional **Conditions** (source network, tags, MFA, time). **Identity-based policies** attach to principals; **resource-based policies** (bucket policies, key policies, queue policies) attach to resources and name which principals may use them. A **role** is an identity with permissions but no long-term credentials: trusted principals **assume** it and receive temporary credentials (on AWS, from the Security Token Service, typically valid for an hour). *(§41.12.1)*
+
+**Idempotence** — An operation is **idempotent** if applying it once or many times leaves the system in the same state. **Drift** is any difference between the state the code declares and the state that actually exists. *(§43.8.1)*
 
 **Idempotency key** — A unique value, generated by the client once per *logical* operation and sent with every attempt of that operation (for example in an `Idempotency-Key` header), that the server uses to recognize retries: the first attempt executes and its result is stored under the key; later attempts with the same key return the stored result instead of executing again. *(§22.15.1)*
 
@@ -434,11 +484,17 @@
 
 **Identity and equality** — **Identity** asks "are these the same object in memory?" (Python `is`, Java `==` on references). **Equality** asks "do these objects represent the same value by a rule the class defines?" (Python `==` via `__eq__`, Java `equals`). Unless a class overrides equality, both languages default to identity. *(§35.3.2)*
 
+**Incident** — An unplanned event that degrades or threatens a service's SLOs, security or data and requires a coordinated response. **Incident management** is the process of detecting, coordinating, mitigating and learning from incidents. *(§39.12.1)*
+
 **Index** — A secondary data structure, kept in sync with a table by the database, that maps values of one or more **key columns** to the locations of the rows holding them, so that rows can be found without scanning the whole table. Most relational indexes are B+ trees (§11.8); others include hash, GiST, GIN and BRIN indexes in PostgreSQL and full-text and spatial indexes in MySQL. *(§11.7.1)*
 
 **In-doubt (blocked) transaction** — A transaction at a participant that has voted yes but has not learned the outcome. It must hold its locks and cannot decide until the coordinator, or another participant that knows the outcome, answers. *(§28.4.3)*
 
+**Infrastructure as code (IaC)** — Managing infrastructure (networks, machines, load balancers, databases, DNS, permissions) through machine-readable definition files kept in version control and applied by tools, instead of through manual console clicks or ad hoc scripts [Morris 2020]. *(§43.8.1)*
+
 **Inheritance** — A mechanism by which a class (the **subclass**, **child** or **derived class**) is defined as an extension of another (the **superclass**, **parent** or **base class**). The subclass automatically has the parent's attributes and methods, may add new ones, and may **override** inherited methods by providing its own version with the same name and parameters. *(§35.5.1)*
+
+**Instance type and family** — An **instance type** is a fixed shape of virtual hardware: vCPUs, memory, network bandwidth, local storage and accelerators. Types are grouped into **families** optimized for a ratio of resources. In AWS naming, `m7g.xlarge` means family `m` (general purpose), generation `7`, attribute `g` (AWS Graviton Arm processor), size `xlarge` (4 vCPUs). A **vCPU** is one hardware thread on most x86 instances (two vCPUs per physical core with simultaneous multithreading) and one physical core on Graviton. *(§41.8.1)*
 
 **Instruction pipeline** — A technique in which the core splits instruction execution into stages and works on different stages of several consecutive instructions at the same time, like an assembly line. *(§5.3.3)*
 
@@ -469,6 +525,8 @@
 **Keys** — A **superkey** is a set of columns whose values are unique across all rows. A **candidate key** is a minimal superkey: remove any column and it stops being unique. The **primary key** is the candidate key chosen as the row's main identifier; it must be unique and NOT NULL. Other candidate keys are enforced with `UNIQUE` constraints. A **foreign key** is a column (or set) in one table whose values must match a key of another table, a rule called **referential integrity**. *(§11.4.1)*
 
 **Key-value store** — A database whose primary interface is `get(key)`, `put(key, value)` and `delete(key)`, where the value is opaque to the database or has a small set of built-in types. The key alone determines where the value lives. *(§12.4.1)*
+
+**Kubernetes** — An open-source container orchestrator that runs workloads across a cluster of nodes from **declarative** specifications. Users write the *desired state* of API objects to a central API server; independent **controllers** continuously compare it with the *observed state* and act to close the gap [Kubernetes Docs: Components]. *(§42.6.1)*
 
 ## L
 
@@ -514,6 +572,8 @@
 
 **Log** — An append-only, totally ordered sequence of records. Each record is assigned a monotonically increasing integer position called its **offset** when it is appended. Records are never modified in place; readers read sequentially from any offset they choose. *(§31.3.1)*
 
+**Log and structured log** — A **log** is a time-ordered record of discrete events emitted by a program. A **structured log** encodes each event as a set of named fields (usually JSON, or key–value pairs), so that machines can filter and aggregate by field instead of parsing free text with regular expressions. *(§40.4.1)*
+
 **Logarithm** — The logarithm base $b$ of $x$, written $\log_b x$, is the exponent to which $b$ must be raised to give $x$: if $b^y = x$ then $y = \log_b x$. *(§4.4.1)*
 
 **Log compaction** — A retention policy (`cleanup.policy=compact`) that keeps **at least the latest record for each key** and discards older records with the same key, so the partition converges to a snapshot of the latest value per key while preserving the offsets and order of the records that remain. A record with a null value, a **tombstone**, marks a key as deleted and is itself removed after `delete.retention.ms` (default 24 hours). *(§31.10.2)*
@@ -533,6 +593,8 @@
 ## M
 
 **Maglev hashing** — A consistent-hashing scheme that builds a **lookup table** of prime size $M$ in which every entry names a backend. Each backend has its own pseudo-random **preference permutation** of table positions; backends take turns claiming their next preferred empty position until the table is full. A packet's backend is `table[hash(5-tuple) mod M]`: one array read [Eisenbud et al. 2016]. *(§19.4.8)*
+
+**Managed database service** — A database engine operated by the provider: provisioning, OS and engine patching, automated backups with point-in-time recovery, replication and failover across zones, monitoring and storage scaling are provider tasks exposed through an API. You keep schema design, queries, indexes, capacity choices, parameter tuning and access control. Examples: Amazon RDS and Aurora, Google Cloud SQL and AlloyDB, Azure SQL Database and Azure Database for PostgreSQL/MySQL. *(§41.11.1)*
 
 **MapReduce** — A programming model and execution system in which the user writes two functions: **map**, which turns one input record into zero or more intermediate key–value pairs, and **reduce**, which receives one intermediate key with *all* values emitted for it and produces output. The system handles splitting, scheduling, regrouping by key, and failures [Dean and Ghemawat 2004]. *(§29.4.1)*
 
@@ -554,6 +616,8 @@
 
 **Metadata service** — The component that maps names to data: directory entries, file or object attributes (size, owner, permissions, version, checksum) and the locations of each chunk or fragment. It is on the path of every open, create, list and delete, while the data path bypasses it. *(§15.7.1)*
 
+**Metric** — A numeric measurement aggregated over time and identified by a name plus a set of **labels** (key–value pairs). Each unique combination of name and label values is one **time series**, a sequence of `(timestamp, value)` samples. For example, `http_requests_total{service="checkout", method="POST", status="500"}` is one series. *(§40.5)*
+
 **Microservice** — A service built around one business capability, owned by one team, deployable independently, and the sole owner of its data, which others reach only through its API or events. Lewis and Fowler describe the style as "an approach to developing a single application as a suite of small services, each running in its own process and communicating with lightweight mechanisms," built around business capabilities and independently deployable [Lewis and Fowler 2014]. *(§34.3.1)*
 
 **Microservices** — An architectural style that builds one application as a suite of small services, each running in its own process, owning its own data, communicating over lightweight network mechanisms, built around a business capability, and **independently deployable** by the team that owns it [Lewis and Fowler 2014]. *(§33.7.1)*
@@ -561,6 +625,8 @@
 **Mobile push notification** — A message sent by an application's server to a platform-operated push service — Apple Push Notification service (**APNs**) for Apple platforms, Firebase Cloud Messaging (**FCM**) for Android (and optionally iOS and web) — which delivers it, on a best-effort basis, over a single persistent connection that the operating system maintains to that service on behalf of all apps. *(§9.8.1)*
 
 **Modular monolith** — A monolith whose code is divided into **modules** aligned with business domains, where each module exposes a small **public interface**, hides its internals and data, and may depend only on an explicitly declared, acyclic set of other modules. Boundaries are enforced by tooling, not just convention. *(§33.5.1)*
+
+**Monitoring** — Collecting, aggregating and displaying predefined measurements of a system, and alerting when they cross thresholds, so that operators learn about *known* failure modes. The Google SRE book defines it as "collecting, processing, aggregating, and displaying real-time quantitative data about a system" [Beyer et al. 2016, ch. 6]. *(§40.3.1)*
 
 **Monolith** — A system whose functionality is built, tested and deployed as **one deployable unit**, typically one process image running as identical replicas and backed by one shared database. "Monolith" describes the *deployment* unit; it says nothing about whether the code inside is well structured. *(§33.4.1)*
 
@@ -604,15 +670,21 @@
 
 **Object** — A value in a running program that bundles **state** (data, stored in **attributes** or **fields**) with **behavior** (functions that operate on that data, called **methods**). Each object has its own copy of the state. *(§35.3.1)*
 
+**Observability** — A property of a system and its telemetry: how well you can understand *any* internal state the system gets into, including states never seen before, by asking new questions of the data it already emits, without shipping new code [Majors, Fong-Jones and Miranda 2022]. The term comes from control theory, where a system is observable if its internal state can be inferred from its outputs. *(§40.3.1)*
+
 **Observer** — A one-to-many dependency in which a **subject** keeps a list of **observers** and notifies each of them when its state changes, so that the subject does not depend on what the observers do [Gamma et al. 1994]. *(§37.8)*
 
 **Offload ratio** — The fraction of traffic a CDN serves without contacting the origin. **Request offload** counts requests; **byte offload** counts bytes. Both are a cache hit ratio (§20.3) measured at the boundary between the CDN and the origin. *(§21.5.1)*
+
+**OIDC workload identity federation** — A mechanism in which the CI platform issues each job a short-lived, signed OpenID Connect (OIDC) token describing the job (repository, branch, environment), and the cloud provider exchanges that token for temporary credentials according to a trust policy, so that no long-lived cloud key is stored in the pipeline. *(§43.11.1)*
 
 **Open and closed workload models** — In an **open** model, new requests arrive at a rate that is independent of how fast the system answers: users on the internet do not wait for each other. In a **closed** model, a fixed population of $N$ users (or load-generator threads) each sends a request, waits for the response, optionally pauses for a **think time** $Z$, and only then sends the next. A **partly open** model has sessions that arrive openly but issue several requests each, closed-loop, within the session [Schroeder et al. 2006]. *(§23.5.2)*
 
 **OpenAPI Specification (OAS)** — A vendor-neutral, machine-readable format (YAML or JSON) for describing HTTP APIs: paths, operations, parameters, request and response bodies (as JSON Schema), status codes and security schemes [OpenAPI Specification]. It grew out of Swagger and is maintained by the OpenAPI Initiative; version 3.1 aligned its schemas with JSON Schema, and version 3.2.0 was released in September 2025. *(§8.16)*
 
 **Open/Closed Principle (OCP)** — Software entities (classes, modules, functions) should be **open for extension** but **closed for modification**: you should be able to add new behavior by adding new code, without editing code that already works and is already depended upon [Martin 2002]. The principle was first stated by Bertrand Meyer [Meyer 1988]. *(§36.4.1)*
+
+**OpenTelemetry (OTel)** — A vendor-neutral, open-source framework of APIs, SDKs, a wire protocol (OTLP), semantic conventions and a Collector for generating, collecting and exporting traces, metrics, logs and (newer) profiles. It was formed in 2019 by merging the OpenTracing and OpenCensus projects and is hosted by the Cloud Native Computing Foundation [OpenTelemetry Docs]. *(§40.7)*
 
 **Operating system (OS)** — The software layer that manages a computer's hardware (CPU, memory, storage, network) and provides running programs with safe, shared, abstract access to it. The privileged core of the OS that runs with full hardware access is the **kernel**. *(§6.3.1)*
 
@@ -652,6 +724,8 @@
 
 **PKCE (Proof Key for Code Exchange, "pixy")** — An extension in which the client creates a random secret, the **code verifier**, sends only its SHA-256 hash, the **code challenge**, with the authorization request, and must present the verifier when redeeming the authorization code. An attacker who intercepts the code cannot redeem it without the verifier [RFC 7636]. *(§8.14.3)*
 
+**Pod** — The smallest deployable unit in Kubernetes: one or more containers that are always scheduled together on one node and share a network namespace (one IP address and port space), IPC namespace and volumes. Pods are disposable: a replaced pod is a new pod with a new name and IP. *(§42.7.1)*
+
 **Point of presence (PoP)** — A CDN site in one metropolitan area or interconnection facility, containing load balancers, caching proxy servers with RAM and SSD storage, and connections to local networks. Large CDNs operate hundreds of PoPs; some also place servers inside Internet service provider (ISP) networks. *(§21.3.2)*
 
 **Poison message** — A message that fails processing every time it is delivered — because it is malformed, refers to data that does not exist, or triggers a bug — and that, if redelivered indefinitely, wastes consumer capacity and (in ordered lanes) blocks every message behind it. *(§30.10)*
@@ -681,6 +755,8 @@
 **Producer–consumer** — Producers put work items into a shared **bounded** buffer and consumers take them out, decoupling the rate at which work is created from the rate at which it is processed; when the buffer is full, producers block or are rejected, which is **backpressure** (§22.10). *(§37.16.1)*
 
 **Profiler** — A tool that attributes a resource (CPU time, wall-clock time, allocated bytes, lock wait time) to the code locations that consumed it. A **sampling profiler** interrupts the program at a fixed frequency and records the current call stack; a function's share of samples estimates its share of time. An **instrumenting** (deterministic, tracing) profiler inserts hooks at every function entry and exit and records exact call counts and durations. *(§23.4.1)*
+
+**Prometheus** — An open-source monitoring system and time-series database, started at SoundCloud in 2012 and a graduated CNCF project since 2018, that scrapes metrics over HTTP, stores them locally, evaluates recording and alerting rules, and is queried with PromQL [Prometheus Docs: Overview]. *(§40.8)*
 
 **Protocol** — A set of rules two parties agree on for exchanging messages: message formats, the meaning of each field, and the actions each side takes on sending, receiving or timing out. A **protocol stack** is a set of protocols layered so that each uses the service provided by the layer below and offers a service to the layer above. *(§7.3.1)*
 
@@ -714,9 +790,13 @@
 
 **Rebalancing** — Moving partitions, or parts of them, between nodes so that data and load stay even as nodes join, leave or fail and as data grows, while staying available and moving no more data than necessary. *(§14.9.1)*
 
+**Reconciliation loop (control loop)** — A loop that repeatedly reads an object's desired state (`spec`), observes actual state, computes the difference and takes actions to reduce it, then records what it observed (`status`). It is **level-triggered**: it acts on the current state of the world, not on the sequence of events that produced it. *(§42.6.3)*
+
 **RED method** — For every **service**, monitor **R**ate (requests per second), **E**rrors (failed requests per second) and **D**uration (the distribution of request latency, as a histogram from which percentiles are read). Tom Wilkie proposed it while at Weaveworks as a service-level complement to USE [Wilkie 2018]. *(§23.3.3)*
 
 **Reduce-side (sort-merge) join and broadcast (map-side) join** — In a **reduce-side join**, both inputs are mapped to `(join key, tagged record)`, shuffled so that all records with the same key meet at one reducer, sorted, and combined there. In a **broadcast join**, the smaller input is copied in full to every map task, loaded into an in-memory hash table, and each record of the larger input is joined locally by lookup, with no shuffle of the larger input. *(§29.4.4)*
+
+**Region, availability zone, edge location** — A **region** is a geographic area (for example `us-east-1`, `europe-west1`, `West Europe`) containing several isolated data-center groups, with its own control plane and, by default, its own copy of regional services. An **availability zone (AZ)** is one or more data centers within a region with independent power, cooling and networking, connected to the other zones of the region by redundant, low-latency links, so that a fire, flood or power failure in one zone should not take down another. An **edge location** (point of presence) is a smaller site in a metropolitan area that runs CDN caches, DNS and edge compute close to users, but not general-purpose VMs and databases. *(§41.4.1)*
 
 **Register** — A tiny, extremely fast storage slot inside a core, typically 64 bits wide for general-purpose registers. x86-64 exposes 16 general-purpose integer registers to programs; ARMv8-A (AArch64) exposes 31. Reading a register costs essentially nothing beyond the instruction that uses it. *(§5.3.2)*
 
@@ -755,6 +835,8 @@
 **Resilient Distributed Dataset (RDD)** — A read-only, partitioned collection of records that can be created only by deterministic operations (**transformations** such as `map`, `filter`, `join`) on stable storage or on other RDDs. Each RDD records its **lineage**, the graph of transformations that produced it, so a lost partition can be recomputed from its parents instead of being restored from a replica [Zaharia et al. 2012]. *(§29.5.1)*
 
 **REST (Representational State Transfer)** — An architectural style for distributed hypermedia systems, defined by Roy Fielding in his 2000 doctoral dissertation as a set of constraints on how components interact [Fielding 2000]. In everyday usage, a "REST API" is an HTTP API that models its domain as **resources** identified by URIs and manipulated with the standard HTTP methods. *(§8.6.1)*
+
+**Rolling deployment** — A deployment that replaces the instances of the old version with instances of the new version a few at a time, so that the service keeps serving throughout and, for the duration of the rollout, both versions serve traffic side by side. *(§43.4)*
 
 **Round robin (RR)** — Send the $k$-th request to backend $k \bmod N$. **Weighted round robin (WRR)** gives backend $i$ an integer weight $w_i$ and sends it a share $w_i / \sum_j w_j$ of requests in each cycle. *(§19.4.1)*
 
@@ -800,6 +882,8 @@
 
 **Service mesh** — An infrastructure layer for service-to-service communication. Its **data plane** is a set of proxies through which all service traffic passes (a **sidecar** per workload instance, or shared per-node proxies); its **control plane** configures the proxies, issues certificates and collects state. It provides traffic management, security (mutual TLS, authorization) and telemetry without application changes [Istio Docs: Architecture; Linkerd Docs: Architecture]. *(§34.10.1)*
 
+**Service models** — **IaaS** (infrastructure as a service): the provider runs physical hardware, the network and the hypervisor; you rent virtual machines, disks and networks and manage the operating system upward (Amazon EC2, Google Compute Engine, Azure Virtual Machines). **PaaS** (platform as a service): the provider also runs the operating system and runtime; you deploy code or containers (Google App Engine, Azure App Service, AWS Elastic Beanstalk, Cloud Run). **SaaS** (software as a service): the provider runs the whole application; you configure it and own your data and users (Gmail, Salesforce, Microsoft 365). **FaaS** (function as a service): a PaaS whose unit of deployment is a function invoked per event, scaled to zero and billed per invocation and duration (AWS Lambda, Cloud Run functions, Azure Functions). *(§41.3.2)*
+
 **Service-oriented architecture (SOA)** — An enterprise integration style, prominent from roughly 2000 to 2010, in which business capabilities are exposed as coarse-grained, reusable **services** with formal contracts, typically SOAP web services described in WSDL, connected through an **enterprise service bus (ESB)** that routes, transforms and orchestrates messages between them. *(§33.6.1)*
 
 **Session** — Server-recognized state that links a series of requests to one authenticated user (or anonymous visitor) over time, typically identified by a cookie. *(§8.10.2)*
@@ -809,6 +893,8 @@
 **Session guarantees** — **Read-your-writes (RYW):** if a session writes $w$ and later reads, the read reflects $w$ (or a later write). **Monotonic reads (MR):** if a session reads a value reflecting a set of writes, later reads reflect at least that set; the session never sees time go backwards. **Monotonic writes (MW):** a session's writes are applied at every replica in the order the session issued them. **Writes-follow-reads (WFR):** if a session reads a value produced by write $w_1$ and then writes $w_2$, every replica applies $w_1$ before $w_2$ (the new write is ordered after what the session saw). *(§25.6.1)*
 
 **Set-associative cache** — A cache divided into $S$ sets of $W$ slots (**ways**). A line at a given address may be stored in any of the $W$ ways of exactly one set. $W = 1$ is a **direct-mapped** cache; a cache with a single set holding every line is **fully associative**. *(§5.4.4)*
+
+**Shared responsibility model** — The division of security and operational duties between the provider and the customer. In AWS's phrasing, the provider is responsible for security **of** the cloud (facilities, hardware, hypervisor, global network, the managed services' own software), and the customer for security **in** the cloud (data, identities and permissions, OS and application patching on IaaS, network rules, encryption choices) [AWS: Shared Responsibility Model]. The exact line moves with the service model (Figure 41.1). *(§41.4.2)*
 
 **Short polling** — A technique in which the client sends an ordinary HTTP request at a fixed interval *T* to ask whether new data exists; the server answers immediately, either with the new data or with an empty response, and the connection's request ends. *(§9.3.1)*
 
@@ -834,6 +920,8 @@
 
 **Sliding window log** — A limiter that stores the timestamp of every admitted request per key and admits a new request only if fewer than $L$ timestamps fall in the interval $(t - W, t]$. *(§22.7.1)*
 
+**SLI, SLO, SLA** — A **service level indicator (SLI)** is a carefully defined quantitative measure of some aspect of the service as users experience it, best expressed as the ratio of good events to valid events. A **service level objective (SLO)** is a target for an SLI over a time window, for example "99.95% of valid place-order requests succeed, over a rolling 28 days". A **service level agreement (SLA)** is a contract with a customer that states objectives and the consequences, usually financial service credits, of missing them [Beyer et al. 2016]. *(§39.6.1)*
+
 **Sloppy quorum and hinted handoff** — In a **sloppy quorum**, a write that cannot reach $W$ of a key's $N$ home replicas is accepted by the next healthy nodes on the ring instead, and still counts toward $W$. Each stand-in stores the write with a **hint** naming the intended home replica and **hands it off** when that replica recovers [DeCandia et al. 2007]. *(§27.9.1)*
 
 **Slotted page** — A page layout in which a **header** is followed by an array of **slots** (also called line pointers or item IDs) that grows from the front, while variable-length **records** (tuples) are packed from the back. Each slot stores the offset and length of one record; free space sits in the middle. *(§13.3.2)*
@@ -847,6 +935,8 @@
 **Speedup** — The ratio of the time a job takes on one processor (or node) to the time it takes on $N$: $S(N) = T(1)/T(N)$. Perfect, **linear** speedup is $S(N) = N$. *(§4.12.1)*
 
 **Split brain** — A failure in which two or more parts of a cluster each believe they are the authoritative primary (or leader) and accept conflicting writes, so the system's state diverges. *(§26.12.1)*
+
+**Spot capacity** — Spare provider capacity sold at a steep discount (often 60–90% off on-demand, varying by type, zone and time) that the provider can reclaim when it needs the capacity back. AWS **Spot Instances** receive a two-minute interruption notice; Google **Spot VMs** (successor to preemptible VMs, which were limited to 24 hours) and Azure **Spot VMs** receive about 30 seconds' notice [AWS EC2 docs: Spot; Google Cloud docs: Spot VMs; Azure docs: Spot VMs]. *(§41.8.5)*
 
 **SQL** — The Structured Query Language, standardized by ANSI/ISO, with sublanguages for defining schema (DDL: `CREATE`, `ALTER`, `DROP`), manipulating data (DML: `SELECT`, `INSERT`, `UPDATE`, `DELETE`) and controlling transactions (`BEGIN`, `COMMIT`, `ROLLBACK`). Every major database implements the core standard plus its own dialect. *(§11.6.1)*
 
@@ -874,6 +964,8 @@
 
 **Symmetric encryption** — Encryption in which the same secret key is used to encrypt and decrypt. A **block cipher** such as AES (Advanced Encryption Standard) encrypts fixed 128-bit blocks under a 128-, 192- or 256-bit key; a **mode of operation** turns the block cipher into a scheme for messages of any length. *(§10.4.2)*
 
+**Symptom-based alert** — An alert on something users experience (errors, latency, unavailability, correctness), ideally expressed against an SLO. A **cause-based** alert fires on a suspected cause (high CPU, a full disk queue, a replica down) that may or may not hurt users [Beyer et al. 2016, ch. 6]. *(§40.10.1)*
+
 **Synchronous and asynchronous inter-service communication** — In **synchronous** communication the caller sends a request (REST, gRPC) and cannot complete its work until the response arrives, so caller and callee must be available at the same time. In **asynchronous** communication the sender publishes a message (event or command) to a broker or log and continues; the receiver processes it later (§30.3). *(§34.8.1)*
 
 **Synchronous communication** — An interaction in which the sender waits for the receiver to process a request and return a response before it continues; both parties must be running and reachable at the same time. *(§30.3.1)*
@@ -895,6 +987,10 @@
 **TCP** — A connection-oriented transport protocol that provides a reliable, ordered, full-duplex **byte stream** between two endpoints identified by (IP address, port) pairs. It achieves reliability with sequence numbers, acknowledgments and retransmission; it protects a slow receiver with **flow control**; and it protects the network with **congestion control**. *(§7.7.1)*
 
 **Template Method** — A method in a base class that defines the skeleton of an algorithm as a fixed sequence of steps, some of which are abstract **primitive operations** or overridable **hooks** that subclasses supply, so subclasses vary steps without changing the sequence [Gamma et al. 1994]. *(§37.15.2)*
+
+**Terraform** — A declarative infrastructure-as-code tool from HashiCorp. Configurations are written in the HashiCorp Configuration Language (HCL); **providers** are plugins that translate resources into calls to a platform's API; a **resource** block declares one infrastructure object; **state** records which real object each resource corresponds to [HashiCorp Docs: Terraform]. *(§43.9.1)*
+
+**The four key metrics** — - **Deployment frequency** — how often the organization deploys code to production. - **Change lead time** — the time from a commit being made to that commit running successfully in production. - **Change failure rate** — the percentage of deployments to production that cause a failure needing remediation (a rollback, hotfix, patch or incident). - **Failed deployment recovery time** — how long it takes to restore service after a deployment causes a failure. Earlier reports called this *time to restore service* or mean time to restore (MTTR); the 2023 report narrowed it to deployment-caused failures [DORA 2023]. *(§43.3.3)*
 
 **Thread** — An independent sequence of execution within a process, with its own program counter, registers and stack, sharing the process's address space, heap, globals and open files with the process's other threads. *(§6.3.5)*
 
@@ -920,6 +1016,8 @@
 
 **Torn write (torn page)** — A page write that is interrupted by a crash so that part of the page on disk is new and part is old. It arises because the database page (8 or 16 KiB) is larger than the unit the device or file system writes atomically (commonly 4 KiB or 512 bytes). *(§13.12.2)*
 
+**Trace and span (data model)** — A **span** records one timed operation: a trace ID (16 bytes), a span ID (8 bytes), a parent span ID (empty for the **root span**), a name such as `POST /checkout`, a **kind** (server, client, producer, consumer or internal), start and end timestamps, a status, key–value **attributes**, timestamped **events** (for example an exception) and optional **links** to spans in other traces. A **trace** is the set of spans sharing one trace ID; parent pointers turn it into a tree rooted at the first instrumented operation [OpenTelemetry Specification: Tracing API; Sigelman et al. 2010]. *(§40.6.1)*
+
 **Trace, span and context propagation** — A **trace** records one request's path through a distributed system under a unique **trace ID**. It is a tree of **spans**, each recording one unit of work (an inbound request, an outbound call, a query) with service, operation, start time, duration, status, its span ID and its **parent span ID**. **Context propagation** passes the trace ID and current span ID from caller to callee (in HTTP headers or message metadata) so the callee's spans join the trace [Sigelman et al. 2010; W3C Trace Context]. *(§34.9.1)*
 
 **Trade-off** — A situation where improving one desired property of a system makes another worse. Examples: lower latency at higher cost, stronger consistency at lower availability during network partitions, faster delivery at higher operational risk. Every design decision is a trade-off. If you cannot name what an option makes worse, you have not understood it yet. *(§2.8.1)*
@@ -933,6 +1031,8 @@
 **Trie (prefix tree)** — A tree in which each edge is labeled with a character and each node represents the string spelled by the path from the root; nodes that end a stored key are marked. Looking up a key or a prefix of length $L$ takes $O(L)$ steps, independent of how many keys are stored [Fredkin 1960]. *(§17.11.1)*
 
 **TrueTime** — Google's clock API that returns time as an interval with a guaranteed error bound instead of a single value. `TT.now()` returns $[\textit{earliest}, \textit{latest}]$, guaranteed to contain the absolute time at which it was called; `TT.after(t)` is true if $t$ has definitely passed, and `TT.before(t)` is true if $t$ has definitely not arrived. The half-width of the interval is the **uncertainty** $\varepsilon$ [Corbett et al. 2012]. *(§28.8.1)*
+
+**Trunk-based development** — A source-control practice in which all developers commit to a single shared branch (the trunk or mainline), either directly or through short-lived branches that live for hours to a day or two, and the trunk is kept releasable at all times [Hammant n.d.]. *(§43.3.2)*
 
 **Trust boundary** — A line in a system where the level of trust changes: data or requests crossing it come from a party that the receiving side does not fully control or trust. Examples: the internet-to-load-balancer edge, the browser-to-server connection, a service calling a third-party API, a tenant's code running on shared infrastructure. *(§10.3.2)*
 
@@ -967,6 +1067,8 @@
 **Virtual memory** — A mechanism in which every address a program uses is a **virtual address** that the hardware's **memory-management unit (MMU)** translates, using tables maintained by the kernel, into a **physical address** in RAM, or into a fault if no valid mapping exists. *(§6.6.1)*
 
 **Virtual node (vnode)** — One of $V$ ring positions belonging to the same physical node, typically obtained by hashing labels such as `db-3#vn17`; also called a **token**. *(§14.8.1)*
+
+**Virtual private cloud (VPC)** — A logically isolated, software-defined network in a provider's cloud, defined by a private CIDR range (§7.4) and divided into **subnets**. Packets between instances are encapsulated by the provider's virtual network (on Nitro, by the cards) and delivered according to the VPC's **route tables** and firewall rules, regardless of which physical hosts the instances are on. *(§41.10.1)*
 
 **Volcano (iterator) model** — An execution model in which a query plan is a tree of operators, each implementing the same interface — `open()`, `next()` and `close()` — and each `next()` call pulls one row from the operator's children on demand [Graefe 1994]. *(§11.9.2)*
 

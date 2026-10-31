@@ -369,7 +369,7 @@ Containers solve packaging on one machine. With 400 containers on 50 machines, s
 :::
 
 ::: industry
-**From Borg to Kubernetes.** Google's Borg ran "hundreds of thousands of jobs" across cells of about 10,000 machines, with a Paxos-replicated master (five replicas per cell) and a scheduler that checks feasibility and then scores machines [Verma et al. 2015]. Omega explored shared-state, optimistically concurrent schedulers [Schwarzkopf et al. 2013]. Kubernetes (open-sourced in 2014, 1.0 in 2015) carried over the lessons Burns et al. list: group co-scheduled containers into **pods**; give every pod its own IP address instead of sharing the host's ports; identify groups with **labels** rather than fixed job membership; make all components talk through one API rather than to the store directly; and build the system from **reconciliation loops** [Burns et al. 2016].
+**From Borg to Kubernetes.** Google's Borg ran "hundreds of thousands of jobs" across cells of about 10,000 machines, with a Paxos-replicated controller, the Borgmaster (five replicas per cell) and a scheduler that checks feasibility and then scores machines [Verma et al. 2015]. Omega explored shared-state, optimistically concurrent schedulers [Schwarzkopf et al. 2013]. Kubernetes (open-sourced in 2014, 1.0 in 2015) carried over the lessons Burns et al. list: group co-scheduled containers into **pods**; give every pod its own IP address instead of sharing the host's ports; identify groups with **labels** rather than fixed job membership; make all components talk through one API rather than to the store directly; and build the system from **reconciliation loops** [Burns et al. 2016].
 *Evidence: Primary* — [Verma et al. 2015]; [Burns et al. 2016]
 :::
 
@@ -1143,7 +1143,7 @@ $$N_{\text{nodes}} = \max_{r} \left\lceil \frac{\sum q_r}{(A_r - D_r)\, \eta} \r
 4. Cost: $10 \times 0.77 \times 730 = \$5{,}621$; control plane $0.10 \times 730 = \$73$; total about $5,694 per month.
 5. Monitoring shows pods use on average 40% of their CPU requests, so real CPU utilization is $120 \times 0.4 / (10 \times 16) = 48/160 = 30\%$. Rightsizing CPU requests to 85 vCPU (p95 usage plus margin) gives $85/12.32 = 6.9 \Rightarrow 7$ nodes for CPU, but memory still needs 9: $9 \times 0.77 \times 730 + 73 = \$5{,}132$, saving about 10%.
 
-**Interpretation.** Requests, not usage, decide the bill, and once CPU is rightsized memory becomes the binding resource, so further savings need memory rightsizing or a node shape with more memory per CPU. **Engineering implication.** Review requests against usage regularly (VPA recommendations), choose node shapes for the binding resource, run interruption-tolerant stateless pods on discounted spot capacity, and remember that surviving the loss of one of three zones requires about 50% more nodes than this steady-state figure (Chapter 44 discusses zone and region capacity).
+**Interpretation.** Requests, not usage, decide the bill, and once CPU is rightsized memory becomes the binding resource, so further savings need memory rightsizing or a node shape with more memory per CPU. **Engineering implication.** Review requests against usage regularly (VPA recommendations), choose node shapes for the binding resource, run interruption-tolerant stateless pods on discounted spot capacity, and remember that surviving the loss of one of three zones requires about 50% more nodes than this steady-state figure (§18.11.2 derives zone-level sizing; Chapter 44 extends it to regions).
 :::
 
 ## 42.14 Persistent volumes

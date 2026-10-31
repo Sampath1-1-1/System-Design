@@ -129,13 +129,13 @@ $$D = f \times \text{CFR} \times T_{\text{restore}}$$
 **Worked example — Is deploying more often riskier?** Two QuickBite teams each merge 80 changes per week.
 
 - *Team A* deploys twice a week, so each deploy carries $80/2 = 40$ changes. CFR is 20%; recovery takes 240 min, because finding the bad change among 40 is slow.
-- *Team B* deploys 40 times a week, 2 changes per deploy,, CFR 5%, recovery 30 min (automated rollback).
+- *Team B* deploys 40 times a week, 2 changes per deploy, CFR 5%, recovery 30 min (automated rollback).
 
 Failed deployments per week: Team A $2 \times 0.20 = 0.4$; Team B $40 \times 0.05 = 2.0$. Team B has *five times as many* failed deployments.
 
 Degraded time per week: Team A $D = 0.4 \times 240 = 96$ min; Team B $D = 2.0 \times 30 = 60$ min.
 
-Now relate this to an error budget (§39.7). Over a 30-day month ($30/7 = 4.29$ weeks), Team A is degraded for $96 \times 4.29 = 411$ min and Team B for $60 \times 4.29 = 257$ min. If a typical bad deploy fails 10% of requests, the full-outage equivalents are 41.1 min and 25.7 min. A 99.9% monthly SLO allows 43.2 min. Team A spends 95% of its budget on deployments alone; Team B spends 59%.
+Now relate this to an error budget (§39.7). Over a 30-day month ($30/7 = 4.29$ weeks), Team A is degraded for $96 \times 4.29 = 411$ min and Team B for $60 \times 4.29 = 257$ min. If a typical bad deploy fails 10% of requests, the full-outage equivalents are 41.1 min and 25.7 min. A 99.9% monthly SLO allows 43.2 min. Team A spends 95% of its budget on deployments alone; Team B spends 60%.
 
 *Interpretation:* counting failed deployments makes Team B look worse; weighting by recovery time reverses the conclusion, because small changes are cheap to diagnose and undo. *Engineering implication:* read all four metrics together, and pair higher frequency with automated rollback.
 :::
@@ -359,7 +359,7 @@ $$B = \lambda \times w \times \Delta p \times (T_{\text{detect}} + T_{\text{roll
 
 The canary's blast radius is $351{,}000 / 1{,}755 = 200$ times smaller: 20 times from exposure and 10 times from faster detection and rollback.
 
-*Against the error budget:* a 99.95% monthly SLO (the order-placement target of §39.6) on $2{,}000 \times 2{,}592{,}000 = 5.18 \times 10^9$ requests allows $2.59 \times 10^6$ failures. The all-at-once deploy burns $351{,}000 / 2.59 \times 10^6 = 13.5\%$ of the month's budget in 15 minutes; the canary burns 0.068%.
+*Against the error budget:* a 99.95% monthly SLO (the order-placement target of §39.6) on $2{,}000 \times 2{,}592{,}000 = 5.18 \times 10^9$ requests (taking the midday rate as the monthly average, which understates both shares below) allows $2.59 \times 10^6$ failures. The all-at-once deploy burns $351{,}000 / 2.59 \times 10^6 = 13.5\%$ of the month's budget in 15 minutes; the canary burns 0.068%.
 
 *Engineering implication:* the canary's value comes from *both* factors. A 5% canary watched by a human who notices after 10 minutes still loses $2{,}000 \times 0.05 \times 0.195 \times 900 = 17{,}550$ requests; automation contributes as much as the small weight.
 :::

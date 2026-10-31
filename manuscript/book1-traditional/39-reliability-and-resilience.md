@@ -1024,7 +1024,7 @@ stateDiagram-v2
   Postmortem --> [*] : action items tracked
 ```
 
-**Reading the diagram.** States are phases of one incident, with no data flow. An alert or report moves it to Detected; acknowledgement and a severity make it Triaged; the IC splits roles and the operations lead mitigates. The intervals give time to detect, acknowledge and mitigate, which sum to the user-visible duration (the MTTR of §4.15). Mitigated is not Resolved: a rollback stops impact long before the defect is fixed. The failure point is hand-offs, especially across time zones; a written timeline and explicit role transfers address it.
+**Reading the diagram.** States are phases of one incident, with no data flow. An alert or report moves it to Detected; acknowledgment and a severity make it Triaged; the IC splits roles and the operations lead mitigates. The intervals give time to detect, acknowledge and mitigate, which sum to the user-visible duration (the MTTR of §4.15). Mitigated is not Resolved: a rollback stops impact long before the defect is fixed. The failure point is hand-offs, especially across time zones; a written timeline and explicit role transfers address it.
 
 ### 39.12.2 Blameless postmortems
 

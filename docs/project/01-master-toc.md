@@ -150,16 +150,16 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part VIII — Production Infrastructure and Operations
 
 **Ch 39 — Reliability and Resilience** (L3, A)
-39.3 Availability vs reliability · 39.4 Fault tolerance and redundancy · 39.5 Graceful degradation · 39.6 SLI, SLO, SLA · 39.7 Error budgets · 39.8 Disaster recovery, RTO, RPO · 39.9 Backup strategies · 39.10 Multi-region architecture (intro; deep dive Ch 44) · 39.11 Chaos engineering · 39.12 Incident management and blameless postmortems
+39.3 Availability versus reliability · 39.4 Fault tolerance and redundancy · 39.5 Graceful degradation · 39.6 SLI, SLO and SLA · 39.7 Error budgets · 39.8 Disaster recovery, RTO and RPO · 39.9 Backup strategies · 39.10 Multi-region architecture (introduction) · 39.11 Chaos engineering · 39.12 Incident management and blameless postmortems
 
 **Ch 40 — Observability** (L3, A)
-40.3 Monitoring vs observability · 40.4 Logs · 40.5 Metrics (counters, gauges, histograms; cardinality) · 40.6 Traces and distributed tracing · 40.7 OpenTelemetry · 40.8 Prometheus · 40.9 Grafana · 40.10 Alerting (symptom-based, burn-rate alerts) · 40.11 Root cause analysis · 40.12 Profiling in production
+40.3 Monitoring versus observability · 40.4 Logs · 40.5 Metrics · 40.6 Traces and distributed tracing · 40.7 OpenTelemetry · 40.8 Prometheus · 40.9 Grafana · 40.10 Alerting · 40.11 Root cause analysis · 40.12 Profiling in production
 
 **Ch 41 — Cloud Computing** (L2, A)
-41.3 IaaS, PaaS, SaaS, FaaS · 41.4 Regions, zones and the shared responsibility model · 41.5 AWS core services · 41.6 GCP core services · 41.7 Azure core services · 41.8 Compute · 41.9 Storage · 41.10 Networking (VPC, subnets, peering, private link) · 41.11 Managed databases · 41.12 Cloud security (IAM) · 41.13 Cost optimization · 41.14 Cross-cloud service mapping table
+41.3 IaaS, PaaS, SaaS and FaaS · 41.4 Regions, availability zones, edge locations and the shared responsibility model · 41.5 AWS core services · 41.6 Google Cloud core services · 41.7 Azure core services · 41.8 Compute · 41.9 Storage · 41.10 Networking · 41.11 Managed databases · 41.12 Cloud security · 41.13 Cost optimization · 41.14 Cross-cloud service mapping
 
 **Ch 42 — Containers and Kubernetes** (L3, A)
-42.3 Containers (namespaces, cgroups) · 42.4 Docker, images, layers · 42.5 Registries · 42.6 Kubernetes architecture (control plane, etcd, kubelet) · 42.7 Pods · 42.8 Deployments, ReplicaSets, StatefulSets, DaemonSets, Jobs · 42.9 Services and kube-proxy · 42.10 Ingress and Gateway API · 42.11 ConfigMaps and Secrets · 42.12 Autoscaling (HPA, VPA, cluster autoscaler) · 42.13 Scheduling · 42.14 Persistent volumes · 42.15 Operators and CRDs · 42.16 Kubernetes vs serverless
+42.3 Containers: namespaces, cgroups and runtimes · 42.4 Docker, images and layers · 42.5 Registries · 42.6 Kubernetes architecture · 42.7 Pods · 42.8 Workload controllers · 42.9 Networking: CNI and Services · 42.10 Ingress and Gateway API · 42.11 ConfigMaps and Secrets · 42.12 Autoscaling · 42.13 Scheduling · 42.14 Persistent volumes · 42.15 Operators and custom resources · 42.16 Kubernetes versus serverless
 
 **Ch 43 — Deployment and Infrastructure** (L3, A)
 43.3 CI/CD · 43.4 Rolling deployments · 43.5 Blue–green deployments · 43.6 Canary releases · 43.7 Feature flags · 43.8 Infrastructure as code · 43.9 Terraform · 43.10 GitOps · 43.11 Secrets management in pipelines · 43.12 Infrastructure monitoring · 43.13 Database migrations
