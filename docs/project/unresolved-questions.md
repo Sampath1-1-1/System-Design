@@ -210,3 +210,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-203 | 38 | CPython lru_cache implementation details and ~100–200 bytes/entry estimate; Redis expiry and transaction behavior (2026 docs) | Open | Version-dependent |
 | UQ-204 | 35 | Coupling kinds/order in Stevens, Myers & Constantine (1974) vs later works; venue of Hitz & Montazeri (1995, LCOM4) | Open | |
 | UQ-205 | 35 | Years of Fowler bliki "TellDontAsk" (2013?) and "AnemicDomainModel" (2003?); *Effective Java* 3rd ed. item numbers cited (10–11, 17–20, 49–50) | Open | |
+| UQ-206 | 42 | Kubernetes feature status as of 2026: native sidecars and nftables kube-proxy stable in 1.33; in-place pod resize stable and IPVS deprecated in 1.35; pod user namespaces and preStop sleep maturity | Open | Version-dependent |
+| UQ-207 | 42 | Go 1.25 cgroup-aware GOMAXPROCS; JVM container support since JDK 10 / 8u191 | Open | |
+| UQ-208 | 42 / 47 | Firecracker figures (~125 ms boot, <5 MiB overhead) from Agache et al. 2020 | Open | |
+| UQ-209 | 42 | kube-scheduler percentageOfNodesToScore default (50% at 100 nodes, 5% floor); Borg figures quoted from Verma et al. 2015 | Open | |
+| UQ-210 | 42 | Image sizes, node reservations and cloud prices in worked examples are illustrative | Accepted | Labeled |
