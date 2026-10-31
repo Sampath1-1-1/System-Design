@@ -596,7 +596,7 @@ $$C_{\text{FaaS}} = R \,\bigl(c_{\text{req}} + M \, D \, c_{\text{GBs}}\bigr), \
 #### Real-world industry applications
 
 ::: industry
-**Prime Video's audio/video monitoring service.** Amazon's Prime Video team described a stream-quality monitoring tool first built as distributed components orchestrated by AWS Step Functions with Lambda functions passing frames through object storage. At high volume, per-transition orchestration charges and storage round trips dominated cost and limited scale. The team moved the components into a single process running on containers, passing data in memory, and reported infrastructure cost falling by over 90% [Kolny 2023]. The lesson is the cost model above: a fine-grained serverless design suited a low-volume start, and a consolidated always-on design suited sustained high volume.
+**Prime Video's audio/video monitoring service.** Amazon's Prime Video team described a stream-quality monitoring tool first built as distributed components orchestrated by AWS Step Functions with Lambda functions passing frames through object storage. At high volume, per-transition orchestration charges and storage round trips dominated cost and limited scale. The team moved the components into a single process running on containers, passing data in memory, and reported infrastructure cost falling by about 90% [Kolny 2023]. The lesson is the cost model above: a fine-grained serverless design suited a low-volume start, and a consolidated always-on design suited sustained high volume.
 *Evidence: Primary* — [Kolny 2023]
 :::
 

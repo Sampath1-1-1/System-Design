@@ -1901,7 +1901,7 @@ These three behavioral patterns each organize *control flow*: State by the objec
 
 #### Problem it solves
 
-An order moves from `PENDING` to `PAID` to `SHIPPED`, and can be cancelled while pending or paid (with a refund if paid) but not after shipping. Implemented with `if self.status == ...` inside every method, the rules for one state are spread across all methods, and an illegal transition (shipping an unpaid order) slips through whichever method forgot a check. The GoF book's own motivating example was a `TCPConnection` whose `open()`, `close()` and `acknowledge()` behave differently in the Established, Listen and Closed states.
+An order moves from `PENDING` to `PAID` to `SHIPPED`, and can be canceled while pending or paid (with a refund if paid) but not after shipping. Implemented with `if self.status == ...` inside every method, the rules for one state are spread across all methods, and an illegal transition (shipping an unpaid order) slips through whichever method forgot a check. The GoF book's own motivating example was a `TCPConnection` whose `open()`, `close()` and `acknowledge()` behave differently in the Established, Listen and Closed states.
 
 #### Structure
 
@@ -2213,7 +2213,7 @@ Use a chain when several independent handlers must process or filter a request i
 
 ## 37.16 Concurrency patterns
 
-The patterns so far organize code within one thread of control. Concurrency patterns organize work across threads: who produces work, who executes it, how results come back, and how shared data is protected. They are catalogued in *Pattern-Oriented Software Architecture, Volume 2* [Schmidt et al. 2000], which also covers Reactor and Proactor (the event-loop designs of §6.13), Active Object, Monitor Object and Leader/Followers, and they are treated for the JVM in *Java Concurrency in Practice* [Goetz et al. 2006]. The primitives underneath (mutexes, condition variables, atomics) are in §6.10.
+The patterns so far organize code within one thread of control. Concurrency patterns organize work across threads: who produces work, who executes it, how results come back, and how shared data is protected. They are cataloged in *Pattern-Oriented Software Architecture, Volume 2* [Schmidt et al. 2000], which also covers Reactor and Proactor (the event-loop designs of §6.13), Active Object, Monitor Object and Leader/Followers, and they are treated for the JVM in *Java Concurrency in Practice* [Goetz et al. 2006]. The primitives underneath (mutexes, condition variables, atomics) are in §6.10.
 
 ::: note
 **Python and the GIL.** In standard CPython builds the global interpreter lock lets only one thread execute Python bytecode at a time, so threads speed up I/O-bound work (the lock is released while waiting on sockets and disks) but not CPU-bound Python code; use processes (`ProcessPoolExecutor`) for that. Python 3.13 added an experimental free-threaded build without the GIL [PEP 703]. Correct code must not rely on the GIL for thread safety in either case.

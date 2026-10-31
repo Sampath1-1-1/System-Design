@@ -1640,7 +1640,7 @@ flowchart LR
   SC -->|SMTP| M{{Mail server}}
 ```
 
-**Reading the diagram.** Arrows are source-code dependencies, which is what DIP is about. Inside the `checkout` package, the service depends only on two interfaces that the package itself defines. Both the production adapters and the test fakes depend *inward* on those interfaces; nothing in `checkout` names an adapter. Only adapters cross the system boundary to the external vendor and mail server (hexagons, the failure points), over HTTPS and SMTP. At run time, calls still flow synchronously from the service through an interface to an adapter; only the compile-time direction is inverted. A second payment vendor is a new adapter; policy is untouched.
+**Reading the diagram.** Arrows are source-code dependencies, which is what DIP is about. Inside the `checkout` package, the service depends only on two interfaces that the package itself defines. Both the production adapters and the test fakes depend *inward* on those interfaces; nothing in `checkout` names an adapter. Only adapters cross the system boundary to the external vendor and mail server (hexagons, the failure points), over HTTPS and SMTP. At run time, calls still flow synchronously from the service through an interface to an adapter; only the compile-time direction is inverted. A second payment vendor is a new adapter; policy is untouched. Applied to a whole application, this arrangement is hexagonal architecture (ports and adapters, §33.10).
 
 #### Code example
 
@@ -1924,7 +1924,7 @@ flowchart LR
   A3 --> MS{{SMS and mail providers}}
 ```
 
-**Reading the diagram.** The domain core contains the policy classes and the ports they own; it imports nothing outside itself. Driving adapters (the HTTP adapter receiving HTTPS requests from clients) call into the core; driven adapters (payment, persistence, messaging) implement the core's ports and are the only components that talk to external systems (hexagons) and the database (cylinder, the storage boundary). Solid arrows are synchronous calls or source dependencies; the dotted arrow is the asynchronous order-placed event that triggers notification. Failure points are concentrated in adapters, where timeouts, retries and circuit breakers belong (Chapter 39). Adapters scale and deploy independently.
+**Reading the diagram.** The domain core contains the policy classes and the ports they own; it imports nothing outside itself. Driving adapters (the HTTP adapter receiving HTTPS requests from clients) call into the core; driven adapters (payment, persistence, messaging) implement the core's ports and are the only components that talk to external systems (hexagons) and the database (cylinder, the storage boundary). Solid arrows are synchronous calls or source dependencies; the dotted arrow is the asynchronous order-placed event that triggers notification. Failure points are concentrated in adapters, where timeouts, retries and circuit breakers belong (§22.11–§22.13). Adapters scale and deploy independently.
 
 ### 36.8.2 Measuring dependency direction: stability and abstractness
 

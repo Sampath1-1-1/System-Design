@@ -987,7 +987,7 @@ A saga is ACD without I: atomic in the semantic sense, consistent within each se
 
 | Countermeasure | How it works | Checkout example |
 |---|---|---|
-| Semantic lock | A compensatable step sets an application-level flag (`*_PENDING`) that other requests check | Cancelling an order in `PENDING` is refused or queued until the saga ends |
+| Semantic lock | A compensatable step sets an application-level flag (`*_PENDING`) that other requests check | Canceling an order in `PENDING` is refused or queued until the saga ends |
 | Commutative updates | Design operations so their order does not matter | `reserve(+2)` and `release(-2)` as deltas, not "set stock = 8" |
 | Pessimistic view | Reorder steps so that risky reads happen in retriable steps | Increase a loyalty balance only after the pivot |
 | Reread value | Reread data before overwriting and abort if it changed (optimistic locking) | Approve only if order version is unchanged |

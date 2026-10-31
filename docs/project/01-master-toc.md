@@ -119,33 +119,33 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part VI — Messaging and Event-Driven Systems
 
 **Ch 30 — Messaging Fundamentals** (L2, A)
-30.3 Synchronous vs asynchronous communication · 30.4 Message queues · 30.5 Publish/subscribe · 30.6 Event-driven architecture · 30.7 Event brokers (RabbitMQ, SQS/SNS, Pub/Sub, Pulsar) · 30.8 Delivery guarantees · 30.9 Ordering · 30.10 Retries and poison messages · 30.11 Dead-letter queues · 30.12 Kafka vs RabbitMQ
+30.3 Synchronous vs asynchronous communication · 30.4 Message queues · 30.5 Publish/subscribe · 30.6 Event-driven architecture · 30.7 Event brokers · 30.8 Delivery guarantees · 30.9 Ordering · 30.10 Retries and poison messages · 30.11 Dead-letter queues · 30.12 Kafka vs RabbitMQ (and SQS, Pulsar)
 
 **Ch 31 — Kafka Deep Dive** (L3, A)
-31.3 The log abstraction · 31.4 Brokers and clusters (ZooKeeper vs KRaft) · 31.5 Topics and partitions · 31.6 Producers (batching, acks, idempotence) · 31.7 Consumers and consumer groups · 31.8 Offsets · 31.9 Replication, ISR and leader election · 31.10 Retention and log compaction · 31.11 Delivery semantics and transactions · 31.12 Rebalancing protocols · 31.13 Performance (zero-copy, page cache, sequential I/O) · 31.14 Kafka Streams and Connect · 31.15 Operating Kafka
+31.3 The log abstraction · 31.4 Brokers and clusters: ZooKeeper mode versus KRaft · 31.5 Topics and partitions · 31.6 Producers · 31.7 Consumers and consumer groups · 31.8 Offsets · 31.9 Replication, ISR and leader election · 31.10 Retention and log compaction · 31.11 Delivery semantics and transactions · 31.12 Rebalancing protocols · 31.13 Performance · 31.14 Kafka Streams and Kafka Connect · 31.15 Operating Kafka
 
 **Ch 32 — Event-Driven Architecture Patterns** (L3–L4, A)
-32.3 Event sourcing · 32.4 CQRS · 32.5 Transactional outbox · 32.6 Change data capture · 32.7 Saga pattern · 32.8 Choreography vs orchestration · 32.9 Exactly-once processing and its limits · 32.10 Idempotent consumers · 32.11 Workflow engines (Temporal, Step Functions)
+32.3 Event sourcing · 32.4 CQRS · 32.5 Transactional outbox · 32.6 Change data capture · 32.7 The saga pattern · 32.8 Choreography versus orchestration · 32.9 Exactly-once processing and its limits · 32.10 Idempotent consumers · 32.11 Workflow engines
 
 ## Part VII — Software Architecture and Design
 
 **Ch 33 — Architecture Patterns** (L2, A)
-33.3 Layered · 33.4 Monolithic · 33.5 Modular monolith · 33.6 Service-oriented architecture · 33.7 Microservices (overview) · 33.8 Event-driven · 33.9 Serverless · 33.10 Hexagonal (ports and adapters) · 33.11 Clean architecture · 33.12 Cell-based architecture · 33.13 Monolith vs microservices
+33.3 Layered architecture · 33.4 Monolithic architecture · 33.5 Modular monolith · 33.6 Service-oriented architecture · 33.7 Microservices (overview) · 33.8 Event-driven architecture (overview) · 33.9 Serverless architecture · 33.10 Hexagonal architecture (ports and adapters) · 33.11 Clean architecture · 33.12 Cell-based architecture · 33.13 Monolith versus microservices
 
 **Ch 34 — Microservices** (L3, A)
-34.3 Service boundaries · 34.4 Domain-driven design · 34.5 Bounded contexts and context maps · 34.6 API gateways and BFF · 34.7 Service discovery · 34.8 Inter-service communication · 34.9 Distributed tracing (intro) · 34.10 Service mesh · 34.11 Data ownership, database-per-service · 34.12 Deployment strategies · 34.13 Migration from monolith (strangler fig) · 34.14 Anti-patterns (distributed monolith)
+34.3 Service boundaries · 34.4 Domain-driven design · 34.5 Bounded contexts and context maps · 34.6 API gateways and backends for frontends · 34.7 Service discovery · 34.8 Inter-service communication · 34.9 Distributed tracing (introduction) · 34.10 Service mesh · 34.11 Data ownership and database-per-service · 34.12 Deployment strategies · 34.13 Migration from a monolith · 34.14 Anti-patterns
 
 **Ch 35 — Object-Oriented Design** (L1–L2, A)
-35.3 Classes and objects · 35.4 Encapsulation · 35.5 Inheritance · 35.6 Polymorphism · 35.7 Abstraction · 35.8 Composition over inheritance · 35.9 Interfaces and contracts · 35.10 Cohesion and coupling
+35.3 Classes and objects · 35.4 Encapsulation · 35.5 Inheritance · 35.6 Polymorphism · 35.7 Abstraction · 35.8 Composition over inheritance · 35.9 Interfaces and contracts · 35.10 Cohesion and coupling · 35.11 Common mistakes
 
 **Ch 36 — SOLID Principles** (L2, A)
-36.3 Single Responsibility · 36.4 Open/Closed · 36.5 Liskov Substitution · 36.6 Interface Segregation · 36.7 Dependency Inversion · 36.8 SOLID at the architecture level
+36.3 Single Responsibility Principle · 36.4 Open/Closed Principle · 36.5 Liskov Substitution Principle · 36.6 Interface Segregation Principle · 36.7 Dependency Inversion Principle · 36.8 SOLID at the architecture level
 
 **Ch 37 — Design Patterns** (L2, A)
-37.3 Factory · 37.4 Abstract factory · 37.5 Builder · 37.6 Singleton · 37.7 Strategy · 37.8 Observer · 37.9 Adapter · 37.10 Decorator · 37.11 Proxy · 37.12 Command · 37.13 Repository · 37.14 Dependency injection · 37.15 State, Template Method, Chain of Responsibility · 37.16 Concurrency patterns
+37.3 Factory · 37.4 Abstract factory · 37.5 Builder · 37.6 Singleton · 37.7 Strategy · 37.8 Observer · 37.9 Adapter · 37.10 Decorator · 37.11 Proxy · 37.12 Command · 37.13 Repository · 37.14 Dependency injection · 37.15 State, Template Method and Chain of Responsibility · 37.16 Concurrency patterns · 37.17 Choosing a pattern
 
 **Ch 38 — UML and Low-Level Design** (L2–L3, A)
-38.3 Class diagrams · 38.4 Sequence diagrams · 38.5 Component diagrams · 38.6 State diagrams · 38.7 Activity diagrams · 38.8 Object relationships · 38.9 LLD method · 38.10 LLD exercises: parking lot, elevator system, LRU cache, vending machine, library system, rate limiter class design, in-memory KV store, chess
+38.3 Class diagrams · 38.4 Sequence diagrams · 38.5 Component diagrams · 38.6 State diagrams · 38.7 Activity diagrams · 38.8 Object relationships in depth · 38.9 The LLD interview method · 38.10 LLD exercises
 
 ## Part VIII — Production Infrastructure and Operations
 

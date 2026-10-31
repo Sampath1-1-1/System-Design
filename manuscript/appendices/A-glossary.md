@@ -4,6 +4,10 @@
 
 ## A
 
+**Abstract factory** — An interface for creating a *family* of related objects (for example a blob store and a work queue) without naming their concrete classes, so that a client receives products that are guaranteed to belong together [Gamma et al. 1994]. *(§37.4)*
+
+**Abstraction** — Representing something by the operations that matter to its users while leaving out the details of how they are carried out. In code, an **abstract class** is a class that cannot be instantiated and may contain both implemented methods and **abstract methods** (declared, with no body) that subclasses must implement. An **interface** declares a set of methods a type promises to provide; in Java it has no instance state, and since Java 8 it may include `default` method bodies built only on its other methods. *(§35.7.1)*
+
 **Access-control model** — A rule system that answers "may subject *S* perform action *A* on resource *R* (in context *C*)?" The three models in common use differ in what the rules are written in terms of: **roles** (RBAC), **attributes** (ABAC) or **relationships** (ReBAC). *(§8.12.1)*
 
 **ACID** — The four guarantees of a database transaction, named by Härder and Reuter [Härder and Reuter 1983]: **Atomicity** — all of a transaction's writes take effect, or none do. **Consistency** — a transaction takes the database from one state satisfying all declared invariants (constraints) to another. **Isolation** — concurrently executing transactions do not see each other's partial effects; at the strongest level, the outcome equals some serial execution. **Durability** — once a commit is acknowledged, its effects survive crashes. *(§11.12)*
@@ -12,13 +16,23 @@
 
 **Active recall** — Deliberately retrieving information from memory without looking at the source, for example by answering a question, drawing a diagram or explaining aloud. Its measured benefit for later retention is called the **testing effect**. *(§3.4.2)*
 
+**Activity diagram** — A behavior diagram that models a workflow as **actions** connected by **control flows**, with **decision** and **merge** nodes for branching, **fork** and **join** bars for concurrency, and **activity partitions** (swimlanes) that assign actions to the participant responsible for them. Its semantics are based on tokens flowing through the graph, similar to a Petri net [OMG 2017]. *(§38.7.1)*
+
+**Adapter** — A wrapper that converts the interface of an existing class into the interface its clients expect, so that classes with incompatible interfaces can work together [Gamma et al. 1994]. *(§37.9)*
+
 **Address space** — The range of memory addresses a process can use. On Linux x86-64 with 4-level page tables, user space spans 2⁴⁷ bytes = 128 TiB of *virtual* addresses; the kernel occupies the upper half and is not accessible from user mode. *(§6.3.2)*
 
+**Aggregate** — A cluster of entities and value objects treated as one unit for data changes, with one **root** entity. Outside objects reference only the root, every change goes through it, and it enforces the aggregate's **invariants**. One transaction modifies one aggregate [Evans 2003; Vernon 2013]. *(§34.4.3)*
+
 **Analysis** — The process that converts raw text into the terms stored in (or looked up from) an inverted index. An **analyzer** is a pipeline of zero or more **character filters** (rewrite the raw character stream), exactly one **tokenizer** (split the stream into tokens with positions and offsets) and zero or more **token filters** (modify, remove or add tokens). *(§16.4.1)*
+
+**Anticorruption layer (ACL)** — A layer owned by a downstream context that translates between an upstream model and its own, so the upstream's concepts, codes and quirks never appear in the downstream model [Evans 2003]. *(§34.5.3)*
 
 **Anycast** — An addressing scheme in which the same IP prefix is announced via BGP from many locations at once. Each client's packets are routed to whichever announcing location is "closest" according to BGP path selection. *(§7.5.3)*
 
 **Apache Flink** — An open-source distributed engine that executes dataflow programs as a graph of long-running, pipelined operators, treating batch as a bounded special case of streaming. It provides event-time processing with watermarks, large keyed state, and exactly-once state consistency through asynchronous distributed snapshots [Carbone et al. 2015a]. *(§29.9.1)*
+
+**API gateway** — A reverse proxy (§7.12) that is the single entry point for external clients into a set of services. It routes requests and applies **edge concerns** once: TLS termination, authentication, rate limiting, request validation, caching, protocol translation and sometimes aggregation [Richardson 2018]. *(§34.6.1)*
 
 **Architectural decision** — A design choice that addresses an architecturally significant requirement — one that affects structure, quality attributes, interfaces or technology in a way that is costly to change later. Examples: choosing a relational database over a key-value store; storing files in object storage; making photo processing asynchronous. *(§1.8.1)*
 
@@ -26,7 +40,11 @@
 
 **Architecture documentation** — The written and diagrammed record of a system's structure and of the decisions that shaped it. It is written so that people who were not in the room (new team members, reviewers, your future self) can understand *what* the system is and *why* it is that way. *(§2.12.1)*
 
+**Association, aggregation, composition** — An **association** is a structural relationship in which instances of one class hold links to instances of another. **Aggregation** (UML "shared aggregation") is an association marked as whole–part, in which a part may be shared by several wholes and exists independently of them. **Composition** (UML "composite aggregation") is a whole–part association in which each part belongs to at most one whole at a time, and the whole is responsible for the part's existence: if the composite is deleted, its parts are deleted with it [OMG 2017]. *(§38.8.1)*
+
 **Asymmetric (public-key) cryptography** — Cryptography using a mathematically linked **key pair**: a **public key** that can be shared with anyone and a **private key** kept secret by its owner. What one key does, only the other can undo or verify. Security rests on problems believed hard to invert: factoring large integers (RSA) or computing discrete logarithms on elliptic curves (ECC). *(§10.4.3)*
+
+**Asynchronous (message-based) communication** — An interaction in which the sender hands a **message** to an intermediary — a **message broker** — and continues without waiting for the receiver to process it. The broker stores the message until a receiver takes it, so sender and receiver need not be available at the same time. *(§30.3.1)*
 
 **Atomic commitment** — A protocol by which a set of **participants** (nodes that each executed part of a transaction) reach a single outcome, commit or abort, such that: (1) all participants that decide reach the same decision; (2) a participant cannot reverse a decision once made; (3) commit is decided only if every participant voted yes; (4) if there are no failures and every participant voted yes, the decision is commit; and (5) once failures are repaired and no new ones occur for long enough, every participant eventually decides [Bernstein et al. 1987]. *(§28.3.1)*
 
@@ -43,6 +61,8 @@
 **Availability** — The fraction of time (or of requests) for which a system serves correctly: $A = \text{uptime}/(\text{uptime} + \text{downtime})$, or, request-based, $A = \text{successful requests} / \text{valid requests}$. It is commonly quoted in "nines": 99.9% is "three nines". *(§4.14.1)*
 
 ## B
+
+**Backend for frontend (BFF)** — A server-side component dedicated to one kind of user interface (iOS, web, partner API), owned by or aligned with that interface's team, which aggregates and reshapes downstream calls into exactly the API that interface needs [Newman 2015]. *(§34.6.2)*
 
 **Back-of-the-envelope estimation** — A quick calculation, done with round numbers and stated assumptions, that gives the order of magnitude of a system's load and resource needs (requests per second, storage, bandwidth, memory, number of nodes). The aim is to be within a factor of about 2–3 of the truth with a few minutes of arithmetic. This section introduces the method. Chapter 89 is the full handbook. *(§2.11.1)*
 
@@ -62,7 +82,11 @@
 
 **Bottleneck** — The resource whose capacity limits the throughput of the whole system for a given workload. Throughput cannot rise above the bottleneck's capacity no matter how much the other resources are improved. Formally, it is the resource with the highest **service demand** per request (defined below). *(§2.6.1)*
 
+**Bounded context** — An explicit boundary (in code, data and team ownership) within which one domain model and its ubiquitous language apply consistently. The same word may mean different things in different contexts [Evans 2003]. *(§34.5.1)*
+
 **Branch prediction** — Hardware that guesses the outcome of a conditional jump (a **branch**, e.g. an `if` or a loop condition) before it is computed, so that the pipeline can keep fetching instructions. A wrong guess is a **misprediction** and forces a pipeline flush. *(§5.3.4)*
+
+**Broker and controller** — A **broker** is a Kafka server process that stores partition replicas and serves produce and fetch requests. The **controller** is the component that owns cluster **metadata** (which brokers are alive, which topics and partitions exist, which replica leads each partition, and the in-sync replica sets) and makes decisions such as leader election when a broker fails. *(§31.4.1)*
 
 **B-tree and B+ tree** — A **B-tree** is a balanced search tree whose nodes are disk pages holding many sorted keys; every leaf is at the same depth, and nodes split and merge to stay between half-full and full [Bayer and McCreight 1972]. A **B+ tree** is the variant used by almost every relational database: internal nodes hold only separator keys and child pointers, all keys and values (or row pointers) live in the leaves, and leaves are linked to their siblings so range scans can walk sideways [Comer 1979; Petrov 2019]. *(§11.8.1)*
 
@@ -71,6 +95,8 @@
 **Bucket, key, object and flat namespace** — A **bucket** is a named container with its own access policy, region and configuration. An **object** is an immutable byte string (from zero bytes to tens of terabytes) plus system metadata (size, content type, checksum, version ID) and user metadata. A **key** is the object's full name within the bucket, for example `photos/2026/10/u42/abc.jpg`. The namespace is **flat**: the slashes are ordinary characters, and "folders" are an illusion produced by listing keys that share a **prefix** and grouping them at a **delimiter** (usually `/`). *(§15.4.1)*
 
 **Buffer pool** — A region of memory, managed by the database itself, divided into page-sized **frames** that cache disk pages. A **page table** maps page IDs to frames; each frame carries a **pin count** (how many threads are using it right now), a **dirty flag** (whether it differs from the disk copy) and bookkeeping for the **replacement policy** that chooses which page to evict. *(§13.4.1)*
+
+**Builder** — A separate object that assembles a complex product step by step, validates the combination of choices, and returns a finished (ideally immutable) product from a final `build()` call [Gamma et al. 1994; Bloch 2018]. *(§37.5)*
 
 **Bulkhead** — Partitioning a service's limited resources (threads, connections, memory, instances) into isolated pools, one per dependency, tenant or workload class, so that exhaustion of one pool cannot starve the others. *(§22.14)*
 
@@ -100,17 +126,33 @@
 
 **Causal consistency** — Writes that are **causally related** must be seen by every client in their causal order; writes that are **concurrent** (neither happens before the other) may be seen in different orders by different clients. Formally, each client's view must be a legal sequential history that respects the causal order induced by program order and reads-from [Ahamad et al. 1995]. *(§25.5.1)*
 
+**Cell-based architecture** — A style in which a workload is deployed as multiple independent, complete copies called **cells**, each with its own compute and data and each serving a fixed subset of customers (or other partition key), placed behind a thin **cell router** that sends each request to its customer's cell. Cells share nothing at run time, so a failure, bad deployment or poison request affects only one cell. The fraction of customers affected by a failure is its **blast radius** [AWS 2023]. *(§33.12.1)*
+
 **Central processing unit (CPU)** — The hardware that executes a program's **instructions**: simple operations such as "add these two numbers", "load a value from memory address X", or "if this value is zero, jump to instruction Y". A modern CPU package contains several independent **cores**, each of which can execute its own stream of instructions. *(§5.3.1)*
 
 **Certificate Transparency (CT)** — A system of public, append-only, Merkle-tree-based logs into which CAs record every certificate they issue, so that mis-issued certificates become publicly detectable [RFC 6962]. *(§10.5)*
 
+**Chain of Responsibility** — A request is passed along a chain of handler objects; each handler either handles it, or does some work and passes it to the next, so the sender does not know which handler will act [Gamma et al. 1994]. *(§37.15.3)*
+
 **Chain replication** — Replicas are arranged in a linear **chain**. Every update enters at the **head** and is forwarded node by node to the **tail**; the tail replies to the client. Every query is answered by the tail. A separate, fault-tolerant **master** service detects failures and reconfigures the chain [van Renesse and Schneider 2004]. *(§27.5.1)*
+
+**Change data capture (CDC)** — Extracting every committed insert, update and delete from a database, in commit order, as a stream of change events that other systems consume. **Log-based CDC** reads the database's replication log (PostgreSQL's write-ahead log via logical decoding, MySQL's binary log) rather than querying tables. *(§32.6.1)*
+
+**Choreography and orchestration** — In **choreography**, each service reacts to other services' events and publishes its own; the saga's control flow is distributed across the participants and exists nowhere as one piece of code. In **orchestration**, a dedicated **orchestrator** sends commands to participants, receives their replies and decides the next step; the control flow lives in one place [Richardson 2018]. *(§32.8)*
 
 **Chubby** — Google's lock service, providing coarse-grained advisory locks and small files in a file-system-like namespace, replicated across a five-node **cell** with Paxos, and used chiefly for leader election, naming and storing small amounts of configuration [Burrows 2006]. *(§26.14.1)*
 
 **CIDR block** — An address range written as `address/prefix-length`, for example `192.168.10.64/26`. The prefix length $n$ says that the first $n$ bits identify the network; the remaining $32-n$ bits (IPv4) or $128-n$ bits (IPv6) identify hosts. The **subnet mask** is the same information as a dotted number with $n$ one-bits followed by zeros (`/26` = `255.255.255.192`). *(§7.4.2)*
 
 **Circuit breaker** — A client-side proxy for calls to a dependency that tracks recent failures and, when they cross a threshold, **opens**: it fails calls immediately without contacting the dependency for a cool-down period, then lets a few trial calls through (**half-open**) and **closes** again only if they succeed. *(§22.13)*
+
+**Class** — A template that describes the attributes and methods every object of a kind will have. Creating an object from a class is called **instantiation**; the object is an **instance** of the class. *(§35.3.1)*
+
+**Class diagram** — A structure diagram showing classifiers (classes, interfaces, enumerations), their **attributes** and **operations**, and the **relationships** among them. A class is drawn as a box with up to three compartments: name, attributes, operations. *(§38.3.2)*
+
+**Class invariant** — A condition on an object's state that is true whenever no method of the object is running: after the constructor finishes and after every public method returns. *(§35.4.1)*
+
+**Clean architecture** — Robert C. Martin's synthesis of hexagonal, onion and similar architectures, drawn as concentric circles: **entities** (enterprise business rules) at the center, then **use cases** (application business rules), then **interface adapters** (controllers, presenters, gateways), then **frameworks and drivers** (web, database, devices) at the edge, governed by one **dependency rule**: source-code dependencies point only inward [Martin 2017]. *(§33.11.1)*
 
 **Client–server architecture** — A way of dividing a system into two roles: a **client**, which initiates requests on behalf of a user or another program, and a **server**, which waits for requests, performs work on shared resources (data, computation) and returns responses. The two communicate over a network using an agreed **protocol**. *(§8.3.1)*
 
@@ -120,15 +162,29 @@
 
 **Clustered and secondary index** — In a **clustered index** (an index-organized table), the leaf level of the index *is* the table: rows are stored in key order inside the index's leaf pages. A table can have at most one. A **secondary index** stores, for each key, a pointer to the row; the table can have many. *(§11.7.2)*
 
+**Cohesion and coupling** — **Cohesion** is how strongly the elements inside one module (here, one class) belong together: whether they serve a single purpose. **Coupling** is how strongly one module depends on others: how much it must know about them, and how likely a change in one is to force a change in the other. Good designs have **high cohesion and low coupling**. Both terms come from structured design [Stevens, Myers & Constantine 1974]. *(§35.10.1)*
+
+**Cohesion and coupling (service level)** — **Cohesion** is the degree to which code inside one service changes together for the same reasons. **Coupling** is the degree to which a change in one service forces a change, redeploy or coordinated release in another. Newman's shorthand: "the code that changes together, stays together" [Newman 2021]. *(§34.3.2)*
+
 **Columnar storage (column store)** — A layout that stores each column of a table contiguously — all values of `price`, then all values of `country` — instead of storing each row's fields together. Column stores are optimized for analytical queries that read a few columns of many rows [Abadi et al. 2013]. *(§13.13.1)*
+
+**Command** — An object that encapsulates a request (the operation and its arguments) so that it can be stored, passed around, queued, logged, replayed and undone [Gamma et al. 1994]. In this book's terminology a command is a request to do something, as opposed to an event, a fact that has happened. *(§37.12)*
+
+**Command Query Responsibility Segregation (CQRS)** — An architecture that uses one model to process commands (writes that enforce invariants) and one or more separate models to answer queries, each read model shaped for the queries it serves and typically updated asynchronously from the write side's events [Young 2010; Fowler 2011b]. *(§32.4.1)*
 
 **Compaction** — The background merge of sorted runs in an LSM tree that removes overwritten values and tombstones and bounds the number of runs a read must consult. A **compaction strategy** decides which runs to merge and when; it sets the engine's read, write and space amplification. *(§13.9.1)*
 
 **Compare-and-swap (CAS)** — An atomic CPU instruction that, in one indivisible step, compares a memory location with an expected value and, only if they are equal, replaces it with a new value, reporting whether it succeeded. On x86-64 it is `LOCK CMPXCHG`; ARMv8.1 and later provide `CAS`, and earlier ARM uses load-linked/store-conditional pairs. *(§6.10.4)*
 
+**Competing consumers** — A pattern in which several consumer processes read from the same queue concurrently, each message going to whichever consumer takes it first, so that adding consumers raises throughput [Hohpe and Woolf 2003]. *(§30.4.1)*
+
 **Component** — A unit of a system with a clear responsibility and an interface — for example a web service, a database, a cache, a message queue, a load balancer or a third-party payment provider. *(§1.3.1)*
 
+**Component diagram** — A structure diagram that shows **components** (modular, replaceable units that encapsulate their contents) and the **interfaces** they *provide* (offer to others, drawn as a "lollipop" circle) and *require* (need from others, drawn as a "socket" half-circle), connected by **assembly connectors** that wire a required interface to a matching provided one [OMG 2017]. *(§38.5.1)*
+
 **Components of network delay** — **Propagation delay**: time for a signal to travel the physical distance. **Transmission (serialization) delay**: time to push all of a packet's bits onto the link. **Queuing delay**: time spent waiting in buffers behind other packets. **Processing delay**: time for a device to examine headers, look up routes and copy the packet. *(§7.15.1)*
+
+**Composition and delegation** — **Composition** builds an object out of other objects that it holds in its fields (a **has-a** relationship). **Delegation** is the object forwarding part of its work to one of those parts by calling the part's methods. "Favor object composition over class inheritance" is the second principle stated in the GoF introduction [Gamma et al. 1994, ch. 1]. *(§35.8.1)*
 
 **Concept-mastery loop** — A fixed sequence of ten learning activities applied to one system-design concept. Each activity produces a concrete artifact (a definition, a diagram, a program, a design). The concept counts as mastered only when you can rebuild every artifact without notes. *(§3.3.1)*
 
@@ -149,6 +205,12 @@
 **Consistent hashing** — A way of assigning keys to nodes so that, when a node is added or removed, only about $K/N$ of the $K$ keys change owner, where $N$ is the number of nodes. Both keys and nodes are hashed onto the same circular number space (the **ring**). Each key belongs to the first node found by moving clockwise from the key's position [Karger et al. 1997]. *(§3.3.2)*
 
 **Consistent hashing with bounded loads** — A variant of consistent hashing in which every backend has a **capacity** of $\lceil (1+\varepsilon)\, m/n \rceil$ for $m$ current items (requests, sessions) and $n$ backends. An item goes to the first backend clockwise from its hash that is below capacity, so overflow from a full backend walks on to the next [Mirrokni, Thorup & Zadimoghaddam 2018]. *(§19.4.7)*
+
+**Consumer-driven contract (CDC)** — A specification, generated by the consumer's tests, of the requests a consumer sends to a provider and the parts of the responses it relies on. The provider verifies every consumer's contract against its real implementation in its own build, so a breaking change fails before deployment [Robinson 2006; Pact Docs]. *(§34.8.5)*
+
+**Consumer group** — A set of consumer instances sharing a `group.id` that divide a topic's partitions among themselves so that **each partition is consumed by exactly one member** at a time. Different groups consume the same topic independently, each with its own offsets. *(§31.7.2)*
+
+**Consumer lag** — For one partition, lag = **log end offset** (or high watermark) minus the group's **committed offset**: the number of records written but not yet processed by the group. Group lag is the sum over partitions. *(§31.7.3)*
 
 **Content-defined chunking (CDC)** — Splitting a byte stream into variable-size chunks whose boundaries are chosen by the content itself: a rolling hash is computed over a small sliding window, and a boundary is declared wherever the hash matches a pattern (for example, its low 13 bits equal a fixed value). Each chunk is then identified by a cryptographic hash of its bytes, so identical chunks are stored once (**deduplication**). *(§15.8.3)*
 
@@ -178,9 +240,13 @@
 
 ## D
 
+**Database-per-service** — Each service's persistent data is private to that service and reachable by others only through its API or published events. The service may use its own database server, its own schema on a shared server, or private tables, provided no other service reads or writes them [Richardson 2018]. *(§34.11.1)*
+
 **DataFrame, Dataset and Catalyst** — A **DataFrame** is a distributed table with a known schema (named, typed columns), manipulated with relational operators or SQL. A **Dataset** (Scala and Java) adds compile-time types to the same abstraction; in Python and R, every DataFrame is untyped at compile time. **Catalyst** is Spark SQL's extensible query optimizer, which turns DataFrame or SQL queries into an optimized physical plan using rule-based and cost-based transformations of trees [Armbrust et al. 2015]. *(§29.5.4)*
 
 **Data locality** — Scheduling a task on or near the node that stores its input, so that the input is read from local disk or memory instead of over the network. Schedulers rank placements as **process-local** (data cached in the same executor), **node-local**, **rack-local** and **off-rack** (any). *(§29.7)*
+
+**Dead-letter queue (DLQ)** — A separate queue or topic to which a broker or consumer moves messages that cannot be processed (delivery limit exceeded, rejected as invalid, expired), preserving them for inspection and later reprocessing instead of losing or endlessly retrying them [Hohpe and Woolf 2003, "Dead Letter Channel"]. *(§30.11.1)*
 
 **Deadline** — An absolute point in time by which a client needs an RPC to complete. gRPC transmits it as a remaining timeout; when it passes, the client stops waiting with `DEADLINE_EXCEEDED` and the server can see that the call was canceled [gRPC Docs: Deadlines]. *(§8.8.4)*
 
@@ -188,15 +254,27 @@
 
 **Decomposition** — Dividing a system into smaller parts (**components**) so that each part has one clear responsibility, a well-defined interface, and as few dependencies on other parts as possible. Each part can then be understood, built, scaled and changed mostly on its own. *(§2.3.2)*
 
+**Decorator (GoF)** — An object that implements the same interface as the object it wraps, forwards calls to it, and adds behavior before or after them, so responsibilities can be added at run time and stacked in any order without subclassing [Gamma et al. 1994]. *(§37.10)*
+
 **Deliberate practice** — Effortful practice designed to improve performance. It targets specific weaknesses, has clear goals, gives immediate feedback and is usually guided by a teacher or coach [Ericsson et al. 1993]. *(§3.4.6)*
+
+**Delivery guarantees** — **At-most-once**: each message is processed zero or one times; failures lose messages but never duplicate them. **At-least-once**: each message is processed one or more times; failures cause duplicates but never loss. **Exactly-once** (more precisely **effectively-once**): the *observable effect* of processing is as if each message were processed exactly once, even though delivery may happen more than once. *(§30.8)*
 
 **Denormalization** — Deliberately storing a fact more than once, or storing a derived value, to make important reads cheaper, while accepting the cost of keeping the copies consistent. *(§11.5.5)*
 
+**Dependency injection (DI)** — A technique in which an object receives the objects it depends on (its dependencies) from outside, typically through its constructor, instead of creating or looking them up itself. The code that creates and connects all objects is the **composition root** [Fowler 2004]. *(§37.14)*
+
+**Dependency Inversion Principle (DIP)** — (a) High-level modules should not depend on low-level modules; both should depend on abstractions. (b) Abstractions should not depend on details; details should depend on abstractions [Martin 2002]. **High-level** modules hold policy: the business rules that justify the system (checkout, invoicing). **Low-level** modules hold detail: mechanisms that could be swapped without changing the business (a payment vendor's SDK, SMTP, SQL). *(§36.7.1)*
+
 **Design assumption** — A belief about the workload, the environment or the business that the design depends on but that has not yet been verified, for example "80% of requests are reads" or "the payment provider responds within 1 s at p99". An assumption is **stated** when it is written down with its value, its source, your confidence in it and how it will be checked. *(§2.7.1)*
+
+**Design by contract** — A method of specifying software in which each routine states a **precondition** (what must be true when it is called: the caller's obligation), a **postcondition** (what it guarantees when it returns: the supplier's obligation), and each class states an **invariant** (what is true of every instance between calls). The approach, and the term, come from Bertrand Meyer and the Eiffel language [Meyer 1997]. *(§35.9.1)*
 
 **Design document (design doc)** — A written proposal, produced before significant implementation, that states a problem, its goals and non-goals, a proposed design, the alternatives considered, and cross-cutting concerns (security, privacy, operations, cost), so that others can review it while changes are still cheap. *(§1.10.1)*
 
 **Designing for failure** — Treating component failure as a *normal, expected event* rather than an exception. For every component and dependency, the design states what happens when it is slow, returns errors or disappears, and makes sure the **blast radius** (the set of users and features affected) is as small as possible. *(§2.9.1)*
+
+**Design pattern** — A named description of a recurring design problem, the core of a solution (a set of collaborating classes or functions and their responsibilities), and the trade-offs of applying it. A pattern is a template you adapt, not a library you import [Gamma et al. 1994]. *(§37)*
 
 **Deterministic database** — A database in which replicas and partitions first agree on a global order of transaction *inputs*, then execute transactions so that the outcome depends only on that order and the initial state. Every node that executes the same log reaches the same state, so no node needs to ask another whether to commit [Thomson et al. 2012]. *(§28.9.1)*
 
@@ -210,17 +288,31 @@
 
 **Distributed file system** — A file system whose namespace and data are spread across many machines, so that files can be larger than any one disk and throughput can grow with the number of machines, while clients still use file-like operations (create, open, read, write or append, delete). *(§15.5.1)*
 
+**Distributed monolith** — A system deployed as multiple services that cannot be changed, deployed or operated independently: services share databases, must be released together, or call each other synchronously so tightly that one failure stops all of them. It has the costs of distribution and the coupling of a monolith [Newman 2021]. *(§34.14.1)*
+
 **Distributed system** — A set of independent computers (**nodes**) that have no shared memory and no shared clock, communicate only by exchanging messages over a network, and cooperate to provide a service. Van Steen and Tanenbaum describe it from the user's side as "a collection of autonomous computing elements that appears to its users as a single coherent system" [van Steen and Tanenbaum 2017]. *(§24.3.1)*
 
 **DNS time to live (TTL)** — A per-record value, in seconds, that tells any cache how long it may reuse the record before asking again. **Negative caching** stores "this name does not exist" (NXDOMAIN) answers for a duration derived from the zone's SOA record [RFC 2308]. *(§7.6.4)*
 
 **Document database** — A database that stores self-describing, hierarchical records — **documents**, usually JSON or a binary encoding of it such as BSON — grouped into **collections**, and that can index and query fields inside the documents, including nested fields and array elements. *(§12.5.1)*
 
+**Domain-driven design (DDD)** — An approach that places a model of the business domain, built jointly by developers and domain experts, at the center of the design, expresses it directly in code, and divides large domains into explicitly bounded models [Evans 2003; Vernon 2013]. *(§34.4)*
+
+**Domain event** — An immutable record of something domain experts care about that happened, named in the past tense (`OrderPlaced`, `CourierAssigned`), carrying the identifiers and facts its consumers need [Evans 2003; Vernon 2013]. *(§34.4.4)*
+
 **Domain Name System (DNS)** — A hierarchical, distributed database that maps human-readable **domain names** (such as `www.example.com`) to data, most often IP addresses, and the protocol used to query it [RFC 1034; RFC 1035]. *(§7.6.1)*
+
+**Double-checked locking** — A lazy-initialization idiom that checks whether an object exists without a lock (fast path), and only if it does not, takes a lock, checks again, and creates it. It avoids locking on every access but is only correct if the language's memory model guarantees that a thread seeing the reference also sees the fully constructed object. *(§37.16.5)*
 
 **DRAM (dynamic random-access memory)** — The technology used for main memory. Each bit is stored as charge in a tiny capacitor that leaks and must be **refreshed** every few tens of milliseconds. DRAM is **volatile**: its contents are lost when power is removed. *(§5.5.1)*
 
+**Duck typing** — A style of polymorphism in which an object is acceptable wherever it supports the operations actually used, regardless of its declared class ("if it walks like a duck and quacks like a duck"). Checking happens when the method is called. **Structural typing** is the static version: a type checker accepts an object if its shape matches a declared protocol. *(§35.6.2)*
+
 **Durability** — The probability that data, once acknowledged as written, is not lost over a given period (usually a year). It is quoted in nines like availability: "eleven nines of durability" means an annual loss probability of $10^{-11}$ per object. *(§4.16.1)*
+
+**Durable execution** — A programming model in which a function's progress is persisted by an engine as it runs, so that the function survives process crashes, deploys and arbitrarily long waits and continues exactly where it left off, as if the process had never died [Temporal Docs]. *(§32.11.1)*
+
+**Durable subscription** — A subscription whose messages the broker retains while the subscriber is disconnected, so the subscriber receives everything published since it subscribed, within the retention period. An **ephemeral** (non-durable) subscription exists only while the subscriber is connected; messages published while it is away are never delivered to it. *(§30.5.2)*
 
 **Dynamic site acceleration (DSA)** — Routing uncacheable requests through the CDN anyway, so that TCP and TLS terminate near the user and the edge forwards each request to the origin over pre-established, tuned, long-lived connections, sometimes along an overlay path chosen from measurements. *(§21.7.2)*
 
@@ -230,11 +322,19 @@
 
 **Encapsulation** — The process by which each layer of the stack prepends its own header (and sometimes appends a trailer) to the data unit handed down by the layer above, treating that data unit as an opaque payload. **Decapsulation** is the reverse at the receiver. *(§7.3.1)*
 
+**Entity and value object** — An **entity** has a continuous identity that persists as its attributes change: two orders for the same pizza are two orders. A **value object** is defined entirely by its attributes, has no identity and is usually immutable: `Money(24.50, "USD")`, `Address` [Evans 2003]. *(§34.4.2)*
+
 **Envelope encryption** — Encrypting data with a **data-encryption key (DEK)** generated for that data, then encrypting ("wrapping") the DEK with a KEK held in a KMS, and storing the wrapped DEK alongside the ciphertext [AWS Docs: KMS concepts]. *(§10.9.2)*
 
 **Erasure code and RS(k, m)** — An **erasure code** transforms $k$ data fragments into $k + m$ fragments such that the original data can be rebuilt from some subset of them after the others are lost ("erased"). A **Reed–Solomon** code RS($k$, $m$) is a **maximum distance separable (MDS)** code: *any* $k$ of the $k+m$ fragments suffice, so it tolerates the loss of any $m$ fragments. A code is **systematic** when the first $k$ fragments are the unmodified data, so healthy reads need no decoding. *(§15.6.1)*
 
+**Event-driven architecture (EDA)** — A style in which components communicate mainly by producing and consuming **events**, immutable records of facts that happened ("OrderPlaced"), through a broker or log, so that producers do not know which consumers exist or when they will run. *(§33.8)*
+
 **Event loop** — A single thread that repeatedly waits for events (ready sockets, expired timers, completed tasks) using an I/O multiplexing call, and dispatches each event to a short, non-blocking handler. *(§6.13.4)*
+
+**Event sourcing** — A persistence pattern in which the system of record for an entity is the append-only, ordered sequence of **domain events** that changed it (`AccountOpened`, `MoneyDeposited`, ...). Current state is not stored as truth; it is derived by replaying the events, a **left fold** of a pure function `apply(state, event)` over the sequence [Fowler 2005]. *(§32.3.1)*
+
+**Event storming** — A collaborative workshop technique created by Alberto Brandolini in which domain experts and developers place domain events (past tense, on sticky notes) along a timeline, then add commands, actors, policies ("whenever X, then Y"), external systems and hotspots (open questions), and group the result into aggregates and candidate bounded contexts [Brandolini: Introducing EventStorming]. *(§34.5.4)*
 
 **Eventual consistency** — If no new updates are made to an object, eventually all reads return the last updated value [Vogels 2009]. Equivalently, replicas that have received the same set of updates **converge** to the same state. **Strong eventual consistency** strengthens this: replicas that have received the same updates are in the same state immediately, with no further coordination, which is what conflict-free replicated data types (CRDTs) guarantee (§27.14). *(§25.7.1)*
 
@@ -245,6 +345,8 @@
 **External consistency** — If transaction $T_1$ commits before $T_2$ starts, in absolute (wall-clock) time, then $T_1$'s commit timestamp is smaller than $T_2$'s. Combined with serializability, this is **strict serializability**: the serial order respects real-time order, as linearizability does for single objects (§25.3). *(§28.8.3)*
 
 ## F
+
+**Factory method** — A method declared in a base class that returns a product through an interface, which subclasses override to decide which concrete product to create. The base class's other methods use the product without knowing its class [Gamma et al. 1994]. *(§37.3.2)*
 
 **Failover** — The sequence that replaces a failed node in a role: **detection**, **election** of a replacement, **reconfiguration** (making the replacement consistent and fencing the old node) and **client redirection**. *(§27.11.1)*
 
@@ -264,11 +366,15 @@
 
 **Four golden signals** — Google's site reliability engineering guidance says that if you can measure only four metrics of a user-facing system, measure **latency** (time to serve a request, tracking successful and failed requests separately), **traffic** (demand, such as requests per second), **errors** (rate of failed requests, explicit or implicit) and **saturation** (how "full" the service is, emphasizing its most constrained resource) [Beyer et al. 2016, ch. 6]. *(§23.3.3)*
 
+**Fragile base class problem** — A change to a base class that is correct on its own breaks subclasses, because the subclasses depend on implementation details of the base (which methods call which) that were never part of its documented interface. *(§35.5.2)*
+
 **Freshness and validation** — A stored response is **fresh** while its age is below its **freshness lifetime** and may then be served without contacting the origin; once **stale**, it must normally be **revalidated**, by sending a conditional request (`If-None-Match` with the stored `ETag`, or `If-Modified-Since`), to which the origin answers `304 Not Modified` (keep using the copy) or `200 OK` with a new body [RFC 9111; RFC 9110]. *(§21.6.1)*
 
 **Functional dependency** — In a relation $R$, the functional dependency $X \to Y$ holds if any two rows that agree on the columns $X$ also agree on the columns $Y$. $X$ is the **determinant**. Example: `product_id → product_name` because one product ID always has one name. *(§11.5.1)*
 
 **Functional requirement (FR)** — A statement of a behavior the system must provide: an input, action or event, and the observable result. Functional requirements describe *what* the system does — for example, "a signed-in user can upload a JPEG or PNG photo up to 20 MB, and it appears in their followers' feeds". *(§1.6.1)*
+
+**Future and promise** — A **future** is a read-only placeholder for a result that will be available later; a **promise** (Java's `CompletableFuture`, Python's `asyncio.Future`) is the writable side that the producer completes with a value or an error. Together they let a caller start work, continue, and later wait for or chain on the result. *(§37.16.3)*
 
 ## G
 
@@ -300,6 +406,8 @@
 
 **Hedged request** — A request sent to one replica and, if no response arrives within a **hedge delay** $d$, sent again to a second replica; the client uses whichever response arrives first and cancels or ignores the other [Dean and Barroso 2013]. *(§23.7.1)*
 
+**Hexagonal architecture (ports and adapters)** — A style, described by Alistair Cockburn, in which the application's core logic interacts with the outside world only through **ports**, interfaces defined by and in the language of the core, and each external technology (web framework, database, message broker, test harness) connects through an **adapter** that implements or calls a port [Cockburn 2005]. **Driving (primary) ports** are how the outside asks the application to do something; **driven (secondary) ports** are how the application asks the outside for something. *(§33.10.1)*
+
 **High-level design (HLD)** — A description of a system as a set of major components (services, data stores, queues, caches, external dependencies), their responsibilities, the interfaces and protocols between them, data flows, and deployment topology — at a level of detail where each component is a box whose internals are not yet specified. *(§1.5.1)*
 
 **Horizontal scaling (scaling out)** — Increasing capacity by adding more nodes that share the workload, for example by running 20 identical application servers behind a load balancer instead of one. Removing nodes when load falls is **scaling in**. *(§18.4.1)*
@@ -320,13 +428,21 @@
 
 **Idempotency key** — A unique value, generated by the client once per *logical* operation and sent with every attempt of that operation (for example in an `Idempotency-Key` header), that the server uses to recognize retries: the first attempt executes and its result is stored under the key; later attempts with the same key return the stored result instead of executing again. *(§22.15.1)*
 
+**Idempotent consumer** — A message consumer whose effect on state is the same whether a given message is processed once or many times, achieved either because the operation is naturally idempotent or because the consumer detects and skips messages it has already processed. *(§32.10)*
+
 **Idempotent method** — A method for which the intended effect on the server of sending the same request $N > 0$ times is the same as sending it once [RFC 9110 §9.2.2]. The *response* may differ (a second `DELETE` may return 404); the *state* does not. *(§8.6.3)*
+
+**Identity and equality** — **Identity** asks "are these the same object in memory?" (Python `is`, Java `==` on references). **Equality** asks "do these objects represent the same value by a rule the class defines?" (Python `==` via `__eq__`, Java `equals`). Unless a class overrides equality, both languages default to identity. *(§35.3.2)*
 
 **Index** — A secondary data structure, kept in sync with a table by the database, that maps values of one or more **key columns** to the locations of the rows holding them, so that rows can be found without scanning the whole table. Most relational indexes are B+ trees (§11.8); others include hash, GiST, GIN and BRIN indexes in PostgreSQL and full-text and spatial indexes in MySQL. *(§11.7.1)*
 
 **In-doubt (blocked) transaction** — A transaction at a participant that has voted yes but has not learned the outcome. It must hold its locks and cannot decide until the coordinator, or another participant that knows the outcome, answers. *(§28.4.3)*
 
+**Inheritance** — A mechanism by which a class (the **subclass**, **child** or **derived class**) is defined as an extension of another (the **superclass**, **parent** or **base class**). The subclass automatically has the parent's attributes and methods, may add new ones, and may **override** inherited methods by providing its own version with the same name and parameters. *(§35.5.1)*
+
 **Instruction pipeline** — A technique in which the core splits instruction execution into stages and works on different stages of several consecutive instructions at the same time, like an assembly line. *(§5.3.3)*
+
+**Interface Segregation Principle (ISP)** — Clients should not be forced to depend on methods that they do not use [Martin 2002]. A **fat interface** serves many kinds of client; a **role interface** describes what one kind of client needs from its collaborator [Fowler 2006]. *(§36.6.1)*
 
 **Interleaving** — Mixing different kinds of problems or concepts within one practice session (A B C A C B), instead of finishing all practice on one kind before moving to the next (AAA BBB CCC, called **blocking**). *(§3.4.5)*
 
@@ -339,6 +455,8 @@
 **IP address** — A numeric identifier assigned to a network interface that the Internet Protocol uses to deliver packets. An **IPv4** address is 32 bits, written as four decimal octets (`203.0.113.25`) [RFC 791]. An **IPv6** address is 128 bits, written as eight groups of four hexadecimal digits separated by colons (`2001:db8:0:1::25`) [RFC 8200]. *(§7.4.1)*
 
 **Isolation anomalies** — **Dirty write:** a transaction overwrites another's uncommitted write. **Dirty read:** a transaction reads another's uncommitted write (which may later roll back). **Non-repeatable (fuzzy) read:** a transaction reads a row twice and sees different committed values because another transaction updated it in between. **Phantom:** a transaction runs the same *predicate* query twice (`WHERE status = 'pending'`) and gets a different set of rows because another transaction inserted or deleted matching rows. **Lost update:** two transactions read the same value, both compute a new value from it and write; the second write silently overwrites the first. **Read skew:** a transaction sees part of another transaction's effects (reads account A before a transfer commits and account B after it). **Write skew:** two transactions read an overlapping set of rows, each checks an invariant, then each writes a *different* row; each write is valid alone but together they violate the invariant. *(§11.13.1)*
+
+**ISR, LEO and high watermark** — Each partition has a **replication factor** (RF) of replicas on different brokers; one is the **leader**, which handles all writes, and the others are **followers**, which fetch from the leader. The **in-sync replica set (ISR)** is the leader plus the followers that have fully caught up within `replica.lag.time.max.ms` (default 30 s). Each replica's **log end offset (LEO)** is the offset its next appended record will get. The **high watermark (HW)** is the offset below which every ISR member has the record; records below the HW are **committed** and are the only ones consumers can read. *(§31.9.1)*
 
 ## J
 
@@ -362,7 +480,11 @@
 
 **Latency and bandwidth (hardware)** — **Latency** is the time from issuing one request to receiving its first byte (for example, ~100 ns for a DRAM load). **Bandwidth** is the maximum rate at which data can be moved once transfers are flowing (for example, ~38 GB/s for one DDR5-4800 channel). Achieved bandwidth is **throughput**. *(§5.9.1)*
 
+**Law of Demeter (object form)** — A method `M` of an object `O` should call methods only on: `O` itself; `M`'s parameters; objects `M` creates; and `O`'s own fields (its direct parts) [Lieberherr & Holland 1989]. Informally: "talk only to your immediate friends", or "use only one dot" (excluding fluent builders and value-object chains). *(§35.10.2)*
+
 **Layer 4 (L4) and layer 7 (L7) load balancing** — An **L4 load balancer** makes its decision from transport-layer information (IP addresses, ports, protocol) and balances **connections or flows**: every packet of one TCP connection goes to the same backend. An **L7 load balancer** terminates the client connection, parses the application protocol (usually HTTP), and balances **requests**: two requests on one connection may go to different backends. *(§19.3.1)*
+
+**Layered architecture** — A style that organizes code into horizontal **layers**, each with one kind of responsibility (presentation, business logic, persistence), where each layer may depend only on layers below it. A **tier** is a *physical* deployment boundary (browser, application server, database server); an **n-tier architecture** maps layers onto separately deployed tiers. *(§33.3.1)*
 
 **Leader election** — A protocol by which the nodes of a group choose one node, the **leader**, to coordinate some activity (ordering writes, running a scheduler, owning a partition), and choose a replacement when it fails. The goal is *at most one* leader at a time (safety) and *eventually some* leader (liveness). *(§26.5.1)*
 
@@ -380,6 +502,8 @@
 
 **Linearizability** — A history is **linearizable** if each operation can be assigned a single instant, its **linearization point**, somewhere between its invocation and its response, such that (1) the operations, ordered by these points, form a **legal sequential history** of the object (every read returns the value of the most recent preceding write), and (2) therefore whenever $a$ precedes $b$ in real time, $a$ comes before $b$ in that order. Pending operations may be either included (with a linearization point after their invocation) or dropped. An object is linearizable if all its histories are [Herlihy & Wing 1990]. *(§25.3.2)*
 
+**Liskov Substitution Principle (LSP)** — Subtypes must be substitutable for their base types [Martin 2002]. More precisely, S is a **behavioral subtype** of T if every property you can prove about objects of type T, using T's specification, also holds for objects of type S [Liskov and Wing 1994]. *(§36.5.1)*
+
 **Little's Law** — For any stable system observed over a long period, the average number of items in the system equals the average arrival rate multiplied by the average time each item spends in the system: $L = \lambda W$ [Little 1961]. *(§4.11.1)*
 
 **Load balancer** — A component that receives traffic addressed to a single service endpoint, the **virtual IP address (VIP)** or service name, and distributes it across a **pool** of **backends** (also called *upstreams*, *targets* or *real servers*) according to a **balancing algorithm**, while excluding backends that are unhealthy. *(§19.3.1)*
@@ -388,7 +512,11 @@
 
 **Local and global secondary indexes** — A **local** (document-partitioned) index lives in each partition and covers only its rows. A **global** (term-partitioned) index covers all rows and is partitioned by the *indexed value*, so all entries for one value live together [Kleppmann 2017]. *(§14.11.1)*
 
+**Log** — An append-only, totally ordered sequence of records. Each record is assigned a monotonically increasing integer position called its **offset** when it is appended. Records are never modified in place; readers read sequentially from any offset they choose. *(§31.3.1)*
+
 **Logarithm** — The logarithm base $b$ of $x$, written $\log_b x$, is the exponent to which $b$ must be raised to give $x$: if $b^y = x$ then $y = \log_b x$. *(§4.4.1)*
+
+**Log compaction** — A retention policy (`cleanup.policy=compact`) that keeps **at least the latest record for each key** and discards older records with the same key, so the partition converges to a snapshot of the latest value per key while preserving the offsets and order of the records that remain. A record with a null value, a **tombstone**, marks a key as deleted and is itself removed after `delete.retention.ms` (default 24 hours). *(§31.10.2)*
 
 **Log matching property** — If two logs contain an entry with the same index and term, then (1) the entries store the same command, and (2) the logs are identical in all preceding entries. *(§26.7.4)*
 
@@ -399,6 +527,8 @@
 **Long polling** — A technique in which the client sends an HTTP request that the server deliberately does not answer until either new data is available or a server-side timeout *T*<sub>hold</sub> expires; on receiving any response, the client immediately sends the next request. *(§9.4.1)*
 
 **Low-level design (LLD)** — A description of the internals of one component: its modules, classes or functions, data structures, algorithms, database schemas, API request and response formats, error handling and state transitions — at a level of detail from which an engineer can write code. *(§1.5.1)*
+
+**Low-level design (LLD) interview** — A 45–60-minute interview in which you design the classes, interfaces, relationships and key algorithms of a single component or small application (a parking lot, an LRU cache, a rate limiter), usually ending with working or near-working code for the core classes. It is also called an *object-oriented design* or *machine coding* interview. It contrasts with the high-level design interview (§1.5, Chapter 87), which designs a distributed system out of services and data stores. *(§38.9.1)*
 
 ## M
 
@@ -416,9 +546,23 @@
 
 **Message authentication code (MAC)** — A short tag computed from a message and a secret key, $t = \text{MAC}_K(m)$, such that without $K$ it is infeasible to produce a valid tag for any new message. **HMAC** is the standard construction from a hash function: $\text{HMAC}_K(m) = H\big((K \oplus \text{opad}) \,\|\, H((K \oplus \text{ipad}) \,\|\, m)\big)$ [Krawczyk et al. 1997]. *(§10.4.6)*
 
+**Message, command, event** — A **message** is the transport unit a broker carries: headers plus a payload. A **command** is a message that asks one specific receiver to do something ("ResizePhoto"); it may be refused. An **event** is a message stating a fact that has already happened ("PhotoUploaded"); it cannot be refused, only reacted to, and its publisher does not know who reacts [Hohpe and Woolf 2003]. *(§30.6.1)*
+
+**Message ordering** — **Global (total) ordering**: all consumers observe all messages in one sequence. **Per-key (partial) ordering**: messages that share a key — an account, an order, a device — are processed in send order, while messages with different keys may be processed in any relative order. *(§30.9)*
+
+**Message queue (point-to-point channel)** — A broker-managed, durable buffer of messages in which each message is delivered to, and processed by, exactly one of the queue's consumers; once a consumer acknowledges a message, the broker removes it [Hohpe and Woolf 2003]. *(§30.4.1)*
+
 **Metadata service** — The component that maps names to data: directory entries, file or object attributes (size, owner, permissions, version, checksum) and the locations of each chunk or fragment. It is on the path of every open, create, list and delete, while the data path bypasses it. *(§15.7.1)*
 
+**Microservice** — A service built around one business capability, owned by one team, deployable independently, and the sole owner of its data, which others reach only through its API or events. Lewis and Fowler describe the style as "an approach to developing a single application as a suite of small services, each running in its own process and communicating with lightweight mechanisms," built around business capabilities and independently deployable [Lewis and Fowler 2014]. *(§34.3.1)*
+
+**Microservices** — An architectural style that builds one application as a suite of small services, each running in its own process, owning its own data, communicating over lightweight network mechanisms, built around a business capability, and **independently deployable** by the team that owns it [Lewis and Fowler 2014]. *(§33.7.1)*
+
 **Mobile push notification** — A message sent by an application's server to a platform-operated push service — Apple Push Notification service (**APNs**) for Apple platforms, Firebase Cloud Messaging (**FCM**) for Android (and optionally iOS and web) — which delivers it, on a best-effort basis, over a single persistent connection that the operating system maintains to that service on behalf of all apps. *(§9.8.1)*
+
+**Modular monolith** — A monolith whose code is divided into **modules** aligned with business domains, where each module exposes a small **public interface**, hides its internals and data, and may depend only on an explicitly declared, acyclic set of other modules. Boundaries are enforced by tooling, not just convention. *(§33.5.1)*
+
+**Monolith** — A system whose functionality is built, tested and deployed as **one deployable unit**, typically one process image running as identical replicas and backed by one shared database. "Monolith" describes the *deployment* unit; it says nothing about whether the code inside is well structured. *(§33.4.1)*
 
 **Monotonic reads** — A client never sees data move backwards: after reading some version, its later reads return that version or newer. *(§14.4.3)*
 
@@ -458,11 +602,17 @@
 
 **OAuth 2.0** — An authorization framework that lets a third-party application obtain *limited* access to an HTTP service on behalf of a resource owner, by obtaining an **access token** from an authorization server instead of using the owner's credentials [RFC 6749]. *(§8.14.1)*
 
+**Object** — A value in a running program that bundles **state** (data, stored in **attributes** or **fields**) with **behavior** (functions that operate on that data, called **methods**). Each object has its own copy of the state. *(§35.3.1)*
+
+**Observer** — A one-to-many dependency in which a **subject** keeps a list of **observers** and notifies each of them when its state changes, so that the subject does not depend on what the observers do [Gamma et al. 1994]. *(§37.8)*
+
 **Offload ratio** — The fraction of traffic a CDN serves without contacting the origin. **Request offload** counts requests; **byte offload** counts bytes. Both are a cache hit ratio (§20.3) measured at the boundary between the CDN and the origin. *(§21.5.1)*
 
 **Open and closed workload models** — In an **open** model, new requests arrive at a rate that is independent of how fast the system answers: users on the internet do not wait for each other. In a **closed** model, a fixed population of $N$ users (or load-generator threads) each sends a request, waits for the response, optionally pauses for a **think time** $Z$, and only then sends the next. A **partly open** model has sessions that arrive openly but issue several requests each, closed-loop, within the session [Schroeder et al. 2006]. *(§23.5.2)*
 
 **OpenAPI Specification (OAS)** — A vendor-neutral, machine-readable format (YAML or JSON) for describing HTTP APIs: paths, operations, parameters, request and response bodies (as JSON Schema), status codes and security schemes [OpenAPI Specification]. It grew out of Swagger and is maintained by the OpenAPI Initiative; version 3.1 aligned its schemas with JSON Schema, and version 3.2.0 was released in September 2025. *(§8.16)*
+
+**Open/Closed Principle (OCP)** — Software entities (classes, modules, functions) should be **open for extension** but **closed for modification**: you should be able to add new behavior by adding new code, without editing code that already works and is already depended upon [Martin 2002]. The principle was first stated by Bertrand Meyer [Meyer 1988]. *(§36.4.1)*
 
 **Operating system (OS)** — The software layer that manages a computer's hardware (CPU, memory, storage, network) and provides running programs with safe, shared, abstract access to it. The privileged core of the OS that runs with full hardware access is the **kernel**. *(§6.3.1)*
 
@@ -504,7 +654,11 @@
 
 **Point of presence (PoP)** — A CDN site in one metropolitan area or interconnection facility, containing load balancers, caching proxy servers with RAM and SSD storage, and connections to local networks. Large CDNs operate hundreds of PoPs; some also place servers inside Internet service provider (ISP) networks. *(§21.3.2)*
 
+**Poison message** — A message that fails processing every time it is delivered — because it is malformed, refers to data that does not exist, or triggers a bug — and that, if redelivered indefinitely, wastes consumer capacity and (in ordered lanes) blocks every message behind it. *(§30.10)*
+
 **Polyglot persistence** — Using several different data-storage technologies within one system, each chosen for the access pattern it serves best, rather than forcing all data into one database [Fowler 2011; Sadalage & Fowler 2012]. *(§12.13.1)*
+
+**Polymorphism** — The ability of one piece of code to work with values of different types. **Subtype polymorphism** means code written against a type also works with any of its subtypes, and each object responds to a method call with its own implementation. **Dynamic dispatch** is the run-time mechanism that picks which implementation runs, based on the object's actual class rather than the declared type of the variable. *(§35.6.1)*
 
 **Power of two choices (P2C)** — For each request, pick **two** backends uniformly at random and send the request to the less loaded of the two (by in-flight count, EWMA latency or another load signal). *(§19.4.4)*
 
@@ -524,6 +678,8 @@
 
 **Process state** — The scheduling status of a process (or thread): whether it is running on a CPU, ready and waiting for a CPU, or blocked waiting for an event. *(§6.3.4)*
 
+**Producer–consumer** — Producers put work items into a shared **bounded** buffer and consumers take them out, decoupling the rate at which work is created from the rate at which it is processed; when the buffer is full, producers block or are rejected, which is **backpressure** (§22.10). *(§37.16.1)*
+
 **Profiler** — A tool that attributes a resource (CPU time, wall-clock time, allocated bytes, lock wait time) to the code locations that consumed it. A **sampling profiler** interrupts the program at a fixed frequency and records the current call stack; a function's share of samples estimates its share of time. An **instrumenting** (deterministic, tracing) profiler inserts hooks at every function entry and exit and records exact call counts and durations. *(§23.4.1)*
 
 **Protocol** — A set of rules two parties agree on for exchanging messages: message formats, the meaning of each field, and the actions each side takes on sending, receiving or timing out. A **protocol stack** is a set of protocols layered so that each uses the service provided by the layer below and offers a service to the layer above. *(§7.3.1)*
@@ -531,6 +687,8 @@
 **Proxy** — An intermediary that terminates a client's connection and opens its own connection onward, relaying requests and responses. A **forward proxy** acts on behalf of **clients** and is chosen by them (or their network administrator). A **reverse proxy** acts on behalf of **servers** and is chosen by the site operator; clients usually do not know it exists. *(§7.12)*
 
 **Public key infrastructure (PKI)** — The set of roles, policies and systems that bind public keys to identities. A **certificate** (X.509) is a document stating "this public key belongs to this name (for example `api.example.com`), valid from date A to date B", signed by a **certificate authority (CA)**. A client trusts a certificate if it can build a **chain** of valid signatures from it to a **root CA** certificate in its local **trust store**. *(§10.5)*
+
+**Publish/subscribe (pub/sub)** — A messaging style in which a publisher sends a message to a named **topic** without knowing its receivers, and the broker delivers a copy to every **subscription** registered on that topic [Hohpe and Woolf 2003; Eugster et al. 2003]. *(§30.5.1)*
 
 ## Q
 
@@ -549,6 +707,8 @@
 **Read repair and anti-entropy** — **Read repair** fixes stale replicas discovered while serving a read: the coordinator writes the newest version back to replicas that returned older ones. **Anti-entropy** is a background process that compares whole replicas, typically with Merkle trees, and copies the differences [DeCandia et al. 2007; Demers et al. 1987]. *(§27.13.1)*
 
 **Read-through** — The application asks only the cache; on a miss the *cache* loads the value from the database through a configured loader, stores it and returns it. *(§20.7.3)*
+
+**Read-write lock** — A lock that allows any number of concurrent readers or exactly one writer, never both; it improves throughput when reads greatly outnumber writes and each read holds the lock long enough for contention to matter (§6.10.5). *(§37.16.4)*
 
 **Read-your-writes consistency** — After a client writes a value, its own later reads return that value or a newer one. Other clients get no such promise. *(§14.4.3)*
 
@@ -583,6 +743,8 @@
 **Replication strategy** — The rule that decides *which* replicas may accept a write, *in what order* the replicas apply writes, and *when* a write counts as done. The five families are **primary–backup**, **chain replication**, **multi-leader**, **leaderless** and **consensus-based** replication. *(§27.3.1)*
 
 **Replication topology** — The graph along which leaders forward writes to each other: a **circular** ring, a **star** with a hub, or **all-to-all**. *(§27.6.1)*
+
+**Repository** — An object that mediates between the domain model and data storage, presenting stored aggregates as an in-memory collection with methods such as `add`, `get` and domain-specific finders, so that domain code never sees SQL, ORM sessions or storage APIs [Fowler 2002; Evans 2003]. *(§37.13)*
 
 **Request–response lifecycle** — The complete sequence of network and processing steps between a client issuing a request and receiving the full response, including name resolution, connection establishment, routing through intermediaries, application processing, data access and the return path. *(§8.5.1)*
 
@@ -622,13 +784,23 @@
 
 **Semaphore** — An integer counter with two atomic operations introduced by Dijkstra: **wait** (P, or *acquire*) decrements it and blocks if the result would be negative; **signal** (V, or *release*) increments it and wakes a waiter [Dijkstra 1965]. *(§6.10.2)*
 
+**Sequence diagram** — An interaction diagram that shows objects or participants as vertical **lifelines** and the **messages** they exchange as horizontal arrows ordered top to bottom in time. **Execution specifications** (activation bars) show when a participant is busy, and **combined fragments** (`alt`, `opt`, `loop`, `par` and others) show conditional, optional, repeated and parallel behavior [OMG 2017]. *(§38.4.1)*
+
 **Sequential consistency** — A history is **sequentially consistent** if there is a single total order of all operations that is a legal sequential history of the objects and that respects each client's **program order** (the order in which that client issued its own operations). In Lamport's words, "the result of any execution is the same as if the operations of all the processors were executed in some sequential order, and the operations of each individual processor appear in this sequence in the order specified by its program" [Lamport 1979]. *(§25.4.1)*
 
 **Serialization (encoding)** — Translating an in-memory data structure into a sequence of bytes for storage or transmission; **deserialization (decoding)** is the reverse [Kleppmann 2017, ch. 4]. *(§8.9.1)*
 
+**Serverless** — An architecture built from **functions as a service (FaaS)**, short-lived functions that the platform runs in response to events, combined with **managed services** (databases, queues, object storage, authentication) that the provider operates, such that the team provisions no servers, capacity scales automatically including **to zero**, and billing is per request and per unit of execution time rather than per running machine [Jonas et al. 2019]. *(§33.9.1)*
+
 **Server-Sent Events (SSE)** — A W3C/WHATWG-standardized mechanism in which a client opens one long-lived HTTP request and the server streams a sequence of UTF-8 text events down the response body using the `text/event-stream` format; browsers expose it through the `EventSource` API, which parses events and reconnects automatically, resuming from the last received event ID [WHATWG HTML §9.2]. *(§9.5.1)*
 
 **Server-side rendering (SSR)** — The server produces complete HTML for each request; the browser displays it immediately and then loads JavaScript to make it interactive (**hydration**). *(§8.4.2)*
+
+**Service discovery** — The mechanism by which a client finds the current network locations of healthy instances of a service. A **service registry** stores instances, locations and health; a **lookup** path lets a client (client-side discovery) or a router (server-side discovery) query it [Richardson 2018]. *(§34.7)*
+
+**Service mesh** — An infrastructure layer for service-to-service communication. Its **data plane** is a set of proxies through which all service traffic passes (a **sidecar** per workload instance, or shared per-node proxies); its **control plane** configures the proxies, issues certificates and collects state. It provides traffic management, security (mutual TLS, authorization) and telemetry without application changes [Istio Docs: Architecture; Linkerd Docs: Architecture]. *(§34.10.1)*
+
+**Service-oriented architecture (SOA)** — An enterprise integration style, prominent from roughly 2000 to 2010, in which business capabilities are exposed as coarse-grained, reusable **services** with formal contracts, typically SOAP web services described in WSDL, connected through an **enterprise service bus (ESB)** that routes, transforms and orchestrates messages between them. *(§33.6.1)*
 
 **Session** — Server-recognized state that links a series of requests to one authenticated user (or anonymous visitor) over time, typically identified by a cookie. *(§8.10.2)*
 
@@ -644,11 +816,17 @@
 
 **SIMD (single instruction, multiple data)** — CPU instructions that apply the same operation to several data elements packed into one wide **vector register** at once — for example, adding eight pairs of 32-bit floats in a single instruction. *(§5.11.1)*
 
+**Simple factory** — A function or static method that takes a description of what is wanted (a string, an enum, a config value) and returns an instance of the matching concrete class, behind a common interface. It is an idiom rather than a GoF pattern, but it is the most common factory in practice. *(§37.3.1)*
+
 **Simultaneous multithreading (SMT)** — A technique in which one physical core runs two (occasionally more) instruction streams at once, interleaving them through the same execution units. Intel markets its implementation as **Hyper-Threading Technology**. Each stream appears to the operating system as a separate **logical CPU** (or **hardware thread**). *(§5.3.6)*
 
 **Single-decree (basic) Paxos** — A consensus algorithm in which **proposers** suggest values, **acceptors** vote on them and **learners** find out the decided value. A value is **chosen** when a majority of acceptors has accepted it with the same proposal number. Paxos guarantees safety under any message delays, loss or reordering, and makes progress whenever one proposer can run both phases without interference from another. *(§26.6.1)*
 
 **Single-page application (SPA) / client-side rendering (CSR)** — The server sends a nearly empty HTML shell plus a JavaScript bundle; the JavaScript calls JSON APIs and builds the page in the browser. Navigation afterwards happens without full page loads. *(§8.4.2)*
+
+**Single Responsibility Principle (SRP)** — A module should be responsible to one, and only one, **actor**, where an actor is a group of people (a role, a team, a stakeholder) who request changes to the module for the same reasons [Martin 2017]. The earlier formulation is "a class should have only one reason to change" [Martin 2002]. *(§36.3.1)*
+
+**Singleton** — A class that guarantees it has exactly one instance within a scope and provides a global access point to it [Gamma et al. 1994]. The scope is almost always one process, a fact that matters greatly in distributed systems. *(§37.6)*
 
 **Skip list** — An ordered linked list augmented with extra levels of "express" pointers. Each node is promoted to the next level with probability $p$ (typically 1/2 or 1/4), so level $i$ contains about a fraction $p^i$ of the nodes. Search, insert and delete take expected $O(\log n)$ time [Pugh 1990]. *(§17.7.1)*
 
@@ -672,13 +850,21 @@
 
 **SQL** — The Structured Query Language, standardized by ANSI/ISO, with sublanguages for defining schema (DDL: `CREATE`, `ALTER`, `DROP`), manipulating data (DML: `SELECT`, `INSERT`, `UPDATE`, `DELETE`) and controlling transactions (`BEGIN`, `COMMIT`, `ROLLBACK`). Every major database implements the core standard plus its own dialect. *(§11.6.1)*
 
+**State** — An object delegates its behavior to a separate state object and changes behavior by swapping that state object, so it appears to change its class; each state class handles the transitions that are legal from it [Gamma et al. 1994]. *(§37.15.1)*
+
 **Stateful service** — A service whose instances hold data that must survive between requests and that clients or other instances depend on: a database, a cache node, a WebSocket server holding live connections, or an application server keeping sessions in memory. *(§18.5.1)*
 
 **Stateless service** — A service that keeps no client-specific data in its own memory between requests. Every request carries, or lets the service look up from a shared store, everything needed to process it. *(§8.3.2)*
 
+**State machine diagram** — A behavior diagram that shows the **states** one object (or protocol) can be in and the **transitions** between them. A transition is labeled `trigger [guard] / effect`: the **trigger** is the event, the **guard** a Boolean condition that must be true for the transition to fire, and the **effect** an action executed during the transition. A state may declare **entry**, **exit** and **do** behaviors, run on entering, on leaving, and while inside the state [OMG 2017]. *(§38.6.1)*
+
 **Static site generation (SSG)** — HTML is produced at build time and served as static files, usually from a CDN (Chapter 21). Pages that change per user cannot be fully static. *(§8.4.2)*
 
 **Storage tier and lifecycle policy** — A **storage tier** (storage class) is a price/performance point for the same data: **hot** (frequent access, highest storage price, no retrieval fee), **warm** or infrequent access (cheaper storage, per-GB retrieval fee, minimum storage duration), **cold** (cheaper again, slower or costlier retrieval) and **archive** (cheapest storage, retrieval in hours). A **lifecycle policy** is a set of rules, usually by prefix, tag or age, that automatically transitions objects between tiers and expires (deletes) them. *(§15.9)*
+
+**Strangler fig application** — A migration strategy in which a new system is grown around the edges of an old one, taking over one capability at a time while the old system keeps running, until the old system can be retired. Fowler named it after strangler fig vines, which grow around a host tree until they stand on their own [Fowler 2004]. *(§34.13.1)*
+
+**Strategy** — A family of interchangeable algorithms, each behind a common interface, so that a client can be configured with one at run time without changing its code [Gamma et al. 1994]. *(§37.7)*
 
 **Stream processing, event time and processing time** — **Stream processing** runs a long-lived computation over an **unbounded** dataset, one that grows forever, producing results incrementally. Each record has an **event time**, when the event actually happened (stamped by the device or service that produced it), and a **processing time**, when the system observes it. The difference is the record's **event-time skew**, which is variable and unbounded in the worst case. *(§29.8.1)*
 
@@ -687,6 +873,10 @@
 **Superscalar execution** — A core that can issue and complete more than one instruction per cycle by having several execution units working in parallel. *(§5.3.5)*
 
 **Symmetric encryption** — Encryption in which the same secret key is used to encrypt and decrypt. A **block cipher** such as AES (Advanced Encryption Standard) encrypts fixed 128-bit blocks under a 128-, 192- or 256-bit key; a **mode of operation** turns the block cipher into a scheme for messages of any length. *(§10.4.2)*
+
+**Synchronous and asynchronous inter-service communication** — In **synchronous** communication the caller sends a request (REST, gRPC) and cannot complete its work until the response arrives, so caller and callee must be available at the same time. In **asynchronous** communication the sender publishes a message (event or command) to a broker or log and continues; the receiver processes it later (§30.3). *(§34.8.1)*
+
+**Synchronous communication** — An interaction in which the sender waits for the receiver to process a request and return a response before it continues; both parties must be running and reachable at the same time. *(§30.3.1)*
 
 **System** — A set of interacting **components** (programs, machines, data stores, networks and people) that together deliver a capability no single component delivers alone. Components interact only through **interfaces**: agreed formats and protocols for exchanging requests, responses and data. *(§1.3.1)*
 
@@ -704,7 +894,11 @@
 
 **TCP** — A connection-oriented transport protocol that provides a reliable, ordered, full-duplex **byte stream** between two endpoints identified by (IP address, port) pairs. It achieves reliability with sequence numbers, acknowledgments and retransmission; it protects a slow receiver with **flow control**; and it protects the network with **congestion control**. *(§7.7.1)*
 
+**Template Method** — A method in a base class that defines the skeleton of an algorithm as a fixed sequence of steps, some of which are abstract **primitive operations** or overridable **hooks** that subclasses supply, so subclasses vary steps without changing the sequence [Gamma et al. 1994]. *(§37.15.2)*
+
 **Thread** — An independent sequence of execution within a process, with its own program counter, registers and stack, sharing the process's address space, heap, globals and open files with the process's other threads. *(§6.3.5)*
+
+**Thread pool** — A fixed or bounded set of worker threads that take tasks from a queue and execute them, so the cost of creating threads is paid once and the number of concurrent tasks is capped [Goetz et al. 2006]. *(§37.16.2)*
 
 **Threat model** — A structured description of a system, the **assets** in it that are worth protecting, the **adversaries** who might attack it and their capabilities, the **threats** (ways a security property could be violated), and the **mitigations** chosen for each threat [Shostack 2014]. *(§10.3.2)*
 
@@ -722,11 +916,17 @@
 
 **Token bucket** — A rate limiter that keeps a counter of **tokens**, refilled continuously at **rate** $r$ up to a maximum **capacity** (burst size) $b$. Each request consumes one token (or a cost $c$); a request that finds too few tokens is rejected. The long-run admitted rate is at most $r$, and up to $b$ requests may be admitted at once. *(§22.4.1)*
 
+**Topic, partition and record** — A **topic** is a named category of records (for example `orders`). A topic is split into **partitions**, each an independent, ordered, replicated log with its own offsets starting at 0. A **record** carries an optional **key**, a **value** (opaque bytes), a **timestamp** and optional **headers**. Kafka guarantees order *within* a partition, not across partitions of a topic. *(§31.5.1)*
+
 **Torn write (torn page)** — A page write that is interrupted by a crash so that part of the page on disk is new and part is old. It arises because the database page (8 or 16 KiB) is larger than the unit the device or file system writes atomically (commonly 4 KiB or 512 bytes). *(§13.12.2)*
+
+**Trace, span and context propagation** — A **trace** records one request's path through a distributed system under a unique **trace ID**. It is a tree of **spans**, each recording one unit of work (an inbound request, an outbound call, a query) with service, operation, start time, duration, status, its span ID and its **parent span ID**. **Context propagation** passes the trace ID and current span ID from caller to callee (in HTTP headers or message metadata) so the callee's spans join the trace [Sigelman et al. 2010; W3C Trace Context]. *(§34.9.1)*
 
 **Trade-off** — A situation where improving one desired property of a system makes another worse. Examples: lower latency at higher cost, stronger consistency at lower availability during network partitions, faster delivery at higher operational risk. Every design decision is a trade-off. If you cannot name what an option makes worse, you have not understood it yet. *(§2.8.1)*
 
 **Transaction** — A sequence of reads and writes that the database treats as one logical unit: either all of its effects become permanent together (**commit**) or none of them do (**abort** or **rollback**), and concurrently running transactions are isolated from each other's intermediate states. *(§11.11.1)*
+
+**Transactional outbox** — A pattern in which a service writes the events it wants to publish into an **outbox table** in its own database, in the same local transaction as the state change, and a separate **message relay** later reads committed outbox rows and publishes them to the broker, retrying until the broker acknowledges [Richardson 2018]. *(§32.5.2)*
 
 **Transport Layer Security (TLS)** — A protocol that gives two communicating applications **confidentiality** (eavesdroppers cannot read the data), **integrity** (tampering is detected) and **authentication** (at least the server proves its identity, usually with an X.509 certificate). **HTTPS** is HTTP carried over TLS, on TCP port 443 by default. TLS 1.3 is specified in RFC 8446 (2018). *(§7.10.1)*
 
@@ -744,7 +944,11 @@
 
 ## U
 
+**Ubiquitous language** — A rigorous vocabulary built by developers and domain experts for one model and used consistently in conversation, tests and code, so that each term means exactly one thing within that model [Evans 2003]. *(§34.4.1)*
+
 **UDP** — The User Datagram Protocol [RFC 768] is a connectionless transport protocol that adds only port numbers, a length and a checksum to IP. Its 8-byte header provides process-to-process delivery of individual **datagrams** with no handshake, no acknowledgments, no retransmission, no ordering, and no flow or congestion control. *(§7.8)*
+
+**Unified Modeling Language (UML)** — A general-purpose graphical language for specifying, visualizing and documenting software systems, standardized by the Object Management Group (OMG). The current version, UML 2.5.1 (December 2017), defines 14 diagram types divided into *structure* diagrams (what the system is made of) and *behavior* diagrams (what it does over time) [OMG 2017]. *(§38.3.1)*
 
 **USE method** — For every **resource**, check **U**tilization (the fraction of time the resource was busy, or the fraction of its capacity in use), **S**aturation (the amount of extra work queued because the resource could not service it) and **E**rrors (the count of error events) [Gregg USE]. A resource is any physical or software component with finite capacity: CPUs, memory, disks, network interfaces, controllers and interconnects, but also locks, thread pools, connection pools and file descriptors. *(§23.3.2)*
 

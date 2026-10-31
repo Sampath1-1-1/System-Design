@@ -98,7 +98,7 @@ flowchart LR
 **Reading the diagram.** On the left, every source has a custom pipeline to every destination: six links, each a separate failure point and format. On the right, sources write once to the *Kafka log* and destinations subscribe asynchronously, so a new destination adds one link and can backfill by replaying. The log is a storage boundary decoupling producers and consumers in time and speed; it is also the new single failure point, which is why the rest of the chapter replicates and partitions it.
 
 ::: industry
-**LinkedIn's activity pipeline.** Kafka was built at LinkedIn to collect user activity events and operational metrics for both online consumers and offline Hadoop loads, replacing per-system pipelines. The original design deliberately used a pull model, stored messages in segment files on disk, kept no per-message acknowledgement state on the broker (consumers track offsets), and relied on the OS page cache [Kreps et al. 2011]. Later work added intra-cluster replication and described its design and LinkedIn's production use [Wang et al. 2015].
+**LinkedIn's activity pipeline.** Kafka was built at LinkedIn to collect user activity events and operational metrics for both online consumers and offline Hadoop loads, replacing per-system pipelines. The original design deliberately used a pull model, stored messages in segment files on disk, kept no per-message acknowledgment state on the broker (consumers track offsets), and relied on the OS page cache [Kreps et al. 2011]. Later work added intra-cluster replication and described its design and LinkedIn's production use [Wang et al. 2015].
 *Evidence: Primary* — [Kreps et al. 2011]; [Wang et al. 2015]
 :::
 
@@ -122,7 +122,7 @@ A cluster is like a library with many branches, each storing some books (partiti
 
 #### Why does this exist? From ZooKeeper to KRaft
 
-From 2011 until 2022, Kafka stored its metadata in **Apache ZooKeeper** (§26.8). One broker won an election in ZooKeeper to become the controller; it read all metadata from ZooKeeper, made decisions, wrote them back, and pushed them to other brokers with RPCs. This had three costs that grew with scale [KIP-500]:
+From 2011 until KRaft became production-ready in 2022 (and in many clusters until 4.0 removed the option), Kafka stored its metadata in **Apache ZooKeeper** (§26.8). One broker won an election in ZooKeeper to become the controller; it read all metadata from ZooKeeper, made decisions, wrote them back, and pushed them to other brokers with RPCs. This had three costs that grew with scale [KIP-500]:
 
 1. **Two systems to operate**, each with its own configuration, security, monitoring and upgrades.
 2. **Slow controller failover.** A new controller had to load every partition's state from ZooKeeper before acting, so recovery time grew linearly with partition count, capping cluster size.
@@ -434,7 +434,7 @@ flowchart LR
   SND -.->|complete futures / callbacks| APP
 ```
 
-**Reading the diagram.** The application thread only serializes and appends to the *accumulator* (memory, not disk). The *sender thread* drains full or expired batches and sends one produce request per broker over TCP, each carrying batches for the partitions that broker leads. Acknowledgements return asynchronously and complete the futures. Failure points: a full accumulator blocks `send()`; a failed request is retried by the sender (§31.6.3). Scaling: larger batches and compression raise throughput per request at the cost of up to `linger.ms` of extra latency.
+**Reading the diagram.** The application thread only serializes and appends to the *accumulator* (memory, not disk). The *sender thread* drains full or expired batches and sends one produce request per broker over TCP, each carrying batches for the partitions that broker leads. Acknowledgments return asynchronously and complete the futures. Failure points: a full accumulator blocks `send()`; a failed request is retried by the sender (§31.6.3). Scaling: larger batches and compression raise throughput per request at the cost of up to `linger.ms` of extra latency.
 
 #### Mathematical foundations
 
@@ -465,11 +465,11 @@ $$n_{\text{batch}} = \min\left(\lambda_p \cdot \ell,\ \frac{B}{s}\right), \qquad
 **Interpretation.** At moderate rates per partition, `linger.ms` decides batch size; `batch.size` matters only for hot partitions. **Engineering implication.** Fewer partitions per producer, or a larger linger, gives bigger batches, better compression and fewer requests. Latency-critical paths keep linger small and accept the overhead.
 :::
 
-### 31.6.2 Acknowledgements: `acks=0`, `1` and `all`
+### 31.6.2 Acknowledgments: `acks=0`, `1` and `all`
 
 The `acks` setting decides when the leader answers the producer:
 
-**Table 31.2 — Producer acknowledgement modes.**
+**Table 31.2 — Producer acknowledgment modes.**
 
 | Setting | Leader replies when | Latency | Loss window |
 |---|---|---|---|
@@ -483,7 +483,7 @@ Since Kafka 3.0 the producer defaults are `acks=all` and `enable.idempotence=tru
 
 #### Why does this exist?
 
-Networks lose acknowledgements. If the broker appended a batch but the reply was lost, the producer retries and the batch is written twice. Retries also threaten ordering: with several requests in flight, batch 1 can fail and be retried after batch 2 succeeds, reversing them.
+Networks lose acknowledgments. If the broker appended a batch but the reply was lost, the producer retries and the batch is written twice. Retries also threaten ordering: with several requests in flight, batch 1 can fail and be retried after batch 2 succeeds, reversing them.
 
 #### How it works internally
 
@@ -495,7 +495,7 @@ The **idempotent producer** (KIP-98) applies the idempotency-key idea of §22.15
 4. With idempotence on, up to `max.in.flight.requests.per.connection` = 5 requests may be outstanding and ordering is still preserved, because the leader accepts batches only in sequence order. Without idempotence, preserving order under retries requires `max.in.flight.requests.per.connection=1`, which caps throughput at one batch per round trip.
 5. Retries continue until `delivery.timeout.ms` (default 120 s) expires.
 
-**Figure 31.7 — Idempotent producer: a lost acknowledgement does not create a duplicate.**
+**Figure 31.7 — Idempotent producer: a lost acknowledgment does not create a duplicate.**
 
 ```mermaid
 sequenceDiagram
@@ -512,7 +512,7 @@ sequenceDiagram
   L-->>P: ack
 ```
 
-**Reading the diagram.** The producer sends a batch tagged with PID 7 and sequences 0–9; the leader appends it, but the acknowledgement is lost. The retry carries the *same* PID and sequences, so the leader recognizes the duplicate and returns the original offsets without appending. The next batch continues at sequence 10. All calls are synchronous request/response over TCP. Limits: deduplication is per PID and per partition, and a PID is new each time the producer restarts unless it uses a `transactional.id` (§31.11), so idempotence protects against retries inside one producer session, not against an application that crashes and re-sends.
+**Reading the diagram.** The producer sends a batch tagged with PID 7 and sequences 0–9; the leader appends it, but the acknowledgment is lost. The retry carries the *same* PID and sequences, so the leader recognizes the duplicate and returns the original offsets without appending. The next batch continues at sequence 10. All calls are synchronous request/response over TCP. Limits: deduplication is per PID and per partition, and a PID is new each time the producer restarts unless it uses a `transactional.id` (§31.11), so idempotence protects against retries inside one producer session, not against an application that crashes and re-sends.
 
 ::: mistake
 **"Idempotent producer means exactly-once."** It removes duplicates caused by the producer's own retries to one partition during one session. It does not deduplicate an application that restarts and re-sends, does not make a consumer's processing idempotent, and does not make writes to several partitions atomic. Those need transactions (§31.11) and idempotent consumers (§32.10).
@@ -605,7 +605,7 @@ $$t_{\text{drain}} = \frac{L}{\mu - \lambda} \quad (\mu > \lambda)$$
 
 ### 31.7.4 Share groups (queues for Kafka)
 
-Consumer groups tie parallelism to partitions and order per partition. Some workloads, such as a pool of workers processing independent jobs, want queue semantics instead: many workers on one partition, per-record acknowledgement and redelivery. **KIP-932** adds **share groups**, in which records of a partition are handed to several consumers with per-record acquisition locks and delivery counts. Share groups arrived as early access in Kafka 4.0 and were still maturing through the 4.x line as of 2026; check your version's documentation before relying on them.
+Consumer groups tie parallelism to partitions and order per partition. Some workloads, such as a pool of workers processing independent jobs, want queue semantics instead: many workers on one partition, per-record acknowledgment and redelivery. **KIP-932** adds **share groups**, in which records of a partition are handed to several consumers with per-record acquisition locks and delivery counts. Share groups arrived as early access in Kafka 4.0 and were still maturing through the 4.x line as of 2026; check your version's documentation before relying on them.
 
 ## 31.8 Offsets
 
@@ -703,7 +703,7 @@ flowchart LR
   LD -.->|ack after HW passes batch| PR
 ```
 
-**Reading the diagram.** The *producer* writes to the *leader* on broker B1. *Followers* pull with fetches carrying their LEOs, so replication is asynchronous to the write, but the `acks=all` acknowledgement waits until the *HW* passes the batch. *Consumers* read only below the HW, never seeing records that could vanish in a failover. Each replica is a separate broker disk. Failure points: lagging B3 holds back the HW until removed from the ISR; leader failure triggers election (§31.9.3). Scaling: replication traffic is (RF − 1) times produce traffic.
+**Reading the diagram.** The *producer* writes to the *leader* on broker B1. *Followers* pull with fetches carrying their LEOs, so replication is asynchronous to the write, but the `acks=all` acknowledgment waits until the *HW* passes the batch. *Consumers* read only below the HW, never seeing records that could vanish in a failover. Each replica is a separate broker disk. Failure points: lagging B3 holds back the HW until removed from the ISR; leader failure triggers election (§31.9.3). Scaling: replication traffic is (RF − 1) times produce traffic.
 
 ### 31.9.2 Kafka's ISR versus majority quorums
 
@@ -1257,7 +1257,7 @@ $$S = \frac{W \cdot t_{\text{ret}} \cdot R}{u}$$
 1. One copy: $200 \times 10^6 \times 604{,}800 = 1.2096 \times 10^{14}$ B = 121 TB.
 2. Three replicas: 363 TB.
 3. Divide by 0.7: $S \approx 518$ TB.
-4. With 12 TB usable per broker: $518 / 12 = 43.2$, so 44 brokers, far more than the 3 that throughput needed (§31.13.2).
+4. With 12 TB usable per broker: $518 / 12 = 43.2$, so 44 brokers, far more than the 2 that throughput needs at 200 MB/s by the formula of §31.13.2 (the 400 MB/s example there needed 3).
 5. With **tiered storage** keeping 1 day locally: local $= 200 \times 10^6 \times 86{,}400 \times 3 / 0.7 = 74$ TB (7 brokers), plus 121 TB of one logical copy in object storage, whose durability is the object store's.
 
 **Interpretation.** Retention, not throughput, sized this cluster. **Engineering implication.** Long retention on broker disks couples storage to compute; tiered storage decouples them and makes broker replacement and rebalancing faster because there is less local data to copy.

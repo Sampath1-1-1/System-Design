@@ -11,7 +11,7 @@ The running example is PhotoShare (Chapter 1). When a user uploads a photo, Phot
 After this chapter you should be able to:
 
 - Explain temporal coupling and compute the availability of a synchronous call chain versus a queue-decoupled design.
-- Describe point-to-point queues, competing consumers, acknowledgements and visibility timeouts, and size a consumer fleet with Little's Law.
+- Describe point-to-point queues, competing consumers, acknowledgments and visibility timeouts, and size a consumer fleet with Little's Law.
 - Calculate backlog drain time after an outage and choose a visibility timeout from processing-time percentiles.
 - Distinguish publish/subscribe from queues, durable from ephemeral subscriptions, and estimate fan-out cost.
 - Distinguish events, commands and messages, and event notification from event-carried state transfer.
@@ -67,7 +67,7 @@ Three engineering problems drive services toward messaging:
 #### How it works internally
 
 1. The producer serializes the work as a message (a payload plus headers such as an ID, type and timestamp).
-2. It sends the message to the broker and waits only for the broker's acknowledgement that the message is durably stored — typically a few milliseconds.
+2. It sends the message to the broker and waits only for the broker's acknowledgment that the message is durably stored — typically a few milliseconds.
 3. The producer returns to its own client ("upload accepted").
 4. Later — milliseconds or hours — a consumer retrieves the message, processes it and **acknowledges** it, after which the broker deletes it or marks it consumed.
 
@@ -178,7 +178,7 @@ Asynchrony is not free. The caller cannot get an answer, so anything the user mu
 
 #### First-principles explanation
 
-Think of the ticket rail in a restaurant kitchen. Waiters clip orders to the rail; any free cook takes the next ticket; when the dish leaves the pass, the ticket is spiked and discarded. No order is cooked twice, and when the dinner rush arrives the manager adds cooks, not waiters. The rail is the queue, the cooks are competing consumers, and spiking the ticket is the acknowledgement.
+Think of the ticket rail in a restaurant kitchen. Waiters clip orders to the rail; any free cook takes the next ticket; when the dish leaves the pass, the ticket is spiked and discarded. No order is cooked twice, and when the dinner rush arrives the manager adds cooks, not waiters. The rail is the queue, the cooks are competing consumers, and spiking the ticket is the acknowledgment.
 
 The essential property is **destructive, shared consumption**: a message is work to be done once, by someone. That makes queues the right tool for *tasks* — resize this image, send this email, charge this order — and the wrong tool when several independent parties each need their own copy (§30.5).
 
@@ -189,7 +189,7 @@ The essential property is **destructive, shared consumption**: a message is work
 3. **Lease.** The broker does not delete a delivered message. It marks it **in flight** — invisible to other consumers — for a lease period: the **visibility timeout** in SQS, the **ack deadline** in Google Cloud Pub/Sub. RabbitMQ instead keeps a delivered message unacknowledged for as long as the consumer's channel stays open, and requeues it if the channel or connection closes.
 4. **Process.** The consumer does the work.
 5. **Acknowledge.** The consumer tells the broker it is done (SQS `DeleteMessage` with the delivery's **receipt handle**; AMQP `basic.ack`; Pub/Sub `acknowledge`). Only now is the message removed.
-6. **Redeliver on failure.** If the consumer crashes, or the lease expires before the acknowledgement, the message becomes visible again and another consumer receives it. A consumer can also **negatively acknowledge** (`basic.nack`, or setting the SQS visibility timeout to zero) to release it immediately.
+6. **Redeliver on failure.** If the consumer crashes, or the lease expires before the acknowledgment, the message becomes visible again and another consumer receives it. A consumer can also **negatively acknowledge** (`basic.nack`, or setting the SQS visibility timeout to zero) to release it immediately.
 
 Acknowledging *after* processing is what makes a queue reliable: a crash at any point before step 5 leads to redelivery rather than loss. It is also why every queue that never loses messages can deliver one twice (§30.8).
 
@@ -210,9 +210,9 @@ flowchart LR
   Q -.->|after max receives| DLQ[[Dead-letter queue]]
 ```
 
-**Reading the diagram.** Two upload-service instances send jobs to one queue (solid arrows: the send is a synchronous call to the broker). The queue delivers each message to exactly one of three workers (dotted: delivery is asynchronous and decoupled in time). Each worker writes thumbnails to object storage (the storage boundary outside the broker) and then acknowledges, which deletes the message; worker 1's acknowledgement is drawn as an example. A message whose processing keeps failing is moved to a dead-letter queue after a maximum number of deliveries (§30.11). Failure points: a worker crash leaves its message in flight until the lease expires; a broker-node failure is covered by replication inside the broker. Scaling: add workers until the queue's own throughput or the downstream storage becomes the limit.
+**Reading the diagram.** Two upload-service instances send jobs to one queue (solid arrows: the send is a synchronous call to the broker). The queue delivers each message to exactly one of three workers (dotted: delivery is asynchronous and decoupled in time). Each worker writes thumbnails to object storage (the storage boundary outside the broker) and then acknowledges, which deletes the message; worker 1's acknowledgment is drawn as an example. A message whose processing keeps failing is moved to a dead-letter queue after a maximum number of deliveries (§30.11). Failure points: a worker crash leaves its message in flight until the lease expires; a broker-node failure is covered by replication inside the broker. Scaling: add workers until the queue's own throughput or the downstream storage becomes the limit.
 
-### 30.4.2 Acknowledgements and the visibility timeout
+### 30.4.2 Acknowledgments and the visibility timeout
 
 **Figure 30.3 — The visibility timeout: success, crash and redelivery.**
 
@@ -246,7 +246,7 @@ $$V \ge b \cdot S_{\text{tail}} + \delta$$
 | $V$ | Visibility timeout (lease length) | s |
 | $b$ | Messages received per batch and processed sequentially under one lease | messages |
 | $S_{\text{tail}}$ | High-percentile (for example p99.9) processing time per message | s |
-| $\delta$ | Margin for acknowledgement latency, pauses and retries inside processing | s |
+| $\delta$ | Margin for acknowledgment latency, pauses and retries inside processing | s |
 :::
 
 ::: example
@@ -274,7 +274,7 @@ $$N = \left\lceil \frac{\lambda \cdot S}{k \cdot \rho} \right\rceil$$
 |---|---|---|
 | $N$ | Number of consumer instances | instances |
 | $\lambda$ | Average arrival rate of messages | messages/s |
-| $S$ | Mean processing time per message, including acknowledgement | s |
+| $S$ | Mean processing time per message, including acknowledgment | s |
 | $\lambda S$ | Average messages in processing (Little's $L$) | messages |
 | $k$ | Concurrent messages per instance (threads, coroutines or prefetch) | messages |
 | $\rho$ | Target utilization of each processing slot | dimensionless (0–1) |
@@ -336,7 +336,7 @@ $$T_{\text{drain}} = \frac{B}{\mu - \lambda}, \qquad \mu = \frac{N k}{S}, \qquad
 | Broker memory exhaustion | Unbounded in-memory backlog | Broker memory alarms | Block publishers, add storage | Disk-backed queues; length limits |
 
 ::: mistake
-**"Acknowledge as soon as you receive."** Acknowledging before processing turns a reliable queue into an at-most-once one: if the consumer crashes after the acknowledgement, the work is lost. Acknowledge after the side effects are durable.
+**"Acknowledge as soon as you receive."** Acknowledging before processing turns a reliable queue into an at-most-once one: if the consumer crashes after the acknowledgment, the work is lost. Acknowledge after the side effects are durable.
 :::
 
 ## 30.5 Publish/subscribe
@@ -349,15 +349,15 @@ $$T_{\text{drain}} = \frac{B}{\mu - \lambda}, \qquad \mu = \frac{N k}{S}, \qquad
 
 #### First-principles explanation
 
-A queue is a ticket rail: each ticket is cooked once. A topic is a newspaper: every subscriber gets their own copy, and the newsroom neither knows nor cares how many there are. Adding a subscriber requires no change to the publisher — which is the point. When PhotoShare later adds a "memories" feature that needs every upload, the team creates a new subscription; the upload service is untouched.
+A queue is a ticket rail: each ticket is cooked once. A topic is a newspaper: every subscriber gets their own copy, and the newsroom neither knows nor cares how many there are. Adding a subscriber requires no change to the publisher — which is the point. When PhotoShare later adds a "memories" feature that needs every upload, the team creates a new subscription; the upload service is untouched. Inside a single process the same idea is the Observer pattern (§37.8), which is synchronous and keeps no messages; Table 37.1 compares the two.
 
-The two styles compose. Each *subscription* usually behaves like a queue, with its own competing consumers, acknowledgements and backlog. Fan-out happens between subscriptions; load balancing happens within one.
+The two styles compose. Each *subscription* usually behaves like a queue, with its own competing consumers, acknowledgments and backlog. Fan-out happens between subscriptions; load balancing happens within one.
 
 #### How it works internally
 
 1. Subscribers register subscriptions on the topic, optionally with a **filter** (for example, only messages whose attribute `type = "video"`).
 2. The publisher sends a message to the topic; the broker stores it once or per subscription, depending on the design.
-3. The broker delivers a copy to every matching subscription. Each subscription tracks its own acknowledgements, so a slow subscriber's backlog never delays a fast one.
+3. The broker delivers a copy to every matching subscription. Each subscription tracks its own acknowledgments, so a slow subscriber's backlog never delays a fast one.
 
 **Figure 30.4 — Fan-out from one topic to independent subscriptions (SNS to SQS).**
 
@@ -501,7 +501,7 @@ flowchart LR
 
 **Reading the diagram.** The upload service publishes over AMQP to the `media` topic exchange with routing key `photo.jpeg.uploaded`. The exchange evaluates each binding: the key matches `photo.*.uploaded` and the match-all binding `#`, so copies go to the `thumbnails` quorum queue and the `audit-log` stream but not to `transcode`. Consumers receive from queues asynchronously; RabbitMQ pushes up to the **prefetch** count of unacknowledged messages per consumer (set with `basic.qos`). Storage lives in queues and streams, not exchanges. Messages rejected without requeue, expired, or over a delivery limit are republished to a **dead-letter exchange** (§30.11). Failure points: publishing to an exchange with no matching binding silently drops the message unless the publisher sets the `mandatory` flag or the exchange has an alternate exchange. Scaling: one queue's throughput is bounded by the node hosting its leader, so high throughput comes from many queues spread across nodes.
 
-**Reliability on both sides.** **Publisher confirms** make the broker acknowledge each published message once it is safely stored (for quorum queues, once a majority of replicas has it); without them a publisher cannot know whether a message survived a broker crash. **Consumer acknowledgements** (`basic.ack`, `basic.nack`, `basic.reject`) work as in §30.4 [RabbitMQ Docs: Confirms].
+**Reliability on both sides.** **Publisher confirms** make the broker acknowledge each published message once it is safely stored (for quorum queues, once a majority of replicas has it); without them a publisher cannot know whether a message survived a broker crash. **Consumer acknowledgments** (`basic.ack`, `basic.nack`, `basic.reject`) work as in §30.4 [RabbitMQ Docs: Confirms].
 
 **Queue types.** RabbitMQ offers three, as of 2026:
 
@@ -560,7 +560,7 @@ flowchart LR
   S1 -.->|max attempts reached| DT[[Dead-letter topic]]
 ```
 
-**Reading the diagram.** Publishers send to a topic; every message is copied to all three subscriptions (fan-out). The indexer subscription is **pull**: two indexer instances hold StreamingPull connections and share its messages (competing consumers). The webhook subscription is **push**: Pub/Sub POSTs each message over HTTPS and treats a success status as the acknowledgement. The **BigQuery subscription** writes messages directly into a table, a storage boundary with no consumer code. All delivery is asynchronous; each subscription keeps its own unacknowledged backlog. Failure points: a message that is not acknowledged within the ack deadline is redelivered; after a configured number of attempts it goes to a dead-letter topic. Scaling is automatic; the main levers are the number of subscriber instances and flow-control settings.
+**Reading the diagram.** Publishers send to a topic; every message is copied to all three subscriptions (fan-out). The indexer subscription is **pull**: two indexer instances hold StreamingPull connections and share its messages (competing consumers). The webhook subscription is **push**: Pub/Sub POSTs each message over HTTPS and treats a success status as the acknowledgment. The **BigQuery subscription** writes messages directly into a table, a storage boundary with no consumer code. All delivery is asynchronous; each subscription keeps its own unacknowledged backlog. Failure points: a message that is not acknowledged within the ack deadline is redelivered; after a configured number of attempts it goes to a dead-letter topic. Scaling is automatic; the main levers are the number of subscriber instances and flow-control settings.
 
 Features as of 2026: an ack deadline from 10 s (default) to 600 s, extended automatically by client libraries; retention of unacknowledged messages up to 7 days per subscription and, optionally, up to 31 days on the topic; **seek** to a timestamp or snapshot for replay; **ordering keys**, which deliver messages with the same key in publish order when the subscription enables ordering; **exactly-once delivery** for pull subscriptions within a region, which guarantees that a successfully acknowledged message is not redelivered; **dead-letter topics** with 5–100 maximum delivery attempts; and retry policies with exponential backoff [Google Cloud Docs: Pub/Sub].
 
@@ -588,9 +588,9 @@ flowchart LR
   BK1 -.->|offload old ledgers| S3[(Object storage tier)]
 ```
 
-**Reading the diagram.** Producers and consumers connect to the broker that owns their topic. Broker 1 writes each entry synchronously to $Q_w$ bookies and confirms to the producer after $Q_a$ acknowledgements; topic B's ledgers sit on a different set of bookies. Ownership and ledger metadata live in the metadata store (dotted: read and updated asynchronously relative to the data path). Sealed ledgers can be offloaded to object storage (**tiered storage**). Failure points: if broker 1 dies, another broker takes ownership of topic A in seconds without copying data, because the data is in BookKeeper; if a bookie dies, its ledgers are re-replicated from the surviving copies. Scaling: add brokers for serving capacity and bookies for storage independently.
+**Reading the diagram.** Producers and consumers connect to the broker that owns their topic. Broker 1 writes each entry synchronously to $Q_w$ bookies and confirms to the producer after $Q_a$ acknowledgments; topic B's ledgers sit on a different set of bookies. Ownership and ledger metadata live in the metadata store (dotted: read and updated asynchronously relative to the data path). Sealed ledgers can be offloaded to object storage (**tiered storage**). Failure points: if broker 1 dies, another broker takes ownership of topic A in seconds without copying data, because the data is in BookKeeper; if a bookie dies, its ledgers are re-replicated from the surviving copies. Scaling: add brokers for serving capacity and bookies for storage independently.
 
-Pulsar supports both queueing and streaming through **subscription types**: *exclusive* and *failover* (one active consumer, ordered, stream-like), *shared* (competing consumers, queue-like) and *key_shared* (competing consumers with per-key ordering). Each subscription is a durable **cursor** over the topic, with individual acknowledgements, negative acknowledgements, a redelivery count, retry-letter and dead-letter topics in the clients, and built-in geo-replication between clusters [Apache Pulsar Docs].
+Pulsar supports both queueing and streaming through **subscription types**: *exclusive* and *failover* (one active consumer, ordered, stream-like), *shared* (competing consumers, queue-like) and *key_shared* (competing consumers with per-key ordering). Each subscription is a durable **cursor** over the topic, with individual acknowledgments, negative acknowledgments, a redelivery count, retry-letter and dead-letter topics in the clients, and built-in geo-replication between clusters [Apache Pulsar Docs].
 
 ::: industry
 **DistributedLog at Twitter.** Twitter built DistributedLog, a replicated log service on BookKeeper, to serve as durable storage for its messaging and database replication workloads; the design segments each log into BookKeeper ledgers so that serving and storage scale separately — the same architecture Pulsar uses [Guo et al. 2017].
@@ -609,7 +609,7 @@ The guarantee is decided by **when the consumer acknowledges relative to its sid
 - Process, then acknowledge → at-least-once. A crash between the two causes redelivery of a message whose effect already happened.
 - Process idempotently, then acknowledge → effectively-once. Redeliveries happen, but the second processing changes nothing.
 
-There is no fourth option in which the broker alone delivers each message exactly once to an arbitrary side effect: the consumer's write to its database and its acknowledgement to the broker are two different systems, and one can succeed while the other fails (the two generals problem, §24.3.3). "Exactly-once" features narrow the window rather than close it.
+There is no fourth option in which the broker alone delivers each message exactly once to an arbitrary side effect: the consumer's write to its database and its acknowledgment to the broker are two different systems, and one can succeed while the other fails (the two generals problem, §24.3.3). "Exactly-once" features narrow the window rather than close it.
 
 ### 30.8.1 Where duplicates come from
 
@@ -631,7 +631,7 @@ sequenceDiagram
   Note over C: lease expiry on a slow consumer also redelivers
 ```
 
-**Reading the diagram.** First, the *producer* sends m1, the broker stores it, but the confirmation is lost; the producer cannot distinguish this from a lost send, retries, and the broker stores a second copy. Second, the *consumer* writes m1's effect to its database, then crashes or loses the acknowledgement; the broker redelivers m1 after the visibility timeout. Third (the note), a lease that expires while a slow consumer is still working hands the message to a second consumer (Figure 30.3). Solid arrows are synchronous calls; crossed arrows are failed messages. The storage boundary that matters is the consumer's database: it already holds m1's effect when the duplicate arrives. Rebalancing in partitioned logs is a fourth source (Chapter 31).
+**Reading the diagram.** First, the *producer* sends m1, the broker stores it, but the confirmation is lost; the producer cannot distinguish this from a lost send, retries, and the broker stores a second copy. Second, the *consumer* writes m1's effect to its database, then crashes or loses the acknowledgment; the broker redelivers m1 after the visibility timeout. Third (the note), a lease that expires while a slow consumer is still working hands the message to a second consumer (Figure 30.3). Solid arrows are synchronous calls; crossed arrows are failed messages. The storage boundary that matters is the consumer's database: it already holds m1's effect when the duplicate arrives. Rebalancing in partitioned logs is a fourth source (Chapter 31).
 
 ::: formula
 **Expected duplicates under at-least-once delivery**
@@ -647,7 +647,7 @@ $$E[\text{deliveries}] = \frac{1}{1 - p}, \qquad r_{\text{dup}} = \lambda \cdot 
 :::
 
 ::: example
-**Worked example — How rare is rare?** A notification consumer handles $\lambda = 10{,}000$ messages/s; one delivery in a thousand ends without an effective acknowledgement ($p = 0.001$).
+**Worked example — How rare is rare?** A notification consumer handles $\lambda = 10{,}000$ messages/s; one delivery in a thousand ends without an effective acknowledgment ($p = 0.001$).
 
 1. $E[\text{deliveries}] = 1 / 0.999 = 1.001$.
 2. $r_{\text{dup}} = 10{,}000 \times 0.001 / 0.999 \approx 10$ duplicates per second.
@@ -664,7 +664,7 @@ $$E[\text{deliveries}] = \frac{1}{1 - p}, \qquad r_{\text{dup}} = \lambda \cdot 
 | At-least-once | Ack after processing; producer retries | No | Yes, on failure | The default for business work |
 | Effectively-once | At-least-once plus idempotent or transactional processing | No | Delivered, but without repeated effect | Payments, inventory, counters |
 
-Broker features help at specific boundaries: SQS FIFO deduplicates *sends* within 5 minutes; Pub/Sub exactly-once delivery prevents redelivery after a successful acknowledgement; Kafka's idempotent producer and transactions make read-process-write *within Kafka* atomic (§31.11). None of them can make your consumer's call to a payment provider or an email service happen once; only idempotency at that boundary can, and §32.9 discusses the limits [Kleppmann 2017, ch. 11; Helland 2007].
+Broker features help at specific boundaries: SQS FIFO deduplicates *sends* within 5 minutes; Pub/Sub exactly-once delivery prevents redelivery after a successful acknowledgment; Kafka's idempotent producer and transactions make read-process-write *within Kafka* atomic (§31.11). None of them can make your consumer's call to a payment provider or an email service happen once; only idempotency at that boundary can, and §32.9 discusses the limits [Kleppmann 2017, ch. 11; Helland 2007].
 
 ::: mistake
 **"We use a broker with exactly-once delivery, so our consumer need not be idempotent."** Broker-level guarantees stop at the broker. A consumer that sends an email and then crashes before acknowledging will send it again on redelivery, whatever the broker promised.
@@ -762,7 +762,7 @@ stateDiagram-v2
   Deleted --> [*]
 ```
 
-**Reading the diagram.** A sent message is *Available*. Each receive makes it *InFlight* and increments its receive count. An acknowledgement deletes it. A negative acknowledgement with a backoff, or a visibility change, makes it *Delayed*; a lease that expires without an ack makes it *Available* again immediately. When an available message has already been received the maximum number of times, the broker moves it to the dead-letter queue instead of delivering it. A redrive returns it to *Available*, usually with a reset count. All transitions occur inside the broker's storage; the failure points are the two paths back to *Available*, which are where duplicates and reordering arise.
+**Reading the diagram.** A sent message is *Available*. Each receive makes it *InFlight* and increments its receive count. An acknowledgment deletes it. A negative acknowledgment with a backoff, or a visibility change, makes it *Delayed*; a lease that expires without an ack makes it *Available* again immediately. When an available message has already been received the maximum number of times, the broker moves it to the dead-letter queue instead of delivering it. A redrive returns it to *Available*, usually with a reset count. All transitions occur inside the broker's storage; the failure points are the two paths back to *Available*, which are where duplicates and reordering arise.
 
 ::: formula
 **Time and work before a poison message is dead-lettered**
@@ -832,7 +832,7 @@ flowchart LR
 
 ### 30.11.2 A runnable in-memory queue with visibility timeout and DLQ
 
-The following program implements the mechanics of this chapter in about 100 lines plus tests: competing consumers, leases, receipts, acknowledgements, heartbeats, backoff via visibility changes, a maximum receive count, a dead-letter queue and redrive. It uses a fake clock so the tests can "wait" instantly. Run it with `python3`; it prints `all queue tests passed`.
+The following program implements the mechanics of this chapter in about 100 lines plus tests: competing consumers, leases, receipts, acknowledgments, heartbeats, backoff via visibility changes, a maximum receive count, a dead-letter queue and redrive. It uses a fake clock so the tests can "wait" instantly. Run it with `python3`; it prints `all queue tests passed`.
 
 ```python
 """In-memory queue with visibility timeout, acks, redelivery and a dead-letter queue."""
@@ -1013,7 +1013,7 @@ What to notice:
 
 Brokers fall into two families [Kleppmann 2017, ch. 11]. **Queue-style brokers** (RabbitMQ classic and quorum queues, SQS) track each message individually and delete it once acknowledged; consumers share work message by message, and replay is impossible once a message is gone. **Log-based brokers** (Kafka, Pulsar, RabbitMQ streams) append messages to a partitioned, retained log; a consumer is just a position (an **offset**) in each partition, so many consumer groups can read the same data independently and any of them can rewind and replay. Parallelism in a log is per partition: within a consumer group each partition is read by one consumer, which gives per-partition ordering for free but means a slow message holds up its whole partition.
 
-**Apache Kafka**, created at LinkedIn [Kreps et al. 2011], is the dominant log-based broker. As of 2026 Kafka 4.x runs without ZooKeeper (metadata is managed by its own Raft-based KRaft quorum), and **share groups** (KIP-932, "Queues for Kafka"), introduced in the 4.x line, add queue-style consumption with per-message acknowledgement and delivery counts on top of the log. Chapter 31 covers partitions, replication, offsets, transactions and performance.
+**Apache Kafka**, created at LinkedIn [Kreps et al. 2011], is the dominant log-based broker. As of 2026 Kafka 4.x runs without ZooKeeper (metadata is managed by its own Raft-based KRaft quorum), and **share groups** (KIP-932, "Queues for Kafka"), introduced in the 4.x line, add queue-style consumption with per-message acknowledgment and delivery counts on top of the log. Chapter 31 covers partitions, replication, offsets, transactions and performance.
 
 **Table 30.7 — Kafka, RabbitMQ, SQS and Pulsar compared (as of 2026).**
 
@@ -1029,7 +1029,7 @@ Brokers fall into two families [Kleppmann 2017, ch. 11]. **Queue-style brokers**
 | Use cases | Event streaming, CDC, logs and metrics pipelines, event sourcing | Task queues, RPC over messaging, complex routing | Decoupling AWS services, job queues, fan-out | Multi-tenant platforms, mixed queue and stream workloads, geo-distributed messaging |
 | Choose when | You need retention, replay and many consumers of the same high-volume stream | You need per-message routing, acks and priorities on moderate volume | You are on AWS and want zero broker operations | You need both semantics, multi-tenancy or geo-replication and can operate it |
 
-Performance figures are orders of magnitude, not benchmarks: real numbers depend on message size, batching, replication, acknowledgement settings and hardware, so measure your own workload. Google Cloud Pub/Sub sits in the same niche on Google Cloud as SQS plus SNS on AWS, with fan-out and per-subscription queues in one service.
+Performance figures are orders of magnitude, not benchmarks: real numbers depend on message size, batching, replication, acknowledgment settings and hardware, so measure your own workload. Google Cloud Pub/Sub sits in the same niche on Google Cloud as SQS plus SNS on AWS, with fan-out and per-subscription queues in one service.
 
 ::: recommendation
 **A default decision path.** Start with the question "does more than one consumer need the *same* data, now or later?" If yes, or if you need replay, use a log (Kafka, Pulsar, RabbitMQ streams, or Pub/Sub with retention). If no, and the work is a task to be done once, use a queue (SQS, RabbitMQ quorum queues). Then let operations decide: on a cloud provider with no platform team, prefer the managed service; at sustained high volume with a platform team, self-managed or managed Kafka is usually cheaper per message.
@@ -1043,7 +1043,7 @@ Performance figures are orders of magnitude, not benchmarks: real numbers depend
 
 ::: summary
 - A **broker** removes time, space and synchronization coupling. A synchronous chain's availability is $\prod A_i$ ($0.999^5 \approx 99.5\%$); a queued design's is front service × broker. Keep synchronous only what the caller needs now.
-- **Queues** deliver each message to one of many **competing consumers**. Messages are leased (visibility timeout, ack deadline) and deleted on **acknowledgement**; size the lease as $b \cdot S_{\text{tail}} + \delta$ or use heartbeats.
+- **Queues** deliver each message to one of many **competing consumers**. Messages are leased (visibility timeout, ack deadline) and deleted on **acknowledgment**; size the lease as $b \cdot S_{\text{tail}} + \delta$ or use heartbeats.
 - Size consumers with Little's Law, $N = \lceil \lambda S / (k\rho) \rceil$; backlogs drain at the surplus, $B/(\mu - \lambda)$. Alert on the age of the oldest message.
 - **Pub/sub** copies each message to every subscription; each subscription is usually a queue. Durable subscriptions retain messages while consumers are away and cost storage when abandoned.
 - **Commands** ask one receiver to act; **events** state facts to unknown subscribers. Event notification is thin and invites callbacks; event-carried state transfer is fat and self-sufficient.
@@ -1079,7 +1079,7 @@ Performance figures are orders of magnitude, not benchmarks: real numbers depend
 6. A durable subscription retains messages while the subscriber is disconnected; an ephemeral one exists only while it is connected, so messages sent in between are lost to it.
 7. A command: it is imperative and addressed to a receiver with a known capability. The event would be `PhotoUploaded`.
 8. Yes to `photo.#` (`#` matches zero or more words). No to `*.uploaded`: `*` matches exactly one word, but the key has three.
-9. Producer retries after a lost confirm; a consumer crash or lost acknowledgement after the side effect; a lease expiring while a slow consumer still works.
+9. Producer retries after a lost confirm; a consumer crash or lost acknowledgment after the side effect; a lease expiring while a slow consumer still works.
 10. Messages of one group are delivered one batch at a time, in order; only different groups can be processed concurrently.
 11. About $4 \times 45 = 180$ s after the first delivery, when it next becomes available.
 12. Because the message's age may count from its original enqueue time; a shorter DLQ retention can delete it before anyone inspects it.

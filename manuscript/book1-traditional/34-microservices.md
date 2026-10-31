@@ -82,7 +82,7 @@ $$C(A,B) = \frac{n_{AB}}{n_A + n_B - n_{AB}}$$
 
 ### 34.3.3 Team ownership and Conway's law
 
-Conway observed that systems copy the communication structure of the organizations that build them [Conway 1968] (§1.4). The **inverse Conway maneuver** shapes teams first so the desired architecture is the natural outcome. Skelton and Pais add that a service should fit within one **stream-aligned team's** cognitive load [Skelton and Pais 2019]. Practical rules: one owning team per service (a team may own several); a change in one business capability should land in one team; and teams with high communication cost (time zones, companies) need stable, documented interfaces between them.
+Conway observed that systems copy the communication structure of the organizations that build them [Conway 1968] (§1.4; §33.13.2 counts the coordination paths). The **inverse Conway maneuver** shapes teams first so the desired architecture is the natural outcome. Skelton and Pais add that a service should fit within one **stream-aligned team's** cognitive load [Skelton and Pais 2019]. Practical rules: one owning team per service (a team may own several); a change in one business capability should land in one team; and teams with high communication cost (time zones, companies) need stable, documented interfaces between them.
 
 **Figure 34.1 — Two ways to split QuickBite: by technical layer and by business capability.**
 
@@ -133,7 +133,7 @@ The most important row is the **transaction boundary**: if two candidates must c
 
 ## 34.4 Domain-driven design
 
-Domain-driven design (DDD) is the most widely used discipline for finding and modelling business capabilities. Evans wrote it for complicated domains such as shipping and banking, a decade before microservices [Evans 2003]. **Strategic design** divides a domain into models and relates them (§34.5); **tactical design** builds one model well (this section).
+Domain-driven design (DDD) is the most widely used discipline for finding and modeling business capabilities. Evans wrote it for complicated domains such as shipping and banking, a decade before microservices [Evans 2003]. **Strategic design** divides a domain into models and relates them (§34.5); **tactical design** builds one model well (this section).
 
 ::: definition
 **Definition — Domain-driven design (DDD).** An approach that places a model of the business domain, built jointly by developers and domain experts, at the center of the design, expresses it directly in code, and divides large domains into explicitly bounded models [Evans 2003; Vernon 2013].
@@ -242,7 +242,7 @@ $$P_{\text{conflict}} = 1 - e^{-\lambda w}$$
 Inside a service, aggregates record events that handlers apply to other aggregates after commit. Across services, the same events go to a broker (Chapter 30), published reliably with the **transactional outbox**: the event row is written in the same local transaction as the aggregate change and relayed afterwards (§32.5). An *event* states a fact; a *command* asks for something and may be refused (§30.6).
 
 ::: mistake
-**Common misconception — "DDD means repositories and factories."** Most of DDD's value is strategic: finding boundaries and naming things in the business's language. A codebase full of `OrderRepository` classes that still has one "order" model for support, kitchen and finance has adopted the vocabulary without the design. Evans reserves the full investment for the **core domain**, the part that differentiates the business [Evans 2003].
+**Common misconception — "DDD means repositories and factories."** Most of DDD's value is strategic: finding boundaries and naming things in the business's language. A codebase full of `OrderRepository` classes that still has one "order" model for support, kitchen and finance has adopted the vocabulary without the design (the Repository and Factory patterns themselves are in §37.13 and §37.3). Evans reserves the full investment for the **core domain**, the part that differentiates the business [Evans 2003].
 :::
 
 ## 34.5 Bounded contexts and context maps
@@ -253,7 +253,7 @@ Inside a service, aggregates record events that handlers apply to other aggregat
 **Definition — Bounded context.** An explicit boundary (in code, data and team ownership) within which one domain model and its ubiquitous language apply consistently. The same word may mean different things in different contexts [Evans 2003].
 :::
 
-A "ticket" means different things at a railway station, in a police car and in a sprint backlog; nobody is confused because each word lives in a context. QuickBite's order therefore becomes several models keyed by a shared `order_id`: in **Ordering**, lines, a status machine and a total; in **Kitchen**, a `Ticket` with a promised-ready time; in **Delivery**, pickup, drop-off and courier; in **Billing**, a `Charge` and later a `Settlement`. Single enterprise-wide models, the goal of 1990s data modelling, became so general that they served nobody; bounded contexts make the translation between legitimate models explicit.
+A "ticket" means different things at a railway station, in a police car and in a sprint backlog; nobody is confused because each word lives in a context. QuickBite's order therefore becomes several models keyed by a shared `order_id`: in **Ordering**, lines, a status machine and a total; in **Kitchen**, a `Ticket` with a promised-ready time; in **Delivery**, pickup, drop-off and courier; in **Billing**, a `Charge` and later a `Settlement`. Single enterprise-wide models, the goal of 1990s data modeling, became so general that they served nobody; bounded contexts make the translation between legitimate models explicit.
 
 ::: concept
 **Concept — A bounded context is the best first candidate for a service boundary.** It already has high cohesion and a deliberately narrow interface. Newman recommends contexts as the starting point: one context may later become several services, but a service should rarely span two contexts [Newman 2021].
@@ -294,7 +294,7 @@ flowchart LR
   ID[Identity] -->|"shared kernel:<br/>CustomerId, auth claims"| ORD
 ```
 
-**Reading the diagram.** Arrows run from upstream to downstream and are labelled with the pattern; this models influence and translation, not request direction. Catalog's **open host service** publishes a menu schema that Ordering consumes. Ordering is a **supplier** to Delivery and Kitchen, which consume its events asynchronously. Billing receives order events through Ordering's open host service and shields itself from the payment provider with an **anticorruption layer**; Kitchen does the same for many restaurant point-of-sale systems. Delivery is **conformist** toward the maps provider, whose geometry types are acceptable. Identity and Ordering share a tiny **kernel**. Each box is a storage and ownership boundary. Failure points: Kitchen's ACL must stop malformed POS data; a maps model change forces Delivery to change. Each context scales independently.
+**Reading the diagram.** Arrows run from upstream to downstream and are labeled with the pattern; this models influence and translation, not request direction. Catalog's **open host service** publishes a menu schema that Ordering consumes. Ordering is a **supplier** to Delivery and Kitchen, which consume its events asynchronously. Billing receives order events through Ordering's open host service and shields itself from the payment provider with an **anticorruption layer**; Kitchen does the same for many restaurant point-of-sale systems. Delivery is **conformist** toward the maps provider, whose geometry types are acceptable. Identity and Ordering share a tiny **kernel**. Each box is a storage and ownership boundary. Failure points: Kitchen's ACL must stop malformed POS data; a maps model change forces Delivery to change. Each context scales independently.
 
 ### 34.5.3 The anticorruption layer in code
 
@@ -455,7 +455,7 @@ flowchart LR
   E7 --> H1["HOTSPOT: when is<br/>an order final?"]
 ```
 
-**Reading the diagram.** This is a modelling artifact: arrows show causality, not network calls. Stadiums are actors, parallelograms commands, rectangles domain events and hexagons policies. A customer's *Place order* produces `OrderPlaced`; a policy reacts with *Authorize payment*, and so on. The dotted arrow marks a human waiting step, where latency and timeouts will appear in the system. The vocabulary shifts around `PaymentAuthorized` (Billing), at "ticket" (Kitchen) and at "courier" (Delivery): these are the candidate boundaries of Figure 34.3. The final hotspot (support says delivery, finance says 14 days later) becomes a design decision instead of a production bug.
+**Reading the diagram.** This is a modeling artifact: arrows show causality, not network calls. Stadiums are actors, parallelograms commands, rectangles domain events and hexagons policies. A customer's *Place order* produces `OrderPlaced`; a policy reacts with *Authorize payment*, and so on. The dotted arrow marks a human waiting step, where latency and timeouts will appear in the system. The vocabulary shifts around `PaymentAuthorized` (Billing), at "ticket" (Kitchen) and at "courier" (Delivery): these are the candidate boundaries of Figure 34.3. The final hotspot (support says delivery, finance says 14 days later) becomes a design decision instead of a production bug.
 
 #### Failure scenarios
 
@@ -1048,7 +1048,7 @@ $$\Delta L_{\text{chain}} \approx h \cdot \delta_{\text{hop}} \qquad C_{\text{CP
 1. Sidecar latency on the longest path: $\Delta L \approx 4 \times 0.25 = 1.0$ ms at p99.
 2. Sidecar CPU: $C = (20{,}000 \times 2 / 1{,}000) \times 0.20 = 8$ vCPU.
 3. Sidecar memory: $M = 400 \times 60 = 24{,}000$ MB = 24 GB (an under-load figure; it grows with configuration size).
-4. Ambient, L4 only: CPU $= 40 \times 0.06 = 2.4$ vCPU; memory $= 40 \times 12 = 480$ MB; latency $\approx 4 \times 0.20 = 0.8$ ms at p99, plus waypoints where L7 is needed.
+4. Ambient, L4 only: CPU $= (20{,}000 \times 2 / 1{,}000) \times 0.06 = 2.4$ vCPU (two ztunnels per call); memory $= 40 \times 12 = 480$ MB; latency $\approx 4 \times 0.20 = 0.8$ ms at p99, plus waypoints where L7 is needed.
 
 **Interpretation.** About 1 ms of p99 is negligible in a 300 ms budget but half of a 2 ms cache-path budget; 8 vCPU and 24 GB is two or three extra nodes. **Engineering implication.** The mesh suits typical request/response services; for very high-rate, low-latency paths, measure first. Ambient mode cuts the per-pod memory cost most. Vendor numbers are best cases; benchmark on your hardware and payloads.
 :::
