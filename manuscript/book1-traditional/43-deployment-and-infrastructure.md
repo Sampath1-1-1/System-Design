@@ -198,7 +198,7 @@ Rolling deployments mix versions and roll back slowly. Some systems need an atom
 5. **Watch.** Keep blue running and untouched for a bake period (minutes to hours).
 6. **Roll back or retire.** If green misbehaves, switch the router back. Otherwise blue becomes the idle environment for the next release, or is torn down.
 
-**Figure 43.4 — Blue–green traffic switch at the load balancer.**
+**Figure 43.2 — Blue–green traffic switch at the load balancer.**
 
 ```mermaid
 flowchart LR
@@ -303,7 +303,7 @@ No staging environment reproduces production's traffic mix, data and scale; some
 4. **Judge.** If the canary is significantly worse, shift its weight to 0 and roll back automatically. If not, increase the weight (for example 1% → 5% → 25% → 50% → 100%), observing at each step.
 5. **Promote** the new version to 100% and retire the old instances.
 
-**Figure 43.6 — Canary progression with automated analysis at each step.**
+**Figure 43.3 — Canary progression with automated analysis at each step.**
 
 ```mermaid
 flowchart TD
@@ -330,7 +330,7 @@ The canary weight can be enforced at several layers:
 - **By weighted routing.** A service mesh (§34.10), gateway or load balancer sends an exact percentage to each version, independent of instance counts. Argo Rollouts and Flagger work this way.
 - **By request attribute.** Route by header, user cohort, region or tenant (employees first, then one city), giving a sticky population so users do not alternate between versions.
 
-**Figure 43.7 — Canary and baseline traffic split by a weighted router.**
+**Figure 43.4 — Canary and baseline traffic split by a weighted router.**
 
 ```mermaid
 flowchart LR
@@ -581,7 +581,7 @@ Real canaries are judged on many metrics at once, not only on error rate: latenc
 3. **Scoring.** Metrics are grouped (for example "errors", "latency", "system"), and each group has a weight. The canary score is the weighted percentage of metrics that passed, from 0 to 100.
 4. **Thresholds.** The configuration sets a *pass* threshold and a *marginal* threshold. A score below marginal fails the canary immediately; a score at or above pass lets it continue. Metrics can also be marked *critical*, so that their failure fails the whole canary regardless of score.
 
-**Figure 43.8 — A Kayenta-style judgment over one analysis interval.**
+**Figure 43.5 — A Kayenta-style judgment over one analysis interval.**
 
 ```mermaid
 sequenceDiagram
@@ -643,7 +643,7 @@ Hodgson classifies flags by how long they live and how dynamic they are [Hodgson
 - **Ops toggles** control operational behavior, including **kill switches** that disable an expensive or failing feature under load. Some live for years by design.
 - **Permissioning toggles** enable features for specific users or plans (beta testers, premium tier). They are long-lived and are really product configuration.
 
-**Figure 43.9 — Feature flag evaluation in a service.**
+**Figure 43.6 — Feature flag evaluation in a service.**
 
 ```mermaid
 flowchart LR
@@ -742,7 +742,7 @@ The strategies combine rather than compete. A typical mature pipeline deploys ea
 **Definition — Infrastructure as code (IaC).** Managing infrastructure (networks, machines, load balancers, databases, DNS, permissions) through machine-readable definition files kept in version control and applied by tools, instead of through manual console clicks or ad hoc scripts [Morris 2020].
 :::
 
-Before IaC, servers were configured by hand. Each became a unique "snowflake" whose exact state nobody could reproduce; rebuilding one after a failure meant archaeology. A disaster-recovery region built by clicking was never quite like the primary. IaC applies the software discipline of this chapter to infrastructure: every change is a reviewed commit, environments are created from the same code, and the history shows who changed what and why.
+Hand-configured servers become unique "snowflakes" nobody can reproduce, and a disaster-recovery region built by clicking is never quite like the primary. IaC makes every infrastructure change a reviewed commit, builds environments from the same code, and records who changed what and why.
 
 There are two styles. An **imperative** definition lists *steps*: "create a VM; then attach a disk; then open port 443". A **declarative** definition states the *desired end state*: "there exist three VMs of this size, each with a disk, behind a load balancer that listens on 443". A thermostat is declarative (you set 21 °C and it works out whether to heat), while "run the heater for ten minutes" is imperative. Terraform, OpenTofu, AWS CloudFormation and Kubernetes manifests are declarative; shell scripts and cloud SDK calls are imperative; Pulumi and the AWS CDK let you write general-purpose code that *produces* a declarative model.
 
@@ -750,9 +750,9 @@ There are two styles. An **imperative** definition lists *steps*: "create a VM; 
 **Definition — Idempotence.** An operation is **idempotent** if applying it once or many times leaves the system in the same state. **Drift** is any difference between the state the code declares and the state that actually exists.
 :::
 
-Declarative tools are idempotent by construction: they compare the desired state with the actual state and act only on the difference. Running "create a VM" twice gives two VMs; applying "there exist three VMs" twice gives three. Idempotence is what makes it safe to re-run an apply after a partial failure, and to run it continuously.
+Declarative tools are idempotent by construction: they compare the desired state with the actual state and act only on the difference. Running "create a VM" twice gives two VMs; applying "there exist three VMs" twice gives three. Idempotence makes re-running an apply after a partial failure safe.
 
-**Figure 43.10 — The declarative reconciliation loop and drift.**
+**Figure 43.7 — The declarative reconciliation loop and drift.**
 
 ```mermaid
 flowchart LR
@@ -769,7 +769,7 @@ flowchart LR
 **Detecting drift.** Run the comparison on a schedule. With Terraform, `terraform plan -detailed-exitcode` exits with code 0 when there are no changes and 2 when there are, which a scheduled job can turn into an alert [HashiCorp Docs: plan]. GitOps controllers (§43.10) detect and optionally revert drift continuously. When you find drift, decide deliberately: either revert it, or bring the code up to date so the change becomes reviewed history.
 
 ::: mistake
-**Mistake — "We use IaC, so the console is fine for quick fixes."** Every console change is drift. The next apply either reverts the fix silently (re-breaking production) or fails in a confusing way. Make the console read-only for humans in production, and keep a break-glass role whose use is logged and followed by a code change.
+**Mistake — "We use IaC, so the console is fine for quick fixes."** Every console change is drift that the next apply silently reverts or trips over. Make production consoles read-only, with a logged break-glass role followed by a code change.
 :::
 
 ## 43.9 Terraform
@@ -866,15 +866,14 @@ What to notice:
 - `required_version` and the provider constraint `~> 6.0` (any 6.x) make runs reproducible; the lock file records the exact provider build.
 - The backend block cannot use variables, because it is read before variables are evaluated; teams pass per-environment backend settings with `terraform init -backend-config=...`.
 - `use_lockfile = true` enables S3-native locking (a lock object written next to the state). Before Terraform 1.10 the S3 backend locked through a DynamoDB table (`dynamodb_table`), which is now deprecated (as of 2026) [HashiCorp Docs: S3 backend].
-- Bucket versioning and the public access block are separate resources that reference the bucket's `id`; the references create the dependency order.
-- `default_tags` labels everything for cost allocation (Chapter 51) and ownership.
+- References to the bucket's `id` create the dependency order.
 - The `validation` block rejects a typo such as `prd` at plan time rather than creating a stray bucket.
 
 ### 43.9.3 Plan and apply
 
 Terraform's core workflow is **init → plan → apply**. `terraform init` downloads providers and configures the backend. `terraform plan` reads state, refreshes it against the real infrastructure, compares it with the configuration and prints the proposed actions: `+` create, `~` update in place, `-/+` replace, `-` destroy. `terraform apply` executes a plan. In a pipeline, save the plan with `terraform plan -out=tfplan`, have a person or policy check review it, and then run `terraform apply tfplan`, which applies exactly the reviewed actions or refuses if the state changed in between.
 
-**Figure 43.11 — A pipeline running plan and apply with remote state and locking.**
+**Figure 43.8 — A pipeline running plan and apply with remote state and locking.**
 
 ```mermaid
 sequenceDiagram
@@ -947,9 +946,9 @@ In August 2023 HashiCorp changed Terraform's license from the open-source Mozill
 **Definition — GitOps.** An operating model in which the desired state of a system is declared in Git, and software agents running inside the target environment continuously pull that state and reconcile the live system to it. The OpenGitOps principles state that the desired state is **declarative**, **versioned and immutable**, **pulled automatically** and **continuously reconciled** [OpenGitOps 2021].
 :::
 
-In a traditional **push** pipeline, the CI system holds credentials to the production cluster and runs `kubectl apply` or `helm upgrade` at the end of a job. That has two weaknesses. The CI system becomes a high-value target: whoever compromises it can change production. And the pipeline acts only at deploy time, so if someone edits the cluster by hand afterwards, nothing notices. GitOps inverts the direction. An agent runs *inside* the cluster, reads Git, and applies what it finds; CI's job ends when it updates the Git repository (for example, bumping an image digest). The cluster needs read access to Git, and nothing outside needs write access to the cluster.
+In a **push** pipeline, the CI system holds production cluster credentials and runs `kubectl apply` at the end of a job: CI becomes a high-value target, and manual edits after deploy go unnoticed. GitOps inverts the direction. An agent runs *inside* the cluster, reads Git, and applies what it finds; CI's job ends when it updates the Git repository (for example, bumping an image digest). The cluster needs read access to Git, and nothing outside needs write access to the cluster.
 
-**Figure 43.12 — Pull-based GitOps with an in-cluster controller.**
+**Figure 43.9 — Pull-based GitOps with an in-cluster controller.**
 
 ```mermaid
 flowchart LR
@@ -1009,7 +1008,7 @@ A deployment pipeline holds the keys to production: it pushes images, applies Te
 **Definition — OIDC workload identity federation.** A mechanism in which the CI platform issues each job a short-lived, signed OpenID Connect (OIDC) token describing the job (repository, branch, environment), and the cloud provider exchanges that token for temporary credentials according to a trust policy, so that no long-lived cloud key is stored in the pipeline.
 :::
 
-**Figure 43.13 — A CI job obtaining cloud credentials through OIDC federation.**
+**Figure 43.10 — A CI job obtaining cloud credentials through OIDC federation.**
 
 ```mermaid
 sequenceDiagram
@@ -1038,7 +1037,7 @@ The pipeline is also the factory for every artifact you run, so attackers target
 - **SBOM.** A software bill of materials lists every component and version in an artifact, in a standard format such as SPDX or CycloneDX. When a vulnerability is announced in a library, an SBOM answers "which of our images contain it?" in minutes.
 - **Signing.** Sign the image digest and attach the provenance and SBOM as attestations. Sigstore's `cosign` supports *keyless* signing: the signer authenticates with OIDC, receives a short-lived certificate from the Fulcio certificate authority, and the signature is recorded in the Rekor transparency log [Sigstore Docs].
 
-**Figure 43.14 — From source to admission: signing and verification.**
+**Figure 43.11 — From source to admission: signing and verification.**
 
 ```mermaid
 flowchart LR
@@ -1125,7 +1124,7 @@ ALTER TABLE orders DROP COLUMN customer_phone;
 
 What to notice: `lock_timeout` makes the `ALTER` give up rather than queue all traffic behind it (the hazard of §11.15); the backfill touches 2,000 rows per transaction to keep locks and replication lag small; `normalize_phone` stands for an application-defined function; and steps 1 and 6 are separate releases, weeks apart.
 
-**Figure 43.16 — Expand–contract releases over time.**
+**Figure 43.12 — Expand–contract releases over time.**
 
 ```mermaid
 gantt
@@ -1169,7 +1168,7 @@ Some changes cannot be made as quick catalog edits: changing a column type, or a
 - **pt-online-schema-change** (Percona Toolkit) creates the new table, adds triggers on the original so that every insert, update and delete is mirrored to the copy, copies existing rows in chunks, and finally swaps the tables with an atomic `RENAME TABLE` [Percona Docs: pt-online-schema-change].
 - **gh-ost** (GitHub's online schema migration tool for MySQL) is *triggerless*. It copies rows in chunks and applies ongoing changes by reading the MySQL binary log, so the migration adds no trigger work to the production write path. It can throttle itself on replica lag or load, be paused and resumed, and postpone the final cut-over until an operator removes a flag file [GitHub gh-ost]. It requires row-based binary logging and has limited support for foreign keys.
 
-**Figure 43.17 — gh-ost's triggerless migration.**
+**Figure 43.13 — gh-ost's triggerless migration.**
 
 ```mermaid
 flowchart LR
@@ -1266,7 +1265,7 @@ PostgreSQL makes many changes cheap without such tools: adding a nullable column
 ### Intermediate
 
 **Q3. How would you automate canary analysis for a service with 500 requests/s and a 0.2% error rate?**
-**Answer.** Decide the smallest regression worth catching (say a doubling), then size the sample: about 12,000 requests per group at $\alpha = 0.01$ and 80% power. At 5% weight per group (25 requests/s) that is about 8 minutes per step. Judge error rate with a one-sided two-proportion test and latency with a nonparametric test against a fresh baseline; correct for repeated looks; add business metrics; auto-rollback on fail, hold on inconclusive.
+**Answer.** Decide the smallest regression worth catching (say a doubling), then size the sample: about 15,000 requests per group at $\alpha = 0.01$ and 80% power. At 5% weight per group (25 requests/s) that is about 10 minutes per step. Judge error rate with a one-sided two-proportion test and latency with a nonparametric test against a fresh baseline; correct for repeated looks; add business metrics; auto-rollback on fail, hold on inconclusive.
 
 **Q4. How do you rename a column in a 2 TB table with zero downtime under rolling deploys?**
 **Answer.** Expand–contract: add the new column, deploy dual-write, backfill in throttled batches, switch reads, stop old writes, drop the old column weeks later. Each step is a separate release compatible with its neighbors. Use `lock_timeout`, and gh-ost or pt-osc for operations that copy the table.

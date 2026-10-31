@@ -62,9 +62,8 @@ Monitoring answers **known-unknowns**: you know which question to ask ("is the e
 | Answers | "Is something wrong?" | "What is different about the requests that are wrong?" |
 | Cost driver | Number of time series | Volume of events stored and scanned |
 | Failure mode | Green dashboards during a real outage | Expensive storage and slow queries if undisciplined |
-| Relationship | Necessary; triggers investigation | Built on top; drives investigation |
 
-The two are complements. You still need cheap, reliable metrics to *detect* problems and page someone; you need rich events and traces to *explain* them.
+The two are complements: cheap, reliable metrics *detect* problems; rich events and traces *explain* them.
 
 ::: concept
 **Concept — The "three pillars" and their limits.** Logs, metrics and traces are often called the three pillars of observability. The framing is useful for tooling but misleading as a goal: three disconnected stores, each queried in a different language, do not make a system observable. What matters is that signals share identifiers (trace ID, service name, deployment version) so that you can pivot from one to another, and that at least one store keeps raw, high-cardinality context about each request [Majors, Fong-Jones and Miranda 2022].
@@ -95,7 +94,7 @@ flowchart LR
   Q4 --> CAUSE([Hypothesis:<br/>new tokenization path])
 ```
 
-**Reading the diagram.** The checkout service emits one wide event per request asynchronously to a columnar event store, the storage boundary. Each subsequent box is an interactive query, and each edge label is what the previous answer revealed, narrowing the population. No query was planned in advance: `app_version` and `card_network` are ordinary fields on the event, and the investigator chose them while exploring. The final "compare" step automates the search by ranking which field values are over-represented among failures. Failure points: if the service had emitted only pre-aggregated counters, Q2 and Q3 would be impossible; if the event lacked `card_network`, the trail would go cold. Scaling: event volume grows with traffic, so stores sample routine successes and keep all failures (§40.6.3).
+**Reading the diagram.** The checkout service emits one wide event per request asynchronously to a columnar event store, the storage boundary. Each subsequent box is an interactive query, and each edge label is what the previous answer revealed, narrowing the population. No query was planned in advance; the investigator chose `app_version` and `card_network` while exploring, and the final step ranks field values over-represented among failures. Failure points: with only pre-aggregated counters Q2 and Q3 are impossible; without `card_network` on the event the trail goes cold. Scaling: event volume grows with traffic, so stores sample routine successes and keep all failures (§40.6.3).
 
 Metrics systems cannot store `user_id` or `trace_id` as a label, because every distinct value creates a new time series (§40.5.3). Event stores can, because each event is a row and a new value costs only its bytes. This is the fundamental trade: **metrics are cheap per request but expensive per dimension; events are cheap per dimension but expensive per request.**
 
@@ -128,7 +127,7 @@ A ship's captain who writes "rough night, lost some cargo" in a diary has writte
 
 #### Why does this exist?
 
-Free-text lines such as `Payment failed for order 991 after 3 retries` force every consumer to write a parser, and the parsers break silently when a developer rephrases the message. At QuickBite's volume (hundreds of gigabytes per day, §40.4.4) nobody reads logs; machines query them. Structure turns logs from prose into data.
+Free-text lines such as `Payment failed for order 991 after 3 retries` force every consumer to write a parser that breaks silently when the message is rephrased. At hundreds of gigabytes per day (§40.4.4) machines, not people, read logs.
 
 ```json
 {"ts":"2026-10-30T19:42:07.118Z","level":"ERROR","service":"payment",
@@ -248,7 +247,7 @@ $$V_{\text{day}} = R \times n \times b \times 86{,}400 \qquad C_{\text{month}} =
 
 ### 40.4.5 Personal data and redaction
 
-Logs are the most common place for personal data to leak, because developers log whole request objects while debugging and the line ships to a system with broad read access and long retention. Under privacy laws such as the EU GDPR, log stores holding names, emails, addresses, card data or precise locations become regulated data stores, subject to access controls, retention limits and deletion requests.
+Logs are where personal data most often leaks: developers log whole request objects while debugging, and the lines land in a widely readable store with long retention. Under laws such as the EU GDPR, a log store holding names, emails, card data or locations becomes a regulated data store.
 
 Defend in layers:
 
@@ -630,7 +629,7 @@ $$V = R \, p_{\text{eff}} \, S \, b \qquad P_{\text{capture}} = 1 - (1 - p)^{k} 
 4. Tail sampling, keeping all errors and slow traces plus a 1% baseline: $p_{\text{eff}} = 0.012 + 0.988 \times 0.01 = 0.0219$, i.e. $0.0219 \times 1.08\text{ TB} \approx 23.6$ GB/day, and **100%** of the failing requests are captured.
 5. Price of tail sampling: the collectors must receive all 25,000 spans/s, and with $w = 10$ s they buffer $1{,}000 \times 10 \times 25 \times 1.5\text{ KB} = 375$ MB of pending spans, plus headroom for traffic spikes.
 
-**Interpretation.** Tail sampling stores less than half of 5% head sampling yet keeps every interesting trace. **Engineering implication.** Use head sampling where the network cost of shipping every span is prohibitive or traffic is uniform; use tail sampling (often after a generous head rate) when the traces you need are rare. Budget collector CPU, network and memory for 100% of spans, and route all spans of a trace to the same collector.
+**Interpretation.** Tail sampling stores less than half of 5% head sampling yet keeps every interesting trace. **Engineering implication.** Use head sampling when shipping every span is unaffordable; use tail sampling (often after a generous head rate) when the traces you need are rare. Budget collector CPU, network and memory for 100% of spans, and route all spans of a trace to the same collector.
 :::
 
 The simulation below checks these numbers on 200,000 synthetic traces, comparing head sampling at 5% and 1% with a tail policy that keeps errors, slow traces and a 1% baseline.
@@ -1009,7 +1008,7 @@ flowchart TB
 **Definition — Symptom-based alert.** An alert on something users experience (errors, latency, unavailability, correctness), ideally expressed against an SLO. A **cause-based** alert fires on a suspected cause (high CPU, a full disk queue, a replica down) that may or may not hurt users [Beyer et al. 2016, ch. 6].
 :::
 
-A hospital monitor alarms when a patient's oxygen saturation drops, not when one of many possible causes appears; the doctor then investigates causes. Paging works the same way. Users care whether checkout works, not whether a CPU is at 90%. CPU at 90% with healthy latency is efficiency; CPU at 30% with a deadlocked pool is an outage that a CPU alert misses. The SRE book's rules are that every page must be urgent, actionable and require human intelligence, and that you should page on symptoms and use causes to debug [Beyer et al. 2016, ch. 6].
+A hospital monitor alarms when a patient's oxygen saturation drops, not on each possible cause; the doctor then investigates. Paging works the same way. CPU at 90% with healthy latency is efficiency; CPU at 30% with a deadlocked pool is an outage that a CPU alert misses. The SRE book's rules are that every page must be urgent, actionable and require human intelligence, and that you should page on symptoms and use causes to debug [Beyer et al. 2016, ch. 6].
 
 **Table 40.10 — Symptom-based versus cause-based alerts.**
 
@@ -1055,15 +1054,23 @@ $$\beta = \frac{e}{1 - \text{SLO}} \qquad \text{budget consumed in time } t = \f
 Prometheus evaluates alerting rules; **Alertmanager** decides who hears about them. An alert moves from *inactive* to *pending* when its condition is true, and to *firing* once it has stayed true for the rule's `for` duration, which filters blips.
 
 ```yaml
-# Prometheus alerting rule (rules file)
+# Prometheus rules file: record error ratios over two windows, then alert
 groups:
 - name: checkout-slo
   rules:
+  - record: service:slo_errors_per_request:ratio_rate5m
+    expr: |
+      sum by (service) (rate(http_server_requests_total{status_class="5xx"}[5m]))
+      / sum by (service) (rate(http_server_requests_total[5m]))
+  - record: service:slo_errors_per_request:ratio_rate1h
+    expr: |
+      sum by (service) (rate(http_server_requests_total{status_class="5xx"}[1h]))
+      / sum by (service) (rate(http_server_requests_total[1h]))
   - alert: CheckoutErrorBudgetFastBurn
     expr: |
-      job:slo_errors_per_request:ratio_rate1h{service="checkout"} > (14.4 * 0.001)
+      service:slo_errors_per_request:ratio_rate1h{service="checkout"} > (14.4 * 0.001)
       and
-      job:slo_errors_per_request:ratio_rate5m{service="checkout"} > (14.4 * 0.001)
+      service:slo_errors_per_request:ratio_rate5m{service="checkout"} > (14.4 * 0.001)
     for: 2m
     labels: {severity: page, team: payments}
     annotations:
@@ -1088,7 +1095,7 @@ inhibit_rules:
 
 What to notice:
 
-- The rule reads recorded series (§40.8.3) and requires both windows to exceed the burn rate; `runbook_url` travels with the alert.
+- Two recording rules (§40.8.3) compute the error ratio over 5 minutes and 1 hour; the alert requires both to exceed 14.4 times the budget rate, and `runbook_url` travels with the alert.
 - `group_by` collapses 60 pods' identical alerts into one notification; `group_wait` waits 30 s to gather the group, `group_interval` throttles updates and `repeat_interval` re-notifies an unresolved alert every 4 hours (these three values are Alertmanager's defaults) [Prometheus Docs: Alertmanager configuration].
 - The routing tree sends pages for the payments team to its pager and everything else to a ticket queue.
 - The inhibition rule suppresses service pages in a region while a `RegionUnreachable` alert is firing for that same region, so responders see the cause, not 40 symptoms.
@@ -1159,7 +1166,7 @@ sequenceDiagram
   participant TS as Trace store
   participant LS as Log store
   participant CD as Deploy system
-  AM->>OC: 19:49 page, checkout fast burn
+  AM->>OC: 19:51 page, checkout fast burn
   OC->>GF: open checkout dashboard
   GF-->>OC: 5xx up since 19:40, no backend deploy
   OC->>GF: click exemplar on p99 panel
@@ -1173,7 +1180,7 @@ sequenceDiagram
   CD-->>OC: error ratio back to 0.1 percent by 20:01
 ```
 
-**Reading the diagram.** Messages run top to bottom in time. The burn-rate page (asynchronous notification) reaches the on-call engineer nine minutes after errors start: the 5-minute window exceeds 1.44% almost at once, but the 1-hour average needs $t$ minutes of 9% errors, where $(0.09\,t + 0.001\,(60 - t))/60 = 0.0144$, so $t \approx 9$ (§39.7.3). Each subsequent exchange is a synchronous query: the dashboard rules out a backend deploy; an exemplar leads to one failing trace; the trace's ID retrieves its logs, which carry `card_network`; a grouped query over wide events or span attributes shows the failures concentrate in one app version and one card network. The mitigation is a feature-flag change, not a deploy (§43.7); nobody restarted healthy services or grepped machines.
+**Reading the diagram.** Messages run top to bottom in time. The burn-rate page (asynchronous notification) reaches the on-call engineer eleven minutes after errors start: the 5-minute window exceeds 1.44% almost at once, but the 1-hour average needs $t$ minutes of 9% errors, where $(0.09\,t + 0.001\,(60 - t))/60 = 0.0144$, so $t \approx 9$ (§39.7.3), plus the rule's 2-minute `for`. Each subsequent exchange is a synchronous query: the dashboard rules out a backend deploy; an exemplar leads to one failing trace; the trace's ID retrieves its logs, which carry `card_network`; a grouped query over wide events or span attributes shows the failures concentrate in one app version and one card network. The mitigation is a feature-flag change, not a deploy (§43.7); nobody restarted healthy services or grepped machines.
 
 ::: example
 **Worked example — What the incident cost.** Checkout serves 300 orders/s; errors ran at 9% instead of 0.1% from 19:40 to 20:01 (21 minutes, 1,260 s). SLO 99.9% over 30 days.
