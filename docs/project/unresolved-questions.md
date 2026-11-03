@@ -246,3 +246,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-239 | 45 | "Cores That Don't Count" (Hochschild et al. HotOS 2021) failure rate quoted | Open | |
 | UQ-240 | 45 | Hyperledger Fabric 3.0 SmartBFT orderer; Tendermint Core → CometBFT rename (2023); Ethereum finality ~12.8 min (as of 2026); Bitcoin transactions-per-block range | Open | Time-sensitive |
 | UQ-241 | 45 | Daudjee & Salem (2006) as origin of strong session SI | Open | |
+| UQ-242 | 46 | Borg (Verma et al. 2015) figures from memory: ~10 s Borgmaster failover; "a few hundred seconds" vs >3 days to schedule a cell without optimizations; 3–5% gain of hybrid scoring over best fit (baseline possibly E-PVM) | Open | Unverifiable numbers removed from text |
+| UQ-243 | 46 | Sparrow default probe ratio d = 2 | Open | |
+| UQ-244 | 46 | Kubernetes: preemption node-selection order; percentageOfNodesToScore default formula; native gang scheduling (v1.35 alpha Workload API); DRA core GA in v1.34; Kueue/Volcano feature names; Slurm backfill defaults; Slinky status | Open | Version-dependent; merge with UQ-206, UQ-209 |
