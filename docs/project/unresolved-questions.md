@@ -232,3 +232,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-225 | 43 | Kayenta details ("critical" metric flag, marginal/pass semantics, effect-size settings); Google blog author/URL | Open | |
 | UQ-226 | 43 | Terraform S3 backend use_lockfile GA version (believed 1.11) and DynamoDB-locking deprecation; HCL example not validated with terraform; OpenTofu governance home (2026); Argo CD default 3-min polling | Open | Version-dependent |
 | UQ-227 | 1 / 43 | Knight Capital $460M loss wording in SEC order | Open | Merge with UQ-014 |
+| UQ-228 | 44 | Observed inter-region RTT ranges in Table 44 region-pair table | Accepted | Labeled approximate, as of 2026 |
+| UQ-229 | 44 | AWS Builders' Library "Minimizing correlated failures in distributed systems" author/year (title confirmed) | Open | |
+| UQ-230 | 44 | Netflix 2013 active–active post author list; "Project Nimble" title, year and evacuation times | Open | |
+| UQ-231 | 44 | DynamoDB global tables: "usually within a second" replication wording, regions with strong consistency, conflict rejection behavior; Aurora Global Database secondary-Region limit (5 vs 10) and typical lag | Open | Time-sensitive; merge with UQ-142, UQ-158 |
+| UQ-232 | 44 | Pokémon GO launch details in SRE Workbook ch. 11 | Open | |
