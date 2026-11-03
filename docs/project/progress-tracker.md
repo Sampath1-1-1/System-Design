@@ -51,10 +51,10 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 41 | Cloud Computing | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,742 | 10 | 14 | 0 |
 | 42 | Containers and Kubernetes | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,874 | 15 | 12 | 0 |
 | 43 | Deployment and Infrastructure | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,773 | 13 | 2 | 0 |
-| 44 | Multi-Region and Global Systems | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 45 | Advanced Consistency and Byzantine Fault Tolerance | 5 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 46 | Distributed Scheduling and Cluster Management | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 47 | Multi-Tenant Architecture and Isolation | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 44 | Multi-Region and Global Systems | 4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 45 | Advanced Consistency and Byzantine Fault Tolerance | 5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 46 | Distributed Scheduling and Cluster Management | 4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 47 | Multi-Tenant Architecture and Isolation | 4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 48 | Edge Computing and Serverless at Scale | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 49 | Large-Scale Data Infrastructure and HPC | 4-5 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 50 | Security Architecture and Privacy Engineering | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |

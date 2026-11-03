@@ -43,3 +43,7 @@
 41: {research: done, draft: done, diagrams: done, review: done, final: todo}
 42: {research: done, draft: done, diagrams: done, review: done, final: todo}
 43: {research: done, draft: done, diagrams: done, review: done, final: todo}
+44: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+45: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+46: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+47: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
