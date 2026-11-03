@@ -333,7 +333,7 @@ Hybrid designs route by job type: a central scheduler places long or constrained
 | How it works | Serial filter–score–bind | Offers, accept or decline | Optimistic transactions | Random probes, late binding | Route by job class |
 | Advantages | Global policy, simple | Framework-specific logic | Parallel, full view, per-workload policy | Millisecond decisions, no bottleneck | Quality for long jobs, speed for short |
 | Disadvantages | Head-of-line blocking, throughput ceiling | Partial view, hoarding, hard gangs | Conflicts, hard for large gangs | No global constraints or preemption | Two systems to run and tune |
-| Performance | Hundreds to thousands of placements/s | Bounded by offer cycle | Scales until conflicts dominate | 100,000s of tasks/s | Best of both for mixed loads |
+| Performance | Hundreds to thousands of placements/s | Bounded by offer cycle | Scales until conflicts dominate | Millisecond decisions at very high task rates | Best of both for mixed loads |
 | Operational complexity | Low | Medium | High | Medium | High |
 | Cost | One scheduler | Allocator plus one per framework | Shared store plus schedulers | Many cheap schedulers | Highest |
 | Use cases | Borg, kube-scheduler, Slurm | Mesos, YARN (similar request model) | Omega, Borg's internal design | Sparrow, short analytics tasks | Research systems, large mixed clusters |
@@ -1224,8 +1224,8 @@ gantt
   section Running
   J0 on 6 nodes :done, j0, 0, 4h
   section Backfilled
-  J2 on 2 nodes :active, j2, 0, 3h
-  J3 on 2 extra nodes :active, j3, 0, 6h
+  J2 on 2 nodes :j2, 0, 3h
+  J3 on 2 extra nodes :j3, 0, 6h
   section Reserved
   J1 on 8 nodes :crit, j1, 4, 2h
   section Later
