@@ -237,3 +237,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-230 | 44 | Netflix 2013 active–active post author list; "Project Nimble" title, year and evacuation times | Open | |
 | UQ-231 | 44 | DynamoDB global tables: "usually within a second" replication wording, regions with strong consistency, conflict rejection behavior; Aurora Global Database secondary-Region limit (5 vs 10) and typical lag | Open | Time-sensitive; merge with UQ-142, UQ-158 |
 | UQ-232 | 44 | Pokémon GO launch details in SRE Workbook ch. 11 | Open | |
+| UQ-233 | 47 | AWS *SaaS Architecture Fundamentals* whitepaper title/year/URL | Open | |
+| UQ-234 | 47 | gVisor systrap default platform and Gofer details; Google production use of gVisor (cut from text — secondary sources only) | Open | |
+| UQ-235 | 47 | Citus tenant-isolation function name/behavior; KMS key-deletion waiting period and quotas | Open | Version-dependent |
+| UQ-236 | 47 | Isolation-overhead figures in §47.9.3 are planning assumptions | Accepted | Labeled in text |
