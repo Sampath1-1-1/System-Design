@@ -241,3 +241,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-234 | 47 | gVisor systrap default platform and Gofer details; Google production use of gVisor (cut from text — secondary sources only) | Open | |
 | UQ-235 | 47 | Citus tenant-isolation function name/behavior; KMS key-deletion waiting period and quotas | Open | Version-dependent |
 | UQ-236 | 47 | Isolation-overhead figures in §47.9.3 are planning assumptions | Accepted | Labeled in text |
+| UQ-237 | 45 | Bailis et al. (VLDB 2014): 3 of 18 databases serializable by default, 8 not offering it; HAT availability classes (Table 45.2) | Open | |
+| UQ-238 | 45 | Ports & Grittner (2012): "first production SSI", performance summary; predicate-lock support by index type/version | Open | |
+| UQ-239 | 45 | "Cores That Don't Count" (Hochschild et al. HotOS 2021) failure rate quoted | Open | |
+| UQ-240 | 45 | Hyperledger Fabric 3.0 SmartBFT orderer; Tendermint Core → CometBFT rename (2023); Ethereum finality ~12.8 min (as of 2026); Bitcoin transactions-per-block range | Open | Time-sensitive |
+| UQ-241 | 45 | Daudjee & Salem (2006) as origin of strong session SI | Open | |
