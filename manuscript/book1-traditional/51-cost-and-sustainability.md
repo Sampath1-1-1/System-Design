@@ -322,7 +322,7 @@ flowchart LR
 
 **Reading the diagram.** The phases form an endless loop, and different services may be at different phases. **Inform** turns billing data into allocated cost and forecasts; **optimize** acts on it (rightsizing, commitments, redesign); **operate** embeds results in budgets, policies and review cadences. Dotted arrows are asynchronous information flows to engineering and from finance. The failure point is a loop that stops at inform, with dashboards nobody acts on. Maturity grows per capability as **crawl, walk, run** [Storment and Fuller 2023].
 
-**Table 51.5 — FinOps personas and what each needs (after the FinOps Foundation framework).**
+**Table 51.4 — FinOps personas and what each needs (after the FinOps Foundation framework).**
 
 | Persona | Main question | Needs from the practice |
 |---|---|---|
@@ -337,7 +337,7 @@ flowchart LR
 
 Chapter 47 defined **showback** (reporting attributed cost to a team or tenant) and **chargeback** (billing it to their budget) and gave the allocation formula (§47.11.2). The organizational choice between them is a FinOps decision.
 
-**Table 51.6 — Showback versus chargeback.**
+**Table 51.5 — Showback versus chargeback.**
 
 | Aspect | Showback | Chargeback |
 |---|---|---|
@@ -354,7 +354,7 @@ Start with showback; charging back before allocation is trusted produces argumen
 
 A **tag** (a label in Google Cloud and Kubernetes) is a key–value pair on a resource that billing exports carry; tags turn a bill into per-team and per-service cost.
 
-**Table 51.7 — A minimal tagging scheme for QuickBite.**
+**Table 51.6 — A minimal tagging scheme for QuickBite.**
 
 | Key | Example value | Used for |
 |---|---|---|
@@ -418,18 +418,17 @@ $$z_t = \frac{c_t - \hat{c}_t}{\sigma_t} \qquad \text{alert if } z_t > k \text{ 
 2. Excess $= \$220 > \$100$, so the alert fires.
 3. If unnoticed for a 30-day month: $220 \times 30 = \$6{,}600$, which is 73% of the whole monthly observability line of Table 51.2.
 
-**Interpretation.** The two-part test avoids paging on large relative jumps in tiny services and on noise in huge ones. **Engineering implication.** Scale $\hat{c}_t$ by business volume, so that a successful promotion does not look like an anomaly, and route the alert to the owning team, not to a central FinOps inbox.
+**Interpretation.** The two-part test ignores large relative jumps in tiny services and noise in huge ones. **Engineering implication.** Scale $\hat{c}_t$ by business volume so a promotion is not an anomaly, and alert the owning team, not a central inbox.
 :::
 
 #### Failure scenarios
 
-**Table 51.8 — FinOps practice failure scenarios.**
+**Table 51.7 — FinOps practice failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Dashboards nobody reads | No owner or cadence | Flat unit cost, no tickets | Monthly cost review per team | Make unit cost part of service reviews |
 | 30% of spend "unallocated" | Untagged resources, shared clusters | Coverage metric | Allocate by usage; fix modules | Deny untagged creation |
-| Chargeback disputes | Allocation rules unclear | Escalations to leadership | Publish rules; revert to showback | Agree rules before charging |
 | Runaway bill over a weekend | Recursive trigger, loop, test left running | Anomaly alert, budget alarm | Disable trigger; set quota | Hard quotas in non-production |
 | Optimization harms reliability | Cuts removed redundancy | SLO burn after cost change | Restore capacity | Review cost changes against SLOs (§51.13) |
 
@@ -549,7 +548,7 @@ assert month_cost(usage, min(usage))[2] == 1.0                       # floor com
 print("all tests passed")
 ```
 
-Output (Python 3.11):
+Output:
 
 ```text
 Usage: min 27.2, mean 74.9, max 126.1 instances
@@ -598,23 +597,23 @@ Spot capacity is unused provider capacity sold at a large discount that the prov
 
 ## 51.7 Engineering levers by resource
 
-Purchasing changes the price of a unit. Engineering changes how many units you need, and it compounds with purchasing. This section summarizes the levers per resource; Table 51.10 collects them with typical savings ranges, which are **illustrative** and depend entirely on the starting point.
+Purchasing changes the price of a unit. Engineering changes how many units you need, and it compounds with purchasing. This section summarizes the levers per resource; Table 51.8 collects them with typical savings ranges, which are **illustrative** and depend entirely on the starting point.
 
 ### 51.7.1 Compute
 
-1. **Rightsizing.** Fit instance size to measured demand: p95 CPU and memory over weeks, not averages over a day. A service using 15% CPU on 8-vCPU nodes can usually run on 4-vCPU nodes. In Kubernetes, the equivalent is setting requests from observed usage, because the scheduler bin-packs on requests, not on use (§42.12, §46.7).
+1. **Rightsizing.** Size to p95 CPU and memory measured over weeks. In Kubernetes, set requests from observed usage, because the scheduler packs on requests, not use (§42.12, §46.7).
 2. **Autoscaling.** Follow the load curve (§18.8, §18.11.3). QuickBite's browse fleet at a peak-to-average ratio of 9.6 averages about 8 nodes under autoscaling instead of 18 static nodes.
 3. **Processor architecture.** Arm-based server processors are often cheaper per unit of throughput. AWS states that Graviton3 instances use up to 60% less energy for the same performance than comparable EC2 instances, and markets better price-performance against x86; these are **vendor claims** whose baseline and workloads are not fully disclosed [AWS: Graviton]. Benchmark your own workload before migrating.
-4. **Bin packing and overcommit.** Pack batch work into the gaps left by latency-sensitive services, and reclaim allocated but unused resources (§46.5.4). Borg's published studies show how much capacity this recovers at fleet scale (§46.5.6).
-5. **Efficient code.** Profiling (§40.12) finds hot functions; a 20% CPU reduction in the top service reduces its compute line by 20% and compounds across the fleet.
+4. **Bin packing and overcommit.** Fill gaps left by latency-sensitive services with batch work and reclaim allocated but unused resources (§46.5.4, §46.5.6).
+5. **Efficient code.** Profiling (§40.12) finds the hot functions worth optimizing.
 
 ### 51.7.2 Storage
 
-1. **Tiering and lifecycle rules.** Move objects to infrequent-access and archive classes as they age (§15.9); archive classes cost roughly an order of magnitude less per GB-month than standard classes, with retrieval fees and delays.
-2. **Retention policies.** Decide how long each data class must exist, by law and by use, and delete the rest automatically. Most storage waste is data nobody decided to keep.
-3. **Compression and columnar formats.** Text logs and JSON often compress 5–10×; Parquet with dictionary encoding compresses analytical data further and reduces bytes scanned.
-4. **Deduplication.** Content-addressed storage of images, backups and build artifacts stores identical content once.
-5. **Hygiene.** Unattached volumes, old snapshots and incomplete multipart uploads are pure waste (§41.13.2).
+1. **Tiering and lifecycle rules** (§15.9): archive classes cost roughly an order of magnitude less per GB-month, with retrieval fees and delays.
+2. **Retention policies**: decide how long each data class must exist and delete the rest automatically.
+3. **Compression and columnar formats**: text logs and JSON often compress 5–10×.
+4. **Deduplication**: content-addressed images, backups and artifacts are stored once.
+5. **Hygiene**: unattached volumes, old snapshots and incomplete uploads are pure waste (§41.13.2).
 
 ### 51.7.3 Network
 
@@ -643,15 +642,15 @@ flowchart LR
   DB -.->|cross-region replication billed| DR[(Replica in<br/>another region)]
 ```
 
-**Reading the diagram.** Each labeled edge is a separately priced transfer. Internet egress from the CDN to clients is billed per GB, but usually at lower rates than origin egress, and cache hits avoid origin transfer altogether. Inside the region, traffic between zones is billed in each direction (§41.10.3); a service in zone A calling a database primary in zone B pays on every query. Traffic through a NAT gateway pays a per-GB processing fee on top of egress, which is why private endpoints for object storage and other provider services matter. Asynchronous cross-region replication (dotted) is billed per GB replicated. Scaling raises every one of these linearly with traffic, so the levers are structural: keep chatty traffic zone-local, cache at the edge, and compress.
+**Reading the diagram.** Each labeled edge is a separately priced transfer. CDN egress is usually cheaper than origin egress, and cache hits avoid origin transfer. Cross-zone traffic is billed in each direction (§41.10.3), so a zone-A service querying a zone-B primary pays on every query. NAT adds a per-GB processing fee, and asynchronous cross-region replication (dotted) is billed per GB. All grow linearly with traffic, so the levers are structural.
 
 The network levers are:
 
-1. **CDN offload.** Raise the cache hit ratio for static and cacheable content (Chapter 21); each percentage point of offload removes origin egress and origin compute.
-2. **Zone-aware routing.** Route requests to replicas in the same zone, use topology-aware routing in Kubernetes, and use rack-aware follower fetching for Kafka consumers [Apache Kafka: KIP-392]. Keep redundancy across zones, but keep the hot request path within one.
-3. **Private endpoints.** Use gateway or private endpoints for provider services instead of NAT (§41.10.3).
-4. **Compression and efficient encodings.** Compressing JSON responses typically reduces bytes several-fold; binary protocols such as Protobuf reduce them further.
-5. **Data locality.** Process data where it is stored instead of moving it between regions or clouds.
+1. **CDN offload** (Chapter 21): every point of hit ratio removes origin egress and compute.
+2. **Zone-aware routing**: same-zone replicas, Kubernetes topology-aware routing, and rack-aware follower fetching for Kafka consumers [Apache Kafka: KIP-392]. Keep redundancy across zones but the hot path within one.
+3. **Private endpoints** instead of NAT for provider services (§41.10.3).
+4. **Compression and binary encodings** such as Protobuf.
+5. **Data locality**: process data where it is stored.
 
 ::: example
 **Worked example — QuickBite's cross-zone chatter.** The order service makes 5 database and cache calls per order request, each returning 8 KB. With replicas spread evenly across three zones and no zone awareness, two thirds of calls cross a zone. Peak-hour traffic is 3,000 requests per second for 4 hours a day; the rest averages 600 requests per second. Price: \$0.01 per GB in each direction, so \$0.02 per GB crossing (illustrative, as of 2026).
@@ -661,21 +660,20 @@ The network levers are:
 3. Monthly cost: $2{,}304 \times 30 \times 0.02 = \$1{,}382$.
 4. With zone-local read replicas and cache nodes, crossing falls to the 10% of calls that must reach the primary: $\$1{,}382 \times 0.10 / (2/3) = \$207$, saving about \$1,175 a month.
 
-**Interpretation.** The saving is modest at QuickBite's scale but grows linearly with traffic, and it also cuts about 1 ms of cross-zone latency from most calls. **Engineering implication.** Make zone locality a default in service discovery, and keep a cost panel for cross-zone bytes per service.
+**Interpretation.** Modest at this scale, the saving grows linearly with traffic and also removes cross-zone latency. **Engineering implication.** Make zone locality the default in service discovery and chart cross-zone bytes per service.
 :::
 
 ### 51.7.4 Databases
 
-1. **Caching versus read replicas.** A replica copies the whole database to serve reads at full price per node; a cache stores only the hot set in memory. For QuickBite's menus (5 GB, read 117 times per order, §2.11), a cache of a few GB absorbs most reads for a fraction of a replica's cost. Replicas win when the read set is large and unpredictable, or when queries need SQL (§20.3, §18.9).
-2. **Serverless and auto-pausing databases** bill per capacity-unit-second and suit spiky or development workloads; at sustained load they usually cost more than provisioned instances, the curve of §51.3.2 again.
-3. **Indexing and query fixes.** One missing index can force a larger instance class; query review often beats scaling up.
-4. **Storage-class choice.** Provisioned IOPS that nobody uses are a fixed cost; measure before paying for them.
+1. **Caching versus read replicas.** A replica copies the whole database at full node price; a cache holds only the hot set. QuickBite's 5 GB of menus, read about 117 times per order (§2.11), fit a small cache. Replicas win for large, unpredictable read sets or SQL queries (§20.3, §18.9).
+2. **Serverless databases** suit spiky or development workloads and usually cost more at sustained load (§51.3.2).
+3. **Index and query fixes** often beat moving up an instance class; unused provisioned IOPS are fixed waste.
 
 ### 51.7.5 Observability
 
-Chapter 40 gave the levers in detail: sample routine successes and never errors (§40.4.4), keep hot retention short and archive compressed data to object storage, and budget metric cardinality (§40.5.3). In QuickBite's example, dropping DEBUG and sampling INFO cut the log bill from \$11,664 to \$2,528 a month. Observability commonly grows faster than traffic because each new service, label and dashboard adds volume, so give each team a volume budget.
+Chapter 40 gave the levers: sample routine successes but never errors, keep hot retention short (§40.4.4) and budget cardinality (§40.5.3). For QuickBite this cut the log bill from \$11,664 to \$2,528 a month. Observability grows faster than traffic, so give each team a volume budget.
 
-**Table 51.10 — Engineering levers and typical savings ranges (illustrative; actual savings depend on the starting point).**
+**Table 51.8 — Engineering levers and typical savings ranges (illustrative; actual savings depend on the starting point).**
 
 | Resource | Lever | Typical saving on the affected line | Main risk |
 |---|---|---|---|
@@ -830,7 +828,7 @@ $$TCO = I + L + E \cdot w + \frac{M_{\text{in}}}{T} + R \qquad k^{*} = \frac{(E_
 
 Storage, both options: $50\ \text{MB/s} \times 604{,}800\ \text{s} = 30.24$ TB per copy; × 3 copies = 90.72 TB; provisioned at 70% fill = 129.6 TB.
 
-**Table 51.11 — Monthly TCO, self-hosted versus managed Kafka (illustrative).**
+**Table 51.9 — Monthly TCO, self-hosted versus managed Kafka (illustrative).**
 
 | Line | Self-hosted, 50 MB/s | Managed, 50 MB/s | Self-hosted, 500 MB/s | Managed, 500 MB/s |
 |---|---|---|---|---|
@@ -841,12 +839,11 @@ Storage, both options: $50\ \text{MB/s} \times 604{,}800\ \text{s} = 30.24$ TB p
 | Tooling | \$500 | \$0 | \$1,000 | \$0 |
 | **Total** | **\$39,628** | **\$29,871** | **\$222,280** | **\$253,712** |
 
-1. Brokers, self-hosted: $6 \times 0.40 \times 730 = \$1{,}752$. Managed: $6 \times 0.84 \times 730 = \$3{,}679$.
-2. Storage: $129{,}600 \times 0.08 = \$10{,}368$ self-hosted; $\times 0.15 = \$19{,}440$ managed.
-3. Cross-zone, self-hosted: replication to two other-zone followers is 100 MB/s, plus two thirds of producer traffic, 33.3 MB/s; $133.3\ \text{MB/s} \times 2.628 \times 10^{6}\ \text{s} = 350.4$ TB; $\times \$0.02 = \$7{,}008$. Managed bills only the producer share: 87.6 TB, \$1,752.
-4. At 50 MB/s managed is cheaper by \$9,757 a month (25%), almost entirely because of engineering time and unbilled replication.
-5. Variable infrastructure per unit of scale: $i_s = 1{,}752 + 10{,}368 + 7{,}008 = \$19{,}128$; $i_m = 3{,}679 + 19{,}440 + 1{,}752 = \$24{,}871$. Crossover with today's staffing: $k^{*} = [(1.0 - 0.25) \times 20{,}000 + 500]/(24{,}871 - 19{,}128) = 15{,}500/5{,}743 = 2.7$, about 135 MB/s.
-6. At 500 MB/s, self-hosting is cheaper by \$31,432 a month (12%) even with 1.5 FTE.
+1. Brokers: $6 \times 0.40 \times 730 = \$1{,}752$ self-hosted; $6 \times 0.84 \times 730 = \$3{,}679$ managed. Storage: $129{,}600\ \text{GB} \times 0.08 = \$10{,}368$; $\times 0.15 = \$19{,}440$.
+2. Cross-zone, self-hosted: replication to two other-zone followers is 100 MB/s, plus two thirds of producer traffic, 33.3 MB/s; $133.3\ \text{MB/s} \times 2.628 \times 10^{6}\ \text{s} = 350.4$ TB; $\times \$0.02 = \$7{,}008$. Managed bills only the producer share: 87.6 TB, \$1,752.
+3. At 50 MB/s managed is cheaper by \$9,757 a month (25%), because of engineering time and unbilled replication.
+4. Variable infrastructure per unit of scale: $i_s = 1{,}752 + 10{,}368 + 7{,}008 = \$19{,}128$; $i_m = 3{,}679 + 19{,}440 + 1{,}752 = \$24{,}871$. Crossover with today's staffing: $k^{*} = [(1.0 - 0.25) \times 20{,}000 + 500]/(24{,}871 - 19{,}128) = 15{,}500/5{,}743 = 2.7$, about 135 MB/s.
+5. At 500 MB/s, self-hosting is cheaper by \$31,432 a month (12%) even with 1.5 FTE.
 
 **Interpretation.** Managed wins while people dominate; self-hosting wins once the provider's markup on infrastructure exceeds the team's cost, here at less than three times today's volume. **Engineering implication.** Compute $k^{*}$ before choosing, include migration cost ($M_{\text{in}}$) and incident risk ($R$), which favor whichever option you already run, and revisit the decision at each doubling. The Dropbox case (§51.3.3) is this crossover at very large scale.
 :::
@@ -866,7 +863,7 @@ flowchart TB
   M -.->|re-check at each doubling| Q3
 ```
 
-**Reading the diagram.** Diamonds are decisions, rectangles are outcomes. Differentiating capabilities justify building; commodity ones go to managed services unless scale passes the TCO crossover and the organization can staff operations. The dotted edge is the periodic review: a managed choice made at launch should be revisited as volume grows. Failure points: building commodity infrastructure because it is interesting, and staying on a managed service long after its markup exceeds a team's cost.
+**Reading the diagram.** Diamonds are decisions, rectangles outcomes. Differentiators justify building; commodity capabilities go to managed services unless scale passes the crossover and operations can be staffed. The dotted edge is the periodic review. Failure points: building commodity infrastructure because it is interesting, and keeping a managed service long after its markup exceeds a team's cost.
 
 ## 51.10 Sustainable computing: energy and carbon basics
 
@@ -893,7 +890,7 @@ flowchart LR
   CO -.->|water evaporated| W[(Water use<br/>for WUE)]
 ```
 
-**Reading the diagram.** Electricity enters from the grid (the external hexagon) and splits: one path through UPS and distribution to IT equipment, the denominator of PUE; parallel paths to cooling and building loads. Everything entering at the transformers is the numerator. Dotted arrows are physical side effects rather than requests: IT heat that cooling must remove, and water evaporated in cooling towers, the numerator of WUE. Losses occur at every conversion; failure points include cooling capacity, which caps how much IT power a hall can host. Scaling efficiency means fewer conversions, free-air or evaporative cooling, and higher allowed inlet temperatures.
+**Reading the diagram.** Grid electricity (hexagon) splits into the path through UPS and distribution to IT equipment, the PUE denominator, and parallel paths to cooling and building loads; everything entering is the numerator. Dotted arrows are physical side effects: IT heat that cooling removes, and evaporated water, the WUE numerator. Every conversion loses energy, and cooling capacity caps the IT power a hall can host. Efficiency comes from fewer conversions, free-air cooling and warmer allowed inlet temperatures.
 
 ::: formula
 **PUE, WUE and operational carbon**
@@ -924,7 +921,7 @@ $$PUE = \frac{E_{\text{facility}}}{E_{\text{IT}}} \qquad WUE = \frac{V_{\text{wa
 *Evidence: Primary* — [Google: Data Center Efficiency; Uptime Institute 2024]
 :::
 
-PUE has known limits. It measures building overhead, not useful work: an idle server at PUE 1.1 wastes more than a busy one at 1.4. It rewards moving loads such as server fans into the IT side of the boundary. And it improves when IT load rises, because fixed overhead is spread more thinly [Barroso et al. 2018].
+PUE measures building overhead, not useful work: an idle server at PUE 1.1 wastes more than a busy one at 1.4 [Barroso et al. 2018].
 
 ### 51.10.2 Operational and embodied carbon, and the three scopes
 
@@ -932,7 +929,7 @@ PUE has known limits. It measures building overhead, not useful work: an idle se
 
 The **GHG Protocol** classifies an organization's emissions into three scopes [GHG Protocol 2004; GHG Protocol 2011; GHG Protocol 2015]:
 
-**Table 51.12 — Scopes 1, 2 and 3 for a company running on its own datacenters versus the public cloud.**
+**Table 51.10 — Scopes 1, 2 and 3 for a company running on its own datacenters versus the public cloud.**
 
 | Scope | Definition | Own datacenter | Cloud customer |
 |---|---|---|---|
@@ -976,7 +973,7 @@ $$P(u) = P_{\text{idle}} + (P_{\text{peak}} - P_{\text{idle}})\,u \qquad e(u) = 
 **Interpretation.** Packing work onto fewer, busier machines saves more energy than almost any code optimization. **Engineering implication.** Autoscaling, bin packing (§46.7), batch work filling the troughs (§46.5.4) and multi-tenancy (§47.3.2) are sustainability measures as much as cost measures. Keep the utilization ceiling that latency needs (§18.11.2), but no lower.
 :::
 
-Efficient code and hardware come next: fewer CPU cycles, bytes moved and bytes stored per unit of work; accelerators and Arm processors where benchmarks show better performance per watt; and longer hardware lifetimes, which spread embodied carbon over more work.
+Efficient code and hardware come next: fewer cycles and bytes per unit of work, processors with better measured performance per watt, and longer hardware lifetimes that spread embodied carbon [AWS Well-Architected: Sustainability Pillar].
 
 ### 51.11.2 Temporal and spatial load shifting
 
@@ -1001,7 +998,7 @@ flowchart LR
   M -.->|usage telemetry| F2
 ```
 
-**Reading the diagram.** Forecasts arrive asynchronously each day (dotted) from an external carbon-intensity source and from internal demand prediction. A risk-aware optimizer turns them into an hourly capacity curve per cluster, stored as data the scheduler reads. Serving traffic is never limited; flexible jobs queue at the scheduler and are admitted only up to the curve, so they drain in cleaner hours. Telemetry closes the loop for the next day's forecast. Failure points: a poor forecast can delay jobs past their deadlines, so the curve preserves daily capacity and keeps a safety margin. The design scales because it changes one input to an existing scheduler rather than adding a new one.
+**Reading the diagram.** Daily forecasts arrive asynchronously (dotted) from an external carbon source and internal demand prediction. A risk-aware optimizer turns them into an hourly capacity curve per cluster, which the scheduler reads. Serving traffic is never limited; flexible jobs are admitted up to the curve, so they drain in cleaner hours, and telemetry feeds the next forecast. Failure point: a poor forecast can delay jobs, so the curve preserves daily capacity. The design scales because it changes one input to an existing scheduler.
 
 ::: formula
 **Carbon saved by shifting a job**
@@ -1044,7 +1041,7 @@ sequenceDiagram
   Note over S,R: If forecast unavailable, run now in home region
 ```
 
-**Reading the diagram.** The submitter sends a job with a deadline and an energy estimate synchronously. The scheduler queries an external forecast for each candidate region, picks the slot with the lowest expected emissions that still meets the deadline and any data-residency constraint, and enqueues it. Completion is reported asynchronously. The note is the essential failure rule: if the forecast is missing, fall back to running immediately in the home region, because a carbon optimization must never break a deadline.
+**Reading the diagram.** The submitter synchronously sends a job with deadline and energy estimate. The scheduler queries the external forecast per region, picks the lowest-emission slot that meets the deadline and residency rules, and enqueues it; completion is reported asynchronously. The note is the failure rule: without a forecast, run now in the home region, because carbon optimization must never break a deadline.
 
 ### 51.11.3 The Software Carbon Intensity score
 
@@ -1082,7 +1079,7 @@ $$SCI = \frac{(E \times I) + M}{R} \qquad M = TE \times \frac{TR}{EL} \times \fr
 
 Cloud customers cannot meter the electricity of a shared server, so carbon figures for cloud workloads are estimates. Provider tools (the AWS Customer Carbon Footprint Tool, Google Cloud Carbon Footprint, and Microsoft's Emissions Impact Dashboard for Azure) report emissions per account, service and region from the provider's own energy and hardware data. The open-source **Cloud Carbon Footprint** tool estimates from billing data, multiplying usage by per-service energy coefficients, PUE and grid intensity, and adds embodied emissions with the SCI method [Cloud Carbon Footprint].
 
-**Table 51.13 — What carbon estimates can and cannot tell you.**
+**Table 51.11 — What carbon estimates can and cannot tell you.**
 
 | Limitation | Why it matters | Mitigation |
 |---|---|---|
@@ -1096,7 +1093,7 @@ Cloud customers cannot meter the electricity of a shared server, so carbon figur
 
 Most decisions in this chapter move several properties at once.
 
-**Table 51.14 — Decision table for common cost and carbon levers.**
+**Table 51.12 — Decision table for common cost and carbon levers.**
 
 | Lever | Cost | Reliability | Latency | Carbon | Choose when |
 |---|---|---|---|---|---|
@@ -1110,7 +1107,7 @@ Most decisions in this chapter move several properties at once.
 | Managed service over self-host | Lower at small scale | Usually higher | Neutral | Provider's efficiency | Below the TCO crossover (§51.9) |
 | Longer hardware life | Lower capital | Higher failure rate late in life | Older, slower hardware | Lower embodied | Performance per watt not much worse |
 
-Three principles sit behind the table. **Reliability is bought with redundancy, and redundancy is idle capacity**: every extra nine costs money and carbon, so set availability targets from user need (§39.6), not from habit. **Latency is bought with headroom**: the utilization that minimizes cost and carbon is above the one that minimizes tail latency, so choose the highest utilization that still meets the SLO. **Cost and carbon usually agree**: wasted capacity costs both, which is why the FinOps and sustainability practices can share one pipeline. They diverge at spatial shifting, managed premiums and cheap but dirty regions; there you need explicit weights.
+Three principles sit behind the table. **Reliability is bought with redundancy, which is idle capacity**: set availability targets from user need (§39.6), not habit. **Latency is bought with headroom**: choose the highest utilization that still meets the SLO. **Cost and carbon usually agree**, because waste costs both, so FinOps and sustainability can share one pipeline; where they diverge (spatial shifting, cheap but dirty regions), set explicit weights.
 
 ## 51.14 Summary and revision notes
 
@@ -1132,31 +1129,31 @@ Three principles sit behind the table. **Reliability is bought with redundancy, 
 
 1. Why is cost per request a poor unit cost for QuickBite?
 2. Two designs: $F_A = \$1{,}000$, $v_A = \$0.001$; $F_B = \$0$, $v_B = \$0.003$ per unit. Find the crossover.
-4. Name the three FinOps phases and one activity in each.
-5. When should an organization prefer showback to chargeback?
-6. Why should anomaly detection scale expected cost by business volume?
-7. With a 55% discount, at which percentile of hourly usage should you commit?
-8. Why is 100% commitment utilization usually a sign of under-commitment?
-9. Spot is 75% cheaper; interruptions cause 20% rework. What is the effective discount?
-11. A facility uses 6.6 GWh with 5.5 GWh of IT load. What is its PUE?
-12. Distinguish location-based from market-based Scope 2 accounting.
-13. Why does consolidating work onto fewer servers save energy?
-15. Why can renewable certificates not lower an SCI score?
+3. Name the three FinOps phases and one activity in each.
+4. When should an organization prefer showback to chargeback?
+5. Why should anomaly detection scale expected cost by business volume?
+6. With a 55% discount, at which percentile of hourly usage should you commit?
+7. Why is 100% commitment utilization usually a sign of under-commitment?
+8. Spot is 75% cheaper; interruptions cause 20% rework. What is the effective discount?
+9. A facility uses 6.6 GWh with 5.5 GWh of IT load. What is its PUE?
+10. Distinguish location-based from market-based Scope 2 accounting.
+11. Why does consolidating work onto fewer servers save energy?
+12. Why can renewable certificates not lower an SCI score?
 
 <details><summary>Answers</summary>
 
 1. Requests are an implementation detail: a client change can raise requests per order and lower cost per request while cost per order rises.
 2. $N^{*} = 1{,}000/(0.003 - 0.001) = 500{,}000$ units per period.
-4. Inform (allocation, showback, forecasting); optimize (rightsizing, commitments, redesign); operate (budgets, policies, review cadence).
-5. When allocation is not yet trusted or the platform is being adopted; chargeback on disputed data produces arguments instead of change.
-6. So that legitimate growth, such as a promotion, does not trigger alerts, while real waste at constant volume does.
-7. The 55th percentile ($c^{*} = Q_x(0.55)$).
-8. A marginal extra commitment would still be used in most hours, and so would still pay for itself; the optimum leaves some commitment idle in quiet hours.
-9. Effective price $0.25 \times 1.2 = 0.30$ of on-demand, a 70% discount.
-11. $6.6/5.5 = 1.20$.
-12. Location-based uses the average intensity of the local grid; market-based uses contractual instruments the company purchases.
-13. Idle power is a large share of peak, so energy per unit of work falls steeply as utilization rises, and fewer servers also mean less embodied carbon.
-15. SCI measures emissions from the energy and hardware the software actually uses, at location-based intensity; market-based neutralizations are excluded by design.
+3. Inform (allocation, showback, forecasting); optimize (rightsizing, commitments, redesign); operate (budgets, policies, review cadence).
+4. When allocation is not yet trusted or the platform is being adopted; chargeback on disputed data produces arguments instead of change.
+5. So that legitimate growth, such as a promotion, does not trigger alerts, while real waste at constant volume does.
+6. The 55th percentile ($c^{*} = Q_x(0.55)$).
+7. A marginal extra commitment would still be used in most hours, and so would still pay for itself; the optimum leaves some commitment idle in quiet hours.
+8. Effective price $0.25 \times 1.2 = 0.30$ of on-demand, a 70% discount.
+9. $6.6/5.5 = 1.20$.
+10. Location-based uses the average intensity of the local grid; market-based uses contractual instruments the company purchases.
+11. Idle power is a large share of peak, so energy per unit of work falls steeply as utilization rises, and fewer servers also mean less embodied carbon.
+12. SCI measures emissions from the energy and hardware the software actually uses, at location-based intensity; market-based neutralizations are excluded by design.
 </details>
 
 ## 51.16 Interview questions
@@ -1169,15 +1166,15 @@ Three principles sit behind the table. **Reliability is bought with redundancy, 
 
 ### Intermediate
 
-**Q3.** Your monthly bill rose 40% while traffic rose 10%. How do you investigate? **Answer.** Compare unit cost per service and per line item month over month. Check for untagged new resources, cross-zone or egress growth, observability volume, expired commitments (a drop in coverage), and per-call third-party charges. Correlate the start date with deployments. Add anomaly alerts scaled by volume so the next one is caught in a day.
+**Q3.** Your monthly bill rose 40% while traffic rose 10%. How do you investigate? **Answer.** Compare unit cost per service and line item month over month. Check untagged new resources, cross-zone and egress growth, observability volume, expired commitments (falling coverage) and third-party charges; correlate the start date with deployments. Then add volume-scaled anomaly alerts.
 
 **Q4.** Should a 20-engineer startup run Kafka itself or use a managed service? **Answer.** Compute TCO with engineering time. At modest throughput, a managed service's markup is smaller than even one FTE of operations, and managed reliability is usually better. Recompute the crossover at each doubling, and watch for cross-zone replication charges and storage markup, which decide the comparison at scale.
 
 ### Advanced
 
-**Q5.** Design carbon-aware scheduling for a company's batch platform across three regions. **Answer.** Tag jobs with deadline, energy estimate, data location and residency constraints. Fetch day-ahead marginal intensity forecasts per region. For each job, choose the lowest-emission slot meeting the deadline, counting data-movement energy and cost for spatial moves. Cap flexible capacity per hour per cluster (as in virtual capacity curves) rather than scheduling jobs one by one. Fall back to immediate execution when forecasts fail, and report emissions avoided with the method stated.
+**Q5.** Design carbon-aware scheduling for a company's batch platform across three regions. **Answer.** Tag jobs with deadline, energy estimate, data location and residency. Use day-ahead marginal intensity forecasts per region; pick the lowest-emission slot meeting the deadline, counting data-movement energy and cost. Cap flexible capacity per cluster-hour, as virtual capacity curves do, instead of scheduling jobs one by one. Run immediately when forecasts fail, and report avoided emissions with the method stated.
 
-**Q6.** Leadership wants a 30% cut in cloud cost within two quarters without harming SLOs. What is your plan? **Answer.** First quarter: allocation and visibility (tag coverage, unit cost per service), waste removal (idle and non-production resources, storage hygiene, log sampling), and rightsizing from p95 data. Second quarter: architectural fixes to the top three unit-cost drivers (zone-local traffic, caching, paid-API call discipline), then commitments at the discount quantile and spot for batch. Review every change against SLO burn rates, and keep failure headroom out of scope.
+**Q6.** Leadership wants a 30% cut in cloud cost within two quarters without harming SLOs. What is your plan? **Answer.** Quarter one: visibility (tag coverage, unit cost per service), waste removal (idle and non-production resources, storage hygiene, log sampling) and rightsizing from p95 data. Quarter two: fix the top unit-cost drivers (zone-local traffic, caching, paid-API calls), then commit at the discount quantile and move batch to spot. Check every change against SLO burn rates and leave failure headroom alone.
 
 ## 51.17 Practical exercises
 

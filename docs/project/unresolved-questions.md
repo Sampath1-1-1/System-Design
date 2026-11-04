@@ -260,3 +260,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-253 | 49 | S3 scale figures (2023 vs reported 2026 ~500T objects, ~200M req/s); Snowflake micro-partition sizes; Snowmobile retirement date | Open | Time-sensitive |
 | UQ-254 | 49 | El Capitan Nov 2024 Rmax/Rpeak and current Top500 leader (June 2026); MPI 5.0 release status | Open | Time-sensitive |
 | UQ-255 | 49 | DCQCN parameters (50 µs notification interval, g = 1/256); titles of Gangidi et al. 2024 (Meta RoCE) and McCrory 2010 (data gravity) | Open | |
+| UQ-256 | 51 | Radovanović et al. (IEEE Trans. Power Systems) volume/pages/year/authors; Google 2020 carbon-intelligent computing blog URL | Open | |
+| UQ-257 | 51 | SCI spec: marginal vs average carbon intensity and exact symbols | Open | |
+| UQ-258 | 51 | PUE figures: Uptime 1.58 (2023), 1.56 (2024); Google 1.09 TTM 2024; Green Grid WP#35 year | Open | Time-sensitive |
+| UQ-259 | 51 | Dropbox S-1 infrastructure savings ($39.5M, $35.1M) via press reports; baseline for AWS Graviton3 "up to 60% less energy" claim | Open | Vendor claim labeled |
+| UQ-260 | 51 | FinOps Foundation personas; FOCUS spec version/release date | Open | Time-sensitive |
