@@ -249,3 +249,9 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-242 | 46 | Borg (Verma et al. 2015) figures from memory: ~10 s Borgmaster failover; "a few hundred seconds" vs >3 days to schedule a cell without optimizations; 3–5% gain of hybrid scoring over best fit (baseline possibly E-PVM) | Open | Unverifiable numbers removed from text |
 | UQ-243 | 46 | Sparrow default probe ratio d = 2 | Open | |
 | UQ-244 | 46 | Kubernetes: preemption node-selection order; percentageOfNodesToScore default formula; native gang scheduling (v1.35 alpha Workload API); DRA core GA in v1.34; Kueue/Volcano feature names; Slurm backfill defaults; Slinky status | Open | Version-dependent; merge with UQ-206, UQ-209 |
+| UQ-245 | 50 | SPIRE default SVID lifetime (1 h) confirmed only for v1.9.x docs; Fulcio ~10-min certificate validity | Open | Version-dependent |
+| UQ-246 | 50 | US Census 2020 privacy-loss budget (ε = 19.61; 17.14 / 2.47 split) from June 2021 release as reported | Open | |
+| UQ-247 | 50 | Mandiant M-Trends median dwell time (11 days) via secondary summaries | Open | Time-sensitive |
+| UQ-248 | 50 | Author lists/issue numbers: Cittadini et al. 2016; Cedar (OOPSLA 2024); DELF (USENIX Security 2020) | Open | |
+| UQ-249 | 50 | CCPA 45+45-day response periods; opt-out preference-signal (GPC) rules | Open | Legal; not advice |
+| UQ-250 | 50 | MPC and FHE performance ranges (Table 50.6) are order-of-magnitude estimates | Accepted | Labeled in text |
