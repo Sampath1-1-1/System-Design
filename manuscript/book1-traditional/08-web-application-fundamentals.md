@@ -354,7 +354,7 @@ A **resource** is any named thing the API exposes: a user, an order, a collectio
 2. **Plural collections, item by identifier.** `/orders` (collection) and `/orders/42` (item).
 3. **Nest only for true containment, at most one level.** `/orders/42/items` is clear; `/users/7/orders/42/items/3/discounts` couples clients to your data model. Prefer `/order-items/3` once items have their own identity.
 4. **Opaque, stable identifiers.** Prefer IDs that do not leak row counts or allow enumeration (UUIDs or Snowflake-style IDs, §17.10).
-5. **Actions that do not fit CRUD** become sub-resources or state changes: `POST /orders/42/cancellation` or `PATCH /orders/42 {"status":"cancelled"}`, rather than `POST /cancelOrder?id=42`.
+5. **Actions that do not fit CRUD** become sub-resources or state changes: `POST /orders/42/cancellation` or `PATCH /orders/42 {"status":"canceled"}`, rather than `POST /cancelOrder?id=42`.
 6. **Consistent casing** (`snake_case` or `camelCase` in JSON, kebab-case in paths) across the whole API.
 
 ### 8.6.3 HTTP methods: safety and idempotency

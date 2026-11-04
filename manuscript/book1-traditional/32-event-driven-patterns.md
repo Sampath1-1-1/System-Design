@@ -1209,7 +1209,7 @@ What to notice:
 |---|---|---|---|---|
 | Double charge or double reservation | Retried step not idempotent | Reconciliation between services | Refund, release | Idempotency by saga ID in every participant |
 | Saga stuck in compensation | Compensation fails permanently (e.g. refund rejected) | Saga age by state | Human workflow | Design compensations that cannot fail for business reasons |
-| Compensation runs before the action | Messages reordered; action arrives after cancel | Orphaned reservations | Timeout-based cleanup | Participants record "cancelled" tombstones for the saga ID |
+| Compensation runs before the action | Messages reordered; action arrives after cancel | Orphaned reservations | Timeout-based cleanup | Participants record "canceled" tombstones for the saga ID |
 | Oversold stock | Dirty read of uncommitted reservations | Negative stock alarms | Back-order process | Semantic locks, commutative updates |
 | Lost saga | Orchestrator state only in memory | Orders stuck in `PENDING` | Sweep and resume | Persist the saga log before each command |
 

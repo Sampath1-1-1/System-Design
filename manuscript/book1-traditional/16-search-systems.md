@@ -2,7 +2,7 @@
 
 > **Level:** 3 · **Track:** A (Traditional) · **Estimated reading time:** 5 h
 
-Type "wireless noise cancelling headphones" into an online store and, within about a tenth of a second, a ranked list comes back from tens of millions of products. A B-tree index (§11.8) cannot do this: it finds rows whose key *equals* or *starts with* a value, so `WHERE description LIKE '%noise%'` reads every row, and even then the database has no notion of which match is *best*.
+Type "wireless noise canceling headphones" into an online store and, within about a tenth of a second, a ranked list comes back from tens of millions of products. A B-tree index (§11.8) cannot do this: it finds rows whose key *equals* or *starts with* a value, so `WHERE description LIKE '%noise%'` reads every row, and even then the database has no notion of which match is *best*.
 
 Search systems solve three problems that ordinary databases do not:
 
@@ -117,7 +117,7 @@ Because postings are sorted, Boolean operators become list operations:
 
 - **AND** (*noise* AND *wireless*) is an **intersection**: walk both lists in step, advancing whichever pointer holds the smaller docID, and output docIDs found in both. Cost is $O(L_1 + L_2)$ for lists of lengths $L_1$ and $L_2$.
 - **OR** is a **union**, also a linear merge; ranked retrieval is usually OR-like, with scoring sorting candidates. **NOT** is a list difference.
-- A **phrase query** ("noise cancelling") first intersects the lists, then checks positions: a document matches only if *cancelling* occurs at position $p+1$ for some position $p$ of *noise*. Positional data typically makes the index two to four times larger, which is why some fields are indexed without positions (in Elasticsearch, `index_options: docs` or `freqs`).
+- A **phrase query** ("noise canceling") first intersects the lists, then checks positions: a document matches only if *canceling* occurs at position $p+1$ for some position $p$ of *noise*. Positional data typically makes the index two to four times larger, which is why some fields are indexed without positions (in Elasticsearch, `index_options: docs` or `freqs`).
 
 Process the **rarest term first**: an intersection is never larger than its shortest list.
 
@@ -525,7 +525,7 @@ What to notice: the index and search analyzers share tokenizer and normalization
 
 #### First-principles explanation
 
-A sensible librarian asked for "noise cancelling headphones" reasons three ways. A book mentioning *noise cancelling* ten times is more on topic than one mentioning it once, but not ten times more (**term frequency, with diminishing returns**). *Headphones* appears in half the catalog, so matching it says little, while rare *cancelling* is informative (**inverse document frequency**). And a leaflet mentioning *noise* once is more focused than an encyclopedia mentioning it once (**length normalization**). BM25 writes these three intuitions as one formula.
+A sensible librarian asked for "noise canceling headphones" reasons three ways. A book mentioning *noise canceling* ten times is more on topic than one mentioning it once, but not ten times more (**term frequency, with diminishing returns**). *Headphones* appears in half the catalog, so matching it says little, while rare *canceling* is informative (**inverse document frequency**). And a leaflet mentioning *noise* once is more focused than an encyclopedia mentioning it once (**length normalization**). BM25 writes these three intuitions as one formula.
 
 The theoretical justification is the **probability ranking principle**: if documents are ranked by their probability of relevance to the query, the ranking is optimal for any measure that rewards putting relevant documents first [Robertson 1977]. BM25 approximates that probability from term statistics alone [Robertson and Zaragoza 2009].
 
@@ -786,8 +786,8 @@ phrase 'cancelling noise' in body: []
 What to notice:
 
 - **Body-only BM25 ranks the earbuds above the headphones** that exactly match the query. Document 4's description is shorter (7 terms versus 10), and *headphone* is so common (in 6 of 8 bodies, IDF 0.33) that matching it barely helps. Lexical scoring has no idea that headphones are what the shopper wants.
-- **Boosting the title field 2×** fixes the order: the title "Wireless noise cancelling headphones" matches all four terms, adding $2 \times 3.588 = 7.18$ to document 1. Field structure is one of the strongest relevance signals available.
-- The stop word "with" was removed, but positions were kept, so *noise* in document 4 is at position 4, not 3; phrase queries stay correct, and word order matters ("cancelling noise" matches nothing).
+- **Boosting the title field 2×** fixes the order: the title "Wireless noise canceling headphones" matches all four terms, adding $2 \times 3.588 = 7.18$ to document 1. Field structure is one of the strongest relevance signals available.
+- The stop word "with" was removed, but positions were kept, so *noise* in document 4 is at position 4, not 3; phrase queries stay correct, and word order matters ("canceling noise" matches nothing).
 - A real engine never scores every matching document this way; see §16.5.6.
 
 ### 16.5.5 Field boosting and beyond
@@ -1528,7 +1528,7 @@ $$T_{\text{fresh}} \approx T_{\text{cdc}} + T_{\text{queue}} + T_{\text{batch}} 
 
 ## 16.11 Beyond lexical matching: a bridge to semantic and hybrid search
 
-BM25 matches *words*. It cannot know that "ANC earbuds" and "noise cancelling in-ear headphones" describe the same thing unless synonyms are configured by hand, and the listing in §16.5.4 ranked earbuds above headphones because it understands nothing. **Semantic (dense) retrieval** encodes queries and documents as embedding vectors with a neural model and retrieves nearest neighbors by cosine similarity (§4.9.2), using approximate nearest neighbor (ANN) indexes such as HNSW. It captures meaning but can miss exact identifiers (part numbers, error codes) that BM25 matches perfectly.
+BM25 matches *words*. It cannot know that "ANC earbuds" and "noise canceling in-ear headphones" describe the same thing unless synonyms are configured by hand, and the listing in §16.5.4 ranked earbuds above headphones because it understands nothing. **Semantic (dense) retrieval** encodes queries and documents as embedding vectors with a neural model and retrieves nearest neighbors by cosine similarity (§4.9.2), using approximate nearest neighbor (ANN) indexes such as HNSW. It captures meaning but can miss exact identifiers (part numbers, error codes) that BM25 matches perfectly.
 
 **Hybrid retrieval** runs both and fuses the lists. Because BM25 scores and cosine similarities live on different scales (§16.5 misconception), fusion usually uses ranks: **reciprocal rank fusion** adds $1/(60 + \text{rank})$ from each list [Cormack et al. 2009]. A cross-encoder reranker may then reorder the top few dozen. Lucene, Elasticsearch and OpenSearch now include vector fields and ANN search alongside inverted indexes, so one cluster can serve both (as of 2025).
 
@@ -1632,7 +1632,7 @@ flowchart LR
 
 ## 16.15 Practical exercises
 
-1. **Extend the engine.** Add Boolean AND with skip-pointer intersection to the §16.5.4 listing, then add BM25F-style scoring (combine weighted tf across fields before saturation) and compare the ranking for "wireless noise cancelling headphones".
+1. **Extend the engine.** Add Boolean AND with skip-pointer intersection to the §16.5.4 listing, then add BM25F-style scoring (combine weighted tf across fields before saturation) and compare the ranking for "wireless noise canceling headphones".
 2. **Measure compression.** Change the Zipf exponent in the §16.3.4 listing to 0.8 and 1.2 and report bytes per posting; then implement frame-of-reference bit packing for blocks of 128 gaps and compare size and decoding time with VByte.
 3. **Analyzer laboratory.** Run Elasticsearch or OpenSearch locally and use the `_analyze` API to compare the standard, English and a custom analyzer on ten product titles containing hyphens, accents, model numbers and plurals.
 4. **Refresh experiment.** Bulk-index one million synthetic documents with refresh intervals of 1 s, 30 s and disabled; record indexing throughput, segment counts over time and merge statistics, and compare with the write-amplification formula.

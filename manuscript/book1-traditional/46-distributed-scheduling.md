@@ -263,7 +263,7 @@ For **sub-second tasks**, even 5 ms per central decision is a bottleneck: 100,00
 
 1. **Per-task sampling.** For each task, probe $d$ random workers for their queue length and place the task on the shortest queue.
 2. **Batch sampling.** For a job of $m$ tasks, probe $d \cdot m$ workers and use the $m$ least loaded. A job finishes with its slowest task, so *all* $m$ tasks must avoid queues; pooling probes makes that far likelier.
-3. **Late binding.** Rather than trust stale queue lengths, place a **reservation** in each probed queue; workers reaching it request a task, the first $m$ get one and the rest are cancelled.
+3. **Late binding.** Rather than trust stale queue lengths, place a **reservation** in each probed queue; workers reaching it request a task, the first $m$ get one and the rest are canceled.
 
 With a probe ratio of $d = 2$, Sparrow performed within 12% of an ideal scheduler on a 110-machine cluster [Ousterhout et al. 2013]. It gives up global policy: priorities and weighted sharing work per worker, but cluster-wide constraints, gangs and preemption need a full view.
 
@@ -290,7 +290,7 @@ sequenceDiagram
   SC-->>W4: no task left, cancel
 ```
 
-**Reading the diagram.** For $m = 2$, $d = 2$, the scheduler enqueues four reservations (synchronous RPCs). Workers 3 and 1 reach theirs first and fetch real tasks; 2 and 4 are cancelled. The storage boundary is each worker's local queue. Failure points: a crashed scheduler loses only its own jobs, which clients resubmit elsewhere; late binding costs one extra round trip per task. Scaling: schedulers share nothing, so throughput grows linearly with their number.
+**Reading the diagram.** For $m = 2$, $d = 2$, the scheduler enqueues four reservations (synchronous RPCs). Workers 3 and 1 reach theirs first and fetch real tasks; 2 and 4 are canceled. The storage boundary is each worker's local queue. Failure points: a crashed scheduler loses only its own jobs, which clients resubmit elsewhere; late binding costs one extra round trip per task. Scaling: schedulers share nothing, so throughput grows linearly with their number.
 
 ::: formula
 **Probability that a job of $m$ tasks avoids all queueing (independent-worker model)**
@@ -380,7 +380,7 @@ flowchart TB
   CH{{Chubby lock<br/>service}} -.->|leader election| BM
 ```
 
-**Reading the diagram.** Clients send RPCs to the elected leader, which replicates every state change to four other replicas through a Paxos-based store; checkpoints allow recovery and offline simulation (the **Fauxmaster**). Election uses Paxos and a Chubby lock (§26.8). The scheduler is a separate process on cached state: it proposes assignments, which the leader accepts unless they are stale, an optimistic scheme similar in spirit to Omega. **Link shards** poll each Borglet every few seconds and forward only differences, so the Borgmaster controls the communication rate and avoids reconnection storms; a machine missing several polls is marked down and its tasks rescheduled. Failure points: a leader failover (typically about 10 s, up to a minute in a large cell) pauses changes, not running tasks; the paper reports 99.99% Borgmaster availability. Scaling: one Borgmaster per cell, more cells for more machines.
+**Reading the diagram.** Clients send RPCs to the elected leader, which replicates every state change to four other replicas through a Paxos-based store; checkpoints allow recovery and offline simulation (the **Fauxmaster**). Election uses Paxos and a Chubby lock (§26.14.1). The scheduler is a separate process on cached state: it proposes assignments, which the leader accepts unless they are stale, an optimistic scheme similar in spirit to Omega. **Link shards** poll each Borglet every few seconds and forward only differences, so the Borgmaster controls the communication rate and avoids reconnection storms; a machine missing several polls is marked down and its tasks rescheduled. Failure points: a leader failover (typically about 10 s, up to a minute in a large cell) pauses changes, not running tasks; the paper reports 99.99% Borgmaster availability. Scaling: one Borgmaster per cell, more cells for more machines.
 
 ### 46.5.3 Priority, quota and admission
 
@@ -1027,7 +1027,7 @@ flowchart TB
 **Definition — Gang scheduling.** Placing all tasks of a parallel job at the same time, or none of them. **Co-scheduling** is the weaker form: place a minimum number together and let the rest follow.
 :::
 
-A 64-worker data-parallel training job runs collectives (all-reduce, Chapter 65) in which every worker participates at every step; with 63 running, 63 GPUs idle waiting for the 64th. A pod-at-a-time scheduler places whatever fits, so two large jobs can each get part of what they need and wait for each other forever.
+A 64-worker data-parallel training job runs collectives (all-reduce, §49.9.2 and Chapter 65) in which every worker participates at every step; with 63 running, 63 GPUs idle waiting for the 64th. A pod-at-a-time scheduler places whatever fits, so two large jobs can each get part of what they need and wait for each other forever.
 
 **Figure 46.10 — Deadlock without gang scheduling on 16 GPUs.**
 
@@ -1398,7 +1398,7 @@ $$T = t_{\text{scan}} + t_{\text{provision}} + t_{\text{join}} + t_{\text{pull}}
 3. Fast decisions wait behind slow ones in one queue. Make decisions faster (caching, sampling) or split classes into separate queues, profiles or schedulers.
 4. $P \approx 1 - e^{-c_1 c_2/N}$ grows with the product of transaction sizes, and the large transaction's long decision time exposes it to many commits; any single conflict rejects the whole transaction.
 5. $(1 - 0.25)^4 = 0.316$.
-6. Stale queue-length reports; it costs an extra round trip per task and idle time for workers whose reservation is cancelled.
+6. Stale queue-length reports; it costs an extra round trip per task and idle time for workers whose reservation is canceled.
 7. Monitoring and production. Mutual preemption would cause cascades and make high-priority services unstable.
 8. $p = 50 - 2{,}500/125 = 30\%$, so 750 nodes.
 9. Permit (with PreEnqueue to gate entry).

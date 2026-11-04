@@ -29,8 +29,8 @@ Use these terms consistently across all chapters. Left column is canonical; righ
 | training–serving skew | — |
 | inference (running a trained model) | prediction (acceptable for the output), scoring |
 | time to first token (TTFT); time per output token (TPOT); inter-token latency (ITL) | — |
-| model FLOPs utilisation (MFU) | — |
+| model FLOPs utilization (MFU) | — |
 | retrieval-augmented generation (RAG) | — |
-| approximate nearest neighbour (ANN) search | — |
+| approximate nearest neighbor (ANN) search | — |
 | KB, MB, GB, TB = 10³, 10⁶, 10⁹, 10¹² bytes; KiB, MiB, GiB = 2¹⁰, 2²⁰, 2³⁰ bytes | mixing the two without stating |
-| British/American spelling: American spelling in prose (optimize, behavior, utilization) | mixing spellings |
+| British/American spelling: American spelling in prose (optimize, behavior, utilization, canceled, labeled) | mixing spellings |

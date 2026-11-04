@@ -1244,7 +1244,7 @@ $$B_{\text{victim}} = B_{\text{attacker}} \times A$$
 :::
 
 ::: industry
-**GitHub memcached attack (2018) and HTTP/2 Rapid Reset (2023).** On 28 February 2018 GitHub received a 1.35 Tbps memcached-reflection attack; memcached servers exposed on UDP can amplify requests by factors in the tens of thousands. GitHub routed traffic to its DDoS-mitigation provider and the attack was mitigated within about ten minutes. In 2023 the "HTTP/2 Rapid Reset" technique (CVE-2023-44487) — opening and immediately cancelling streams on a single connection — produced application-layer floods that Google reported peaking at about 398 million requests per second.
+**GitHub memcached attack (2018) and HTTP/2 Rapid Reset (2023).** On 28 February 2018 GitHub received a 1.35 Tbps memcached-reflection attack; memcached servers exposed on UDP can amplify requests by factors in the tens of thousands. GitHub routed traffic to its DDoS-mitigation provider and the attack was mitigated within about ten minutes. In 2023 the "HTTP/2 Rapid Reset" technique (CVE-2023-44487) — opening and immediately canceling streams on a single connection — produced application-layer floods that Google reported peaking at about 398 million requests per second.
 *Evidence: Primary* — [GitHub 2018]; [Google Cloud 2023]
 :::
 

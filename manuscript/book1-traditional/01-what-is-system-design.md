@@ -575,7 +575,7 @@ The catalog is split into qualities observable while the system runs (Table 1.7)
 | Operability | Ease of running in production | Pages per week; manual steps per release | ≤ 2 pages per on-call week | Ch 39 |
 | Interoperability | Ability to work with other systems | Supported standards and API versions | Public API with versioning | §8.15 |
 | Portability | Ability to run in other environments | Effort to move cloud or region | Containerized services | Ch 41–42 |
-| Compliance | Conformance to laws and standards | Audit findings | EU users' data stored in the EU | Ch 50 |
+| Compliance | Conformance to laws and standards | Audit findings | EU users' data stored in the EU | Ch 44, Ch 50 |
 | Cost efficiency | Resources consumed per unit of value | \$ per 1,000 requests; \$ per user per month | ≤ \$0.01 per MAU per month | Ch 51 |
 | Sustainability | Energy and carbon per unit of work | kWh or gCO₂e per request | Track and report | Ch 51 |
 

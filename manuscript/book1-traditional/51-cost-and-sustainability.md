@@ -144,7 +144,7 @@ flowchart LR
   Before -.->|re-architecture| After
 ```
 
-**Reading the diagram.** Originally (left), an orchestrator invoked converter and detector functions, and frames travelled between them through object storage, so every transition and storage request carried a per-use charge and a round trip. After consolidation (right), one container task holds all components and frames stay in memory: the storage boundary leaves the hot path, and with it the dominant cost, which fell by about 90% [Kolny 2023]. The trade-off: scaling means running more tasks, and a detector fault now shares a process with the others. The cost curve of §33.9.3 predicts this crossover at sustained volume.
+**Reading the diagram.** Originally (left), an orchestrator invoked converter and detector functions, and frames traveled between them through object storage, so every transition and storage request carried a per-use charge and a round trip. After consolidation (right), one container task holds all components and frames stay in memory: the storage boundary leaves the hot path, and with it the dominant cost, which fell by about 90% [Kolny 2023]. The trade-off: scaling means running more tasks, and a detector fault now shares a process with the others. The cost curve of §33.9.3 predicts this crossover at sustained volume.
 
 ::: industry
 **Dropbox's move to its own storage infrastructure.** Dropbox's 2018 registration statement described an "infrastructure optimization" that migrated the large majority of user data from a third-party provider to its own custom-built infrastructure in colocation facilities, reporting reductions in operating cost of about \$39.5 million in 2016 and \$35.1 million in 2017. At Dropbox's scale, storage was a large share of the cost of revenue, and a specialized system beat a general-purpose service once a dedicated team was affordable. §51.9 turns this into a build-versus-buy calculation.
@@ -772,6 +772,7 @@ growth           8.67    10.68      2.01       0.52
 other_3p         9.25     9.99      0.74       0.19
 infra_var        9.38     9.85      0.47       0.12
 fixed            9.53     9.71      0.18       0.05
+all tests passed
 ```
 
 What to notice:
@@ -1017,8 +1018,8 @@ $$\Delta C = E\,(I_{\text{now}} - I_{\text{shift}}) - E_{\text{move}}\,I_{\text{
 **Worked example — Shifting QuickBite's nightly analytics job.** The job uses $E = 200$ kWh per run and today starts at 18:00 in region A, where intensity is 450 gCO₂e/kWh. At 13:00 solar lowers it to 250. Region B, on a hydro-dominated grid, averages 50, but the job must copy 5 TB there; assume network energy of 0.005 kWh/GB, a deliberately rough assumption (published estimates vary widely). Intensities are illustrative.
 
 1. Today: $200 \times 450 = 90{,}000$ g = 90 kg per run; $90 \times 365 = 32.9$ tCO₂e a year.
-2. Temporal shift to 13:00: $200 \times 250 = 50$ kg; $\Delta C = 40$ kg per run (44%); 18.3 t a year.
-3. Spatial shift to region B: computing $200 \times 50 = 10$ kg; moving data $5{,}000 \times 0.005 = 25$ kWh, $25 \times 450 = 11.25$ kg; total 21.25 kg per run, saving 68.75 kg (76%); 7.8 t a year.
+2. Temporal shift to 13:00: $200 \times 250 = 50$ kg; $\Delta C = 40$ kg per run (44%); 18.3 t a year instead of 32.9 t.
+3. Spatial shift to region B: computing $200 \times 50 = 10$ kg; moving data $5{,}000 \times 0.005 = 25$ kWh, $25 \times 450 = 11.25$ kg; total 21.25 kg per run, saving 68.75 kg (76%); 7.8 t a year instead of 32.9 t.
 4. Cost check: copying 5 TB at an illustrative \$0.02/GB inter-region rate costs \$100 per run, \$36,500 a year, unless the data is already replicated to region B.
 
 **Interpretation.** Moving to a clean region saves the most carbon here, but the data movement is half its remaining footprint and adds real cost; the temporal shift is free. **Engineering implication.** Shift in time first; shift in space when the data already lives in both places or the job is compute-heavy relative to its data. Use marginal intensity forecasts where available, and treat results as estimates.

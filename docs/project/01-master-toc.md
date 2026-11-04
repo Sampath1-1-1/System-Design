@@ -167,13 +167,13 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part IX — Advanced and Expert Topics
 
 **Ch 44 — Multi-Region and Global Systems** (L4, A) — global traffic management, geo-DNS, anycast, geo-replication, active–active vs active–passive, data residency, conflict handling, cell architecture
-**Ch 45 — Advanced Consistency and Byzantine Fault Tolerance** (L5, A) — consistency hierarchy (Jepsen map), snapshot isolation vs serializability, CRDT theory, BFT, PBFT, HotStuff, blockchain consensus overview
+44.3 Why go multi-region · 44.4 Latency physics across regions · 44.5 Global traffic management · 44.6 Deployment topologies · 44.7 Geo-replication · 44.8 Conflict handling across regions · 44.9 Data residency and sovereignty · 44.10 Cell-based and region-isolated architectures at global scale · 44.11 Regional failover and evacuation · 44.12 Global consistency options and the user-visible consequences
 **Ch 46 — Distributed Scheduling and Cluster Management** (L4, S) — Borg, Omega, Mesos, Kubernetes scheduler, bin-packing, preemption, gang scheduling, fairness (DRF)
-**Ch 47 — Multi-Tenant Architecture and Isolation** (L4, S) — tenancy models, noisy neighbours, quotas, isolation levels (process, VM, microVM/Firecracker, gVisor), tenant-aware sharding
+46.3 The cluster scheduling problem · 46.4 Scheduler architectures · 46.5 Borg · 46.6 The Kubernetes scheduler in depth · 46.7 Bin-packing heuristics · 46.8 Priorities, preemption and quota · 46.9 Fairness · 46.10 Gang scheduling and co-scheduling · 46.11 GPU and accelerator scheduling · 46.12 Batch and HPC schedulers: Slurm · 46.13 Autoscaling the cluster itself
 **Ch 48 — Edge Computing and Serverless at Scale** (L4, A) — edge runtimes, cold starts, Lambda internals (Firecracker), serverless data patterns, limits
-**Ch 49 — Large-Scale Data Infrastructure and High-Performance Computing** (L4–L5, S) — exabyte storage, data platform architecture, HPC (MPI, RDMA, InfiniBand), batch schedulers
+48.3 What "serverless" really means · 48.4 Inside a FaaS platform · 48.5 Cold starts · 48.6 Concurrency and scaling limits · 48.7 Serverless data patterns · 48.8 Edge runtimes · 48.9 Edge data · 48.10 What to run at the edge · 48.11 Cost at scale · 48.12 Operating serverless · 48.13 Serverless versus containers: a decision table
 **Ch 50 — Security Architecture and Privacy Engineering** (L4, S) — defense in depth, zero trust (BeyondCorp), identity architecture, supply-chain security, privacy by design, GDPR/CCPA engineering, data minimization, differential privacy intro
-**Ch 51 — Cost-Aware and Sustainable Architecture** (L4, S) — unit economics, FinOps, reserved/spot capacity, cost modeling, carbon-aware computing, efficiency metrics (PUE)
+50.3 Defense in depth as an architecture · 50.4 Zero trust architecture in depth · 50.5 Identity architecture · 50.6 Software supply-chain security · 50.7 Detection and response architecture · 50.8 Privacy by design · 50.9 GDPR and CCPA engineering · 50.10 Data minimization and de-identification · 50.11 Differential privacy: an introduction · 50.12 Computing on protected data: MPC, homomorphic encryption and confidential computing · 50.13 Security architecture review checklist
 
 ## Part X — Traditional System Design Case Studies (16-section format)
 

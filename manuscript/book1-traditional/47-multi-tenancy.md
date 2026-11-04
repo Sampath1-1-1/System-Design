@@ -248,7 +248,7 @@ Data isolation answers one question: what stops a query for tenant A from return
 
 #### First-principles explanation
 
-A storage company can give each customer a separate building, a locked room in a shared building, or a labelled shelf in a shared room with a guard who checks labels on every withdrawal. The building is safest and dearest; the shelf is cheapest and only as safe as the guard.
+A storage company can give each customer a separate building, a locked room in a shared building, or a labeled shelf in a shared room with a guard who checks labels on every withdrawal. The building is safest and dearest; the shelf is cheapest and only as safe as the guard.
 
 #### Why does this exist?
 
@@ -629,7 +629,7 @@ Demers, Keshav and Shenker emulated an ideal bit-by-bit round robin: each packet
 3. **Bounded per-tenant queues.** A full queue sheds that tenant's requests (503) only, so the backlog itself becomes a bulkhead.
 
 ::: formula
-**Weighted max–min fair share (water-filling)**
+**Weighted max–min fair share (water-filling, as in §46.9.1)**
 
 $$a_i = \min\left(d_i,\; w_i\,\theta\right), \qquad \text{with } \theta \text{ chosen so that } \sum_i a_i = C \quad \left(\text{if } \sum_i d_i > C\right)$$
 
@@ -656,7 +656,7 @@ $$a_i = \min\left(d_i,\; w_i\,\theta\right), \qquad \text{with } \theta \text{ c
 **Interpretation.** Tenants asking for less than their share get all of it; only those asking for more are cut, and unused shares flow to them. **Engineering implication.** A well-behaved tenant's service no longer depends on the noisy one, which the simulation below confirms.
 :::
 
-One-dimensional fairness is not the whole story: a tenant may be light on CPU and heavy on memory. **Dominant Resource Fairness (DRF)** equalizes each tenant's share of its most-used resource [Ghodsi et al. 2011]; Chapter 46 covers it.
+One-dimensional fairness is not the whole story: a tenant may be light on CPU and heavy on memory. **Dominant Resource Fairness (DRF)** equalizes each tenant's share of its most-used resource [Ghodsi et al. 2011]; §46.9.3 covers it.
 
 ### 47.8.3 Admission control as a pipeline
 
@@ -1033,12 +1033,12 @@ The questions you will be asked are per tenant: "why is Acme slow?", "who filled
 Where the tenant ID goes depends on the signal:
 
 - **Logs and traces:** always. High-cardinality attributes are what logs and traces are for (§40.3.3).
-- **Metrics:** carefully. A latency histogram labelled with route (25 values) and tenant (40,000) has $25 \times 40{,}000 \times 14 = 14$ million series before adding pod or status labels, far beyond what a Prometheus-style system holds comfortably (§40.5.3).
+- **Metrics:** carefully. A latency histogram labeled with route (25 values) and tenant (40,000) has $25 \times 40{,}000 \times 14 = 14$ million series before adding pod or status labels, far beyond what a Prometheus-style system holds comfortably (§40.5.3).
 
 Three patterns keep per-tenant metrics affordable:
 
 1. **Usage counters with few labels**: one per tenant per resource type (five types) is $40{,}000 \times 5 = 200{,}000$ series, manageable.
-2. **Top-N plus "other"**: tenant-labelled histograms only for the top few hundred tenants; the rest fold into `tenant="other"` or a tier label.
+2. **Top-N plus "other"**: tenant-labeled histograms only for the top few hundred tenants; the rest fold into `tenant="other"` or a tier label.
 3. **Wide events to a columnar store**: one event per request, with per-tenant percentiles computed by query where cardinality is cheap (§40.3.3).
 
 ### 47.11.2 Metering, showback and chargeback
@@ -1357,4 +1357,4 @@ Offboarding must remove the tenant's data from *every* store, provably, within a
 - gVisor platform details: systrap as default since mid-2023, and the Gofer and directfs behavior. Taken from search summaries of the platform guide.
 - The Citus function name and current behavior for isolating a single tenant to its own shard.
 - KMS key-deletion waiting periods (7–30 days) and request quotas, as of 2026.
-- The isolation-overhead figures in §47.9.3 are labelled planning assumptions. Replace them with measured values if a source is found.
+- The isolation-overhead figures in §47.9.3 are labeled planning assumptions. Replace them with measured values if a source is found.
