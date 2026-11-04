@@ -255,3 +255,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-248 | 50 | Author lists/issue numbers: Cittadini et al. 2016; Cedar (OOPSLA 2024); DELF (USENIX Security 2020) | Open | |
 | UQ-249 | 50 | CCPA 45+45-day response periods; opt-out preference-signal (GPC) rules | Open | Legal; not advice |
 | UQ-250 | 50 | MPC and FHE performance ranges (Table 50.6) are order-of-magnitude estimates | Accepted | Labeled in text |
+| UQ-251 | 49 | Tectonic (FAST 2021): TrafficGroup/TrafficClass details, cluster sizes, per-tenant RS parameters (PDF unreachable) | Open | |
+| UQ-252 | 49 | Colossus "two file systems above 10 EB" figure and Google post titles; Azure storage stamp sizes | Open | |
+| UQ-253 | 49 | S3 scale figures (2023 vs reported 2026 ~500T objects, ~200M req/s); Snowflake micro-partition sizes; Snowmobile retirement date | Open | Time-sensitive |
+| UQ-254 | 49 | El Capitan Nov 2024 Rmax/Rpeak and current Top500 leader (June 2026); MPI 5.0 release status | Open | Time-sensitive |
+| UQ-255 | 49 | DCQCN parameters (50 µs notification interval, g = 1/256); titles of Gangidi et al. 2024 (Meta RoCE) and McCrory 2010 (data gravity) | Open | |
