@@ -774,20 +774,20 @@ Output (Python 3.13): `{'batchItemFailures': [{'itemIdentifier': 'm2'}]} -> idem
 
 What to notice:
 
-- The return value follows the partial-batch-response shape, so only message `m2` returns to the queue; `m1` and its duplicate `m3` are deleted.
-- The key is derived from the object version, so the duplicate `m3`, a different message carrying the same work, does no work.
-- Two environments can still process the same record concurrently between the check and the put. That is acceptable here because thumbnail writes overwrite the same keys; for non-idempotent side effects (charging a card, sending an email), claim the key with the conditional put *before* the side effect, as in §22.15.3.
+- The partial-batch response returns only `m2` to the queue.
+- `m3` is a different message carrying the same work; the version-derived key makes it a no-op.
+- Two environments can still race between check and put. That is harmless for thumbnails, which overwrite the same keys; for non-idempotent effects (charges, emails), claim the key *before* the side effect (§22.15.3).
 
 ### 48.7.3 Orchestration instead of chains
 
-When work has several steps, the tempting design is a **function chain**: function A calls function B synchronously, B calls C. It is the main serverless anti-pattern, for four reasons:
+The tempting multi-step design is a **function chain**, A calling B synchronously and B calling C. It is the main serverless anti-pattern:
 
-1. **Double billing.** A waits, billed per millisecond, while B runs; with three levels, the first function is billed for the whole chain.
-2. **Concurrency multiplication.** Each request holds one environment per level, so a three-level chain uses three times the concurrency of the work it does and hits account limits three times sooner.
-3. **Compounding timeouts and retries.** Each level needs a timeout longer than everything below it, and retries at each level multiply (§22.12).
-4. **No durable state.** If A crashes after B succeeded, nothing records that B's step happened.
+1. **Double billing.** A is billed while it waits for B; the first function pays for the whole chain.
+2. **Concurrency multiplication.** A three-level chain holds three environments per request.
+3. **Compounding timeouts and retries** at every level (§22.12).
+4. **No durable state.** If A crashes after B succeeded, nothing records B's step.
 
-The fixes are a queue between steps when each step is independent (choreography), or a **workflow engine** when the process has order, branching, waits or compensation (orchestration, §32.8 and §32.11). AWS Step Functions records each state transition durably and retries tasks with backoff; its Standard workflows run up to a year with exactly-once transitions, and Express workflows run up to five minutes for high-volume, short processes (as of 2026). Azure Durable Functions and Google Workflows fill the same role.
+Use a queue between independent steps (choreography), or a **workflow engine** for order, branching, waits or compensation (§32.8, §32.11). Step Functions records every transition durably and retries tasks; Standard workflows run up to a year, Express up to five minutes (as of 2026). Azure Durable Functions and Google Workflows fill the same role.
 
 **Figure 48.10 — A synchronous function chain versus an orchestrated workflow.**
 
@@ -807,11 +807,11 @@ flowchart TB
   end
 ```
 
-**Reading the diagram.** In the chain, every arrow is synchronous: the client holds a connection for 2.4 s, the order function is billed for 2.4 s and the payment function for 2.0 s, although each does a fraction of that work, and three environments are held per request. A failure in `receipt` surfaces as an error in `payment` and then in `order`, with no record of which steps completed. In the orchestrated version the client gets an immediate acknowledgment; the engine invokes each function as a task with its own retry policy, records every transition in its execution history (the storage boundary) and runs the receipt step asynchronously. Failure points move to the engine, a managed and durable service. Scaling: each function holds an environment only while it works, so concurrency equals the work actually being done.
+**Reading the diagram.** In the chain every arrow is synchronous: the client waits 2.4 s, `order` is billed 2.4 s and `payment` 2.0 s for a fraction of that work, and three environments are held per request; a `receipt` failure surfaces through both callers with no record of completed steps. In the orchestrated version the client gets an immediate 202; the engine invokes each function as a task with its own retries, records transitions in its execution history (the storage boundary) and runs the receipt asynchronously. The failure point becomes the managed, durable engine. Scaling: concurrency equals the work actually being done.
 
 ### 48.7.4 State and other anti-patterns
 
-State lives in managed stores: key-value tables for per-entity state and idempotency records, object storage for blobs, caches for hot reads, workflow history for process state. Anything kept in an environment's memory or `/tmp` is a cache that may vanish at any moment and is not shared with the other environments of the same function.
+State lives in managed stores (tables, object storage, caches, workflow history). An environment's memory and `/tmp` are unshared caches that may vanish at any moment.
 
 **Table 48.4 — Serverless anti-patterns.**
 
@@ -819,19 +819,17 @@ State lives in managed stores: key-value tables for per-entity state and idempot
 |---|---|---|
 | Lambda calling Lambda synchronously | Double billing, concurrency × depth, compounding timeouts | Queue between steps, or a workflow engine |
 | Recursive trigger (function writes to the bucket or queue that triggers it) | Infinite loop and a runaway bill | Separate input and output locations; loop detection; budgets |
-| Per-invocation database connections without a pooler | Connection exhaustion at scale | Connection proxy, caps, HTTP data APIs |
-| Long-running work in a function | Duration limit, cost per ms while waiting | Containers or batch for long jobs; step functions with waits |
-| State in memory or `/tmp` assumed durable | Lost on reclamation, invisible to other environments | External stores |
-| One giant "monolith function" with every route | Large package, slow cold starts, one IAM role for everything | Functions per bounded context, or a container |
-| Polling in a loop for a result | Billed idle time | Callbacks, events, workflow waits |
+| Database connections without a pooler | Connection exhaustion at scale | Proxy, caps, HTTP data APIs |
+| Long-running or polling work in a function | Duration limit; billed idle waiting | Containers or batch; workflow waits; callbacks |
+| One giant function with every route | Large package, slow cold starts, one broad IAM role | Functions per bounded context, or a container |
 
-Lambda detects some recursive loops itself: when a chain of invocations through Lambda, SQS, SNS and S3 repeats about 16 times, it stops invoking and reports the loop (as of 2026) [AWS Docs: Lambda]. Treat this as a last line of defense, not a design.
+Lambda stops some recursive loops itself, after about 16 repetitions through Lambda, SQS, SNS and S3 (as of 2026) [AWS Docs: Lambda]; treat that as a last line of defense.
 
 ## 48.8 Edge runtimes
 
 ### 48.8.1 Why the edge needs a different sandbox
 
-A large CDN has hundreds of points of presence (PoPs), each with many servers, and every server may receive a request for any of millions of customer scripts. A microVM per script per server is far too much memory, and even a 125 ms boot is longer than the 10–20 ms round trip the edge exists to save. Edge runtimes therefore use lighter sandboxes, trading generality (no arbitrary binaries, no full Linux) for start times measured in milliseconds or microseconds and per-tenant memory measured in megabytes.
+Any server in any of a CDN's hundreds of points of presence (PoPs) may receive a request for any of millions of customer scripts. A microVM per script per server is far too much memory, and a 125 ms boot exceeds the 10–20 ms round trip the edge saves. Edge runtimes trade generality (no arbitrary binaries, no full Linux) for millisecond or microsecond starts and megabytes per tenant.
 
 ::: definition
 **Definition — V8 isolate.** An instance of the V8 JavaScript engine's heap and execution state. Many isolates run inside one operating-system process, each with its own memory and globals and no access to another's objects; switching between them costs about as much as a function call, not a process context switch [Bloom 2018].
@@ -839,15 +837,15 @@ A large CDN has hundreds of points of presence (PoPs), each with many servers, a
 
 #### First-principles explanation
 
-A microVM is a separate apartment with its own kitchen and plumbing: very safe, slow to build. A container is a room in a shared house. An isolate is a desk in an open-plan office with a locked drawer: dozens of people work in the same room, nobody can open anyone else's drawer, and a new person can sit down in seconds. The office is safe only if the drawers are strong and nobody can learn secrets by watching how long a neighbor takes to type, which is why isolate platforms work so hard on their security model.
+A microVM is a separate apartment; an isolate is a desk with a locked drawer in an open-plan office. Newcomers sit down in seconds, but the office is safe only if drawers are strong and nobody learns secrets by timing a neighbor's typing, hence the effort isolate platforms put into security.
 
 #### How it works internally
 
-**Cloudflare Workers.** Each server runs a runtime process hosting thousands of isolates, one per customer script. Cloudflare reported in 2018 that an isolate starts in about 5 ms and uses a small fraction of the memory of a Node.js process, so the platform can keep many scripts resident and start the rest on demand [Bloom 2018]. Later it moved even that start off the critical path: the runtime begins loading a script when the TLS handshake reveals the hostname, so the isolate is usually ready by the time the HTTP request arrives [Partovi 2020]. Limits (as of 2026) include 128 MB of memory per isolate and a CPU-time limit per request (10 ms on the free plan; configurable up to minutes on paid plans), with time spent waiting on network I/O not counted as CPU [Cloudflare Docs: Workers].
+**Cloudflare Workers.** Each server's runtime process hosts thousands of isolates, one per script. Cloudflare reported in 2018 that an isolate starts in about 5 ms using a fraction of a Node.js process's memory [Bloom 2018], and later began loading the script when the TLS handshake reveals the hostname, so the isolate is usually ready when the request arrives [Partovi 2020]. Limits (as of 2026) include 128 MB per isolate and a per-request CPU-time limit (10 ms free; up to minutes on paid plans), excluding time waiting on I/O [Cloudflare Docs: Workers].
 
-**Fastly Compute.** Customer code is compiled to **WebAssembly** (Wasm) ahead of time and run by the Wasmtime runtime. Each request gets a fresh Wasm instance, a linear memory region with bounds-checked access, which is created in microseconds and destroyed after the response, so no state leaks between requests [Fastly Docs: Compute]. Wasm's sandbox comes from its design: code can touch only its own linear memory and call only imported host functions [Haas et al. 2017]. Any language with a Wasm target works: Rust, Go and JavaScript (through an engine compiled to Wasm).
+**Fastly Compute.** Code is compiled ahead of time to **WebAssembly** (Wasm) and run by Wasmtime, with a fresh instance per request, created in microseconds and destroyed after the response, so no state leaks between requests [Fastly Docs: Compute]. Wasm code can touch only its own bounds-checked linear memory and call only imported host functions [Haas et al. 2017]. Rust, Go and JavaScript (via an engine compiled to Wasm) all work.
 
-**AWS Lambda@Edge and CloudFront Functions.** AWS offers two tiers [AWS Docs: CloudFront]. **CloudFront Functions** run lightweight JavaScript in every edge location on viewer request and viewer response events only, with sub-millisecond execution, 2 MB of memory, a 10 KB code limit and no network access: header rewrites, redirects, cache-key normalization, token checks. **Lambda@Edge** runs ordinary Lambda functions (Node.js and Python) in the larger regional edge caches, on viewer events (5 s, 128 MB) and origin events (30 s, more memory), with network access.
+**AWS Lambda@Edge and CloudFront Functions** [AWS Docs: CloudFront]. **CloudFront Functions** run restricted JavaScript at every edge location on viewer events only: sub-millisecond, 2 MB memory, 10 KB code, no network (header rewrites, redirects, cache keys, token checks). **Lambda@Edge** runs Node.js or Python Lambda functions in regional edge caches, on viewer events (5 s, 128 MB) and origin events (30 s, more memory), with network access.
 
 **Figure 48.11 — One edge server running many tenants' isolates.**
 
@@ -869,11 +867,11 @@ flowchart LR
   I1 -->|HTTPS| O{{Origin}}
 ```
 
-**Reading the diagram.** The edge front end terminates TLS; as soon as the hostname is known from the handshake, it asynchronously tells the runtime to load that tenant's script, so the isolate is warm when the request arrives (the dotted edge). One OS process hosts many isolates, each with its own heap; the process itself sits inside an OS-level sandbox, a second wall behind V8. Requests are dispatched synchronously to the right isolate, which can read the local cache or make subrequests to the origin. Storage boundaries: the PoP's cache and remote origins; isolates keep nothing durable. Failure points: a V8 bug (the reason for the second sandbox layer), CPU-heavy scripts (bounded by CPU limits), and origin round trips (§48.10). Scaling: every server can run every tenant, so capacity scales with PoPs and servers rather than with per-tenant provisioning.
+**Reading the diagram.** Once the TLS handshake reveals the hostname, the front end asynchronously (dotted) tells the runtime to load that tenant's script. One OS-sandboxed process hosts many isolates with separate heaps; requests are dispatched synchronously to the right isolate, which may read the PoP cache or call the origin. Storage boundaries: the local cache and remote origins; isolates keep nothing durable. Failure points: a V8 bug (hence the second, OS-level wall), CPU-heavy scripts (bounded by limits) and origin round trips (§48.10). Scaling: every server runs every tenant, so capacity grows with PoPs and servers.
 
 ### 48.8.2 The isolate security model
 
-Running thousands of mutually untrusting tenants in one process is safe only with defenses beyond the language sandbox. Cloudflare's published model describes several layers [Varda 2020]:
+Mutually untrusting tenants in one process need defenses beyond the language sandbox. Cloudflare's published model has several layers [Varda 2020]:
 
 1. **The V8 sandbox**, patched rapidly when vulnerabilities appear.
 2. **A process-level sandbox** around the runtime (namespaces and system-call filtering), so a V8 escape lands in a process with almost no privileges.
@@ -918,7 +916,7 @@ sequenceDiagram
   E-->>V: response
 ```
 
-**Reading the diagram.** All messages are synchronous HTTP. Viewer-request code runs on every request before the cache lookup, so it must be cheap: this is where token validation and cache-key normalization belong. Origin-request and origin-response code runs only on cache misses, after the regional cache, so it can afford more work (choosing an origin, generating an image variant) and its result can be cached. Viewer-response code runs on every response, including hits. Storage boundaries are the two cache tiers and the origin. Failure points: slow viewer-event code adds latency to every hit, and an exception there fails requests that the cache could have served. Scaling: work placed on origin events scales with the miss rate, not the request rate.
+**Reading the diagram.** All messages are synchronous HTTP. Viewer-request code runs on every request before the cache lookup, so it must be cheap (token checks, cache keys). Origin events run only on misses, after the regional cache, so they can do more (origin selection, image variants) and their results are cached. Viewer-response code runs on every response. Storage boundaries: two cache tiers and the origin. Failure points: slow or failing viewer code hurts even cache hits. Scaling: origin-event work grows with the miss rate, not the request rate.
 
 ::: warning
 **Warning — Edge code is on every request.** One millisecond of viewer-request code at PhotoShare's 17,400 photo views per second is 17.4 CPU-seconds per second across the edge. Put per-request logic in the cheapest tier that can do it, and move anything cacheable to origin-facing events.
@@ -926,11 +924,11 @@ sequenceDiagram
 
 ## 48.9 Edge data
 
-Edge code is only as fast as the data it reads. If every request must still fetch state from one region, the edge saves nothing (§48.10). Edge platforms therefore offer storage with different placements, and each placement is a different point in the consistency trade-offs of Chapter 25.
+Edge code is only as fast as its data (§48.10), so edge platforms offer storage with different placements, each a different point in the consistency trade-offs of Chapter 25.
 
 ### 48.9.1 Four kinds of edge state
 
-1. **Per-PoP cache (Cache API).** Code can read and write the PoP's HTTP cache programmatically: store a computed response, a fetched token-signing key or an assembled fragment. It is local to one PoP (or one data center), not replicated, and may be evicted at any time; correctness must never depend on it.
+1. **Per-PoP cache (Cache API).** Code reads and writes the PoP's HTTP cache (computed responses, fetched signing keys, fragments). It is local, unreplicated and evictable; correctness must never depend on it.
 2. **Global key-value stores** (Workers KV, Fastly KV Store, CloudFront KeyValueStore). Writes go to central storage and propagate to PoPs, which cache values for reads. They are **eventually consistent**: Cloudflare documents that a write is usually visible at once where it was made but may take 60 seconds or more to appear elsewhere, and limits writes to the same key to about one per second [Cloudflare Docs: Workers KV]. Concurrent writes resolve by last-write-wins. Ideal for read-heavy, rarely changing data: feature flags, redirects, A/B experiment definitions, allow-lists, public keys.
 3. **Single-writer actors** (Cloudflare **Durable Objects**). Each object has a globally unique ID, and the platform guarantees at most one live instance of it in the world at a time, running single-threaded next to its own transactional, strongly consistent storage (SQLite-backed) [Cloudflare Docs: Durable Objects]. Every request for that ID is routed to that instance, so the object serializes all operations on its state without locks: a linearizable unit, in the terms of §25.3. Ideal for counters, per-user rate limiters, chat rooms, collaborative documents, game sessions and coordination.
 4. **Replicated SQL at the edge** (Cloudflare D1 read replication, libSQL/Turso embedded replicas, LiteFS). A primary SQLite database takes all writes; read replicas near users serve queries. Reads from a replica can be stale; D1 offers sessions with bookmarks so that a client's reads observe at least its own earlier writes (read-your-writes, sequential consistency within the session) [Cloudflare Docs: D1].
@@ -949,7 +947,7 @@ flowchart LR
   DO -.->|WebSocket messages| W2
 ```
 
-**Reading the diagram.** Workers run in the PoP nearest each user and are stateless. Both route requests for `room-42` synchronously to the single instance of that Durable Object, which happens to live in Frankfurt; its colocated SQLite storage is the strongly consistent storage boundary, and the object serializes every operation. Broadcasts to connected clients flow asynchronously over WebSockets. Read-mostly data such as feature flags comes from the eventually consistent KV store at the local PoP. Failure points: the object's location is a latency cost for distant users (Tokyo pays about a 230 ms round trip to Frankfurt), one object's single thread bounds its throughput, and the platform must recreate the object elsewhere if its host fails. Scaling: shard state across many objects (one per room, per user, per document), never one global object.
+**Reading the diagram.** Stateless Workers in each user's nearest PoP route requests for `room-42` synchronously to its single instance in Frankfurt, whose colocated SQLite storage is the strongly consistent boundary; broadcasts flow back asynchronously over WebSockets. Feature flags come from eventually consistent KV at the local PoP. Failure points: distance (Tokyo pays about a 230 ms round trip), one thread bounding throughput, and re-creation elsewhere if the host fails. Scaling: shard state across many objects (per room, user or document), never one global object.
 
 ### 48.9.2 Choosing by consistency
 
@@ -966,14 +964,14 @@ flowchart LR
 The pattern for most products: authoritative state at the origin, read-mostly copies in KV or replicas, coordination in single-writer objects sharded by entity, and caches everywhere. PhotoShare keeps photo metadata in its regional database, experiment definitions and token-signing public keys in KV, per-user upload rate limits in Durable Objects keyed by user, and rendered thumbnails in the CDN cache.
 
 ::: mistake
-**Common misconception — "Edge KV is a globally replicated database."** It is a globally cached configuration store. A counter incremented in KV from two PoPs loses updates, a value written in Paris may read as old in Sydney for a minute, and per-key write rates are tiny. Use a single-writer object or the origin for anything that must be counted or read back immediately.
+**Common misconception — "Edge KV is a globally replicated database."** It is a globally cached configuration store: concurrent increments lose updates, Sydney may read Paris's write a minute late, and per-key write rates are tiny. Count and read-back-immediately state belongs in a single-writer object or at the origin.
 :::
 
 ## 48.10 What to run at the edge
 
 ### 48.10.1 The latency budget
 
-The edge saves one thing: round trips between the user and the region. It gains nothing, and often loses, when edge code must make several round trips back to the region for data. The arithmetic below makes the rule precise; §44.4 covers the physics of the round-trip times.
+The edge saves round trips between user and region, and loses when edge code makes several round trips back for data (§44.4 covers the physics).
 
 ::: formula
 **Edge versus origin request latency (warm connections)**
@@ -1037,7 +1035,7 @@ flowchart TB
   D4 -->|no| MISS[Run on cache-miss event and cache result]
 ```
 
-**Reading the diagram.** This is a decision flow, not a data flow. Logic that runs rarely or is not latency sensitive stays at the origin. For per-request logic, the deciding question is data: none (or only what the token carries) means the edge; read-mostly data that tolerates seconds of staleness means the edge plus KV or a replica; strongly consistent state about one entity means a single-writer object; authoritative data joined across many entities means the origin, because $m > 1$. Finally, CPU-heavy work moves to a cache-miss event so that its result is cached. Failure points to check at each "edge" leaf: what happens when the edge store is stale or unreachable, and whether the origin can still serve as a fallback.
+**Reading the diagram.** This is a decision flow, not a data flow. Rare or latency-insensitive logic stays at the origin. For per-request logic, data decides: none (or only the token) means the edge; read-mostly data tolerating staleness means edge plus KV or a replica; consistent state about one entity means a single-writer object; authoritative data joined across entities means the origin ($m > 1$). CPU-heavy work moves to a cache-miss event. At each edge leaf, check behavior when the edge store is stale or unreachable, and whether the origin can serve as fallback.
 
 ## 48.11 Cost at scale
 
@@ -1092,13 +1090,13 @@ The curves explain the Prime Video case in §33.9: a fine-grained serverless des
 
 ## 48.12 Operating serverless
 
-**Observability.** The platform emits the core metrics; alert on the ones that reveal serverless-specific failures: throttles, init duration and cold-start count, concurrency against its limit, iterator age (how far a stream consumer lags), queue age and dead-letter depth, and asynchronous-event age. Log in structured form with the request ID, function version and cold-start flag, so that latency can be split into warm and cold populations (§48.5.2).
+**Observability.** Alert on serverless-specific signals: throttles, init duration and cold-start count, concurrency versus limit, iterator age (stream lag), queue age and dead-letter depth. Log the request ID, version and cold-start flag so latency splits into warm and cold populations (§48.5.2).
 
 **Tracing across asynchronous hops.** A request that crosses a queue loses its trace unless the producer writes the trace context (W3C `traceparent`, §40.6.2) into message attributes and the consumer restores it. Batches complicate this: one invocation may process ten messages from ten traces, so the consumer's span should carry **span links** to each producer span rather than pretend to have one parent. Managed services propagate context only where the provider integrates them; verify each hop.
 
 **Versions, aliases and gradual deployment.** A published function **version** is immutable code plus configuration; an **alias** is a named pointer (for example `live`) that triggers and callers use. Shifting an alias's routing weights (say 5% to the new version for ten minutes, with automatic rollback on alarms) is a canary release (§43.6) without load balancers. Provisioned concurrency attaches to a version or alias, so pre-warm the new version before shifting traffic, or the canary measures cold starts rather than code.
 
-**Testing.** Write handlers as thin adapters around plain functions and unit-test them with recorded events, as in §48.7.2. Emulators (AWS SAM CLI, LocalStack, Azure Functions Core Tools, Cloudflare's local Workers runtime) catch wiring mistakes cheaply. Permissions, event-source settings, limits and managed-service behavior can only be tested in the cloud, so give each branch an ephemeral stack created from infrastructure as code (§43.8).
+**Testing.** Keep handlers thin around plain functions and unit-test them with recorded events (§48.7.2). Emulators (AWS SAM CLI, LocalStack, Azure Functions Core Tools, Cloudflare's local runtime) catch wiring mistakes; permissions, event-source settings and limits need an ephemeral cloud stack per branch from infrastructure as code (§43.8).
 
 **Lock-in.** Handler logic is portable; the event formats, triggers, IAM policies, workflow definitions and managed data services around it are not. Keep business logic behind ports and adapters (§33.10), use standard event envelopes such as CloudEvents where possible, and prefer container-based platforms (Cloud Run, Knative) when portability matters more than the deepest integration. Lock-in to a managed service that removes a whole operational burden is often a good trade; make it deliberately.
 
@@ -1169,7 +1167,7 @@ Most mature systems use several columns: the edge for authentication and routing
 11. A failing record blocks its whole shard. Bisecting isolates the bad record, and the destination removes it so the shard can make progress.
 12. Any two of: the process-level OS sandbox, trust-based cordons, no high-resolution timers or shared-memory threads, and dynamic process isolation of suspicious scripts.
 13. KV is eventually consistent and last-write-wins, and it allows about one write per second per key. Concurrent increments from different PoPs lose updates.
-14. Only if the origin path itself needs more than about three regional round trips' worth of time. Otherwise it cannot: $3 \times 150 = 450$ ms exceeds one 150 ms trip plus a few 1 ms database calls. Batch the calls into one, or replicate the data to the edge.
+14. Practically never: the edge path spends $3 \times 150 = 450$ ms on origin round trips, while origin rendering costs one 150 ms trip plus a few 1 ms database calls. It wins only after batching the calls into one ($m = 1$) or moving the data to the edge.
 15. Egress (data transfer to the Internet), $R\,b\,c_{\text{eg}}$.
 </details>
 

@@ -265,3 +265,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-258 | 51 | PUE figures: Uptime 1.58 (2023), 1.56 (2024); Google 1.09 TTM 2024; Green Grid WP#35 year | Open | Time-sensitive |
 | UQ-259 | 51 | Dropbox S-1 infrastructure savings ($39.5M, $35.1M) via press reports; baseline for AWS Graviton3 "up to 60% less energy" claim | Open | Vendor claim labeled |
 | UQ-260 | 51 | FinOps Foundation personas; FOCUS spec version/release date | Open | Time-sensitive |
+| UQ-261 | 48 | Lambda limits/prices (1,000 account concurrency; scaling 1,000 per 10 s; provisioned-concurrency price; 1,769 MB per vCPU); 2025 INIT-phase billing change | Open | Time-sensitive; merge with UQ-176 |
+| UQ-262 | 48 | Firecracker paper: placement <20 ms and pre-booted microVM pool; Lambda Worker Manager replacement (conference talks only); SnapStart runtimes and "up to 10×" | Open | |
+| UQ-263 | 48 | Wang et al. 2018 figures (summarized qualitatively); Cloudflare Workers limits, KV ~60 s propagation, Varda/Partovi 2020 post titles; Lambda recursive-loop detection threshold (~16) | Open | |
+| UQ-264 | 48 | Cloud Run and Azure Functions Flex Consumption details; Beswick 2021 post title | Open | Time-sensitive |
