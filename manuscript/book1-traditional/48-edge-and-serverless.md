@@ -2,23 +2,23 @@
 
 > **Level:** 4 · **Track:** A (Traditional) · **Estimated reading time:** 4.5 h
 
-Two ideas share this chapter. **Serverless** lets you hand the provider a function and stop thinking about machines: the platform starts a sandbox when an event arrives, bills you for the milliseconds it ran and reclaims it when traffic stops. **Edge computing** moves small pieces of that code out of the region and into hundreds of points of presence a few milliseconds from users. Both trade control for elasticity, and both have hidden costs: cold starts, concurrency limits, databases that cannot keep up with a function fleet, eventually consistent edge storage and bills that grow linearly with traffic.
+Two ideas share this chapter. **Serverless** lets you hand the provider a function and stop thinking about machines: the platform starts a sandbox when an event arrives, bills you for the milliseconds it ran and reclaims it when traffic stops. **Edge computing** moves small pieces of that code out of the region and into hundreds of points of presence a few milliseconds from users. Both trade control for elasticity, and both hide costs: cold starts, concurrency limits, databases that cannot keep up, eventually consistent edge storage and bills linear in traffic.
 
-Section 33.9 introduced serverless, its cold starts and its break-even cost against servers; §21.9 previewed edge runtimes on CDNs; §41.8.4 and §47.9 explained Firecracker microVMs and the isolation spectrum. This chapter opens those boxes. You will see what "serverless" means precisely (§48.3), how AWS Lambda is built according to its published papers (§48.4), the anatomy and arithmetic of cold starts with a runnable fleet simulation (§48.5), concurrency limits and downstream protection (§48.6), data patterns and anti-patterns (§48.7), edge runtimes (§48.8), edge data and its consistency trade-offs (§48.9), what belongs at the edge (§48.10), cost curves at three traffic scales (§48.11), operations (§48.12) and a decision table (§48.13). The running example is **PhotoShare**, the hypothetical photo app of Chapter 1, at 10 million daily users with about 70 photo uploads per second and 17,400 photo views per second at peak (§1.9). Every PhotoShare number is a teaching assumption.
+Section 33.9 introduced serverless and its break-even cost, §21.9 previewed edge runtimes, and §41.8.4 and §47.9 explained Firecracker and the isolation spectrum. This chapter opens those boxes: Lambda's published internals, cold-start arithmetic with a fleet simulation, concurrency limits, data patterns, edge runtimes and edge data, latency and cost models, and operations. The running example is **PhotoShare**, the hypothetical photo app of Chapter 1, at 10 million daily users with about 70 photo uploads per second and 17,400 photo views per second at peak (§1.9). Every PhotoShare number is a teaching assumption.
 
 ## 48.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Define serverless by its three properties (no resource management, scale to zero, pay per use) and distinguish FaaS from managed backend services.
-- Trace an AWS Lambda invocation through frontend, assignment, placement and worker, and explain slots, microVMs, on-demand image loading and snapshot restore.
+- Define serverless by its three properties and distinguish FaaS from managed backend services.
+- Trace a Lambda invocation through frontend, placement and worker, and explain slots, on-demand image loading and snapshot restore.
 - Break a cold start into its phases, compute how a cold-start fraction changes a latency percentile, and choose among mitigations.
 - Compute required concurrency with Little's Law, the time to scale under a scaling-rate limit, and the database connections a function fleet will open.
 - Design event-driven pipelines with batching, partial failures, idempotency and orchestration, and recognize serverless anti-patterns.
 - Compare V8 isolates, WebAssembly sandboxes and microVMs as edge runtimes, including their security models and limits.
 - Choose an edge data store by its consistency model and compute edge-versus-origin latency for a request.
 - Build cost curves for functions, containers and VMs, including memory–duration pricing, front-door charges and egress.
-- Operate serverless systems: tracing across asynchronous hops, versions and aliases, local testing and lock-in.
+- Operate serverless systems: asynchronous tracing, aliases, testing and lock-in.
 
 ## 48.2 Prerequisites
 
@@ -43,21 +43,20 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-A restaurant kitchen can be staffed two ways. In the first, you hire cooks for every shift and pay them whether or not orders arrive. In the second, you have an agency that sends a cook the moment an order comes in and bills you by the minute of cooking; the agency also supplies the pantry, the fridge and the dishwasher. Agency cooks never remember anything between orders, so everything they need must be in the shared pantry. The first cook of the evening takes a few minutes to arrive and put on an apron: a **cold start**. Serverless is the agency kitchen. FaaS is the cooks, BaaS is the pantry and appliances, and statelessness is the rule that nothing survives in a cook's pockets.
+A kitchen can hire cooks for every shift, paid whether or not orders arrive, or use an agency that sends a cook per order, bills by the minute and supplies the pantry. Agency cooks remember nothing between orders, so everything lives in the shared pantry, and the first cook of the evening takes a while to arrive: a **cold start**. FaaS is the agency cooks; BaaS is the pantry.
 
 #### Why does this exist?
 
-The Berkeley view of serverless computing argued that the early cloud copied the server too literally: users rented virtual machines and still had to provision, patch, monitor and scale them, and most of those machines idled [Jonas et al. 2019]. The authors compared serverless to the move from assembly language to high-level languages: the programmer states *what* to run and the platform decides *where* and *on how much*. They also identified what early serverless lacked: storage fast enough for fine-grained state, coordination between functions, efficient communication patterns, and predictable performance (cold starts). Most of this chapter is about how platforms and architects have answered those four gaps.
+The Berkeley view argued that the early cloud copied the server too literally: users still provisioned, patched and scaled virtual machines that mostly idled [Jonas et al. 2019]. Serverless is to that what high-level languages were to assembly: you state *what* to run; the platform decides *where* and *on how much*. The authors also listed what early serverless lacked: fast storage for fine-grained state, coordination, efficient communication and predictable performance (cold starts). Much of this chapter is about how those gaps are answered.
 
-The critique "Serverless Computing: One Step Forward, Two Steps Back" made the complementary point from a data-systems view [Hellerstein et al. 2019]: functions are isolated from each other and from data, so FaaS **ships data to code** through slow storage hops instead of shipping code to data. That is why FaaS excels at embarrassingly parallel, event-driven work and struggles with chatty, stateful or tightly coordinated computation.
+Hellerstein et al. added the data-systems critique: isolated functions **ship data to code** through slow storage hops, so FaaS excels at embarrassingly parallel, event-driven work and struggles with chatty, stateful, coordinated computation [Hellerstein et al. 2019].
 
 #### How it works internally
 
-1. An **event source** (an HTTP front door, a queue, an object upload, a schedule, a database change stream) produces an event.
-2. A **trigger** binding routes the event to a function version, either synchronously (the caller waits for the result) or asynchronously (the platform queues it and retries on failure).
-3. The platform finds or creates an **execution environment**, a sandbox holding the language runtime and your initialized code, and runs the **handler** with the event.
-4. The handler reads and writes state only in managed services and returns.
-5. The environment stays warm for a while to serve later events, then is reclaimed.
+1. An **event source** (HTTP front door, queue, object upload, schedule, change stream) produces an event.
+2. A **trigger** routes it to a function version, synchronously (the caller waits) or asynchronously (the platform queues and retries).
+3. The platform finds or creates an **execution environment** (a sandbox with the runtime and your initialized code) and runs the **handler**, which keeps state only in managed services.
+4. The environment stays warm for later events, then is reclaimed.
 
 **Figure 48.1 — A serverless application: functions for logic, managed services for state.**
 
@@ -76,33 +75,27 @@ flowchart LR
   AUTH{{Managed identity service}} -->|tokens| C
 ```
 
-**Reading the diagram.** PhotoShare's upload path is built from three functions (rectangles) and four managed services. The client authenticates with a managed identity service, asks a synchronous `upload-url` function for a presigned URL and uploads the photo directly to object storage, so the large bytes never pass through a function. Everything after that is asynchronous (dotted): the object-created event lands in a queue, the queue invokes the thumbnail function with batches of events, and the metadata write emits a change stream that triggers feed fan-out. The storage boundaries are object storage and the key-value database; no function keeps state between invocations. Failure points are the queue's retries (which make duplicates, §48.7.2), cold starts on the synchronous path, and the database's capacity when functions scale out. Each function scales independently up to the account's concurrency limit (§48.6).
+**Reading the diagram.** PhotoShare's upload path uses three functions and four managed services. The client gets a token from the identity service, asks the synchronous `upload-url` function for a presigned URL and uploads directly to object storage, so large bytes never pass through a function. The rest is asynchronous (dotted): the object-created event lands in a queue that invokes the thumbnail function in batches, and the metadata write emits a change stream that triggers feed fan-out. Storage boundaries are object storage and the key-value database; no function keeps state. Failure points: duplicate deliveries from retries (§48.7.2), cold starts on the synchronous path, and database capacity when functions scale out. Each function scales independently up to the account limit (§48.6).
 
 ### 48.3.2 Scale to zero and the billing model
 
-**Scale to zero** means that when no events arrive, no environments run and you pay nothing for compute. It is the property that makes serverless cheap for spiky or rare workloads and the property that creates cold starts: an environment that does not exist must be created before it can serve.
-
-The billing model of AWS Lambda illustrates the common shape (as of 2026) [AWS Lambda Pricing]:
+**Scale to zero** means that with no events, no environments run and compute costs nothing. It makes serverless cheap for spiky or rare workloads, and it creates cold starts. Lambda's billing shows the common shape (as of 2026) [AWS Lambda Pricing]:
 
 - A **request charge** per invocation, \$0.20 per million in us-east-1.
 - A **duration charge** in **GB-seconds**: configured memory × billed duration, rounded up to the nearest millisecond, \$0.0000166667 per GB-second for x86 and about 20% less for Arm (Graviton).
-- **CPU is proportional to memory.** You do not choose vCPUs; a function configured with 1,769 MB gets the equivalent of one vCPU, and the 10,240 MB maximum gets six [AWS Docs: Lambda]. Raising memory can therefore *lower* cost for CPU-bound code: double the memory, halve the duration, same GB-seconds, half the latency.
+- **CPU is proportional to memory**: 1,769 MB gets one vCPU, the 10,240 MB maximum gets six [AWS Docs: Lambda]. For CPU-bound code, doubling memory halves duration: same GB-seconds, half the latency.
 - The **initialization phase** is billed as duration. Since 1 August 2025 this includes managed-runtime functions packaged as ZIP archives, whose init time was previously free [AWS Compute Blog 2025].
 - Optional **provisioned concurrency** bills pre-initialized environments per GB-second while they exist, whether or not they serve requests (§48.5.3).
 
-Google Cloud Run and Azure Functions' Flex Consumption plan bill along similar lines, by vCPU-seconds and GiB-seconds of instance time plus requests, with options to keep a minimum number of instances warm [Google Cloud Docs: Cloud Run]; [Microsoft Learn: Azure Functions]. Two consequences follow: cost is linear in traffic with no step at all, and idle time costs nothing, so the comparison with servers depends on utilization (§48.11).
+Cloud Run and Azure Functions' Flex Consumption plan bill similarly, by instance vCPU-seconds and GiB-seconds plus requests, with optional warm minimums [Google Cloud Docs: Cloud Run]; [Microsoft Learn: Azure Functions]. Cost is linear in traffic and idle time is free, so the comparison with servers depends on utilization (§48.11).
 
 ::: mistake
-**Common misconception — "Serverless means no servers."** There are servers; you do not manage them. The machines, their kernels, sandbox placement and capacity are the provider's problem. What you still own is code, configuration, concurrency limits, the capacity of every non-elastic dependency, idempotency and the bill.
-:::
-
-::: mistake
-**Common misconception — "Serverless equals FaaS."** Managed queues, object storage, serverless databases and workflow engines are serverless too: they scale on demand and bill per use. Many of the best serverless architectures contain few functions; they wire managed services together directly and use functions only for logic that no service provides.
+**Common misconception — "Serverless means no servers" or "serverless equals FaaS."** There are servers; the provider manages them. You still own code, concurrency limits, every non-elastic dependency, idempotency and the bill. And managed queues, storage, databases and workflow engines are serverless too: good serverless designs often wire services together directly and use functions only for logic no service provides.
 :::
 
 ## 48.4 Inside a FaaS platform
 
-This section describes how FaaS platforms are built using only what providers have published: peer-reviewed papers by AWS engineers, and product documentation. Internal details change; treat everything here as "as of 2026" and as a model of the design problem rather than a current blueprint.
+This section uses only published material: papers by AWS engineers and product documentation. Internals change; read it as a model of the design problem (as of 2026), not a current blueprint.
 
 ### 48.4.1 AWS Lambda's invoke path
 
@@ -112,18 +105,18 @@ This section describes how FaaS platforms are built using only what providers ha
 
 #### First-principles explanation
 
-Think of a taxi dispatcher. A request comes in; the dispatcher first looks for a taxi already waiting in the right neighborhood (a warm slot). If none is free, it asks a fleet planner to send a new taxi to a garage chosen so that no garage gets overloaded (placement). Each taxi carries exactly one party at a time but serves many parties in a row. Lambda's control flow is that dispatcher, with microVMs as taxis.
+A taxi dispatcher first looks for an idle taxi nearby (a warm slot); if none is free, a fleet planner sends a new one from a garage chosen to keep garages balanced (placement). Each taxi carries one party at a time but many in a row.
 
 #### How it works internally
 
 The NSDI 2020 Firecracker paper describes Lambda's architecture as four cooperating parts [Agache et al. 2020]:
 
-1. **Frontend.** Receives the `Invoke` request (synchronous from an HTTP front door or SDK, or from internal pollers that read queues and streams), authenticates and authorizes it, and loads the function's metadata.
-2. **Worker Manager.** A stateful, sticky load balancer that knows which slots exist for each function and which are idle. If an idle slot exists, it reserves it with a lightweight concurrency-control protocol and tells the frontend where it is: a **warm start**.
-3. **Placement service.** If no idle slot exists, the Worker Manager asks Placement to create one. Placement chooses a worker so that CPU, memory, network and storage use stay even across the fleet and so that one function's slots are not concentrated on a few hosts. The paper reports this optimization typically takes under 20 ms.
-4. **Worker.** On each worker, a **MicroManager** process manages the Firecracker processes, creates slots on request and keeps a small pool of pre-booted microVMs so that slot creation skips the VM boot. The frontend then sends the invocation payload to the slot, and the response flows back the same way.
+1. **Frontend.** Receives `Invoke` (from callers, or from internal pollers reading queues and streams), authenticates it and loads function metadata.
+2. **Worker Manager.** A stateful, sticky load balancer tracking which slots exist and which are idle. If one is idle, it reserves it and tells the frontend: a **warm start**.
+3. **Placement service.** Otherwise Placement picks a worker that keeps CPU, memory, network and storage use even and spreads one function's slots across hosts; the paper reports this typically takes under 20 ms.
+4. **Worker.** A **MicroManager** process manages the Firecracker processes and keeps a small pool of pre-booted microVMs so slot creation skips the boot. The frontend then sends the payload to the slot.
 
-AWS engineers have since described evolving parts of this design in conference talks (for example, replacing the Worker Manager with a new assignment service); the four roles above remain a sound model of any FaaS control plane.
+AWS engineers have since described evolving parts of this (for example, a new assignment service replacing the Worker Manager) in conference talks; the four roles remain a sound model of any FaaS control plane.
 
 **Figure 48.2 — Lambda's invoke path as described in the Firecracker paper.**
 
@@ -145,7 +138,7 @@ flowchart LR
   CODE[(Code and image store)] -.->|chunks on demand| S1
 ```
 
-**Reading the diagram.** Synchronous callers and Lambda's own pollers (for queues and streams) both enter through the frontend, which authenticates and loads metadata. The frontend asks the Worker Manager for an idle slot; on a warm path the answer comes straight back and the frontend sends the payload directly to the slot on the worker. On a cold path the Worker Manager calls Placement, which picks a worker and tells its MicroManager to turn a pre-booted microVM into a slot for this function; code and image bytes stream in asynchronously from storage (§48.4.3). Each slot is a separate microVM, the isolation boundary between tenants. Failure points: Worker Manager state (it must know which slots exist), placement capacity in a zone, and the code store on the cold path. The fleet scales by adding workers; one function scales by adding slots across many workers.
+**Reading the diagram.** Callers and Lambda's pollers enter synchronously through the frontend, which asks the Worker Manager for an idle slot. Warm: the frontend sends the payload straight to the slot. Cold: Placement picks a worker and its MicroManager turns a pre-booted microVM into a slot, while code streams in asynchronously from storage (§48.4.2). Each slot is a separate microVM, the isolation boundary between tenants. Failure points: Worker Manager state, placement capacity in a zone, and the code store on the cold path. The fleet scales by adding workers; one function scales by adding slots across workers.
 
 **Figure 48.3 — Warm and cold invocation, step by step.**
 
@@ -173,25 +166,25 @@ sequenceDiagram
   F->>M: release slot as idle
 ```
 
-**Reading the diagram.** All calls are synchronous request/response within the platform. The `alt` block is the whole difference between warm and cold: on a cold path the caller waits for placement (milliseconds), slot creation from a pre-booted microVM, code loading, runtime start and the function's own initialization (§48.5). Releasing the slot returns it to the idle set, where it waits for the next invocation of the same function until the platform reclaims it. Failure points: slot creation can fail or be throttled (the caller sees a throttling error, §48.6), and initialization code can time out. Scaling: more concurrent invocations require more slots, which is why concurrency, not request rate, is the unit Lambda limits.
+**Reading the diagram.** All calls are synchronous. The `alt` block is the whole difference between warm and cold: cold, the caller also waits for placement, slot creation, code loading, runtime start and function initialization (§48.5). Releasing the slot returns it to the idle set until reclamation. Failure points: slot creation can be throttled (§48.6) and initialization can time out. Scaling: more concurrent invocations need more slots, which is why Lambda limits concurrency, not request rate.
 
 ::: industry
-**AWS Lambda on Firecracker.** Lambda originally isolated functions with containers inside per-customer VMs, which wasted capacity because one customer's VM could not be shared. Firecracker gave each slot its own microVM with a minimal device model and a jailer, so slots of different customers could be packed onto one bare-metal worker, and memory and CPU could be oversubscribed because most functions are idle or lightly loaded most of the time. The paper reports boot to user-space code in as little as 125 ms, less than 5 MiB of monitor overhead per microVM and up to 150 microVMs created per second per host, and states that Lambda processed trillions of events per month for hundreds of thousands of customers at the time [Agache et al. 2020]. §47.9 compares this boundary with containers and gVisor.
+**AWS Lambda on Firecracker.** Lambda originally isolated customers with per-customer VMs, which wasted capacity. Firecracker gave each slot its own minimal microVM, so different customers' slots share one bare-metal worker and memory and CPU can be oversubscribed, since most functions are idle most of the time. The paper reports boot to user-space code in as little as 125 ms, less than 5 MiB of monitor overhead per microVM and up to 150 microVMs created per second per host, and states that Lambda processed trillions of events per month for hundreds of thousands of customers at the time [Agache et al. 2020]. §47.9 compares this boundary with containers and gVisor.
 *Evidence: Primary* — [Agache et al. 2020]
 :::
 
 ### 48.4.2 Loading code on demand
 
-Lambda accepts container images up to 10 GiB [AWS Docs: Lambda]. Downloading 10 GiB before every cold start would take tens of seconds, so Lambda does not download images; it loads the bytes a function actually touches, when it touches them. Earlier research found that pulling packages accounted for 76% of container start-up time while only 6.4% of the pulled data was read [Harter et al. 2016].
+Lambda accepts container images up to 10 GiB [AWS Docs: Lambda]. Downloading that before each cold start would take tens of seconds, so Lambda loads only the bytes a function touches, when it touches them. Earlier research found that pulling accounted for 76% of container start-up time while only 6.4% of the pulled data was read [Harter et al. 2016].
 
 Brooker et al. describe the design [Brooker et al. 2023]:
 
-1. **Flatten and chunk.** At function creation, the image's layers are flattened into a single file-system image, which is split into fixed-size chunks.
-2. **Deduplicate with convergent encryption.** Many images share base layers (the same OS, the same runtime). Each chunk is encrypted with a key derived from its own content, so identical plaintext chunks from different customers produce identical ciphertext that can be stored and cached once, while nobody without the content can read it.
-3. **Load on demand at block level.** The microVM sees a block device; a local agent on the worker serves each read from a worker-local cache, then from a shared, erasure-coded cache in the availability zone, and only then from the backing object store.
-4. **Tier and replicate for tails.** Erasure coding in the zone cache lets the agent reconstruct a chunk from any sufficient subset of fragments, which cuts tail latency when one cache node is slow.
+1. **Flatten and chunk.** At function creation the layers are flattened into one file-system image, split into fixed-size chunks.
+2. **Deduplicate with convergent encryption.** Each chunk is encrypted with a key derived from its content, so identical chunks from different customers (shared OS and runtime layers) yield identical ciphertext, stored and cached once, unreadable without the content.
+3. **Load on demand at block level.** The microVM sees a block device; a worker agent serves reads from a local cache, then an erasure-coded zone cache, then the object store.
+4. **Erasure-code for tails.** A chunk can be rebuilt from any sufficient subset of fragments, masking a slow cache node.
 
-The result, per the paper, supports Lambda's goal of adding up to 15,000 new containers per second for a single customer, and the system had served hundreds of trillions of invocations for over a million customers [Brooker et al. 2023].
+Per the paper, this supports Lambda's goal of adding up to 15,000 new containers per second for a single customer, and the system had served hundreds of trillions of invocations for over a million customers [Brooker et al. 2023].
 
 **Figure 48.4 — Block-level on-demand loading of a container image.**
 
@@ -206,19 +199,19 @@ flowchart LR
   B[Image build at deploy] -.->|flatten, chunk, encrypt, dedupe| S3
 ```
 
-**Reading the diagram.** At deploy time (dotted, asynchronous) the image is flattened, chunked, convergently encrypted and deduplicated into the object store. At run time the microVM issues synchronous block reads to a local agent, which tries the worker-local cache, then the zone's erasure-coded cache, then the object store; each tier is a storage boundary with higher latency than the last. Only touched chunks travel, so a 10 GiB image that reads 200 MB at start-up costs about 200 MB of transfer, mostly served from caches because popular base chunks are shared. Failure points: a cold zone cache after a deploy of a unique image, and a slow cache node (masked by erasure coding). Scaling: cache hit ratios rise with fleet size, because more customers share the same base chunks.
+**Reading the diagram.** At deploy time (dotted, asynchronous) the image is chunked, encrypted and deduplicated into the object store. At run time the microVM's synchronous block reads go to a local agent, which tries three storage tiers of rising latency. Only touched chunks travel: a 10 GiB image that reads 200 MB at start-up moves about 200 MB, mostly from caches. Failure points: a cold zone cache for a unique new image, and a slow cache node (masked by erasure coding). Scaling: hit ratios rise with fleet size, because more customers share base chunks.
 
 ### 48.4.3 Snapshot restore: SnapStart
 
-The slowest part of many cold starts is the function's own initialization: a Java framework scanning classes, a Python process importing a machine-learning library. **Snapshot restore** runs initialization once and saves the result.
+The slowest part of many cold starts is the function's own initialization. **Snapshot restore** runs it once and saves the result.
 
 ::: definition
 **Definition — Snapshot-based start (SnapStart).** A mode in which the platform, when a function version is published, runs its initialization, takes a Firecracker snapshot of the microVM's memory and disk state, encrypts and caches it, and on each later cold start **restores** the snapshot instead of initializing from scratch [AWS Docs: Lambda].
 :::
 
-As of 2026, AWS documents SnapStart for Java, Python and .NET managed runtimes, and describes start-up improvements of up to 10× for Java functions with heavy initialization. Snapshot chunks are loaded on demand from the same kind of tiered cache as container images.
+As of 2026, AWS documents SnapStart for Java, Python and .NET, with start-up improvements of up to 10× for heavy Java functions; snapshot chunks load on demand from tiered caches like images.
 
-Snapshots introduce a subtle correctness problem: **uniqueness**. Anything created during initialization is copied into every environment restored from the snapshot: random-number generator seeds, UUID generators, cryptographic nonces, cached credentials, open network connections whose peers have long since closed them. Brooker et al. analyze this problem for microVM snapshots and the kernel and library support needed to reseed randomness after restore [Brooker et al. 2021]. Platforms therefore provide **runtime hooks** (`beforeCheckpoint` and `afterRestore` in Java's CRaC interface; decorator-registered hooks in Python) to close connections before the snapshot and re-establish them, refresh credentials and reseed generators after restore.
+Snapshots raise a correctness problem: **uniqueness**. Whatever initialization created is copied into every restored environment: random seeds, UUID generators, nonces, credentials, connections whose peers have closed them. Brooker et al. analyze this for microVM snapshots and the support needed to reseed randomness after restore [Brooker et al. 2021]. **Runtime hooks** (`beforeCheckpoint` and `afterRestore` in Java's CRaC interface; registered hooks in Python) close connections before the snapshot and reconnect, refresh credentials and reseed after restore.
 
 **Figure 48.5 — Lifecycle of a snapshot-started function version.**
 
@@ -236,18 +229,18 @@ stateDiagram-v2
   Cached --> [*]: version deleted or unused
 ```
 
-**Reading the diagram.** States are those of one function version; transitions are triggered by deployment, invocation and idleness. Initialization runs once per version at publish time, not once per environment. Every cold start restores from the cached snapshot, and the `afterRestore` hook is the only place to repair state that must be unique per environment. Storage boundaries: the snapshot cache tiers. Failure points: hooks that forget to reseed or reconnect (duplicate IDs, stale connections), and snapshots evicted for versions unused for a long time, which must be re-created. Scaling: restores of the same snapshot share cached chunks, so a burst of cold starts is cheaper than a burst of full initializations.
+**Reading the diagram.** States belong to one function version; deployment, invocation and idleness trigger transitions. Initialization runs once per version, not per environment; every cold start restores the cached snapshot, and `afterRestore` is the only place to repair per-environment state. Storage boundary: the snapshot cache tiers. Failure points: hooks that forget to reseed or reconnect, and snapshots evicted for long-unused versions. Scaling: restores share cached chunks, so a burst of cold starts is cheaper than a burst of full initializations.
 
 ::: warning
-**Warning — Snapshots copy secrets and randomness.** Generating a session key, a UUID seed or a "random" sampling decision during initialization is safe with ordinary cold starts and wrong with snapshots: every restored environment produces the same values. Move such work into the handler or an after-restore hook, and test by restoring two environments and comparing outputs.
+**Warning — Snapshots copy secrets and randomness.** A key, seed or "random" sampling decision made during initialization is identical in every restored environment. Move such work into the handler or an after-restore hook, and test by restoring two environments and comparing outputs.
 :::
 
 ### 48.4.4 Google Cloud Run and Azure Functions
 
 Other platforms make different choices, mainly about **per-instance concurrency**.
 
-- **Google Cloud Run** runs any container image. Each instance can serve many requests at once (default 80, configurable up to 1,000), so 1,000 concurrent requests may need only 13 instances instead of 1,000 environments. It scales to zero by default, supports **minimum instances** to keep some warm, offers a start-up CPU boost, and bills either only while requests are in flight or for the whole instance lifetime [Google Cloud Docs: Cloud Run]. Its first-generation execution environment used gVisor; the second generation runs in a microVM with full Linux compatibility. **Cloud Run functions** (formerly Cloud Functions) are built on Cloud Run.
-- **Azure Functions** runs on several hosting plans [Microsoft Learn: Azure Functions]. The **Consumption** plan scales instances by event load and bills per execution; the **Flex Consumption** plan adds per-instance concurrency, **always-ready** instances and virtual-network integration; the **Premium** plan keeps pre-warmed instances so that scale-out avoids cold starts; and dedicated App Service plans run on reserved machines. **Durable Functions** adds code-first orchestration.
+- **Google Cloud Run** runs any container image, and each instance serves many requests at once (default 80, up to 1,000), so 1,000 concurrent requests may need 13 instances rather than 1,000 environments. It scales to zero, supports **minimum instances** and a start-up CPU boost, and bills per request time or per instance lifetime [Google Cloud Docs: Cloud Run]. Its first-generation environment used gVisor, the second a microVM. **Cloud Run functions** (formerly Cloud Functions) build on it.
+- **Azure Functions** offers hosting plans [Microsoft Learn: Azure Functions]: **Consumption** (scale by event load, pay per execution), **Flex Consumption** (adds per-instance concurrency, **always-ready** instances, virtual networks), **Premium** (pre-warmed instances) and dedicated plans. **Durable Functions** adds code-first orchestration.
 
 **Table 48.1 — Three FaaS platforms (published behavior, as of 2026).**
 
@@ -261,7 +254,7 @@ Other platforms make different choices, mainly about **per-instance concurrency*
 | Maximum duration | 15 minutes | Up to 60 minutes per HTTP request | Plan-dependent; long-running orchestration via Durable Functions |
 | Billing basis | Requests + GB-seconds (1 ms granularity) | vCPU-seconds + GiB-seconds + requests | Execution time and memory, plus always-ready baseline |
 
-The concurrency row matters most. With one request per environment, a slow downstream call multiplies environments (§48.6) but no request ever competes for CPU with another; with many requests per instance, the instance count stays small and connection pools work as on a server, but one request's CPU spike or memory leak hurts its neighbors.
+The concurrency row matters most. One request per environment means a slow dependency multiplies environments (§48.6) but requests never compete for CPU; many per instance keeps instance counts and connection pools small, but one request's CPU spike or leak hurts its neighbors.
 
 ## 48.5 Cold starts
 
@@ -273,19 +266,19 @@ The concurrency row matters most. With one request per environment, a slow downs
 
 #### First-principles explanation
 
-A cold start is the first customer of the morning at a coffee shop that opens on demand: someone must unlock the door, switch on the espresso machine, wait for it to heat and grind the beans before the first cup is pulled. Every later customer waits only for their own cup. Your bill and your users' experience depend on how often a customer arrives to a locked door, and on how long the heating takes.
+A cold start is the first customer at a coffee shop that opens on demand: someone must unlock, switch on the machine and wait for it to heat before the first cup. Later customers wait only for their own cup. What matters is how often a customer finds the door locked, and how long the heating takes.
 
 #### How it works internally
 
 A Lambda cold start has five phases; other platforms differ in detail but not in shape [Agache et al. 2020]; [AWS Docs: Lambda]:
 
-1. **Placement and slot reservation.** The control plane picks a worker (typically under 20 ms in the Firecracker paper).
-2. **Sandbox creation.** A microVM is taken from a pre-booted pool or booted (as little as 125 ms) or restored from a snapshot.
-3. **Code loading.** ZIP packages are copied and unpacked; container images and snapshots are read in chunks on demand (§48.4.2).
-4. **Runtime initialization.** The language runtime starts: a Python or Node.js interpreter in tens of milliseconds; a Java virtual machine with class loading and just-in-time compilation warm-up in hundreds. Lambda **extensions** (agents for monitoring or secrets) also initialize here.
-5. **Function initialization.** Your code outside the handler runs: imports, framework start-up, SDK clients, configuration and secret fetches, database connections. Lambda limits this phase to 10 seconds for on-demand environments, and it is often the largest phase.
+1. **Placement and slot reservation** (typically under 20 ms in the Firecracker paper).
+2. **Sandbox creation**: a microVM from a pre-booted pool, a boot (as little as 125 ms) or a snapshot restore.
+3. **Code loading**: ZIP packages unpacked, or images and snapshots read in chunks on demand (§48.4.2).
+4. **Runtime initialization**: an interpreter in tens of milliseconds, a JVM with class loading in hundreds; Lambda **extensions** (monitoring or secrets agents) start here too.
+5. **Function initialization**: imports, frameworks, SDK clients, secret fetches, database connections. Lambda limits it to 10 s on demand, and it is often the largest phase.
 
-Only then does the handler run. Phases 1 to 3 belong to the provider and are typically tens of milliseconds; phases 4 and 5 belong to your choice of language, package size and initialization code, and range from tens of milliseconds to seconds.
+Phases 1–3 belong to the provider and are typically tens of milliseconds; phases 4–5 depend on your language, package and initialization code, and range from tens of milliseconds to seconds.
 
 **Figure 48.6 — An illustrative cold start for a Python function with a heavy SDK, axis in milliseconds.**
 
@@ -306,15 +299,13 @@ gantt
   Handler                        :h1, after f2, 80ms
 ```
 
-**Reading the diagram.** Each bar is a phase on one synchronous path; the axis is milliseconds from the moment the platform found no idle environment. The platform phases (120 ms here) are short; the highlighted phases are the function's own initialization (400 ms), larger than everything else combined, and the handler (80 ms) is what a warm request would pay. The storage boundaries are the code store (phase 3) and the secrets service and database (phase 5); either being slow or unreachable extends or fails the cold start. Scaling consequence: in a burst, every new environment pays the whole 720 ms, so cold starts cluster exactly when load rises. The numbers are illustrative, chosen to match published orders of magnitude, not measurements of any runtime.
+**Reading the diagram.** Bars are phases on one synchronous path, in milliseconds from the moment no idle environment was found. Platform phases total 120 ms; the highlighted function initialization (400 ms) exceeds everything else combined; the 80 ms handler is all a warm request pays. Storage boundaries: the code store, the secrets service and the database, any of which can stall or fail the cold start. In a burst every new environment pays the full 720 ms, so cold starts cluster when load rises. Numbers are illustrative orders of magnitude, not measurements.
 
 #### Measured ranges
 
-Published measurements agree on the shape and differ on the numbers because platforms keep changing:
-
-- AWS states that in an analysis of production use, cold starts typically occur in under 1% of invocations, and that their duration ranges from under 100 ms to over 1 s [AWS Compute Blog 2025]; [Beswick 2021].
-- Wang et al. measured AWS Lambda, Azure Functions and Google Cloud Functions in 2017–2018 and found cold-start latency varied strongly with provider, language and memory size, with Azure's cold starts then far slower than the other two; they also measured how long idle instances survived before reclamation and found co-residency and performance-isolation issues [Wang et al. 2018]. Treat their absolute numbers as history: every platform has changed since.
-- Shahrad et al.'s two-week trace of Azure Functions found invocation frequency spanning eight orders of magnitude across applications, with most applications invoked rarely, so a fixed keep-alive leaves rare functions cold most of the time [Shahrad et al. 2020].
+- AWS reports that cold starts typically occur in under 1% of production invocations and last from under 100 ms to over 1 s [AWS Compute Blog 2025]; [Beswick 2021].
+- Wang et al. measured Lambda, Azure Functions and Google Cloud Functions in 2017–2018: cold-start latency varied strongly with provider, language and memory, Azure's was then far slower, and they also measured idle-instance lifetimes and co-residency [Wang et al. 2018]. Treat their numbers as history.
+- Shahrad et al.'s Azure trace found invocation rates spanning eight orders of magnitude, most applications rare, so a fixed keep-alive leaves rare functions mostly cold [Shahrad et al. 2020].
 
 ### 48.5.2 How cold starts move percentiles
 
@@ -335,7 +326,7 @@ $$F(t) = (1 - p)\,F_w(t) + p\,F_c(t) \qquad\qquad p > 1 - q \;\Rightarrow\; L_q 
 | $t_{c,\min}$ | Fastest cold-start latency (cold overhead plus fastest handler) | ms |
 :::
 
-The second expression is the **cliff**: if more than $1 - q$ of invocations are cold, at least one cold start must fall inside the slowest $1 - q$, so the percentile is a cold-start latency no matter how fast warm requests are. Since $F(t) \le (1-p) + p\,F_c(t)$, and $F_c(t) = 0$ below $t_{c,\min}$, the bound follows.
+The second expression is the **cliff**: below $t_{c,\min}$, $F(t) \le 1 - p < q$, so if more than $1 - q$ of invocations are cold, the $q$-th percentile is a cold-start latency however fast warm requests are.
 
 ::: example
 **Worked example — PhotoShare's `upload-url` function.** Warm latency has p99 = 160 ms and p99.5 = 180 ms; nothing warm exceeds 300 ms. Cold invocations add 300–700 ms of initialization (uniform) to an 80 ms handler, so cold latency runs from about 380 ms to 780 ms with a median of about 580 ms.
@@ -345,7 +336,7 @@ The second expression is the **cliff**: if more than $1 - q$ of invocations are 
 3. $p = 2\%$: now $p > 1 - q = 1\%$, so $L_{0.99} \ge 380$ ms. Warm requests are all below 300 ms, so solve $0.02\,(1 - F_c(t)) = 0.01$: $F_c(t) = 0.5$, the cold median, about 580 ms.
 4. Means, for comparison: with $p = 2\%$ the mean rises from about 84 ms to $0.98 \times 84 + 0.02 \times 580 \approx 94$ ms, only 12%.
 
-**Interpretation.** The p99 jumps from 160 ms to 580 ms, 3.6 times, when the cold fraction crosses 1%, while the mean moves by 10 ms. **Engineering implication.** State latency SLOs at a percentile and compute $p$ against $1 - q$: a p99 SLO tolerates well under 1% cold starts, a p99.9 SLO well under 0.1%. If the cold fraction is near the cliff, remove cold starts from the path (provisioned capacity, asynchronous design), because shaving the handler will not help.
+**Interpretation.** The p99 jumps 3.6 times when the cold fraction crosses 1%, while the mean moves by 10 ms. **Engineering implication.** Compare $p$ with $1 - q$: a p99 SLO tolerates well under 1% cold starts, a p99.9 SLO well under 0.1%. Near the cliff, remove cold starts from the path; shaving the handler will not help.
 :::
 
 What sets $p$? For a function with sparse traffic, each invocation is cold if the previous one finished more than a **keep-alive window** $K$ ago.
@@ -370,11 +361,11 @@ $$P_{\text{cold}} = e^{-\lambda K} \qquad\qquad I = \frac{1 - e^{-\lambda K}}{\l
 2. $K = 1{,}200$ s: $P_{\text{cold}} = e^{-4} = 1.8\%$; $I = 300\,(1 - 0.018) = 295$ s.
 3. An hourly function ($\lambda = 1/3{,}600$) with $K = 1{,}200$ s: $P_{\text{cold}} = e^{-1/3} = 71.7\%$, while holding $I = 3{,}600\,(1 - 0.717) = 1{,}020$ s of idle memory per invocation.
 
-**Interpretation.** For the five-minute function, doubling $K$ cuts cold starts 7.5-fold at 14% more idle memory. For the hourly function, a 20-minute window wastes 17 minutes of memory per call and still leaves 72% of calls cold. **Engineering implication.** No fixed window fits every function. Rare functions need either prediction (pre-warm just before the expected arrival) or acceptance of cold starts; frequent functions are warm under almost any window.
+**Interpretation.** For the five-minute function, doubling $K$ cuts cold starts 7.5-fold for 14% more idle memory; the hourly function wastes 17 minutes of memory per call and stays 72% cold. **Engineering implication.** No fixed window fits every function: rare functions need prediction (pre-warm before the expected arrival) or acceptance of cold starts.
 :::
 
 ::: industry
-**Azure Functions: a hybrid histogram keep-alive.** Shahrad et al. characterized the entire Azure Functions workload over two weeks: 54% of applications had a single function, half of functions ran for under a second on average, and invocation rates spanned eight orders of magnitude. Azure then used a fixed keep-alive (20 minutes). The authors proposed a per-application policy that keeps a small histogram of idle times, unloads an application right after it runs and **pre-warms** it just before the next invocation is expected, falling back to a fixed window when the histogram is not predictive and to time-series forecasting for very rare applications. In trace-driven simulation it achieved fewer cold starts with less memory than fixed windows, and a version was deployed in production [Shahrad et al. 2020]. The team published the trace as the Azure Public Dataset.
+**Azure Functions: a hybrid histogram keep-alive.** Shahrad et al. characterized two weeks of the whole Azure Functions workload: 54% of applications had one function, half of functions averaged under a second, and invocation rates spanned eight orders of magnitude. Azure then used a fixed 20-minute keep-alive. The authors proposed a per-application policy that keeps a histogram of idle times, unloads an application after it runs and **pre-warms** it just before the next expected invocation, falling back to a fixed window or time-series forecasting when the histogram is not predictive. In trace-driven simulation it gave fewer cold starts with less memory, and a version was deployed in production; the trace is public as the Azure Public Dataset [Shahrad et al. 2020].
 *Evidence: Primary* — [Shahrad et al. 2020]
 :::
 
@@ -393,7 +384,7 @@ $$P_{\text{cold}} = e^{-\lambda K} \qquad\qquad I = \frac{1 - e^{-\lambda K}}{\l
 | Provisioned concurrency / minimum instances | All phases, up to the provisioned level | Pay while idle | Bursts above the level still cold |
 | Keep-warm pings | One environment's reclamation | Ping invocations | Keeps 1 warm, not the 20 a burst needs |
 
-**Provisioned concurrency** keeps $P$ environments initialized at all times and bills them whether or not they serve requests; requests above $P$ spill over to on-demand environments with ordinary cold starts [AWS Docs: Lambda].
+**Provisioned concurrency** keeps $P$ environments initialized and billed at all times; requests above $P$ spill to on-demand environments with ordinary cold starts [AWS Docs: Lambda].
 
 ::: formula
 **Monthly cost of keeping capacity warm**
@@ -417,12 +408,12 @@ $$C_{\text{warm}} = P \times M \times T \times c_{\text{pc}}$$
 3. Cost: $32{,}400{,}000 \times 0.0000041667 \approx \$135$ per month.
 4. Compare: the same traffic (about 535,000 invocations per day, 16 million per month, mean 84 ms) costs about $16 \times 10^6 \times (0.5 \times 0.084 \times 0.0000166667 + 2 \times 10^{-7}) \approx \$14.4$ per month on demand.
 
-**Interpretation.** Warmth costs nine times the work itself, because 25 environments sit mostly idle between bursts. **Engineering implication.** Provision only for functions whose cold starts break an SLO, size $P$ from measured burst concurrency rather than averages, and schedule it (more during business hours, less at night) with an autoscaler.
+**Interpretation.** Warmth costs nine times the work, because 25 environments idle between bursts. **Engineering implication.** Provision only where cold starts break an SLO, size $P$ from measured burst concurrency, and schedule it with an autoscaler.
 :::
 
 ### 48.5.4 Simulation: keep-alive and provisioned concurrency under bursty traffic
 
-The program simulates one function on a FaaS fleet for two hours. Traffic is 1 RPS in the background with a 40 RPS burst for two minutes every 15 minutes. Each environment serves one request at a time; handlers take a lognormal time with median 80 ms; a cold start adds 300–700 ms. Idle on-demand environments are reclaimed after a keep-alive window $K$; $P$ provisioned environments never are. The router prefers a provisioned environment, then the most recently used warm one. The program sweeps $K$ and $P$, then tests monotonicity, the cost of warmth, Little's Law and the analytic formula $e^{-\lambda K}$.
+The program simulates one function for two hours: 1 RPS background traffic with a 40 RPS burst for two minutes every 15 minutes. Each environment serves one request at a time; handlers are lognormal with median 80 ms; a cold start adds 300–700 ms. On-demand environments idle longer than $K$ are reclaimed; $P$ provisioned ones never are. The router prefers provisioned, then the most recently used warm environment. It sweeps $K$ and $P$, then runs five tests.
 
 ```python
 import math
@@ -570,10 +561,10 @@ all fleet tests passed
 
 What to notice:
 
-- **The cliff is real.** With a 10 s window, 1.03% of requests are cold, just over $1 - q$ for p99, and the p99 jumps to 387 ms; at 60 s the cold fraction falls to 0.32% and p99 drops to 169 ms, close to the warm 162 ms. The p99.9 stays cold-dominated until almost all cold starts are gone, exactly as §48.5.2 predicts.
-- **The window must outlast the gap between bursts.** Windows from 60 s to 600 s give similar cold rates because bursts are 900 s apart: environments created in one burst die before the next. Only $K = 1{,}200$ s carries them across, and it holds 3.5 times as many idle environment-hours as $K = 60$ s.
+- **The cliff is real.** At $K = 10$ s, 1.03% of requests are cold, just over $1 - q$, and p99 is 387 ms; at 60 s, 0.32% are cold and p99 is 169 ms, near the warm 162 ms. The p99.9 stays cold-dominated until nearly all cold starts are gone (§48.5.2).
+- **The window must outlast the gap between bursts.** Windows of 60–600 s perform alike because bursts are 900 s apart; only $K = 1{,}200$ s carries environments across, at 3.5 times the idle environment-hours of $K = 60$ s.
 - **Cold starts inflate concurrency.** The average burst concurrency is $40 \times 0.084 \approx 3.4$ environments, yet up to 25 on-demand environments exist: at the start of each burst, requests arrive while new environments are still initializing for 300–700 ms, so each cold request occupies an environment about seven times longer than a warm one (584 ms versus 84 ms) and triggers more cold starts. This **cold-start cascade** is why bursts need more capacity than Little's Law on warm durations suggests.
-- **Provisioned concurrency trades memory for certainty.** $P = 10$ cuts cold starts tenfold; $P = 25$ removes them, at 49 idle environment-hours over two hours. The tests check that longer windows never add cold starts, that warmth costs idle memory, that busy environment-seconds match Little's Law within 5%, and that a sparse function's cold fraction matches $e^{-\lambda K}$.
+- **Provisioned concurrency trades memory for certainty.** $P = 10$ cuts cold starts tenfold; $P = 25$ removes them at 49 idle environment-hours. The tests check monotonicity in $K$, the memory cost of warmth, Little's Law within 5%, and $e^{-\lambda K}$ for a sparse function.
 
 #### Failure scenarios
 
@@ -588,7 +579,7 @@ What to notice:
 | Bill jumps with no traffic change | Init now billed, heavy init code | Billed duration vs handler duration | Trim init | Measure init GB-seconds |
 
 ::: mistake
-**Common misconception — "Cold starts only matter for Java."** Runtime choice changes phase 4, but phase 5, your own initialization, can take seconds in any language (a large Python ML import, a framework that scans annotations, a database connection over TLS). Measure the init duration your platform reports before blaming the runtime.
+**Common misconception — "Cold starts only matter for Java."** Runtime choice changes phase 4, but your own initialization (phase 5) can take seconds in any language. Measure the reported init duration before blaming the runtime.
 :::
 
 ## 48.6 Concurrency and scaling limits
@@ -599,7 +590,7 @@ What to notice:
 **Definition — Concurrency (FaaS).** The number of execution environments serving invocations at the same instant. On platforms with one request per environment it equals in-flight requests. Providers limit concurrency, not request rate, because concurrency is what consumes memory on workers.
 :::
 
-By Little's Law (§4.11), concurrency equals arrival rate times duration. The consequence is counterintuitive: a function that becomes slower needs more environments for the same traffic, so a slow database can push a fleet into its concurrency limit without any increase in requests.
+By Little's Law (§4.11), concurrency equals arrival rate times duration, so a slower function needs more environments for the same traffic: a slow database can push a fleet into its limit with no extra requests.
 
 ::: formula
 **Required concurrency, time to scale and connections opened**
@@ -632,7 +623,7 @@ As of 2026, AWS Lambda's defaults are a **regional account limit** of 1,000 conc
 4. Scaling time from zero: $T_{\text{scale}} \approx 10 \times \lceil 400/1{,}000 \rceil = 10$ s. A sudden need for 5,000 environments (after a limit increase) would take about $10 \times 5 = 50$ s, during which excess events wait in the queue.
 5. Database: each `reencode` environment opens $k = 1$ PostgreSQL connection to update metadata, so $N_{\text{conn}} = 400$, against a `max_connections` of 500 that the API servers also use. The real need: 333 updates/s at 3 ms each gives $N_{\text{pool}} = 333 \times 0.003 = 1$ busy connection on average.
 
-**Interpretation.** Concurrency, not request rate, is the budget, and the database needs 1 connection's worth of work but would be offered 400 connections. **Engineering implication.** Give every high-volume asynchronous function a concurrency cap, reserve capacity for latency-critical functions, and put a connection pooler between functions and any relational database.
+**Interpretation.** Concurrency is the budget, and the database has one connection's worth of work but would be offered 400 connections. **Engineering implication.** Cap high-volume asynchronous functions, reserve capacity for latency-critical ones, and pool connections to relational databases.
 :::
 
 **Figure 48.7 — Concurrency pools within one account and Region.**
@@ -653,15 +644,15 @@ flowchart TB
   UN -->|throttle 429 when empty| X{{Throttled invocations}}
 ```
 
-**Reading the diagram.** The account limit is one shared bucket of environments; reserved concurrency carves guaranteed, capped slices out of it for named functions. Synchronous traffic from the front door reaches `upload-url` and `feed-api`, which cannot be starved by the backfill because their reservations are theirs alone. The backfill's queue poller is asynchronous and capped, so excess work stays in the queue (a storage boundary that absorbs bursts) rather than throttling. Everything else shares the unreserved pool; when it is empty, synchronous callers get 429 and asynchronous events are retried. Failure point: reserving too much leaves the unreserved pool too small for unplanned functions. Scaling: raise the account limit, or split workloads into separate accounts, which also limits blast radius (§47.4.3).
+**Reading the diagram.** The account limit is one shared bucket; reserved concurrency carves guaranteed, capped slices for named functions. Synchronous front-door traffic reaches `upload-url` and `feed-api`, which the backfill cannot starve. The backfill's asynchronous poller is capped, so excess work waits in the queue (a storage boundary) instead of throttling. Other functions share the unreserved pool; when it is empty, synchronous callers get 429 and asynchronous events are retried. Failure point: over-reserving starves unplanned functions. Scaling: raise the limit or split workloads into accounts, which also limits blast radius (§47.4.3).
 
 ### 48.6.2 Protecting downstream systems
 
-Functions scale in seconds; most databases, legacy services and third-party APIs do not. Three tools protect them:
+Functions scale in seconds; most databases and third-party APIs do not. Three tools protect them:
 
-1. **Concurrency caps** bound how many environments can call a dependency at once (reserved concurrency, or the maximum concurrency of a queue's event source).
-2. **A queue in front** turns a burst into a backlog that drains at a controlled rate, the load-levelling pattern of §30.4.
-3. **A connection pooler** multiplexes many short client sessions onto a few database connections. **Amazon RDS Proxy** is the managed version for Lambda: functions connect to the proxy, which keeps a warm pool to the database, lends a connection for each transaction and returns it; session state such as temporary tables or session variables **pins** a client to a connection and defeats multiplexing [AWS Docs: RDS Proxy]. PgBouncer in transaction mode does the same for self-managed PostgreSQL. Alternatively, use a database with an HTTP data API or one designed for per-request connections.
+1. **Concurrency caps** (reserved concurrency, or a queue event source's maximum concurrency).
+2. **A queue in front**, turning a burst into a backlog that drains at a controlled rate (§30.4).
+3. **A connection pooler.** **Amazon RDS Proxy** keeps a warm pool to the database and lends a connection per transaction; session state such as temporary tables **pins** a client to a connection and defeats multiplexing [AWS Docs: RDS Proxy]. PgBouncer in transaction mode does the same for self-managed PostgreSQL; HTTP data APIs avoid connections altogether.
 
 **Figure 48.8 — A connection proxy between a function fleet and a relational database.**
 
@@ -679,21 +670,21 @@ flowchart LR
   SM{{Secrets manager}} -.->|credentials| PX
 ```
 
-**Reading the diagram.** Each environment opens a cheap session to the proxy instead of a database connection; all edges are synchronous. The proxy holds a fixed pool of 20 connections, sized by Little's Law ($N_{\text{pool}}$ from §48.6.1, with headroom) and lends one per transaction, so the database sees 20 connections whatever the fleet size. Credentials come from a secrets manager asynchronously, so functions need no database password. The database remains the storage boundary and the real capacity limit; the proxy also queues requests when the pool is busy, which surfaces as added latency rather than connection errors. Failure points: pinned sessions that exhaust the pool, and the proxy itself (deploy it across zones). Scaling: a larger pool only helps while the database has spare CPU and I/O.
+**Reading the diagram.** Each environment opens a cheap synchronous session to the proxy, which lends one of 20 pooled connections per transaction (sized by $N_{\text{pool}}$ with headroom), so the database sees 20 connections whatever the fleet size. Credentials arrive asynchronously from a secrets manager. The database is the storage boundary and the real capacity limit; when the pool is busy the proxy queues, adding latency instead of connection errors. Failure points: pinned sessions exhausting the pool, and the proxy itself (deploy it across zones). Scaling: a larger pool helps only while the database has spare CPU and I/O.
 
 ::: mistake
-**Common misconception — "Serverless scales, so my system scales."** The functions scale. The system scales only as far as its least elastic dependency. Every function that writes to a relational database, calls a rate-limited partner API or sends email needs a cap or a queue in front of that dependency.
+**Common misconception — "Serverless scales, so my system scales."** The system scales only as far as its least elastic dependency; every function calling a database or rate-limited API needs a cap or a queue.
 :::
 
 ## 48.7 Serverless data patterns
 
 ### 48.7.1 Event-driven pipelines
 
-Functions hold no state and run for minutes at most, so serverless systems are built as **pipelines**: a managed queue, stream or event bus carries each unit of work between functions, and managed stores hold the results. The event source determines delivery semantics, ordering and how failures are retried.
+Stateless, short-lived functions are composed into **pipelines**: a managed queue, stream or event bus carries work between them, and the event source fixes delivery semantics, ordering and retries.
 
-- **Queues** (SQS, Pub/Sub, Service Bus). A poller reads messages in **batches** (up to a size or a batching window), invokes the function and deletes the messages on success. A message that fails becomes visible again after its visibility timeout and is retried, then moved to a **dead-letter queue** after a configured number of receives (§30.11). Without further work a single bad message fails its whole batch; **partial batch responses** let the function report only the failed message IDs [AWS Docs: Lambda]. There is no ordering across messages except in FIFO queues.
-- **Streams** (Kinesis, DynamoDB Streams, Kafka). Records are ordered per shard or partition, and the poller processes one batch per shard at a time (Lambda allows a **parallelization factor** of up to 10 concurrent batches per shard, preserving order per key). A failing record blocks its shard until it succeeds, expires or is diverted, so stream consumers need bisect-on-error, a retry limit and an on-failure destination.
-- **Pub/sub fan-out** (SNS, EventBridge, Eventarc). One event is delivered to many subscribers, each with its own retry policy, usually through a queue per subscriber so that one slow consumer does not affect the others.
+- **Queues** (SQS, Pub/Sub, Service Bus). A poller invokes the function with **batches** and deletes messages on success; failed messages reappear after the visibility timeout and go to a **dead-letter queue** after a set number of receives (§30.11). **Partial batch responses** report only the failed message IDs, so one bad message does not fail its batch [AWS Docs: Lambda].
+- **Streams** (Kinesis, DynamoDB Streams, Kafka). Records are ordered per shard, processed one batch per shard at a time (Lambda's **parallelization factor** allows up to 10, preserving per-key order). A failing record blocks its shard, so consumers need bisect-on-error, a retry limit and an on-failure destination.
+- **Pub/sub fan-out** (SNS, EventBridge, Eventarc). One event reaches many subscribers, usually through a queue per subscriber so a slow consumer affects no one else.
 
 **Figure 48.9 — PhotoShare's upload pipeline with fan-out and failure paths.**
 
@@ -714,11 +705,11 @@ flowchart LR
   Q2 -.->|after 5 receives| DLQ
 ```
 
-**Reading the diagram.** An object-created event goes to an event bus, whose rules fan it out to one queue per consumer (all dotted, asynchronous, at-least-once). Each queue has its own batch size and concurrency: thumbnails in batches of 10 capped at 200 environments, moderation one at a time because each call is slow and rate limited, audit in batches of 100 because each record is tiny. Synchronous edges are the functions' writes to object storage, the metadata table, the moderation API and the audit store (the storage boundaries). Failure points: a corrupt image (retried, then dead-lettered without blocking other photos), the moderation API's rate limit (its queue absorbs the backlog), duplicate deliveries (handled by idempotency, §48.7.2). Scaling: each consumer scales independently; adding a consumer means adding a rule and a queue, without touching the producer.
+**Reading the diagram.** Bus rules fan each object-created event out to one queue per consumer (dotted: asynchronous, at-least-once). Each queue sets its own batch size and concurrency: thumbnails in tens capped at 200, moderation singly because its API is slow and rate limited, audit in hundreds. Solid edges are synchronous writes to the storage boundaries and the moderation API. Failure points: a corrupt image (retried, then dead-lettered without blocking others), the moderation rate limit (its queue absorbs the backlog) and duplicates (§48.7.2). Scaling: consumers scale independently, and a new consumer needs only a rule and a queue.
 
 ### 48.7.2 Idempotent handlers
 
-Every event source above delivers at least once, and Lambda's own asynchronous invocation retries failed events, so every handler must be **idempotent**: processing an event twice must have the same effect as processing it once. The protocol of §22.15 applies unchanged: derive an **idempotency key** from the business identity of the work (here, bucket, key and object version, not the delivery's message ID, so a duplicate upload notification also deduplicates), record completion with a conditional write, and make side effects either naturally idempotent (overwriting the same thumbnail keys) or guarded by the record.
+Every source above delivers at least once, and asynchronous invocations are retried, so handlers must be **idempotent**. Apply §22.15: derive the **idempotency key** from the business identity of the work (bucket, key and object version, not the message ID), record completion with a conditional write, and make side effects naturally idempotent or guarded by the record.
 
 ```python
 import hashlib
