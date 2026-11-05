@@ -2287,3 +2287,131 @@ A workflow run creates one `task_instances` row per task, with `upstream_remaini
 *Evidence: Primary* — [Beyer et al. 2016]; [Matsuda 2015]; [Kubernetes Docs: CronJob]
 :::
 
+### 52.9.9 Data flow
+
+**Figure 52.19 — Write path: from job registration to dispatch.**
+
+```mermaid
+sequenceDiagram
+  participant T as Team service
+  participant A as Job API
+  participant J as Job store
+  participant S as Scheduler owner of partition 417
+  participant Q as Dispatch queue
+  T->>A: POST /v1/jobs cron 30 2 * * * Europe/Berlin
+  A->>J: insert job, next_fire_at 01:30Z, partition 417
+  A-->>T: 201 job_id, next_fire_at
+  Note over S: every minute: load partition 417<br/>jobs due before now + 10 min
+  S->>J: SELECT due jobs WHERE next_fire_at < now + 10 min
+  J-->>S: jobs incl. invoice-export
+  Note over S: insert into timing wheel
+  Note over S: 01:30:00.000 tick fires
+  S->>Q: append batch, key execution_id
+  Q-->>S: acked
+  S->>J: checkpoint watermark 01:30:00, fencing token 88
+  J-->>S: ok, token current
+  Note over S: compute next fire in Europe/Berlin,<br/>update next_fire_at lazily in batches
+```
+
+**Reading the diagram.** Registration is a synchronous insert; the API computes the first fire time in the job's time zone and stores it in UTC. The owning scheduler node loads near-term firings from its partition's index every minute (and receives jobs due within the window directly from the API). At the due tick, the wheel releases the job, the node appends a dispatch message keyed by execution ID, and once the queue acknowledges, the node advances the partition watermark with its fencing token; a rejected checkpoint means the node has lost its lease and must stop. The job's `next_fire_at` is advanced in batched updates off the critical path, because correctness rests on the watermark. Failure points: a crash after the queue append and before the checkpoint causes the new owner to re-dispatch the same execution ID; a time-zone transition (the daylight-saving change) is handled when computing the next fire time (§52.9.11). Scaling: dispatch throughput scales with partitions per node and queue partitions.
+
+**Figure 52.20 — Read path: a worker executes, fails once and retries.**
+
+```mermaid
+sequenceDiagram
+  participant W as Worker
+  participant Q as Dispatch queue
+  participant E as Execution history
+  participant X as Job target
+  participant S as Scheduler owner
+  W->>Q: lease next task, 900 s
+  Q-->>W: execution e_5f, attempt 1, token 31
+  W->>E: conditional insert e_5f attempt 1 running
+  E-->>W: ok, first
+  W->>X: POST export, Idempotency-Key e_5f
+  X-->>W: 503
+  W->>E: attempt 1 failed
+  W->>S: retry e_5f at now + 30 s
+  W->>Q: ack task
+  Note over S: timer fires after 30 s
+  S->>Q: dispatch e_5f attempt 2
+  Q-->>W: e_5f attempt 2
+  W->>X: POST export, Idempotency-Key e_5f
+  X-->>W: 200
+  W->>E: attempt 2 succeeded
+```
+
+**Reading the diagram.** Workers pull work; the queue's lease (visibility timeout) returns the task to the queue if the worker dies. Before calling the target, the worker claims the attempt with a conditional insert, so two workers holding duplicate deliveries of the same attempt cannot both run it. The target receives the same idempotency key on every attempt, so if attempt 1 had actually done the work before failing, attempt 2 would return the stored result instead of exporting twice. The retry is scheduled as an ordinary timer on the owning scheduler with exponential backoff. Failure points: a target that ignores the idempotency key can run twice; a worker that exceeds its lease without heartbeating loses the task to another worker, and the fencing token makes its late writes to the execution history fail. Scaling: workers scale on queue lag, separately per tenant class so one tenant's backlog cannot starve others.
+
+### 52.9.10 Bottlenecks
+
+1. **The top-of-hour burst.** A million firings in one second; mitigated by pre-loading, batching dispatches and hashed minutes.
+2. **Job store index scans.** Loading due jobs every minute from 1,024 partitions is 1,024 index range scans per minute, cheap; but a full reload after a mass failover must be rate-limited.
+3. **Downstream targets.** A thousand tenants' jobs at 02:00 can overload a shared internal service; per-target concurrency limits in workers (using §52.6) protect it.
+4. **History writes.** 250 million attempts per day, more with retries; batch writes and keep them off the dispatch path.
+
+### 52.9.11 Failure scenarios
+
+**Table 52.28 — Job scheduler failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Scheduler node crash | Its partitions stop firing | Lease expiry in etcd | Other nodes take leases; replay from watermark | Short leases (10 s); spare capacity |
+| GC pause or network partition of an owner | Two nodes believe they own a partition | Rejected checkpoint (stale fencing token) | Stale node stops; duplicates deduplicated by execution ID | Fencing tokens on every write |
+| Coordination service down | No ownership changes | etcd health | Owners keep partitions until leases lapse; then firing stops safely | 5-node etcd across zones (§26.9) |
+| Dispatch queue unavailable | Firing pauses; watermarks stop advancing | Append errors | Resume; replay from watermark; misfire policies apply | Replicated queue; alert on watermark lag |
+| Worker dies mid-job | Task redelivered after lease | Missing heartbeats | Another worker runs the same execution ID | Idempotent jobs; heartbeats |
+| Daylight-saving transition | A 02:30 local job has no 02:30 on spring-forward day, two on fall-back day | Tests on time-zone transitions | Policy: fire once at the next valid time; fire only the first occurrence | Use a time-zone database; test transitions |
+| Clock skew on a scheduler node | Jobs fire early or late | Clock offset monitoring | Fix NTP | Fire by node clock but checkpoint against store time |
+| Poison job (always fails) | Retries waste capacity | Attempts per execution | Dead-letter after max attempts; alert owner | Retry caps; backoff |
+
+### 52.9.12 Scaling strategy
+
+**At 10× (100 million schedules, 10 million firings at the top of the hour).** Raise the partition count (to 8,192) and the scheduler fleet (to about 200 nodes); make hashed minutes the default for new hourly schedules, with explicit opt-in for exact :00 firing; and split dispatch queues by tenant tier so free-tier bursts cannot delay paid tenants.
+
+**At 100×.** Run independent scheduler cells per region and tenant group, each with its own coordination service, job store shards and queues (§33.12); a global directory maps tenants to cells. Firing within a cell remains the same design; the cell bounds the blast radius of a bad deploy or a coordination outage.
+
+### 52.9.13 Trade-offs
+
+- **Partitioned ownership versus a single leader:** throughput and fast partial failover, in exchange for lease management and fencing.
+- **Watermark checkpoints versus per-firing database writes:** dispatch at memory speed, in exchange for a window of duplicates after failover.
+- **At-least-once plus idempotency versus attempting exactly-once:** a contract that can actually be kept, in exchange for requiring job authors to write idempotent jobs.
+- **In-memory wheel for near-term timers only:** small memory and fast firing, in exchange for a loader loop and a direct-push path for newly created near-term jobs.
+
+### 52.9.14 Alternative designs
+
+- **Database polling** (`SELECT … WHERE next_fire_at <= now() FOR UPDATE SKIP LOCKED`): many workers poll one table and claim due rows. Simple and correct for thousands of jobs per minute; the polling load and lock contention fail at the million-per-second burst.
+- **Delayed messages in the broker** (queues with per-message delivery delay, or Redis sorted sets scored by due time): good for one-off delays; recurring cron schedules and catch-up policies still need a scheduler on top.
+- **Kubernetes CronJobs** for a few thousand cluster-local jobs: no new system to run, but each firing creates a pod, which is too heavy for millions of small HTTP callbacks.
+- **Workflow engines** (§32.11) for complex, long-running, stateful workflows; the scheduler then only triggers them.
+
+### 52.9.15 Interview discussion
+
+**Table 52.29 — 45-minute plan for the distributed job scheduler.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Requirements | Cron with time zones, delayed jobs, DAGs, retries, policies |
+| 5–10 | Estimates | 250 million/day; 1 million firings at :00; 103,000 dispatches/s |
+| 10–15 | API and data model | Deterministic execution ID; jobs table; watermarks |
+| 15–22 | Architecture | Figure 52.18: partitions, leases, wheels, queues, workers |
+| 22–34 | Deep dive: ownership and firing | Leases, fencing tokens, watermark replay, timing wheel |
+| 34–41 | Execution guarantees | At-least-once plus idempotency; retries; concurrency policy; DAG readiness |
+| 41–45 | Failures and scaling | GC pause, DST, burst smoothing, cells |
+
+**Likely follow-ups.**
+
+- *"Can you guarantee exactly-once execution?"* No: a worker can crash after the side effect and before recording success. Offer at-least-once with a stable execution ID and require idempotent jobs.
+- *"How do you avoid two schedulers firing the same job?"* Partition leases with fencing tokens; even when they overlap briefly, duplicates share an execution ID.
+- *"Why a timing wheel instead of a heap?"* Constant-time insert and expiry for millions of timers and frequent retries; a heap is fine at small scale.
+- *"How do you handle a job that runs longer than its interval?"* The concurrency policy: forbid, replace or allow.
+
+**What distinguishes senior and staff answers.** A senior candidate partitions the work, uses leader election and a queue, and adds retries. A staff candidate finds the top-of-hour burst from the estimate, avoids per-firing database writes with watermarks, decomposes exactly-once into per-stage guarantees, uses fencing tokens correctly, and treats time zones and daylight-saving changes as correctness requirements.
+
+### 52.9.16 Production considerations
+
+- **Observability.** Dispatch delay distribution (scheduled versus dispatched time) per partition; watermark lag; lease changes per hour; retries and dead-letters per job; duplicate attempts detected by the conditional insert.
+- **Security.** Job targets execute with the job owner's credentials, stored in a secrets manager and injected at execution; never store secrets in job payloads; restrict which internal endpoints jobs may call.
+- **Cost.** The scheduler is cheap; the jobs are not. Show tenants their run counts and durations, and pause jobs whose targets have returned errors for weeks.
+- **Operations.** Freeze windows for schedule changes during incidents; a global "pause tenant" switch; replay tooling to re-run a time range of firings after an outage, honoring misfire policies.
+

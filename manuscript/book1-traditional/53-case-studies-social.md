@@ -269,7 +269,7 @@ The teaching design uses option 2. Holes from crashed leases are harmless if cli
 Why not order by timestamp? Two senders' clocks disagree by seconds, server clocks by milliseconds, and two messages can share a millisecond. Timestamp order would reorder messages differently on different devices whenever two arrive close together. Timestamps are for display ("10:42"); sequence numbers are for order.
 
 ::: mistake
-**Mistake — Using the message ID as the order.** A Snowflake ID (§17.10.3) is roughly time-ordered across machines, but only within clock skew: two messages sent to the same group from different chat-service nodes in the same few milliseconds can receive IDs in the opposite order from the one in which they were stored. Use the ID for identity and deduplication, and the per-conversation sequence number for order. Discord's design shows that Snowflake order is often good enough for display when one partition orders writes; a design that needs gap detection still needs dense numbers.
+**Mistake — Using the message ID as the order.** A Snowflake ID (§17.10.3) is roughly time-ordered across machines, but only within clock skew: two messages sent to the same group from different chat-service nodes in the same few milliseconds can receive IDs in the opposite order from the one in which they were stored. Use the ID for identity and deduplication, and the dense per-conversation sequence number for order and gap detection.
 :::
 
 #### Delivery state: watermarks instead of per-message receipts
@@ -461,7 +461,7 @@ stateDiagram-v2
 
 **At 10× (1 billion DAU, 40 billion messages/day).** Peak sends reach about 1.4 million/s and deliveries 8.9 million/s. Gateways grow to about 800; this is linear and routine. What breaks first is **storage** (13 PB/year at RF 3) and the **inbox writes** (8.9 million/s). Changes: aggressive tiering of cold buckets; drop per-member inbox writes for groups larger than about 50; move to **multiple regions with a home region per conversation** (§44.6.4), where the conversation's sequencer and primary replicas live in the region of most of its members, and cross-region members are served by replicas with a few hundred milliseconds of extra delay.
 
-**At 100×.** No single region can hold the fleet, and users in one conversation span continents. The sequencer becomes the hard limit only for single conversations, never for the system, because conversations are independent; the system-wide limits are cross-region bandwidth and the operational cost of thousands of database nodes. Changes: cell-based deployment (§44.10), where each cell holds a set of conversations with its own gateways, sequencers and store, and a thin global directory maps conversations to cells; media deduplication by content hash; and per-conversation retention policies chosen by the customer for enterprise products.
+**At 100×.** The sequencer limits only single conversations, never the system, because conversations are independent; the system-wide limits are cross-region bandwidth and operating thousands of database nodes. Changes: cell-based deployment (§44.10), with each cell owning a set of conversations and a thin global directory mapping conversations to cells, plus media deduplication by content hash.
 
 ### 53.4.13 Trade-offs
 
@@ -480,8 +480,7 @@ stateDiagram-v2
 
 1. **Per-recipient inboxes (fan-out-on-write of messages).** Copy each message into every member's mailbox. Reads become a single-partition scan of one's own mailbox and per-user deletion is easy, but storage and writes multiply by the group size. This is the right choice when server-side history is *not* kept and the server is only a relay, which is exactly the WhatsApp model of §53.5.
 2. **Relational store sharded by conversation.** PostgreSQL or MySQL sharded by `conv_id` (§14.7) with `(conv_id, seq)` as the primary key works well up to tens of terabytes per shard group and gives transactions for membership changes. Slack has described moving to sharded MySQL with Vitess (§14.13.3) [Slack Engineering 2020]. It becomes costly when history grows to petabytes, because storage on primary database nodes is expensive.
-3. **A log as the store.** Keep each conversation as a partition key in a durable log (Kafka with tiered storage, §31.15.3) and build history reads from it. Simple ordering, but random access to old ranges and per-user indexes need a second store anyway.
-4. **Peer-to-peer or federated chat (Matrix, XMPP).** Servers federate by replicating conversation state between domains. Ordering becomes a partial order resolved by a state-resolution algorithm instead of one sequencer: more resilient to a single provider, harder to make simple for users.
+3. **Federated chat (Matrix, XMPP).** Servers in different domains replicate conversation state; order becomes a partial order resolved by an algorithm instead of one sequencer. More resilient to a single provider, harder to make simple.
 
 ### 53.4.15 Interview discussion
 
@@ -508,10 +507,10 @@ What distinguishes answers: a mid-level answer draws gateways and a database. A 
 
 ### 53.4.16 Production considerations
 
-- **Observability.** End-to-end delivery latency measured with synthetic "canary conversations" between probe clients in every region; the fraction of messages that reach a recipient device within 1 s and within 60 s; fan-out consumer lag; gap-resync rate per client version (a rising rate reveals a bug in the live path); reconnect rate per gateway. Trace a message by `msg_id` across gateway, chat service, store and fan-out (§40.6).
-- **Security.** TLS for every hop; token-authenticated WebSockets with short-lived tokens; authorization of every `SEND` and history read against `members` (a removed member must not read seqs after removal, and should not read before `joined_seq`); per-user and per-conversation rate limits against spam (§22.3); attachment scanning before thumbnails are served; encryption at rest with envelope keys (§10.9). Server-side history means the operator can read messages, which must be stated honestly to users or replaced by end-to-end encryption (§53.5).
-- **Cost.** Storage dominates: attachments are about 40× text, so deduplicate attachments by content hash, transcode large images on upload and set lifecycle rules (§15.9). Gateways are cheap per user; presence can quietly become the largest Redis bill.
-- **Operations.** Gateways are deployed rarely and drained gracefully; the chat service is deployed often. Run regular game days that kill a gateway zone and verify that reconnect and resync traffic stays within budget. Keep a kill switch for presence and typing indicators so that they can be shed under load (§22.9) without affecting messages.
+- **Observability.** End-to-end delivery latency from synthetic "canary conversations" in every region; fan-out consumer lag; gap-resync rate per client version (a rising rate reveals a live-path bug); reconnect rate per gateway; traces by `msg_id` (§40.6).
+- **Security.** Short-lived tokens on WebSockets; authorization of every `SEND` and history read against `members` (no reads before `joined_seq` or after removal); per-user and per-conversation rate limits (§22.3); encryption at rest (§10.9). Server-side history means the operator can read messages, which must be stated honestly or replaced by E2EE (§53.5).
+- **Cost.** Storage dominates; attachments are about 40× text, so deduplicate by content hash and set lifecycle rules (§15.9). Presence can quietly become the largest Redis bill.
+- **Operations.** Gateways are deployed rarely and drained gracefully; the chat service often. Game days kill a gateway zone to verify reconnect and resync budgets. Keep kill switches for presence and typing indicators (§22.9).
 
 ## 53.5 WhatsApp
 
@@ -519,9 +518,9 @@ What distinguishes answers: a mid-level answer draws gateways and a database. A 
 
 Design a messenger in the style of WhatsApp: one-to-one and group messaging, voice notes, photos and videos, for about two billion users on phones, with optional companion devices (desktop, web, tablet). The defining constraint is **end-to-end encryption (E2EE)**: messages, media and calls are encrypted on the sender's device and decrypted only on the recipients' devices. The operator's servers relay and temporarily store ciphertext but never hold the keys to read it.
 
-The analogy is a postal service that only ever handles locked boxes. Each recipient publishes padlocks that anyone may take; senders lock their letters with the recipient's padlock, and only the recipient has the key. The post office still sees the addresses, sizes and postmarks, and it still has to sort and deliver billions of boxes a day, but it can never open one. That changes the system design in four ways that §53.4 did not face: the server cannot index, search, rank or moderate content; the server must run a **key directory** that it can be trusted not to lie about; every recipient *device* is a separate encryption target; and server-side history disappears, so the server becomes a store-and-forward relay rather than a database of conversations.
+The analogy is a post office that only handles locked boxes. Each recipient publishes padlocks anyone may take; senders lock letters with them, and only the recipient has the key. The post office still sees addresses, sizes and postmarks, but can never open a box. Compared with §53.4, the server cannot index, search or moderate content; it must run a **key directory** that it can be trusted not to lie about; every recipient *device* is a separate encryption target; and server-side history disappears, leaving a store-and-forward relay.
 
-The distinctive hard problems are therefore **the E2EE architecture and its cost at scale** (multi-device and large groups multiply ciphertexts), **media handling without server-side access**, and **very high connection counts per server**.
+The distinctive hard problems are **the E2EE architecture and its cost at scale** (multi-device and large groups multiply ciphertexts), **media handling without server-side access** and **very high connection counts per server**.
 
 ::: industry
 **WhatsApp's published scale and stack.** WhatsApp completed end-to-end encryption for all users in April 2016 using the Signal Protocol, and documents the design in a security white paper [WhatsApp 2016; WhatsApp Security White Paper]. It announced two billion users in February 2020 [WhatsApp 2020]. Earlier, its engineers described an Erlang/FreeBSD server stack: in January 2012 the team reported more than 2 million concurrent TCP connections on one server [WhatsApp 2012; Reed 2012], and a 2014 Erlang Factory talk on scaling to hundreds of millions of users is summarized by third parties as describing roughly 550 servers, of which about 150 were chat servers each holding about a million phone connections [Reed 2014; High Scalability 2014].
@@ -769,7 +768,7 @@ Honesty about metadata is part of the design: E2EE protects content, not the soc
 
 #### Connection density
 
-Each chat server holds about a million long-lived connections. The ingredients published for the Erlang stack were one lightweight process per connection (a few kilobytes each), a kernel tuned for very many sockets, and a runtime built for soft real-time message passing [Reed 2012]. The design rules generalize to any runtime (Go, Rust with async I/O, Java with virtual threads): keep per-connection memory near the 40 KB budget of Table 9.12, size servers by blast radius, not just by RAM, and make reconnects cheap because the device's state lives on the device.
+The published Erlang stack used one lightweight process per connection and a kernel tuned for very many sockets [Reed 2012]. The rules generalize to any runtime: keep per-connection memory near the budget of Table 9.12, size servers by blast radius as well as RAM, and keep reconnects cheap, which E2EE helps with because session state lives on the device.
 
 ### 53.5.9 Data flow
 
@@ -832,9 +831,8 @@ sequenceDiagram
 
 1. **Re-key storms in large groups.** A removal in a 1,024-member group costs about 1.7 million pairwise messages. Mitigations: lazy re-keying on next send, rate limits on membership churn, and treating very large broadcast use cases as a different product (one-to-many channels with different cryptographic trade-offs).
 2. **Multi-device multiplication.** Every additional device per user adds a ciphertext to every one-to-one message and every group delivery. A cap on companion devices bounds $d$.
-3. **Key directory hot spots.** A celebrity reinstalling the app, or a mass re-registration after an outage, causes bursts of bundle fetches and one-time prekey depletion. Clients refill prekeys when the server reports a low count; the signed prekey is a fallback when one-time keys run out.
-4. **Media egress.** About 1 Tbit/s on average; edge caching of viral forwards (shared blob, shared hash) and resumable range downloads are the levers.
-5. **Connection churn.** Mobile networks drop connections constantly; each reconnect costs a TLS or Noise handshake and a mailbox read. Session resumption and keeping the handshake cheap matter more than message throughput.
+3. **Key directory hot spots.** Mass re-registration after an outage causes bursts of bundle fetches and one-time prekey depletion; clients refill when told their count is low, and the signed prekey is the fallback.
+4. **Media egress.** About 1 Tbit/s on average; edge caching of viral forwards (shared blob and hash) is the main lever.
 
 ### 53.5.11 Failure scenarios
 
@@ -874,9 +872,8 @@ sequenceDiagram
 
 1. **Server-side encryption only (TLS plus encryption at rest).** Enables search, multi-device history and server-side moderation, as in §53.4, but the operator can read every message: a different product.
 2. **Pairwise encryption for groups (no sender keys).** Stronger per-recipient ratcheting; acceptable for small groups, prohibitive at 1,024 members.
-3. **MLS for groups.** Tree-based group key agreement standardized by the IETF; better scaling of membership changes at the cost of protocol complexity and a coordinating "delivery service" that must order handshake messages.
-4. **Federated or peer-to-peer E2EE (Matrix with Megolm, Briar).** Removes the single operator at the cost of availability, spam control and the ability to make fast protocol changes.
-5. **Metadata-minimizing designs (Signal's sealed sender).** Hide the sender's identity from the server for delivery; the server still sees the recipient and timing.
+3. **MLS for groups** (§53.5.12): logarithmic membership changes, at the cost of protocol complexity and a server that must order handshake messages.
+4. **Federated E2EE (Matrix with Megolm)** removes the single operator but weakens spam control and slows protocol changes; **sealed-sender** designs (Signal) additionally hide the sender's identity from the server.
 
 ### 53.5.15 Interview discussion
 
@@ -902,10 +899,10 @@ A **senior** answer separates transport security from E2EE, explains prekeys as 
 
 ### 53.5.16 Production considerations
 
-- **Observability without content.** All metrics are about envelopes, not messages: delivery latency by region and network type, decrypt-failure rates reported by clients (the earliest sign of a session-handling bug), prekey depletion, device-list rejects, re-key volume per group size. Logs must never contain ciphertext or keys longer than needed for debugging, and never plaintext.
-- **Security.** Protect the key directory like a certificate authority: change logs, multi-party approval for operational access, and key transparency so clients can verify the directory's answers (WhatsApp described deploying key transparency in 2023 [Meta Engineering 2023]). Client binaries are the security boundary, so release signing and reproducibility matter (§50.6). Encrypted backups: WhatsApp described end-to-end encrypted backups protected by a key stored in a hardware security module-based vault or by a user-held key [Meta Engineering 2021b].
-- **Cost.** Media dominates: on-device compression and resizing, content-addressed reuse of forwarded media and lifecycle expiry are the main levers. The relay design keeps database cost unusually small.
-- **Operations.** Protocol upgrades must interoperate with years-old clients, so every message format carries a version and servers must route ciphertexts they cannot interpret. Abuse handling relies on metadata and reports, which requires its own pipeline and review process.
+- **Observability without content.** Metrics describe envelopes, not messages: delivery latency by region and network type, client-reported decrypt failures (the earliest sign of a session bug), prekey depletion, device-list rejects, re-key volume by group size.
+- **Security.** Protect the key directory like a certificate authority: change logs, multi-party approval for operator access, and key transparency (WhatsApp described deploying it in 2023 [Meta Engineering 2023]). Client binaries are the security boundary, so release signing matters (§50.6). WhatsApp also described end-to-end encrypted backups whose key is held in a hardware-security-module-based vault or by the user [Meta Engineering 2021b].
+- **Cost.** Media dominates; on-device compression, reuse of forwarded blobs and lifecycle expiry are the levers. The relay design keeps database cost unusually small.
+- **Operations.** Every message format carries a version, because servers must route ciphertexts from clients years old that they cannot interpret.
 
 ## 53.6 Instagram
 
@@ -1297,9 +1294,8 @@ flowchart LR
 
 1. **Upload through application servers.** Simpler authentication and immediate validation, but ties up servers and memory for slow mobile uploads at 3 MB each; acceptable at small scale only.
 2. **On-the-fly resizing at the edge** (an image service that renders sizes on request and caches them). Fewer stored renditions and easy addition of new sizes, at the cost of compute on cache misses; common for product catalogs.
-3. **Wide-column metadata store.** Posts and likes in Cassandra keyed by author and post: higher write scalability, at the cost of transactions and ad hoc queries.
-4. **Exact counters with `UPDATE … + 1` per like.** Correct and simple until a single row receives thousands of updates per second; lock contention then caps throughput.
-5. **Probabilistic counters** (Morris counters or HyperLogLog for distinct likers, §17.5): tiny memory, but users can see the count move non-monotonically; useful for view counts, not for the visible like count.
+3. **Exact counters with `UPDATE … + 1` per like.** Correct and simple until one row receives thousands of updates per second and lock contention caps throughput.
+4. **Probabilistic counters** (HyperLogLog of distinct likers, §17.5): tiny memory, fine for view counts, but a visible like count must not wobble.
 
 ### 53.6.15 Interview discussion
 
@@ -1713,8 +1709,7 @@ sequenceDiagram
 
 1. **Pure push with ranking at read.** Precompute per-user candidate lists (bounded length) and rank at read time; simpler read path, but write amplification and wasted writes for inactive users.
 2. **Hybrid by follower count** (as in §53.6 and §53.8). Push for ordinary authors, pull for large ones; well suited to follower-based, chronological products.
-3. **Graph database** for the social graph (§12.7). Natural for multi-hop queries ("friends of friends who like X"), but harder to scale to this read rate; such queries are better served by offline jobs.
-4. **Fully precomputed feeds** (batch-ranked hourly). Cheap reads and high throughput, but stale; acceptable for email digests, not for the app.
+3. **Graph database** for the social graph (§12.7). Natural for multi-hop queries, but harder to scale to this read rate; multi-hop questions are better served by offline jobs.
 
 ### 53.7.15 Interview discussion
 
@@ -2125,8 +2120,7 @@ flowchart LR
 
 1. **Pure pull timelines.** Simpler writes, no backlog, but each read merges hundreds of user timelines; viable with an in-memory index as in §53.7.
 2. **General-purpose search engine** (Elasticsearch with a 1 s refresh, §16.10). Easier to operate, adequate at smaller scale; harder to reach high ingest and query rates with second-level freshness on a fast-changing corpus.
-3. **Exact counting for trends** with a stream processor keyed by term (§29.9). Exact but memory grows with distinct terms, which spam can inflate without bound.
-4. **Database-generated IDs.** Simpler, but IDs then need coordination per shard and lose cross-shard time order.
+3. **Exact counting for trends** with a stream processor keyed by term (§29.9). Exact, but memory grows with distinct terms, which spam can inflate without bound.
 
 ### 53.8.15 Interview discussion
 
@@ -2215,7 +2209,7 @@ A **senior** answer separates the three products and explains push with large-ac
 
 ### Intermediate
 
-**Q3.** A news feed product has 1 billion DAU, authors average 300 followers, and 1,000 accounts have more than 50 million followers. Choose a fan-out strategy. **Answer.** Compute push load: ordinary posts × 300 is affordable (a few million inserts/s), but each large-account post creates a 50-million-write burst, a minute or more of delivery skew, and many writes to inactive users. Use push below a threshold and pull for large accounts, merging at read time from a hot, replicated per-author list. Choose the threshold by measuring the knee (Figure in §53.7.8): where pushed inserts stop falling quickly and pulled lists per load start rising. If the feed is ranked and the graph is bounded, also consider read-time aggregation over an in-memory activity index.
+**Q3.** A news feed product has 1 billion DAU, authors average 300 followers, and 1,000 accounts have more than 50 million followers. Choose a fan-out strategy. **Answer.** Compute push load: ordinary posts × 300 is affordable (a few million inserts/s), but each large-account post creates a 50-million-write burst, a minute or more of delivery skew, and many writes to inactive users. Use push below a threshold and pull for large accounts, merging at read time from a hot, replicated per-author list. Choose the threshold by measuring the knee (the simulation in §53.7.8): where pushed inserts stop falling quickly and pulled lists per load start rising. If the feed is ranked and the graph is bounded, also consider read-time aggregation over an in-memory activity index.
 
 **Q4.** How does WhatsApp deliver media without the server being able to read it, and what does the server lose? **Answer.** The device encrypts the file with a random key, uploads the ciphertext once and sends the key, hash and pointer inside an E2E-encrypted message to each recipient device; recipients download, verify the hash and decrypt. The server cannot transcode, thumbnail, scan or deduplicate by content (only by identical ciphertext, as in forwards), so compression and thumbnails move to the device and abuse detection relies on metadata and reports.
 
