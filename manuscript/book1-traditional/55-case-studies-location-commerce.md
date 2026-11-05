@@ -2728,3 +2728,141 @@ sequenceDiagram
 - **Cost.** PSP fees dominate; routing by cost and approval rate is worth more than any infrastructure saving. Ledger storage grows linearly; tier old partitions.
 - **Operations.** Finance operations is a user of this system: break queues, correction tooling with approvals, and clear runbooks for PSP outages ("pause captures, keep authorizing on the secondary PSP"). Rehearse PSP failover and webhook outages as game days.
 
+## 55.10 Summary and revision notes
+
+::: summary
+- **Find the small strongly consistent core inside the large eventually consistent system.** Trip state, driver claims, inventory reservations, seat holds and ledger postings need conditional writes or transactions; positions, availability displays, tiles and traffic only need freshness.
+- **Uber (§55.4).** About 1,000 trip requests/s against 500,000 location updates/s ($U = N_{\text{online}}/\Delta t$): a telemetry system with a transactional core. Location goes to an in-memory H3 cell index and a log, never to the trip database. Trips are persisted state machines with compare-and-set on a version and a transactional outbox. Prices are fixed in signed quotes; cities are isolation boundaries.
+- **Ride matching (§55.5).** Expand hexagon rings until enough candidates are found, plus one safety ring ($C(k) = \rho (1 + 3k(k+1)) A_{\text{cell}}$). Score a shortlist by road ETA, not distance. Batched assignment beats greedy (7.5 vs 3.5 min in the two-rider trap; 14% lower in the random test) at the cost of up to one window of latency. One driver, one ride: a lease-based claim returns a fencing token, and the accept commits trip and driver rows in one local transaction guarded by version and token.
+- **Google Maps (§55.6).** The tile pyramid grows as $4^z$; vector tiles to about zoom 14 with client overzoom replace hundreds of terabytes of raster per style. Versioned, immutable tile URLs make CDN caching trivial. Dijkstra is A* with $h = 0$; an admissible but weak bound saved only 27% in the grid test; contraction hierarchies trade preprocessing for queries that settle hundreds of nodes, and need re-customization (CRP) or re-scoring for live traffic.
+- **Amazon (§55.7).** Product pages are a caching and fan-out problem; checkout is a saga (create order, reserve with TTL, authorize as pivot, confirm, capture at shipment). Reserve at order time, not at add-to-cart. A single inventory row serializes at about $1/t_h$; size sub-counters with $N \ge \lceil \lambda_w t_h / u \rceil$ and gate flash-sale demand.
+- **Ticket booking (§55.8).** Seats are unique rows; holds are leases. Row locks, optimistic conditional updates and Redis holds all work with different contention and failure behavior; keep a database unique constraint on tickets as the final guard. Waiting rooms admit at a rate bounded by both backend capacity and unheld inventory; $q^{*} = S/(bc)$ tells you who will get tickets.
+- **Payments (§55.9).** Exactly-once money movement is at-least-once plus idempotence at every hop: client key, API key store, persisted PSP attempt with a deterministic key, webhook deduplication, posting keys, payout keys. Treat a timeout as unknown, never as failure. The double-entry ledger is immutable and balanced per currency; balances are derived; reconciliation against PSP and bank is a first-class system. Tokenize to keep card data, and PCI scope, out of your systems; store money as integer minor units with ISO 4217 codes.
+:::
+
+## 55.11 Knowledge checkpoint
+
+1. Why should driver location updates never be written to the trip database?
+2. What does compare-and-set on a trip's `version` prevent, and what does the loser of the race do?
+3. With 1.5 million drivers online reporting every 3 s at 150 bytes, what are the update rate and ingress bandwidth?
+4. Why does ring expansion stop one ring *after* the target candidate count is reached?
+5. How many hexagons are in a 3-ring, and how many idle drivers do you expect at resolution 9 with a density of 4 drivers/km²?
+6. Give a two-rider, two-driver example where greedy matching is worse than batched matching.
+7. Why is a TTL lock on a driver not sufficient on its own to prevent double dispatch?
+8. How many tiles are there at zoom 12, and in all levels from 0 to 12?
+9. Why does A* remain exact only when the heuristic is admissible?
+10. Why do contraction hierarchies struggle with live traffic, and name one remedy.
+11. Why reserve inventory at order placement rather than at add-to-cart?
+12. A hot item's row lock is held 4 ms per reservation and 3,000 attempts/s reach the store; how many sub-counters at 70% utilization?
+13. What race does `SELECT ... FOR UPDATE ... ORDER BY seat_id` avoid, and what does `SKIP LOCKED` add?
+14. In a waiting room with 30,000 seats, 2 tickets per order and 75% conversion, at which position does the event sell out?
+15. Why must a payment orchestrator persist the PSP attempt row *before* calling the PSP?
+16. Why should a webhook receiver acknowledge before processing, and how does it avoid double processing?
+17. Show that the capture transaction in §55.9.8 balances, and explain how a wrong ledger entry is corrected.
+18. How do you represent ¥1,500 and \$15.00 in the ledger, and why not floats?
+
+<details><summary>Answers</summary>
+
+1. They arrive 500,000 times per second and are obsolete in seconds; the trip database would be sized for telemetry. They belong in an in-memory index plus an append-only log.
+2. Two actors applying conflicting transitions (cancel versus accept) based on the same old state. The loser's update changes zero rows; it reloads the trip and acts on the true state.
+3. $1.5 \times 10^6 / 3 = 500{,}000$ updates/s; $500{,}000 \times 150 = 75$ MB/s $= 0.6$ Gb/s.
+4. Reaching the count bounds how many candidates you have, not how close they are: a k-ring is jagged, so a nearer driver may sit in the next ring. The haversine sort trims the excess.
+5. $1 + 3 \times 3 \times 4 = 37$ hexagons; $37 \times 0.105 = 3.885$ km² $\times 4 = 15.5$ drivers.
+6. Riders at 1.0 and 2.2 km, drivers at 1.8 and 0.0 km on a line: greedy gives rider 1 the driver at 1.8 (0.8 km) and rider 2 the driver at 0 (2.2 km), 3.0 km total; batched gives 1.0 + 0.4 = 1.4 km.
+7. A paused or partitioned holder can act after its lock expired, and an asynchronously replicated lock store can lose a lock on failover. The commit must check a fencing token in the database that stores the assignment.
+8. $4^{12} = 16{,}777{,}216$; $(4^{13} - 1)/3 = 22{,}369{,}621$.
+9. A* stops when the destination is popped; if $h$ overestimates somewhere, a node on the true shortest path may be ranked behind the destination, so a worse path is returned.
+10. Shortcut weights bake in travel times at preprocessing; changed weights invalidate them. Remedies: customizable route planning (fast re-customization), or CH on typical weights followed by re-scoring candidate routes with live speeds.
+11. Carts are often abandoned; stock locked in carts for days would cause undersell. Reserving at order placement with a short TTL holds stock only while a purchase is actually in progress.
+12. $\lceil 3{,}000 \times 0.004 / 0.7 \rceil = \lceil 17.1 \rceil = 18$.
+13. Ordering avoids deadlocks between transactions locking overlapping seat sets in different orders; `SKIP LOCKED` lets best-available buyers take different free seats instead of waiting on the same locked rows.
+14. $q^{*} = 30{,}000 / (2 \times 0.75) = 20{,}000$.
+15. If the process crashes after the PSP call, the restarted orchestrator must retry with the same PSP idempotency key; a key that existed only in memory would be lost, and a new key could charge twice.
+16. Slow processing would make the provider time out and redeliver, amplifying load. A primary key on `(provider, event_id)` collapses duplicates; deterministic posting keys make re-processing a no-op.
+17. $9{,}680 + 320 - 8{,}500 - 1{,}500 = 0$. Corrections post a reversal (exact negation) and a new correct transaction; lines are never edited.
+18. `(1500, "JPY")` (exponent 0) and `(1500, "USD")` (exponent 2): same integer, different meaning, so the currency code is always stored. Binary floats cannot represent most decimal fractions exactly and accumulate rounding errors.
+</details>
+
+## 55.12 Interview questions
+
+### Basic
+
+**Q1. How would you show nearby cars to millions of riders without a million queries per second against the index?** **Answer.** Compute one snapshot per occupied hexagon per second (cars within its k-ring) and send the same snapshot to every rider in that hexagon over their stream or from a cache. Cost scales with occupied hexagons, not riders; one second of staleness is invisible on a map.
+
+**Q2. What is a vector tile and why is it preferred over raster tiles?** **Answer.** A tile containing geometry and attributes (as protocol buffers with integer tile-local coordinates) rendered by the client. One pyramid serves all styles, languages and pixel densities, supports overzoom so the pyramid can stop around zoom 14, and is smaller; the cost is client rendering work and a more complex build.
+
+**Q3. Why does a payment API require an idempotency key?** **Answer.** A client that times out cannot know whether the charge happened; it must retry. With a key chosen before the first attempt, the server recognizes the retry and returns the original result instead of charging again (§22.15).
+
+### Intermediate
+
+**Q4. Design dispatch so that a driver is never assigned two rides.** **Answer.** Claim the driver with a conditional update (`IDLE` to `OFFERED`) that increments a fencing token and sets a lease longer than the offer deadline. The accept commits, in one local transaction on the city shard, the trip's `MATCHING` to `DRIVER_ASSIGNED` (guarded by trip version) and the driver's `OFFERED` to `ASSIGNED` (guarded by the token). A late accept carries an old token and fails; a crashed matcher's lease expires.
+
+**Q5. How do you sell 5,000 units of a deal to 1 million interested customers without melting the inventory database?** **Answer.** Static deal page from the CDN; an in-memory token gate admitting roughly as many buyers as units (with a small overbooking margin); sub-counters sized by $N \ge \lceil \lambda_w t_h / u \rceil$; per-account limits and bot defenses; short reservation TTLs; the database's conditional update remains the authority, so the approximate gate can only over-admit attempts, never oversell.
+
+**Q6. Compare row locks, optimistic updates and Redis holds for seat booking.** **Answer.** Row locks queue waiters and need ordered locking; good for low contention and `SKIP LOCKED` best-available. Optimistic conditional updates fail fast and are the best default. Redis holds give the highest throughput but can be lost on failover, so keep a unique constraint on tickets as the final guard and void the losing payment.
+
+### Advanced
+
+**Q7. A PSP call times out and the user taps "Pay" again. Walk through what happens end to end.** **Answer.** The client resends with the same idempotency key; the API finds the key `IN_PROGRESS` (409, retry later) or `COMPLETED` (stored response). The orchestrator's attempt row is `UNKNOWN`; it retries the PSP with the same PSP key, queries status, or awaits the webhook. It never retries with a new key or fails over to another PSP until the outcome is resolved. When resolved, state advances and the ledger posts with a deterministic posting key. Reconciliation catches any case where the PSP charged without our record.
+
+**Q8. Your routing service uses contraction hierarchies. Product wants routes that reflect accidents within two minutes. What do you change?** **Answer.** Keep CH (or CRP) for candidate generation; apply closures as live weight overrides; re-score the top candidate routes with live segment speeds and the ETA model; or move to customizable route planning, whose customization step can rerun every minute or two. Version graph artifacts with the map so tiles and routes agree, and fall back to historical profiles when traffic is stale.
+
+**Q9. How would you make a stadium on-sale fair and survivable?** **Answer.** Pre-registration with identity verification; a pre-queue randomized at the start time, then first in, first out; signed, identity-bound queue tokens served at the edge; admission rate bounded by purchase-flow capacity (Little's Law) *and* unheld inventory; atomic multi-seat holds with TTL and a payment-pending extension; a unique constraint on tickets; honest messaging for positions beyond $q^{*}$; and a rehearsed war-room plan.
+
+## 55.13 Practical exercises
+
+1. **Ring expansion.** Install the `h3` Python package and replace the square cells in the §55.5.8 program with H3 resolution-9 cells and `grid_disk`. For densities 0.3, 2 and 8 drivers/km², record the ring radius reached and compare with $C(k)$.
+2. **Batch window experiment.** Extend the matching simulation with arrivals over time (Poisson, 30 requests/s) and drivers becoming free after trips. Plot mean pickup ETA plus mean waiting-for-batch time for windows of 0, 1, 2 and 4 s.
+3. **Better heuristics.** Add landmark (ALT) lower bounds to the routing program: precompute Dijkstra distances from 4 corner landmarks and use $\max_L |d(L, t) - d(L, v)|$. Report nodes settled versus the top-speed heuristic.
+4. **Seat-hold race.** In PostgreSQL, create the `seats` table, then run 50 concurrent clients trying to hold the same two seats with (a) check-then-update without a condition, (b) the conditional update, (c) `FOR UPDATE`. Count double holds and throughput.
+5. **Ledger auditor.** Extend the §55.9.8 ledger with multi-currency FX transactions and write an auditor that recomputes balances from the journal, checks per-currency trial balances and reports any account whose stored balance differs.
+6. **Idempotent webhook receiver.** Write a small HTTP endpoint that verifies an HMAC-SHA256 signature with a timestamp tolerance, stores events by `(provider, event_id)`, returns 200 immediately and processes asynchronously; test it with duplicated and reordered deliveries.
+
+## 55.14 Design challenges
+
+1. **Food delivery dispatch.** Extend §55.5 to couriers who carry two orders at once from different restaurants. Define the assignment problem (now a vehicle-routing problem with time windows), choose a batching strategy, and keep the one-courier-per-order invariant with fencing tokens.
+2. **Offline maps.** Design downloadable offline regions for Google Maps: package size per region from the tile formula, an on-device routing graph, incremental updates when the map version changes, and how online traffic is merged when connectivity returns.
+3. **Global flash sale.** A product launch sells 200,000 units worldwide in one minute from regional fulfillment networks. Design per-region inventory allocation, a global waiting room, rebalancing of unsold regional stock, and the payment authorization surge with two PSPs.
+4. **Marketplace payouts.** Design weekly payouts to 5 million sellers in 40 currencies: ledger accounts, FX conversion, batching to banks, idempotent payout keys, handling returned transfers, and reconciliation of bank statements. Estimate ledger lines and storage per year.
+
+## 55.15 References
+
+1. Brodsky, I. "H3: Uber's Hexagonal Hierarchical Spatial Index." Uber Engineering Blog, 2018. https://www.uber.com/blog/h3/
+2. Chew, J. "Avoiding Double Payments in a Distributed Payments System." Airbnb Engineering & Data Science, 2019. https://medium.com/airbnb-engineering/avoiding-double-payments-in-a-distributed-payments-system-2981f6b070bb
+3. DeCandia, G., Hastorun, D., Jampani, M., Kakulapati, G., Lakshman, A., Pilchin, A., Sivasubramanian, S., Vosshall, P., Vogels, W. "Dynamo: Amazon's Highly Available Key-Value Store." *SOSP*, 2007.
+4. Delling, D., Goldberg, A. V., Pajor, T., Werneck, R. F. "Customizable Route Planning." *Experimental Algorithms (SEA 2011)*, LNCS 6630. Springer, 2011.
+5. Derrow-Pinion, A., et al. "ETA Prediction with Graph Neural Networks in Google Maps." *CIKM*, 2021. https://arxiv.org/abs/2108.11482
+6. Dijkstra, E. W. "A Note on Two Problems in Connexion with Graphs." *Numerische Mathematik* 1:269–271, 1959.
+7. Fu, Y., Soman, C. "Real-time Data Infrastructure at Uber." *SIGMOD*, 2021. https://arxiv.org/abs/2104.00087
+8. Garcia-Molina, H., Salem, K. "Sagas." *SIGMOD*, 1987.
+9. Geisberger, R., Sanders, P., Schultes, D., Delling, D. "Contraction Hierarchies: Faster and Simpler Hierarchical Routing in Road Networks." *Experimental Algorithms (WEA 2008)*, LNCS 5038. Springer, 2008.
+10. Goldberg, A. V., Harrelson, C. "Computing the Shortest Path: A* Search Meets Graph Theory." *SODA*, 2005.
+11. Gray, J. "A Conversation with Werner Vogels." *ACM Queue* 4(4), 2006.
+12. H3 Project. *H3 documentation*. https://h3geo.org/docs/
+13. Hart, P. E., Nilsson, N. J., Raphael, B. "A Formal Basis for the Heuristic Determination of Minimum Cost Paths." *IEEE Transactions on Systems Science and Cybernetics* 4(2):100–107, 1968.
+14. Hoff, T. "How Uber Scales Their Real-time Market Platform." High Scalability, 2015. https://highscalability.com/how-uber-scales-their-real-time-market-platform/
+15. Kuhn, H. W. "The Hungarian Method for the Assignment Problem." *Naval Research Logistics Quarterly* 2(1–2):83–97, 1955.
+16. Leach, B. "Designing robust and predictable APIs with idempotency." Stripe Blog, 2017. https://stripe.com/blog/idempotency
+17. Mapbox. *Vector Tile Specification*, version 2.1. https://github.com/mapbox/vector-tile-spec
+18. OpenStreetMap Wiki. *Slippy map tilenames*. https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames
+19. PCI Security Standards Council. *Payment Card Industry Data Security Standard*, v4.0 (2022) and v4.0.1 (2024). https://www.pcisecuritystandards.org/
+20. Queue-it. *How does Queue-it work?* and pre-queue documentation (cited as Queue-it Docs). https://queue-it.com/how-does-queue-it-work
+21. Ranney, M. "Scaling Uber's Real-time Market Platform." QCon London, 2015. https://www.infoq.com/presentations/uber-market-platform/
+22. Ringpop. *uber/ringpop-node: Scalable, fault-tolerant application-layer sharding*. GitHub. https://github.com/uber/ringpop-node
+23. Stripe. "Ledger: Stripe's system for tracking and validating money movement." Stripe engineering blog, 2024 (cited as Stripe 2024). https://stripe.dev/blog/ledger-stripe-system-for-tracking-and-validating-money-movement
+24. Stripe. *Idempotent requests*. Stripe API reference, accessed 2026. https://docs.stripe.com/api/idempotent_requests
+25. Stripe. *Webhooks: verify signatures*. Stripe documentation, accessed 2026. https://docs.stripe.com/webhooks
+26. Thomsen, J. H. "Designing Schemaless, Uber Engineering's Scalable Datastore Using MySQL." Uber Engineering Blog, 2016. https://www.uber.com/blog/schemaless-part-one-mysql-datastore/
+27. Ticketmaster. "Taylor Swift | The Eras Tour Onsale Explained." Ticketmaster Business, November 2022. https://business.ticketmaster.com/press-release/taylor-swift-the-eras-tour-onsale-explained/
+28. Xu, Z., Li, Z., Guan, Q., Zhang, D., Li, Q., Nan, J., Liu, C., Bian, W., Ye, J. "Large-Scale Order Dispatch in On-Demand Ride-Hailing Platforms: A Learning and Planning Approach." *KDD*, 2018.
+
+## 55.16 Open verification items
+
+- Ranney 2015 (QCon London) and Hoff 2015: confirm DISCO, S2 sharding, Ringpop and "driver phones as backup storage" against the talk video or slides; the callout relies on secondary summaries.
+- Geisberger et al. 2008: confirm the reported sub-millisecond query times and preprocessing duration on the European road network before quoting numbers.
+- Xu et al. 2018 (DiDi, KDD): confirm the full author list and the description of windowed bipartite matching with learned values.
+- Chew 2019: confirm that the Airbnb post names the idempotency library "Orpheus".
+- Stripe 2024 Ledger post: confirm the publication date (about February 2024) and author attribution.
+- Ticketmaster 2022: the statement (3.5 billion system requests, four times previous peak; over 2 million tickets sold) was reportedly removed from Ticketmaster's site; confirm via an archived copy.
+- Gray 2006: confirm the "more than 100 services per page" wording in the Vogels interview.
+- Ringpop-node repository URL and description.
