@@ -893,7 +893,6 @@ Likely follow-ups:
 - *"How does the server deliver a message it cannot read?"* — Routing uses the envelope's header (recipient account and device), which is not secret; only the payload is encrypted.
 - *"How does a new phone get old messages?"* — Not from the server, which deleted them; from another device of the same user over an encrypted transfer, or from an encrypted backup whose key the server does not hold.
 - *"How do you fight spam without reading messages?"* — Metadata signals (sending rate, account age, how many recipients block or report), forwarding limits, and user reports, in which the reporting user's client forwards the reported messages.
-- *"Can the server reorder or drop messages?"* — It can drop or delay them (denial of service is always possible), but tampering is detected by authenticated encryption, and the ratchet counters reveal gaps to the recipient.
 
 A **senior** answer separates transport security from E2EE, explains prekeys as the answer to asynchronous key agreement and counts ciphertexts per message. A **staff** answer quantifies the multi-device and group multipliers, identifies the key directory as the trust anchor and discusses key transparency, lists exactly what metadata remains visible, and explains why group size and device limits are cryptographic-cost decisions.
 
@@ -1318,8 +1317,8 @@ A **senior** answer keeps image bytes off application servers, designs idempoten
 
 - **Observability.** Upload success rate by network type and app version; time from upload to `live` (p50/p99); resize queue age; CDN hit ratio and origin egress per region; hot-key detection on counters and post rows (§20.15).
 - **Security and privacy.** Presigned URLs scoped to one key, type and size, with short lifetimes; strip EXIF location by default; scan media for malware and policy violations before `live`; private accounts enforced at hydration *and* at the CDN by signed, expiring URLs for private media (§21.11).
-- **Cost.** Storage and egress dominate. Lifecycle tiering of originals, better image codecs and higher CDN hit ratios are worth far more than application-server tuning.
-- **Operations.** Backfills (a new rendition size for a new device class) run as throttled batch jobs over billions of objects; schema changes run per logical shard with tooling that walks all 8,192 schemas.
+- **Cost.** Storage and egress dominate; tiering, better codecs and CDN hit ratio matter far more than server tuning.
+- **Operations.** Backfills of new rendition sizes run as throttled batch jobs; schema changes walk all 8,192 logical shards.
 
 ## 53.7 Facebook News Feed
 
@@ -1724,16 +1723,16 @@ sequenceDiagram
 | 32–40 | Deep dive: graph cache and ranking funnel | TAO tiers, light/heavy ranking |
 | 40–45 | Failures, privacy, trade-offs | Degrade to cached or chronological feed |
 
-Likely follow-ups: *"A celebrity posts; how quickly do followers see it?"* — Immediately on their next load, because it is pulled from a hot list. *"A user unfriends someone; when does the feed stop showing them?"* — On the next load: sources are read at request time and privacy is checked at hydration. *"How do you avoid showing a story twice?"* — Seen-set per viewer and session-cached ranked lists. *"What about a user who follows 5,000 pages?"* — Cap and prioritize sources by affinity before scattering.
+Likely follow-ups: *"A user unfriends someone; when does the feed stop showing them?"* — On the next load: sources are read at request time and privacy is checked at hydration. *"How do you avoid showing a story twice?"* — Seen-set per viewer and session-cached ranked lists. *"What about a user who follows 5,000 pages?"* — Cap and prioritize sources by affinity before scattering.
 
 A **senior** answer compares push and pull with numbers and lands on a justified hybrid or pull design. A **staff** answer shows that follower count cancels from total cost and that burstiness and inactive followers decide the threshold, sizes the in-memory index, budgets ranking compute, and keeps privacy evaluation at read time.
 
 ### 53.7.16 Production considerations
 
-- **Observability.** Feed latency broken down by stage (graph, scatter, ranking, hydration); partial-result rate; candidate counts per stage; empty-feed rate; freshness (time from post to first impression); ranking fallback rate.
-- **Security and privacy.** Privacy checks at hydration, failing closed; audit sampling of served stories against audience rules; deletion propagation within seconds to leaves, caches and session lists (§50.9).
-- **Cost.** Ranking compute and leaf memory dominate; measure cost per thousand feed loads and attribute it to stages.
-- **Operations.** Ranking models change weekly, so every change ships behind experiments with guardrail metrics (Chapter 68); leaves are restarted shard by shard with log replay; capacity is planned for region evacuation.
+- **Observability.** Latency by stage, partial-result rate, empty-feed rate, freshness (post to first impression), ranking fallback rate.
+- **Security and privacy.** Privacy checks at hydration, failing closed; audit sampling against audience rules; fast deletion propagation to leaves and caches (§50.9).
+- **Cost.** Ranking compute and leaf memory dominate; track cost per thousand feed loads by stage.
+- **Operations.** Ranking changes ship behind experiments with guardrails (Chapter 68); leaves restart shard by shard with log replay.
 
 ## 53.8 Twitter/X
 
@@ -2141,19 +2140,19 @@ A **senior** answer separates the three products and explains push with large-ac
 
 ### 53.8.16 Production considerations
 
-- **Observability.** Fan-out lag (p99 time from post to last delivered timeline), timeline cache hit ratio and rebuild rate, search indexing delay (post to searchable), query latency by partition, trend pipeline delay and the share of trends removed by filters.
-- **Security and abuse.** Rate limits on posting and following (§22.3); trend and search manipulation defenses; private (protected) accounts excluded from search and public timelines at ingest and at query time.
-- **Cost.** Memory for timeline caches and indexes dominates; trim cached lists, evict inactive users and keep sketches bounded.
+- **Observability.** Fan-out lag, timeline cache hit and rebuild rates, post-to-searchable delay, query latency by partition, trend pipeline delay.
+- **Security and abuse.** Rate limits on posting and following (§22.3); manipulation defenses; protected accounts excluded from search at ingest and at query time.
+- **Cost.** Memory for timeline caches and indexes dominates.
 - **Operations.** Rebuild paths for every derived structure (timelines, indexes, trend windows) must be exercised regularly by replaying the log, because they are the recovery plan.
 
 ## 53.9 Summary and revision notes
 
 ::: summary
-- **Chat (§53.4):** order per conversation with a single-writer sequence number; make sends idempotent with a client message ID; treat live delivery as lossy and close gaps by ranged reads by `seq`; model receipts and unread counts as per-member watermarks (8.5× less traffic in the worked example); store messages once per conversation in a bucketed wide-column store, which becomes storage-bound, not write-bound.
-- **WhatsApp (§53.5):** E2EE moves keys and history to devices; the server runs a public-key directory, relays per-device ciphertext and deletes on acknowledgment. X3DH gives asynchronous session setup, the Double Ratchet gives forward secrecy and post-compromise recovery. Multi-device multiplies ciphertexts by about $2d - 1$; sender keys make group sends $O(1)$ for the sender but membership changes cost $O(n^2 d)$. Media is encrypted on the device, uploaded once and referenced by key and hash. The server still sees metadata.
-- **Instagram (§53.6):** keep image bytes off application servers with presigned uploads, asynchronous idempotent resizing and immutable CDN URLs; embed the logical shard in a time-ordered 64-bit ID; implement story expiry by filtering on read; keep per-user like state exact and counts approximate, with write coalescing for hot posts (decisive for hot keys, minor for the long tail).
-- **News Feed (§53.7):** follower count cancels out of the per-author push-to-pull cost ratio; celebrities hurt push through synchronized bursts of distinct writes and wasted writes to inactive followers. Read-time aggregation over an in-memory activity index suits ranked feeds with bounded friend graphs; a TAO-style graph cache absorbs about a hundred graph reads per feed load; ranking is a staged funnel to control compute.
-- **Twitter/X (§53.8):** one tweet log feeds three products: push timelines (an 800-ID rebuildable in-memory index per active user, with large accounts merged at read time), a time-partitioned in-memory inverted index for search within seconds, and trends as windowed heavy hitters scored against a baseline. Snowflake IDs make merging and paging by time an integer comparison.
+- **Chat (§53.4):** single-writer sequence numbers per conversation; idempotent sends via a client message ID; lossy live delivery with gaps closed by ranged reads; receipts and unread counts as watermarks (8.5× less traffic); one copy per conversation in a bucketed wide-column store that ends up storage-bound.
+- **WhatsApp (§53.5):** keys and history live on devices; the server runs a public-key directory and relays per-device ciphertext, deleting on acknowledgment. X3DH gives asynchronous session setup; the Double Ratchet gives forward secrecy and post-compromise recovery. Multi-device costs about $2d - 1$ ciphertexts per message; sender keys make group sends $O(1)$ but re-keying $O(n^2 d)$. Metadata stays visible.
+- **Instagram (§53.6):** presigned uploads, idempotent asynchronous resizing and immutable CDN URLs; shard embedded in a time-ordered 64-bit ID; story expiry by read filter; exact per-user like state, approximate coalesced counts (decisive for hot keys only).
+- **News Feed (§53.7):** follower count cancels from the push-to-pull ratio; celebrities hurt push through bursts and writes to inactive followers. Read-time aggregation over an in-memory activity index suits ranked, bounded-graph feeds; a TAO-style cache absorbs the graph reads; ranking is a staged funnel.
+- **Twitter/X (§53.8):** one tweet log feeds push timelines (rebuildable 800-ID lists, large accounts merged at read time), a time-partitioned in-memory search index and windowed heavy-hitter trends; Snowflake IDs make time order an integer comparison.
 - **Across cases:** separate the durable commit point from asynchronous fan-out; derive caches and indexes from a log so they can be rebuilt; size by the hottest key and the burst, not the average.
 :::
 
@@ -2175,7 +2174,6 @@ A **senior** answer separates the three products and explains push with large-ac
 14. Show that the per-author push-to-pull ratio does not depend on follower count. What, then, makes celebrities expensive for push?
 15. What do TAO's leader and follower cache tiers each do?
 16. Why is Twitter's home-timeline cache safe to lose?
-17. Why does a trend score divide by the square root of the baseline count?
 
 <details><summary>Answers</summary>
 
@@ -2195,7 +2193,6 @@ A **senior** answer separates the three products and explains push with large-ac
 14. $W/R = pF / (\alpha F r) = p / (\alpha r)$. Push turns one post into a synchronized burst of $F$ distinct writes (100 s for 100 million at 1 M/s) and writes to inactive users; pull reads one hot, cached list.
 15. Followers serve reads and forward misses and writes; the leader for a shard is the only cache that queries or writes the database, sends invalidations to followers, and protects the database from stampedes.
 16. It holds only IDs for active users and can be rebuilt from the follow graph and user timelines; replicas exist for availability, not durability.
-17. A Poisson count's standard deviation is the square root of its mean, so the division standardizes surprise and lets small, sudden topics compete with large, steady ones.
 
 </details>
 

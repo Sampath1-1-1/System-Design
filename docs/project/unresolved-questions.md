@@ -277,3 +277,8 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-270 | 54 | Netflix end-2024 membership; Izrailevsky 2016 venue; whether Basiri et al. 2016 describes whole-region failure exercises | Open | |
 | UQ-271 | 54 | Spotify 30-second play rule wording; 2019 event-delivery post author; hourly partitions in 2016 vs 2019 post | Open | |
 | UQ-272 | 54 | Dropbox Magic Pocket posts (Cowling 2016, Gupta 2016) titles/dates/details; Day-Richter authorship of all three 2010 Google Docs posts | Open | |
+| UQ-273 | 53 | WhatsApp: 30-day undelivered-message limit, transport/media encryption details vs current privacy policy and security whitepaper; 1,024-member group limit (news reports); 2014 server counts (third-party summary) | Open | Time-sensitive |
+| UQ-274 | 53 | Meta 2021 encrypted-backups and 2023 key-transparency post titles/URLs | Open | |
+| UQ-275 | 53 | Twitter Redis timeline details (800-entry cap, 3 replicas) via secondary sources; Krikorian 2013 post title/URL; 2023 recommendation-algorithm figures (search snippets) | Open | |
+| UQ-276 | 53 | Facebook Multifeed percentages; Lada et al. 2021 authors/URL; "~40 requests per query" (2012) | Open | |
+| UQ-277 | 53 | Discord 177→72 nodes (2023 migration); Instagram 2015 like-count/lease details; 2016 ranked-feed post title | Open | Secondary sources |
