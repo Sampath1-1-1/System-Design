@@ -982,7 +982,7 @@ flowchart LR
 - **Failure points.** A cache outage sends all reads to the replicas at once and can overload them (a *cache avalanche*, §20.13). A poisoned job that always crashes a worker must be moved aside to a dead-letter queue (§30.11).
 - **Scaling options.** App servers and workers scale horizontally; replicas scale reads; the primary still takes every write.
 
-**Stage 3 — 10,000,000 DAU: scale every tier and survive a zone failure.** The estimator now gives about 5,800 average and 17,400 peak photo views per second, about 1,700 peak feed API RPS, 5 TB of new photo data per day (1.8 PB per year before replication) and about 9.3 Gbit/s of average image egress (28 Gbit/s at peak). The availability target rises to "survive loss of one availability zone". The design splits into a few services along clear data-ownership lines, partitions the metadata database by user ID (Ch 14), precomputes feeds asynchronously when a photo is posted (*fan-out on write*, examined in §53.3), and runs in at least two zones.
+**Stage 3 — 10,000,000 DAU: scale every tier and survive a zone failure.** The estimator now gives about 5,800 average and 17,400 peak photo views per second, about 1,700 peak feed API RPS, 5 TB of new photo data per day (1.8 PB per year before replication) and about 9.3 Gbit/s of average image egress (28 Gbit/s at peak). The availability target rises to "survive loss of one availability zone". The design splits into a few services along clear data-ownership lines, partitions the metadata database by user ID (Ch 14), precomputes feeds asynchronously when a photo is posted (*fan-out on write*, examined in §53.7), and runs in at least two zones.
 
 **Figure 1.7 — PhotoShare v3: services, partitioned data and multi-zone deployment.**
 
@@ -1014,7 +1014,7 @@ flowchart LR
 - **Protocols.** HTTPS at the edge; internal RPC (for example gRPC, §8.8) between gateway and services; the event log's protocol for producers and consumers.
 - **Direction and sync/async.** The read path (gateway → feed service → feed cache → metadata) is synchronous and short. The write path returns once the original and metadata are stored; everything else — thumbnails, fan-out — happens asynchronously from the event log, so a user with 100,000 followers does not make the upload slow.
 - **Storage boundaries.** Object storage and the CDN are regional or global managed services outside the zone boundary; metadata, the event log and the feed cache are replicated across zones.
-- **Failure points.** Loss of a zone: traffic shifts to the mirror zone, which must have spare capacity (≥ 50% headroom with two zones). Fan-out lag: followers see new photos seconds late — acceptable under the "within 5 s" consistency NFR, and visible as event-log consumer lag in monitoring (Ch 40). Celebrity accounts with tens of millions of followers make fan-out on write too expensive; a hybrid with *fan-out on read* for those accounts is the standard fix (§53.3).
+- **Failure points.** Loss of a zone: traffic shifts to the mirror zone, which must have spare capacity (≥ 50% headroom with two zones). Fan-out lag: followers see new photos seconds late — acceptable under the "within 5 s" consistency NFR, and visible as event-log consumer lag in monitoring (Ch 40). Celebrity accounts with tens of millions of followers make fan-out on write too expensive; a hybrid with *fan-out on read* for those accounts is the standard fix (§53.7).
 - **Scaling options.** Every service is stateless and scales horizontally; metadata scales by adding partitions; the event log by adding partitions and consumers; the CDN absorbs image egress.
 
 **Table 1.14 — PhotoShare stages, triggers and costs.**
@@ -1305,7 +1305,7 @@ Most beginner mistakes are versions of one error: *designing without stating req
 
 **Q1. What is the difference between functional and non-functional requirements? Give an example of each for a URL shortener.**
 
-**Answer.** Functional requirements describe behavior — what the system does: "given a long URL, return a short code; visiting the short URL redirects to the long one". Non-functional requirements describe quality — how well, under what constraints, with numbers: "redirects complete with p99 ≤ 50 ms server-side at 10,000 RPS; the service is available 99.95% per month; a created mapping is never lost". The NFRs drive the design: the latency and read volume suggest caching (Ch 20), and the durability requirement suggests a replicated store (Ch 27). The full design is in §52.1.
+**Answer.** Functional requirements describe behavior — what the system does: "given a long URL, return a short code; visiting the short URL redirects to the long one". Non-functional requirements describe quality — how well, under what constraints, with numbers: "redirects complete with p99 ≤ 50 ms server-side at 10,000 RPS; the service is available 99.95% per month; a created mapping is never lost". The NFRs drive the design: the latency and read volume suggest caching (Ch 20), and the durability requirement suggests a replicated store (Ch 27). The full design is in §52.4.
 
 **Q2. What is a single point of failure, and how would you find them in a design?**
 

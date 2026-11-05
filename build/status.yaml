@@ -51,8 +51,8 @@
 49: {research: done, draft: done, diagrams: done, review: done, final: todo}
 50: {research: done, draft: done, diagrams: done, review: done, final: todo}
 51: {research: done, draft: done, diagrams: done, review: done, final: todo}
-52: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-53: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-54: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-55: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-56: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+52: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+53: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+54: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+55: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+56: {research: done, draft: done, diagrams: done, review: wip, final: todo}

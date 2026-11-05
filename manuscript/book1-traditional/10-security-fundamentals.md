@@ -1456,7 +1456,7 @@ Use this table in every design document and design review — and in interviews,
 3. **Envelope encryption.** Extend the `FakeKMS` example in §10.9.2 with a per-tenant KEK and a `delete_tenant` operation. Show that encrypted objects for a deleted tenant can no longer be decrypted while other tenants are unaffected. Then replace `FakeKMS` with a real KMS client in a sandbox account if you have one.
 4. **Brute-force calculator.** Write a function that takes alphabet size, length, guesses per second and number of GPUs and prints expected time. Use it to compare a 4-word and a 6-word Diceware passphrase (7,776 words) against bcrypt and against unsalted SHA-256.
 5. **Tamper-evident log.** Modify the audit log in §10.12 so that every 100 entries the head is signed with an Ed25519 key (§10.4.8). Write a verifier that accepts only chains whose signed heads verify.
-6. **Threat model.** Draw a DFD for a URL shortener (§52.1) with trust boundaries and produce a STRIDE table with at least eight threats ranked by $L \times I$.
+6. **Threat model.** Draw a DFD for a URL shortener (§52.4) with trust boundaries and produce a STRIDE table with at least eight threats ranked by $L \times I$.
 
 ## 10.18 Design challenges
 

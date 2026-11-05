@@ -61,7 +61,7 @@ Every case in Chapters 52–56 follows the same sixteen sections in the same ord
 5. **Evidence labels.** The designs are teaching designs (*Evidence: Illustrative*). Where a company has *published* how its system works, the fact carries *Evidence: Primary* or *Secondary* with a citation. Never present a case's design as "how X does it".
 6. **Cross-references instead of re-derivation.** When a case needs consistent hashing or the Bloom filter formula, it gives one or two sentences and points to the owning section.
 
-**How to practice.** Use the 45-minute plan in section 15 of each case with a timer. Say requirements and numbers out loud before drawing anything; interviewers judge the reasoning as much as the boxes. After each attempt, list which failure scenarios from section 11 you missed, and repeat the case a week later (§3.4 on spaced repetition). Chapter 91 collects further practice questions with rubrics, and Chapter 89 is the full capacity-estimation handbook.
+**How to practice.** Use the 45-minute plan in section 15 of each case with a timer. Say requirements and numbers out loud before drawing anything; interviewers judge the reasoning as much as the boxes. After each attempt, list which failure scenarios from section 11 you missed, and repeat the case a week later (§3.4 on spaced repetition). Chapter 91 collects further practice questions with rubrics, and Chapter 89 is the full capacity-estimation handbook. For the data-system principles behind these designs, Kleppmann remains the standard companion [Kleppmann 2017]; Xu's interview guide walks through several of the same problems at a shallower depth and is useful as a second perspective [Xu 2020].
 
 ::: tip
 **Interview tip — Name the hard problem early.** Within the first ten minutes, say which component is genuinely difficult and that you intend to spend most of the time there. "The interesting part of a URL shortener is generating codes that are short, unique and not enumerable; the redirect path is a cache lookup." Interviewers reward candidates who allocate time to where the risk is.
@@ -2415,3 +2415,569 @@ sequenceDiagram
 - **Cost.** The scheduler is cheap; the jobs are not. Show tenants their run counts and durations, and pause jobs whose targets have returned errors for weeks.
 - **Operations.** Freeze windows for schedule changes during incidents; a global "pause tenant" switch; replay tooling to re-run a time range of firings after an outage, honoring misfire policies.
 
+## 52.10 Web crawler
+
+### 52.10.1 Problem statement
+
+Design a web crawler for a search engine that downloads 3 billion pages every 30 days, discovers new pages by following links, and keeps the collection fresh by recrawling pages as they change. The output feeds an indexing pipeline (§16.6).
+
+A crawler is a loop: take a URL, fetch it, extract links, add the new ones, repeat. At scale the loop is easy to write and hard to run well, for reasons that are mostly about *other people's servers*:
+
+1. **The URL frontier with politeness and priority (the distinctive hard problem).** The crawler must fetch thousands of pages per second in total but never more than about one request every few seconds from any single host, while fetching important and changed pages first.
+2. **Duplicates at three levels.** The same URL discovered many times; the same content under different URLs; and nearly identical content (the same article with a different timestamp or advertisement).
+3. **Robots.txt and DNS.** Every host has rules to obey and a name to resolve, and both must be cached or they become the bottleneck.
+4. **Distribution.** Fifty crawler nodes must divide the web without two of them hammering the same host.
+5. **Recrawl scheduling.** With a fixed fetch budget, which known pages should be fetched again, and how often?
+
+### 52.10.2 Functional requirements
+
+- Start from seed URLs and discover new URLs from fetched HTML pages (and sitemaps).
+- Fetch over HTTP and HTTPS, follow redirects, and store the raw response with metadata (status, headers, fetch time, IP).
+- Obey robots.txt (RFC 9309) for the crawler's user agent, and identify the crawler with a descriptive `User-Agent` and a contact URL.
+- Limit request rate per host and per IP address; back off on errors and slow responses.
+- Skip URLs already seen; detect exact and near-duplicate content.
+- Prioritize URLs by estimated importance and freshness need; recrawl known pages on a schedule.
+- Hand fetched pages to the indexing pipeline.
+
+Out of scope: rendering JavaScript-heavy pages (a separate, far more expensive rendering service), indexing and ranking (Chapter 16), and crawling the non-public web.
+
+### 52.10.3 Non-functional requirements
+
+| Property | Target |
+|---|---|
+| Throughput | 3 billion pages per 30 days: about 1,160 pages/s average; 2,000 pages/s capacity |
+| Politeness | At most one concurrent connection per host; default ≥ 5 s between requests to a host, adaptive to server response time |
+| Robots compliance | 100% of fetches checked against a robots.txt copy no older than 24 hours |
+| Freshness | Important pages (top 10% by importance) recrawled at least daily; median page age in the index ≤ 15 days |
+| Duplicate waste | ≤ 5% of fetches return content that is an exact duplicate of stored content |
+| Availability | The crawler is a batch system: a node failure must not lose frontier state or more than a few minutes of work |
+| Storage durability | Fetched pages stored with object-storage durability (§15.4) |
+
+Availability matters less than for online services, but *politeness* failures are severe: a crawler bug that floods a small website can take it down, and the crawler gets blocked across hosting providers.
+
+### 52.10.4 Capacity estimation
+
+::: example
+**Worked example — Fetch rate, bandwidth and storage.**
+
+*Assumptions.* 3 billion pages per 30-day cycle; average page 100 KB uncompressed, 25 KB compressed; capacity provisioned at 2,000 pages/s to allow for retries, redirects and robots.txt fetches; average fetch time 1 s (connect, TLS, download); 50 links extracted per page; 30 billion distinct URLs known.
+
+1. Average rate: $3 \times 10^9 / (30 \times 86{,}400\ \text{s}) = 3 \times 10^9 / 2{,}592{,}000 = 1{,}157$ pages/s.
+2. Download bandwidth at capacity: $2{,}000 \times 100\ \text{KB} = 200\ \text{MB/s} = 1.6\ \text{Gbps}$ (0.93 Gbps at the average rate).
+3. Storage per cycle: $3 \times 10^9 \times 25\ \text{KB} = 75\ \text{TB}$; keeping three cycles for change detection and reprocessing: 225 TB.
+4. Fetches in flight, by Little's Law (§4.11): $2{,}000\ \text{pages/s} \times 1\ \text{s} = 2{,}000$ concurrent fetches, 40 per node with 50 nodes, trivial with asynchronous I/O.
+5. Links discovered: $2{,}000 \times 50 = 100{,}000$ URLs/s to test against the seen set.
+6. URL-seen set as a Bloom filter over 30 billion URLs (§17.4): at a 1% false-positive rate, 9.6 bits per URL = 36 GB; at 0.1%, 14.4 bits per URL = 54 GB, about 1.1 GB per node when partitioned across 50 nodes.
+7. SimHash fingerprints for 3 billion pages: $3 \times 10^9 \times 8\ \text{B} = 24\ \text{GB}$; four lookup tables (Component 3): 96 GB across the cluster.
+
+*Interpretation.* Bandwidth and storage are moderate. The URL-seen test at 100,000 lookups per second and the frontier's politeness constraints are the parts that need design. *Engineering implication.* Every per-URL structure must be partitioned and mostly in memory; a disk seek per discovered link would need 100,000 IOPS.
+:::
+
+Politeness caps how fast the crawler can go, in a way more machines cannot fix.
+
+::: formula
+**Politeness bound on crawl throughput**
+
+$$R \leq \frac{H_{active}}{d} \qquad\qquad d_{\min,host} = \frac{T_{cycle}}{P_{host}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $R$ | Achievable crawl rate across all hosts | pages/s |
+| $H_{active}$ | Hosts with URLs ready in the frontier at any moment | hosts |
+| $d$ | Minimum delay between requests to one host | s |
+| $T_{cycle}$ | Time allowed to crawl a host's pages once | s |
+| $P_{host}$ | Pages on one host that must be crawled per cycle | pages |
+| $d_{\min,host}$ | Largest delay that still crawls the host within the cycle | s |
+:::
+
+::: example
+**Worked example — How many hosts must be ready, and what about large sites?**
+
+1. With $d = 5$ s and a target of 2,000 pages/s: $H_{active} \geq 2{,}000 \times 5 = 10{,}000$ hosts must have URLs ready at every moment, 200 per node.
+2. A large site with $P_{host} = 10^7$ pages at $d = 5$ s takes $10^7 \times 5 = 5 \times 10^7$ s, which is 579 days, far longer than a 30-day cycle.
+3. To crawl it in 30 days: $d_{\min,host} = 2{,}592{,}000 / 10^7 = 0.26$ s, about 3.9 requests per second.
+
+*Interpretation.* The frontier must keep thousands of distinct hosts ready, and large sites need a per-host rate set from their capacity rather than a global default. *Engineering implication.* Make the delay adaptive (for example, a multiple of the host's recent response time, as Mercator-style frontiers do) and allow per-host overrides for large sites that can serve more; never raise the rate for a host without evidence it can take it.
+:::
+
+**Table 52.30 — Web crawler capacity summary.**
+
+| Quantity | Value | Consequence |
+|---|---|---|
+| Fetch rate | 1,157 pages/s average; 2,000 capacity | 50 nodes with asynchronous I/O |
+| Bandwidth | 1.6 Gbps at capacity | Modest; spread across nodes |
+| Storage | 75 TB per cycle; 225 TB for three | Object storage, compressed WARC-style files |
+| Discovered links | 100,000/s | Partitioned in-memory URL-seen filter |
+| URL-seen filter | 36–54 GB | ≈ 1 GB per node |
+| Ready hosts needed | ≥ 10,000 | Frontier must be wide, not deep |
+
+### 52.10.5 API design
+
+A crawler has few external clients; its interfaces are internal RPCs between components and a control API for operators.
+
+```text
+Control API (operators):
+POST /v1/seeds        { "urls": ["https://example.org/"], "priority": 0.9 }
+PUT  /v1/hosts/{host}/policy  { "min_delay_s": 0.5, "max_connections": 2, "blocked": false }
+GET  /v1/hosts/{host}         -> { "robots_fetched_at": "...", "delay_s": 5.0, "queued": 1823,
+                                   "errors_24h": 3, "last_status": 200 }
+POST /v1/recrawl      { "url_prefix": "https://news.example.org/", "priority": 1.0 }
+
+Internal RPCs (gRPC):
+Frontier.Add(urls[], source_url, discovered_at)        -> accepted count (routed to owner node by host)
+Frontier.Next(worker_id, max)                          -> [ {url, host, ip, priority, not_before} ]
+Fetcher.Report(url, status, content_ref, fetch_ms, etag, last_modified)
+Indexer feed: append to topic "fetched-pages" {url, content_ref, simhash, fetched_at}
+```
+
+### 52.10.6 Data model and database schema
+
+```text
+URL store (per node, for its hosts; LSM key-value store, §13.8):
+  key:   reversed host + path, e.g. "org.example.www/news/2026/11/budget"   -- groups a host's URLs
+  value: { url_fp: 64-bit, first_seen, last_fetched, last_changed, fetch_count, change_count,
+           etag, last_modified, content_fp, simhash, importance, next_fetch_at, status }
+
+Host table (per node):
+  host -> { ip, dns_expires_at, robots_rules, robots_fetched_at, delay_s, next_allowed_at,
+            consecutive_errors, max_connections }
+
+URL-seen filter (per node, in memory, checkpointed): Bloom filter over url_fp
+Content fingerprint index (cluster-wide, partitioned by fingerprint): content_fp -> canonical URL
+SimHash tables (cluster-wide): 4 tables keyed by one 16-bit block each -> list of (simhash, url_fp)
+Page archive (object storage): WARC-style files of ~1 GB, each holding many compressed responses
+```
+
+Keying URLs by **reversed host name** stores a host's URLs together and a domain's hosts near each other, so the per-host frontier can read a host's URLs with one range scan, the same trick Bigtable's web table used [Chang et al. 2006]. Pages are stored in large archive files, not one object per page, because 3 billion small objects would be expensive in requests and metadata (§15.4); the URL store records each page's file and offset.
+
+### 52.10.7 High-level architecture
+
+**Figure 52.21 — Distributed web crawler architecture.**
+
+```mermaid
+flowchart LR
+  SEED([Seeds and sitemaps]) --> FR
+  subgraph Node["Crawler node, one of 50, owns hosts by hash"]
+    FR["URL frontier<br/>priority front queues,<br/>per-host back queues"] --> FE["Fetchers<br/>async HTTP"]
+    FE -->|robots check| RB[(Robots cache)]
+    FE -->|resolve| DNS[(Local DNS cache)]
+    FE --> PR["Parser and link extractor"]
+    PR -->|URL-seen test| BF[(Bloom filter<br/>URL-seen)]
+    PR --> US[(URL store)]
+    RS["Recrawl scheduler"] --> FR
+    US --> RS
+  end
+  FE -->|HTTPS GET| WEB{{Web servers}}
+  DNS -->|cache miss| RES{{Recursive resolvers}}
+  PR -->|links of other hosts| RT["Router by hash of host"]
+  RT -->|batched gRPC| FR2["Other nodes' frontiers"]
+  PR --> DD["Duplicate detection<br/>exact fp and SimHash"]
+  DD --> AR[(Page archive<br/>object storage)]
+  DD -.->|new content| IDX[["Indexer feed"]]
+```
+
+**Reading the diagram.** Each of the 50 nodes owns a set of hosts, chosen by hashing the host name (§14.6), and runs the whole loop for them inside the subgraph. The frontier releases a URL only when its host's politeness delay has passed; fetchers check the robots.txt cache and the local DNS cache before connecting synchronously to the web server; the parser extracts links, tests each against the node's URL-seen Bloom filter, records new URLs in the URL store, and routes links belonging to hosts owned by other nodes through the router, which batches them into gRPC calls to those nodes' frontiers. Fetched content passes through duplicate detection (exact fingerprint, then SimHash) before being written to the page archive and announced asynchronously to the indexer (dotted). The recrawl scheduler reads the URL store and feeds known URLs back into the frontier when they are due. Storage boundaries: per-node URL store and host table (local, replicated by checkpoint), the archive (object storage), and the cluster-wide fingerprint indexes. Failure points: a node failure stalls its hosts until another node takes over its hash range; slow DNS stalls fetchers; a misparsed robots.txt is a politeness incident. Scaling: add nodes and re-divide the host hash space (consistent hashing, §14.8, keeps movement small).
+
+### 52.10.8 Detailed component design
+
+#### Component 1: the URL frontier
+
+The frontier is the design described for Mercator [Heydon & Najork 1999] and explained in detail by Manning, Raghavan and Schütze [Manning et al. 2008, ch. 20]: two layers of queues that separate *priority* from *politeness*.
+
+**Figure 52.22 — Mercator-style frontier: priority front queues and per-host back queues.**
+
+```mermaid
+flowchart LR
+  IN["New and recrawl URLs"] --> PRI{"Prioritizer<br/>importance x staleness"}
+  PRI --> F1[["Front queue 1, highest"]]
+  PRI --> F2[["Front queue 2"]]
+  PRI --> FK[["Front queue K, lowest"]]
+  F1 --> SEL{"Back-queue router<br/>biased toward high priority"}
+  F2 --> SEL
+  FK --> SEL
+  SEL --> B1[["Back queue: host a.example"]]
+  SEL --> B2[["Back queue: host b.example"]]
+  SEL --> BN[["Back queue: host n.example"]]
+  B1 --> HEAP["Heap of back queues<br/>by next_allowed_at"]
+  B2 --> HEAP
+  BN --> HEAP
+  HEAP --> FT["Fetcher threads"]
+```
+
+**Reading the diagram.** URLs enter at the left and are assigned a priority, then placed in one of $K$ **front queues** (FIFO per priority level). The back-queue router pulls from front queues with a bias toward higher priority and places each URL in the **back queue** for its host; each back queue holds URLs of exactly one host, and there are a few times as many back queues as fetcher threads (Mercator's designers suggested about three times as many [Manning et al. 2008]). A **heap** keyed by each back queue's `next_allowed_at` time gives fetchers the host whose politeness delay expired earliest. When a fetch finishes, the host's `next_allowed_at` is set to now plus the delay, and the back queue goes back into the heap; when a back queue empties, the router refills it with URLs of a new host from the front queues. All flows are in-process and synchronous; front and back queues spill to the local URL store when they exceed memory. Failure points: too few distinct hosts in the back queues (throughput falls, per the politeness formula); one huge host monopolizing front queues (bounded by per-host admission caps). Scaling: per node, the structure is independent of other nodes because hosts never span nodes.
+
+The **delay** for a host is adaptive: the larger of a floor (5 s by default, or a per-host override), and a multiple of the host's recent response time; the textbook description of Mercator's frontier uses ten times the last fetch duration as an example [Manning et al. 2008]. A slow, struggling server therefore automatically gets fewer requests. Errors increase the delay exponentially; HTTP 429 and 503 with `Retry-After` set `next_allowed_at` directly. Politeness is also enforced per **IP address**, because thousands of small hosts often share one server: the host table maps hosts to IPs, and a second heap limits concurrency per IP.
+
+**Priority** combines estimated importance (link-based scores from the previous crawl, domain quality, depth from the site root) with the need to recrawl (Component 4). New URLs from a high-importance page inherit a share of its importance.
+
+#### Component 2: DNS, robots.txt and fetching
+
+**DNS.** Resolution can take tens to hundreds of milliseconds and is done once per host per TTL, but the standard blocking resolver library serializes lookups and was a known bottleneck in early crawlers; Mercator used its own multithreaded resolver for this reason [Heydon & Najork 1999; Najork & Heydon 2001]. Each node runs an asynchronous local caching resolver, resolves hosts when they enter the back queues (prefetching, so the fetch does not wait), honors TTLs with a minimum floor of, say, one hour to limit load, and records the IP for per-IP politeness. Because hosts are partitioned by node, each node's DNS cache covers only its own hosts and achieves a high hit ratio.
+
+**Robots.txt.** RFC 9309 standardized the Robots Exclusion Protocol in 2022: the crawler fetches `/robots.txt` for each host (scheme, host and port), matches the most specific `User-agent` group, and applies `Allow` and `Disallow` rules by longest match [RFC 9309]. The RFC says crawlers should not use a cached copy for more than 24 hours unless the file is unreachable, and must parse at least 500 KiB of it. It also distinguishes failure cases: if robots.txt is *unavailable* (a 4xx status) the crawler may access any resources; if it is *unreachable* (a 5xx status or network error) the crawler must assume complete disallow. That asymmetry matters: a server error on robots.txt stops the crawl of that host, which is the polite default when a server is struggling. `Crawl-delay` is not part of RFC 9309; honor it anyway as a lower bound on the delay where present. The robots cache is the host table's `robots_rules` field, refreshed before expiry for hosts with queued URLs.
+
+**Fetching.** Fetchers use asynchronous I/O with connection reuse per host (keep-alive, §7.16), a total timeout (30 s), a maximum body size (for example 10 MB, truncating beyond), and conditional requests for recrawls (`If-None-Match` with the stored ETag, `If-Modified-Since` with the stored date), which turn unchanged pages into small 304 responses. Redirects are not followed inline; the target URL goes back through the frontier so it obeys politeness and duplicate checks for its own host.
+
+#### Component 3: duplicate detection
+
+**Table 52.31 — Duplicate detection layers.**
+
+| Layer | Question | Mechanism | Cost | Error mode |
+|---|---|---|---|---|
+| URL normalization | Are these strings the same URL? | Lowercase scheme and host, remove default ports and fragments, sort or strip tracking parameters, resolve `.` and `..` | CPU only | Over-normalizing merges distinct pages |
+| URL-seen | Have we seen this URL before? | 64-bit fingerprint tested against a Bloom filter (§17.4), confirmed in the URL store when needed | 100,000 lookups/s in memory | False positive skips a new URL (rate ≤ 0.1%) |
+| Exact content | Is this content byte-identical to a stored page? | Hash of the normalized body, looked up in the fingerprint index | One lookup per fetch | None in practice |
+| Near-duplicate | Is it nearly identical (different timestamp, ad, counter)? | SimHash fingerprint, Hamming distance ≤ 3 | Four table lookups per fetch | Threshold misjudges very short pages |
+
+The URL-seen test runs on the node that owns the URL's host, after routing, so each node's filter covers only its own hosts. A Bloom filter cannot delete and only grows, so it is rebuilt from the URL store each cycle. Its false positives mean a truly new URL is occasionally skipped; at 0.1% that is acceptable because important pages are usually linked from many places and will be discovered again through another source. Mercator kept a disk-based set of URL fingerprints with an in-memory cache for the same test [Heydon & Najork 1999].
+
+**Near-duplicates** are the bigger source of waste: mirrors, printer-friendly versions, session-ID URLs and pages differing only in boilerplate. Broder et al. introduced **shingling**, which compares sets of overlapping word sequences (shingles) and estimates their resemblance from small sketches [Broder et al. 1997]. Charikar's **SimHash** compresses a document into a single 64-bit fingerprint such that similar documents get fingerprints that differ in few bits [Charikar 2002]. Manku, Jain and Das Sarma showed that SimHash is practical for detecting near-duplicates at Google's crawl scale, reporting that 64-bit fingerprints with a Hamming-distance threshold of 3 worked well for a repository of 8 billion pages, and gave table-based methods for finding all fingerprints within distance 3 quickly [Manku et al. 2007].
+
+```python
+import hashlib
+import re
+
+
+def features(text: str, k: int = 3) -> list:
+    """Word 3-shingles: overlapping sequences of k words."""
+    words = re.findall(r"\w+", text.lower())
+    return [" ".join(words[i:i + k]) for i in range(max(1, len(words) - k + 1))]
+
+
+def h64(s: str) -> int:
+    return int.from_bytes(hashlib.blake2b(s.encode(), digest_size=8).digest(), "big")
+
+
+def simhash(text: str) -> int:
+    """Charikar's SimHash: each feature votes +1/-1 on each of 64 bits."""
+    votes = [0] * 64
+    for f in features(text):
+        h = h64(f)
+        for bit in range(64):
+            votes[bit] += 1 if (h >> bit) & 1 else -1
+    return sum(1 << bit for bit in range(64) if votes[bit] > 0)
+
+
+def hamming(a: int, b: int) -> int:
+    return bin(a ^ b).count("1")
+
+
+base = " ".join([
+    "The city council approved the new budget on Tuesday after a long debate about funding for",
+    "public transport, schools and road repairs. The mayor said the plan adds two bus lines,",
+    "repairs forty bridges and hires sixty teachers, while opposition members argued that the",
+    "property tax increase would hurt small businesses in the old town and asked for a review.",
+    "Residents who attended the meeting raised concerns about parking near the new tram depot,",
+    "noise from night construction and the cost of replacing water pipes under the main square.",
+    "The finance director explained that interest rates had risen sharply since last spring and",
+    "that the city must refinance older loans before the end of the coming fiscal year. Several",
+    "councillors proposed delaying the stadium renovation to free money for winter heating help",
+    "for pensioners, and the amendment passed by a narrow margin late in the evening session.",
+    "Local shop owners welcomed the extra bus lines but asked for loading zones on market days,",
+    "and the transport committee promised a traffic study before any street is closed to cars.",
+    "Teachers' unions said sixty new posts would barely cover retirements expected next summer,",
+    "while parents asked whether the repaired school roofs would be finished before the rains.",
+])
+page_a = base + "Posted 09:14. Share this article. 3 comments."
+page_b = base + "Posted 09:15. Share this article. 4 comments."          # same story, new timestamp
+page_c = ("A recipe for sourdough bread needs flour, water, salt and a lively starter that has "
+          "been fed the night before. Shape the loaf, let it rise for several hours in a cool kitchen, "
+          "then bake it in a very hot oven with steam for the first twenty minutes until the crust is dark. ")
+
+a, b, c = simhash(page_a), simhash(page_b), simhash(page_c)
+print("exact duplicate?", hashlib.sha256(page_a.encode()).digest() == hashlib.sha256(page_b.encode()).digest())
+print("near-duplicate distance A-B:", hamming(a, b), "| unrelated distance A-C:", hamming(a, c))
+
+# Pigeonhole lookup: if distance <= 3, at least one of four 16-bit blocks is identical.
+blocks = lambda x: [(i, (x >> (16 * i)) & 0xFFFF) for i in range(4)]
+print("shared 16-bit blocks A-B:", len(set(blocks(a)) & set(blocks(b))))
+```
+
+Output:
+
+```text
+exact duplicate? False
+near-duplicate distance A-B: 3 | unrelated distance A-C: 26
+shared 16-bit blocks A-B: 1
+```
+
+What to notice:
+
+- An exact hash says pages A and B are different, although a reader would call them the same article; SimHash puts them 3 bits apart, within the threshold, while an unrelated page is 26 bits away (about 32 is expected for unrelated documents).
+- The lookup trick is the pigeonhole principle: if two 64-bit fingerprints differ in at most 3 bits, at least one of their four 16-bit blocks is identical. Four tables, each keyed by one block, return a small candidate set to check exactly. Manku et al. refine this with permuted tables to balance memory and candidate counts [Manku et al. 2007].
+- Short pages have few shingles, so a small edit moves many bits; apply the near-duplicate test only above a minimum length (for example 100 words) and rely on exact hashes below it.
+- Production systems weight features (for example by term frequency) and strip boilerplate (navigation, footers) before fingerprinting, which makes distances more meaningful.
+
+When a near-duplicate is found, the crawler stores the page compactly (as a reference to the canonical page) and lowers the recrawl priority of the duplicate URL; repeated duplicates from one host suggest a URL pattern (session IDs, calendars) that should be blocked by a per-host rule, which also defends against **crawler traps**: infinite URL spaces such as calendars that link to the next day forever. Caps on URLs per host and on path depth bound the damage.
+
+#### Component 4: recrawl scheduling
+
+With a fixed budget of about 1,157 fetches per second, every recrawl of a known page displaces the discovery of a new one. The scheduler estimates each page's **change rate** from its history (number of observed changes over number of fetches, by comparing content fingerprints) and sets `next_fetch_at` from importance and change rate. Cho and Garcia-Molina analyzed refresh policies for a crawler with a fixed budget and found, counter-intuitively, that refreshing pages in proportion to how often they change can give *lower* average freshness than refreshing all pages uniformly; under their freshness metric, the optimal policy gives pages that change extremely often fewer refreshes, because a copy of such a page is stale again almost immediately [Cho & Garcia-Molina 2003]. In practice, schedulers bound recrawl intervals between a minimum (hours, for important news pages) and a maximum (months), weight by importance, use sitemap `lastmod` hints, and use conditional GETs so that checking an unchanged page costs a 304 response rather than a full download.
+
+::: industry
+**Mercator and published crawler designs.** Mercator, built at Compaq's Systems Research Center, was a scalable, extensible Java crawler whose design introduced the URL frontier structure, the URL-seen and content-seen tests with fingerprints, and a custom DNS resolver [Heydon & Najork 1999]; Najork and Heydon later described its high-performance configuration and lessons [Najork & Heydon 2001]. The robots.txt conventions crawlers had followed informally since 1994 became RFC 9309 in 2022 [RFC 9309]. Google researchers published the SimHash-based near-duplicate method described above [Manku et al. 2007]. The architecture in this section follows these published designs; it is not a description of any company's current production crawler.
+
+*Evidence: Primary* — [Heydon & Najork 1999]; [Najork & Heydon 2001]; [RFC 9309]; [Manku et al. 2007]
+:::
+
+### 52.10.9 Data flow
+
+**Figure 52.23 — Read path: selecting and fetching the next URL.**
+
+```mermaid
+sequenceDiagram
+  participant F as Fetcher
+  participant FR as Frontier heap
+  participant H as Host table and robots cache
+  participant D as Local DNS cache
+  participant W as Web server
+  F->>FR: Next
+  FR-->>F: url on b.example, next_allowed_at passed
+  F->>H: robots rules for b.example, age 3 h
+  H-->>F: allowed, delay 5 s
+  F->>D: resolve b.example
+  D-->>F: 198.51.100.7, cached
+  F->>W: GET /news/budget, If-None-Match etag
+  W-->>F: 200, 96 KB, 0.8 s
+  Note over F,FR: set next_allowed_at = now + max of 5 s and 10 x 0.8 s
+  F->>FR: return back queue to heap
+```
+
+**Reading the diagram.** The fetcher asks the frontier for work; the heap returns a URL only from a host whose politeness time has passed. Before connecting, the fetcher checks robots rules (cached for at most 24 hours; refreshed in the background) and resolves the host from the local DNS cache, both normally in memory. The fetch itself is synchronous over HTTPS with a conditional header for a recrawl. After the fetch, the host's next allowed time is set from the adaptive delay (here 8 s, because the server took 0.8 s) and the host's back queue returns to the heap. Failure points: a robots.txt that returns 5xx (treat the host as fully disallowed until it recovers), DNS timeouts (requeue with backoff), and slow servers (the adaptive delay backs off automatically). Scaling: thousands of hosts in the heap per node keep fetchers busy despite per-host delays.
+
+**Figure 52.24 — Write path: processing a fetched page.**
+
+```mermaid
+sequenceDiagram
+  participant F as Fetcher
+  participant P as Parser
+  participant DD as Duplicate detection
+  participant A as Page archive
+  participant U as URL store and Bloom filter
+  participant R as Router
+  participant I as Indexer feed
+  F->>P: response body, headers
+  P->>DD: exact fp and SimHash
+  DD-->>P: new content, no near-duplicate
+  P->>A: append compressed record to archive file
+  P--)I: page ready, content_ref
+  P->>U: update url record, changed, next_fetch_at
+  Note over P: extract 50 links, normalize
+  P->>U: own-host links, Bloom test, add new ones
+  P->>R: links of other hosts
+  R--)R: batch per owner node, gRPC Frontier.Add
+```
+
+**Reading the diagram.** The parser computes fingerprints first, so duplicates are stored only as references. New content is appended to the current archive file in object storage, and the indexer is notified asynchronously. The URL record is updated with the fetch result and change observation, which feeds the recrawl scheduler. Extracted links are normalized; links to the node's own hosts are tested against the local Bloom filter and added to the URL store and frontier if new; links to other hosts are batched by owner node and sent asynchronously. Failure points: a crash before the archive file is closed loses the pages in that file since the last flush, so files are flushed every few minutes and the URL records point only to flushed data; the cross-node link stream can lag without harming politeness. Scaling: link routing traffic grows with the number of nodes but is batched; 100,000 links/s at about 100 bytes each is 10 MB/s cluster-wide.
+
+### 52.10.10 Bottlenecks
+
+1. **Host diversity in the frontier.** Throughput is capped by $H_{active}/d$; a frontier dominated by a few large hosts idles fetchers. Admission caps per host and a wide front-queue mix keep thousands of hosts ready.
+2. **URL-seen lookups.** 100,000 per second; in-memory Bloom filters per node solve it, while any disk-based lookup per link would not.
+3. **DNS.** Mitigated by prefetching and a local cache; a slow recursive resolver otherwise stalls fetchers.
+4. **Parsing CPU.** HTML parsing and link extraction of 200 MB/s is a real CPU cost, often larger than networking; size nodes for it.
+5. **Storage writes of small pages.** Solved by archive files instead of objects per page.
+
+### 52.10.11 Failure scenarios
+
+**Table 52.32 — Web crawler failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Crawler node crash | Its hosts stall; in-memory queues lost | Heartbeat loss | Another node takes its hash range and rebuilds queues from the URL store | Checkpoint frontier state and Bloom filter regularly |
+| Politeness bug (delay ignored) | A small site is overloaded; complaints, blocks | Per-host request-rate monitor | Kill switch per host and globally | Independent per-IP rate guard in the fetch path |
+| Robots.txt misparsed | Crawling disallowed paths | Audits against a robots test suite | Purge fetched disallowed content | RFC 9309 test cases in CI |
+| Crawler trap | Frontier fills with one host's infinite URLs | URLs per host growth | Block URL pattern; cap per host | Per-host URL caps; depth limits; near-duplicate signals |
+| DNS resolver outage | Fetchers stall on new hosts | Resolution latency and errors | Fail over to secondary resolvers | Multiple resolvers; prefetching; TTL floor |
+| Bloom filter lost | Many URLs re-added as new | Duplicate fetch rate rises | Rebuild from URL store | Periodic checkpoints |
+| Host hash rebalancing | Two nodes briefly crawl one host | Overlapping ownership | Ownership by lease with fencing (§26.13) | Hand over hosts only after the old owner stops |
+| Mass 5xx from one hosting provider | Many hosts error at once | Error rate per IP range | Back off per IP; pause range | Per-IP politeness and error backoff |
+
+### 52.10.12 Scaling strategy
+
+**At 10× (30 billion pages per cycle, 20,000 pages/s).** Politeness now requires 100,000 ready hosts at a 5 s delay, which means the frontier must draw from a far wider slice of the web: improve host discovery and lower per-node host counts by adding nodes (about 500). Storage reaches 750 TB per cycle, so keep only changed pages from previous cycles. The URL-seen filters grow to about 540 GB in total and remain partitioned.
+
+**At 100×.** Crawl from several regions, assigning hosts to the region nearest to their servers to cut latency and cross-ocean bandwidth, with host ownership still unique worldwide. Recrawl efficiency becomes the main lever: change prediction models, sitemaps and push-based notification of changes from cooperating sites reduce wasted fetches more than hardware does.
+
+### 52.10.13 Trade-offs
+
+- **Host-partitioned nodes:** politeness, DNS caching and robots caching become local problems, in exchange for cross-node link routing and uneven load when a node owns very large hosts.
+- **Bloom filter for URL-seen:** fast and small, in exchange for occasionally skipping new URLs.
+- **Near-duplicate suppression:** large savings in storage and indexing, in exchange for occasionally treating distinct short pages as duplicates.
+- **Fixed fetch budget split between discovery and recrawl:** freshness of known pages versus coverage of new ones; the split is a product decision.
+
+### 52.10.14 Alternative designs
+
+- **Centralized frontier service** shared by stateless fetchers: simpler fetchers, but the frontier becomes a bottleneck and a single politeness authority that must be highly available.
+- **Breadth-first crawl from a disk-based queue** (early crawlers): easy, but without per-host back queues, politeness requires sleeping threads and throughput collapses on hosts with many links.
+- **Use a public crawl dataset** (such as Common Crawl's published archives) for research or bootstrap: no crawling infrastructure, but no control over freshness, coverage or recrawl.
+- **Headless-browser rendering for all pages**: complete content for JavaScript-heavy sites, at one to two orders of magnitude more CPU per page; usually reserved for pages known to need it.
+
+### 52.10.15 Interview discussion
+
+**Table 52.33 — 45-minute plan for the web crawler.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Requirements | Pages per cycle, politeness, robots, freshness, duplicates |
+| 5–10 | Estimates | 1,157 pages/s, 1.6 Gbps, 75 TB/cycle, 100,000 links/s, ready hosts formula |
+| 10–14 | Data model | URL store keyed by reversed host; host table; archive files |
+| 14–20 | Architecture | Figure 52.21: host-partitioned nodes, router, duplicate detection |
+| 20–33 | Deep dive: frontier | Front and back queues, heap, adaptive delay, per-IP limits |
+| 33–40 | Duplicates, robots, DNS | Bloom filter, exact hash, SimHash, RFC 9309 behavior |
+| 40–45 | Recrawl and scaling | Change rates, conditional GETs, traps, 10× hosts |
+
+**Likely follow-ups.**
+
+- *"How do you stay polite while crawling fast?"* Per-host back queues with a heap of next-allowed times, adaptive delays and per-IP limits; throughput comes from host diversity, not from hitting hosts harder.
+- *"How do you detect duplicates?"* Normalize URLs; a Bloom filter for URL-seen; an exact content hash; SimHash with a 3-bit threshold for near-duplicates.
+- *"How do you distribute the crawl?"* Partition by hash of the host so each host has one owner; route discovered links to owners.
+- *"What if robots.txt returns 500?"* Treat the host as fully disallowed until it is reachable again, per RFC 9309.
+
+**What distinguishes senior and staff answers.** A senior candidate builds the frontier with politeness and uses Bloom filters. A staff candidate derives the ready-hosts bound and the large-site problem from numbers, partitions by host to make politeness and caching local, separates exact from near-duplicate detection with costs, handles crawler traps, and treats recrawl scheduling as a budget allocation problem with a known counter-intuitive result.
+
+### 52.10.16 Production considerations
+
+- **Observability.** Fetches per second, ready hosts per node, per-host request rates (with alerts above policy), robots.txt fetch outcomes by status class, DNS latency, duplicate and near-duplicate rates, and index freshness (median page age).
+- **Security and ethics.** Fetch only public content; respect robots.txt and opt-out requests promptly; publish the crawler's user agent, purpose and contact page; never send credentials; sandbox parsers, because hostile pages target parser bugs; filter content that must not be stored.
+- **Cost.** Bandwidth, storage and parsing CPU; conditional requests and near-duplicate suppression reduce all three.
+- **Operations.** A global and per-host kill switch; a complaint-handling process with fast host blocking; replayable archive files for reprocessing when parsers improve.
+
+## 52.11 Summary and revision notes
+
+::: summary
+- **Method (§52.3).** Scope → size → contract → shape → depth → stress → judgment. Name the distinctive hard problem within ten minutes and spend most of the time there. Every number comes from stated assumptions; peak ≈ 4.8 × average with $h = 0.10$, $b = 2$.
+- **URL shortener.** 280,000 redirect RPS at peak, 182.5 billion links in 10 years, 7 base62 characters ($62^7 = 3.52 \times 10^{12}$). Leased counter ranges plus a keyed permutation give unique, non-enumerable codes without per-create coordination; 302 keeps analytics correct; clicks go asynchronously to Kafka and are rolled up.
+- **Pastebin.** Metadata in a key-value store, blobs in object storage, small pastes inline. Logical expiry is checked on every read; physical deletion uses a time-bucketed expiry index, lifecycle rules as backstop and a reconciler. Permanent pastes dominate storage. Private content is never cached in shared layers; burn-after-read is a conditional state transition.
+- **Rate limiter.** Choose per rule where counting happens: local, regional Redis with atomic Lua, leased token batches for hot keys, or demand-proportional regional shares for global limits. Fail-open or fail-closed is a per-rule decision; the limiter must never cause the outage it exists to prevent.
+- **Notification system.** Separate queues and pools per priority; the router applies preferences, quiet hours, caps and deduplication before rendering. Provider quotas often set campaign drain time. Provider timeouts make delivery ambiguous; resolve per channel. Every message ends in a recorded terminal state.
+- **Key-value store.** Fixed partitions on a consistent-hashing ring; $N = 3$ zone-diverse replicas; quorums with sloppy quorum and hinted handoff; version vectors and siblings; read repair and Merkle anti-entropy; LSM storage; gossip membership with explicit permanent changes. Throughput, not capacity, sets node count; tombstones must outlive the rejoin window.
+- **Job scheduler.** Partition ownership by lease with fencing tokens; near-term timers in hierarchical timing wheels; watermark checkpoints instead of per-firing writes; deterministic execution IDs; at-least-once execution plus idempotent jobs; top-of-hour bursts drive capacity.
+- **Web crawler.** Mercator-style frontier: priority front queues, per-host back queues and a heap of next-allowed times. Throughput ≤ ready hosts ÷ delay. Partition by host; cache DNS and robots.txt (RFC 9309); URL-seen Bloom filter, exact hash and SimHash for duplicates; recrawl as budget allocation.
+:::
+
+## 52.12 Knowledge checkpoint
+
+1. With $h = 0.10$ and $b = 2$, what multiple of the daily average is the design peak?
+2. How many base62 characters are needed for $1.825 \times 10^{13}$ codes at 10% maximum fill?
+3. Why does a counter-based shortener need a keyed permutation, and why must cycle-walking be used with a 42-bit Feistel network?
+4. Why does a shortener with analytics return 302 rather than 301?
+5. In the Pastebin estimate, why do never-expiring pastes dominate storage although 70% of pastes expire?
+6. Why is a database's native TTL not sufficient to stop expired pastes from being served?
+7. How is burn-after-read made safe under concurrent readers?
+8. A global limit of 6,000 requests per minute; regional demand 6,000, 3,000 and 1,000 per minute; floor fraction 0.1. Compute the regional allocations.
+9. Which rate limits should fail closed when the limiter is unavailable, and why?
+10. A 50 million-message campaign; capacity 50,000/s; higher-priority traffic 8,333/s. How long does the campaign take?
+11. Why does a single queue with a priority field fail for one-time passwords?
+12. In the key-value store, why does reading from all three replicas cost nodes, and what does it buy?
+13. Why must tombstones be retained longer than the maximum time a replica can be away and still rejoin?
+14. What is the span of a three-level timing wheel with 100 ms ticks and 600, 60 and 24 slots?
+15. Why can a job scheduler not promise exactly-once execution, and what does it offer instead?
+16. A crawler needs 2,000 pages/s with a 5 s politeness delay. How many hosts must have URLs ready?
+17. Why must links be routed to the node that owns their host?
+18. What does RFC 9309 require when robots.txt returns a 5xx status?
+
+<details><summary>Answers</summary>
+
+1. $0.10 \times 24 \times 2 = 4.8$.
+2. $\log_{62}(1.825 \times 10^{14}) = 7.96$, so 8 characters.
+3. Sequential counters are enumerable; a keyed permutation maps consecutive counters to unrelated codes without collisions. The Feistel network permutes $[0, 2^{42})$, which is larger than $62^7$, so out-of-range results are re-encrypted until they fall inside, preserving a permutation on the smaller set.
+4. 301 is cacheable by default, so browsers stop asking and analytics undercounts; disabled links also keep redirecting from caches.
+5. Expiring pastes reach a steady state (about 1.15 TB) while permanent ones accumulate (21.9 TB per year).
+6. Native TTL deletion is asynchronous and best effort (DynamoDB: typically within a few days); visibility must be decided by a read-time check of `expires_at`.
+7. A conditional transition from `active` to `burned` before returning content; only one reader's update succeeds.
+8. Floors 200 each; remaining 5,400 split 0.6/0.3/0.1: 3,440, 1,820 and 740.
+9. Security limits (login failures) and money limits (paid sends): an unchecked burst causes harm that cannot be undone; fall back to strict local limits.
+10. $5 \times 10^7 / 41{,}667 = 1{,}200$ s, 20 minutes.
+11. Head-of-line blocking: the OTP waits behind already queued campaign messages; isolation needs separate queues and consumers.
+12. Each logical read becomes three replica reads, raising the node count to 150; it detects stale replicas promptly (read repair) and lets the coordinator answer with the fastest $R$ replies, cutting tail latency.
+13. Otherwise a replica that missed the delete still holds the old value and anti-entropy copies it back, resurrecting deleted data.
+14. $0.1 \times 600 \times 60 \times 24 = 86{,}400$ s, one day.
+15. A worker can crash after the side effect but before recording success, so the job may run again. It offers at-least-once execution with a stable execution ID; idempotent jobs then get effectively-once results.
+16. $2{,}000 \times 5 = 10{,}000$ hosts.
+17. So that exactly one node enforces politeness, holds robots and DNS state, and tests URL-seen for each host.
+18. Treat the host as unreachable and assume complete disallow until it can be fetched.
+
+</details>
+
+## 52.13 Interview questions
+
+### Basic
+
+**Q1. Design the redirect path of a URL shortener for 280,000 RPS with p99 ≤ 20 ms.**
+**Answer.** Stateless redirect nodes behind the CDN, with an in-process LRU cache, a Redis cluster and a partitioned link store keyed by code. Return 302 with a short private cache lifetime; cache negative results for unknown codes; collapse concurrent misses; emit click events asynchronously. At a 95% hit ratio the store sees about 14,000 reads/s; about 50 nodes at 10,000 RPS each and 60% utilization.
+
+**Q2. Why separate blobs from metadata in a Pastebin?**
+**Answer.** Their access patterns and lifecycles differ: metadata is small, read on every request and updated; blobs are immutable and large. Large values in a key-value store inflate compaction, replication and caches. Object storage is cheaper per byte and has lifecycle rules. Keep small pastes inline to avoid an object request for the common case.
+
+### Intermediate
+
+**Q3. Your notification platform's OTPs are delayed during marketing campaigns. Diagnose and fix.**
+**Answer.** OTPs share a queue, workers or provider quota with campaign traffic. Give critical traffic its own queue and worker pool, reserve a share of each provider's throughput for it, set a short TTL, cap campaign rates, and fail over SMS providers on definitive errors. Monitor end-to-end latency per priority.
+
+**Q4. How does a Dynamo-style store remain writable when one of three replicas is down, and what is the cost?**
+**Answer.** The coordinator writes to a substitute node with a hint (sloppy quorum), meeting $W = 2$; the hint is replayed later. The cost: the substitute is outside the preference list, so $R + W > N$ no longer guarantees reading the latest write until handoff and repair complete, and concurrent writes during partitions produce siblings or LWW losses.
+
+### Advanced
+
+**Q5. Design global rate limits for a tenant served from three regions without adding cross-region latency.**
+**Answer.** Enforce regional shares locally (Redis plus Lua per region), recomputed every second from published per-key usage with $L_r = fL/R + (1-f)L\,d_r/\sum d$. Overshoot during demand shifts is about $\lambda\Delta$. Use chunked leases from a durable global counter for money-like daily quotas. Declare failure modes per rule and keep local fallback limits.
+
+**Q6. A job scheduler must fire one million jobs at 00:00:00 within 10 s and never fire a job twice in a way that matters. Design the core.**
+**Answer.** Partition schedules (1,024 partitions) with leases and fencing tokens; pre-load the next 10 minutes of timers into hierarchical timing wheels; at the tick, batch-append dispatch messages keyed by `hash(job_id, scheduled_at)`; checkpoint a per-partition watermark each second instead of writing per firing; on failover, replay from the watermark. Workers claim attempts by conditional insert and pass the execution ID as an idempotency key. Encourage hashed minutes to flatten the burst.
+
+## 52.14 Practical exercises
+
+1. Run the short-code program with a different key and confirm that the first 200,000 codes are still unique; then measure the average number of Feistel encryptions per code and compare with 1.25.
+2. Write a sweeper simulation for the Pastebin expiry index with 64 shards and the expiry mix of §52.5.4; measure the largest partition at the peak hour.
+3. Extend the rate-limiter allocation formula into a simulation where demand moves from the US to the EU over 10 minutes; plot overshoot against $\Delta$ = 1, 5 and 10 s.
+4. Implement the notification state machine of Figure 52.12 with forward-only transitions and feed it shuffled, duplicated events; assert that final states are unchanged.
+5. Add retries with exponential backoff to the timing-wheel program, re-scheduling failed jobs, and verify that every retry fires at its computed time.
+6. Run the SimHash program on two versions of a real news page and on two unrelated pages; record distances with and without boilerplate removal.
+
+## 52.15 Design challenges
+
+1. **Link-in-bio service.** Extend the URL shortener so that each user has an editable page of links at `sho.rt/@name`. Links become mutable: redesign caching and invalidation, and estimate how often caches must be purged.
+2. **Regional notification compliance.** Users in one jurisdiction must have contact data and notification logs stored only in that region. Redesign the notification platform's stores, queues and provider routing, and state what happens to a global campaign.
+3. **Crawler for a vertical search engine.** Crawl 50 million product pages from 20,000 shops daily with price-change detection within 4 hours for the top 1 million products. Size the frontier, choose recrawl intervals, and decide where near-duplicate detection is harmful (identical products in different shops).
+
+## 52.16 References
+
+1. Apache Software Foundation. *Apache Cassandra documentation: architecture (Dynamo, data distribution and replication)*. Accessed 2026. https://cassandra.apache.org/doc/latest/
+2. Apple. *Sending notification requests to APNs*. Apple Developer Documentation. https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns
+3. Amazon Web Services. *Managing the lifecycle of objects* (Amazon S3 User Guide). Accessed 2026. https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html
+4. Amazon Web Services. *Using time to live (TTL) in DynamoDB* (Amazon DynamoDB Developer Guide). Accessed 2026. https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html
+5. Beyer, B., Jones, C., Petoff, J., Murphy, N. R. (eds.). *Site Reliability Engineering: How Google Runs Production Systems*, ch. 24 "Distributed Periodic Scheduling with Cron." O'Reilly Media, 2016. https://sre.google/sre-book/distributed-periodic-scheduling/
+6. Broder, A. Z., Glassman, S. C., Manasse, M. S., Zweig, G. "Syntactic Clustering of the Web." *Proceedings of the Sixth International World Wide Web Conference (WWW6)*, 1997.
+7. Chang, F., Dean, J., Ghemawat, S., Hsieh, W. C., Wallach, D. A., Burrows, M., Chandra, T., Fikes, A., Gruber, R. E. *Bigtable: A Distributed Storage System for Structured Data*. OSDI, 2006.
+8. Charikar, M. S. "Similarity Estimation Techniques from Rounding Algorithms." *Proceedings of the 34th ACM Symposium on Theory of Computing (STOC)*, 2002.
+9. Cho, J., Garcia-Molina, H. "Effective Page Refresh Policies for Web Crawlers." *ACM Transactions on Database Systems* 28(4), 2003.
+10. DeCandia, G., Hastorun, D., Jampani, M., Kakulapati, G., Lakshman, A., Pilchin, A., Sivasubramanian, S., Vosshall, P., Vogels, W. *Dynamo: Amazon's Highly Available Key-value Store*. ACM SOSP, 2007.
+11. Elhemali, M., Gallagher, N., Gordon, N., Idziorek, J., Krog, R., Lazier, C., Mo, E., Mritunjai, A., Perianayagam, S., Rath, T., Sivasubramanian, S., Sorenson, J. C., Sosothikul, S., Terry, D., Vig, A. *Amazon DynamoDB: A Scalable, Predictably Performant, and Fully Managed NoSQL Database Service*. USENIX ATC, 2022.
+12. Envoy Project. *Global rate limiting* and *Local rate limit filter*. Envoy Proxy documentation, accessed 2026. https://www.envoyproxy.io/docs
+13. Fielding, R., Nottingham, M., Reschke, J. (Eds.). *HTTP Semantics*. RFC 9110, IETF, 2022. https://www.rfc-editor.org/rfc/rfc9110
+14. Google. *Firebase Cloud Messaging HTTP v1 API*. Firebase documentation. https://firebase.google.com/docs/cloud-messaging (cited as [FCM Docs])
+15. Google. *Email sender guidelines*. Gmail Help, accessed 2026. https://support.google.com/a/answer/81126
+16. Google. *Safe Browsing APIs*. Google for Developers, accessed 2026. https://developers.google.com/safe-browsing
+17. Heydon, A., Najork, M. "Mercator: A Scalable, Extensible Web Crawler." *World Wide Web* 2(4):219–229, 1999.
+18. Kleppmann, M. *Designing Data-Intensive Applications*. O'Reilly Media, 2017.
+19. Koster, M., Illyes, G., Zeller, H., Sassman, L. *Robots Exclusion Protocol*. RFC 9309, IETF, 2022. https://www.rfc-editor.org/rfc/rfc9309
+20. Kubernetes Authors. *CronJob*. Kubernetes documentation, accessed 2026. https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
+21. Manku, G. S., Jain, A., Das Sarma, A. "Detecting Near-Duplicates for Web Crawling." *Proceedings of the 16th International World Wide Web Conference (WWW)*, 2007.
+22. Manning, C. D., Raghavan, P., Schütze, H. *Introduction to Information Retrieval*, ch. 20 "Web crawling and indexes." Cambridge University Press, 2008. https://nlp.stanford.edu/IR-book/
+23. Matsuda, Y. *Apache Kafka, Purgatory, and Hierarchical Timing Wheels*. Confluent blog, 2015. https://www.confluent.io/blog/apache-kafka-purgatory-hierarchical-timing-wheels/
+24. Najork, M., Heydon, A. *High-Performance Web Crawling*. Compaq Systems Research Center, SRC Research Report 173, 2001; also in *Handbook of Massive Data Sets*, Kluwer, 2002.
+25. PrivateBin project. *PrivateBin: a minimalist, open source online pastebin where the server has zero knowledge of pasted data*. Accessed 2026. https://privatebin.info/ and https://github.com/PrivateBin/PrivateBin
+26. Tarjan, P. *Scaling your API with rate limiters*. Stripe Blog, 2017. https://stripe.com/blog/rate-limiters
+27. Twitter. *snowflake* (archived repository, tag `snowflake-2010`: README and `IdWorker.scala`), 2010. https://github.com/twitter-archive/snowflake (cited as [Twitter: Snowflake 2010])
+28. Varghese, G., Lauck, T. "Hashed and Hierarchical Timing Wheels: Data Structures for the Efficient Implementation of a Timer Facility." *Proceedings of the 11th ACM Symposium on Operating Systems Principles (SOSP)*, 1987.
+29. Xu, A. *System Design Interview – An Insider's Guide*, vol. 1. Independently published, 2020. (Secondary teaching reference.)
+
+## 52.17 Open verification items
+
+- RFC 9309 details quoted in §52.10.8 (24-hour cache limit, 500 KiB parse minimum, 4xx "unavailable" versus 5xx "unreachable" behavior) were confirmed only through secondary sources; rfc-editor.org was unreachable from the build environment.
+- Google's 2024 bulk-sender requirements (0.3% spam-rate threshold, one-click unsubscribe) and the exact help-page URL should be checked against the current page.
+- The SRE book's description of the `?` crontab extension (§52.9.8) is cited from memory of ch. 24; confirm the wording.
+- S3 request price ($0.005 per 1,000 PUTs, §52.5.6) is time-sensitive; confirm current list price.
+- The Mercator "ten times the last fetch duration" heuristic is taken from Manning et al. ch. 20 as an example, not from the Mercator paper itself.
+- Cross-references to Chapter 52 in other chapters use an older numbering: §9.8 cites "§52.4" for the notification system (now §52.7); §3.8 and §10 exercises cite "§52.1" for the URL shortener (now §52.4) and "§52.3" for the rate limiter (now §52.6).

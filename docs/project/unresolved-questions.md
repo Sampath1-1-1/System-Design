@@ -285,3 +285,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-278 | 55 | Uber details (DISCO, S2 sharding, Ringpop, driver phones as backup store) from secondary summaries of Ranney 2015 / Hoff 2015; ringpop-node repo URL | Open | |
 | UQ-279 | 55 | Geisberger et al. 2008 query/preprocessing times; Xu et al. 2018 (Didi order dispatch) author list and matching method | Open | |
 | UQ-280 | 55 | Airbnb Orpheus (Chew 2019) library name; Stripe Ledger post date (~Feb 2024) and author; Ticketmaster 2022 statement (archived copy); Gray 2006 "100+ services per page" wording | Open | |
+| UQ-281 | 52 | RFC 9309 (robots.txt) details: 24 h cache limit, 500 KiB parse minimum, 4xx/5xx handling (secondary sources; rfc-editor.org unreachable) | Open | |
+| UQ-282 | 52 | Google email sender guidelines: 0.3% spam-rate threshold, one-click unsubscribe; help-page URL (from memory) | Open | Time-sensitive |
+| UQ-283 | 52 | Google SRE book ch. 24 "?" crontab extension wording; S3 PUT price ($0.005/1,000) | Open | Time-sensitive |
+| UQ-284 | 52 | Mercator "10× last fetch time" politeness delay is from Manning et al. ch. 20 as an example, not the Mercator paper | Accepted | Attributed accordingly |
