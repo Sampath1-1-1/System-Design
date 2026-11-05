@@ -269,3 +269,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-262 | 48 | Firecracker paper: placement <20 ms and pre-booted microVM pool; Lambda Worker Manager replacement (conference talks only); SnapStart runtimes and "up to 10×" | Open | |
 | UQ-263 | 48 | Wang et al. 2018 figures (summarized qualitatively); Cloudflare Workers limits, KV ~60 s propagation, Varda/Partovi 2020 post titles; Lambda recursive-loop detection threshold (~16) | Open | |
 | UQ-264 | 48 | Cloud Run and Azure Functions Flex Consumption details; Beswick 2021 post title | Open | Time-sensitive |
+| UQ-265 | 56 | Percolator ~50% document-age reduction and its resource-cost comparison with MapReduce | Open | Merge with UQ-145 |
+| UQ-266 | 56 | Druid/Pinot store Kafka offsets with segment metadata (exactly-once ingestion); Pinot paper's star-tree index and member-facing uses; Pixie full pruned graph in memory per server | Open | |
+| UQ-267 | 56 | ClickHouse DDL details (tokenbf_v1 parameters; TTL … TO VOLUME with toDateTime(DateTime64); 8,192-row granule) untested on current release | Open | Version-dependent |
+| UQ-268 | 56 | Illustrative ratios (3 B/posting, 4 KB/series, 1 GB/s/core scan, full-text index 0.5× raw, 10:1 log compression) | Accepted | Labeled illustrative |

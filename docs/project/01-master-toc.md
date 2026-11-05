@@ -231,12 +231,12 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 
 ## Part XVII — ML and AI Case Studies
 
-**Ch 81 — Case Studies VI: Recommendation, Search and Ads** — 81.1 YouTube Recommendations · 81.2 Instagram Recommendations · 81.3 Netflix Recommendations · 81.4 Search Ranking · 81.5 Product Recommendation · 81.6 Personalized Advertising · 81.7 Large-scale Recommendation Platform
-**Ch 82 — Case Studies VII: Risk and Trust** — 82.1 Real-time Fraud Detection · 82.2 Credit Risk Prediction · 82.3 Spam Detection · 82.4 Content Moderation
-**Ch 83 — Case Studies VIII: Marketplace Forecasting and Optimization** — 83.1 Ride Demand Prediction · 83.2 ETA Prediction · 83.3 Dynamic Pricing
-**Ch 84 — Case Studies IX: Perception and Language** — 84.1 Face Recognition · 84.2 Image Classification Service · 84.3 Speech Recognition · 84.4 Real-time Translation
-**Ch 85 — Case Studies X: ML Platforms** — 85.1 Feature Store · 85.2 Distributed Model Training Platform · 85.3 Multi-tenant ML Serving Platform · 85.4 Real-time ML Inference Platform
-**Ch 86 — Case Studies XI: LLM and Agent Systems** — 86.1 Enterprise RAG Assistant · 86.2 LLM Inference Platform · 86.3 AI Coding Assistant · 86.4 Customer-Support Agent · 86.5 AI-powered Search
+**Ch 81 — Case Studies VI: Recommendation, Search and Ads** — 81.4 YouTube Recommendations · 81.5 Instagram Recommendations · 81.6 Netflix Recommendations · 81.7 Search Ranking · 81.8 Product Recommendation · 81.9 Personalized Advertising · 81.10 Large-scale Recommendation Platform
+**Ch 82 — Case Studies VII: Risk and Trust** — 82.4 Real-time Fraud Detection · 82.5 Credit Risk Prediction · 82.6 Spam Detection · 82.7 Content Moderation
+**Ch 83 — Case Studies VIII: Marketplace Forecasting and Optimization** — 83.4 Ride Demand Prediction · 83.5 ETA Prediction · 83.6 Dynamic Pricing
+**Ch 84 — Case Studies IX: Perception and Language** — 84.4 Face Recognition · 84.5 Image Classification Service · 84.6 Speech Recognition · 84.7 Real-time Translation
+**Ch 85 — Case Studies X: ML Platforms** — 85.4 Feature Store · 85.5 Distributed Model Training Platform · 85.6 Multi-tenant ML Serving Platform · 85.7 Real-time ML Inference Platform
+**Ch 86 — Case Studies XI: LLM and Agent Systems** — 86.4 Enterprise RAG Assistant · 86.5 LLM Inference Platform · 86.6 AI Coding Assistant · 86.7 Customer-Support Agent · 86.8 AI-powered Search
 
 ---
 
