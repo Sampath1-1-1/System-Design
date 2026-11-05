@@ -15,7 +15,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 5 | Computer Architecture | 1 | ✅ | ✅ | ✅ | ✅ | ⬜ | 17,236 | 10 | 13 | 0 |
 | 6 | Operating Systems | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 16,805 | 12 | 8 | 0 |
 | 7 | Networking Fundamentals | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 23,114 | 13 | 15 | 0 |
-| 8 | Web Application Fundamentals | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,798 | 12 | 21 | 1 |
+| 8 | Web Application Fundamentals | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,798 | 12 | 21 | 0 |
 | 9 | Real-Time Communication | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 16,868 | 10 | 14 | 0 |
 | 10 | Security Fundamentals for System Designers | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 17,623 | 10 | 13 | 0 |
 | 11 | Relational Databases | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 16,095 | 12 | 13 | 0 |
@@ -59,11 +59,11 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 49 | Large-Scale Data Infrastructure and HPC | 4-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,932 | 13 | 4 | 0 |
 | 50 | Security Architecture and Privacy Engineering | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,926 | 14 | 7 | 0 |
 | 51 | Cost-Aware and Sustainable Architecture | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,898 | 11 | 12 | 0 |
-| 52 | Case Studies I: Foundational Services | 2-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 53 | Case Studies II: Social and Communication | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 54 | Case Studies III: Media and Files | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 55 | Case Studies IV: Location, Commerce and Payments | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 56 | Case Studies V: Data Platforms | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 52 | Case Studies I: Foundational Services | 2-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 53 | Case Studies II: Social and Communication | 3-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 54 | Case Studies III: Media and Files | 3-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 55 | Case Studies IV: Location, Commerce and Payments | 3-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 56 | Case Studies V: Data Platforms | 3-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 57 | Machine Learning Fundamentals for System Designers | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 58 | Deep Learning Essentials for System Designers | 2-3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 59 | The ML Lifecycle | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
