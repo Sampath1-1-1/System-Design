@@ -683,7 +683,7 @@ gantt
 | 3 | 8–10 | REST design; OAuth 2.0 flow; TLS; threat model | API spec for a URL shortener (§52.4) |
 | 4 | 11–12, 17 | B+ tree index; isolation levels; Bloom filter | Bloom filter build (Table 3.8) |
 | 5 | 14–15, 18–19 | Replication lag; consistent hashing; L4 vs L7 balancing | Hash ring build (§3.3) |
-| 6 | 20–22; 52.1–52.3 | Cache-aside; cache stampede; token bucket | **L2 checkpoint**: rate limiter design (§52.6), timed at 45 min |
+| 6 | 20–22; 52.4–52.6 | Cache-aside; cache stampede; token bucket | **L2 checkpoint**: rate limiter design (§52.6), timed at 45 min |
 | 7 | 24–27 | Lamport clocks; linearizability; Raft; quorums | Raft election simulation |
 | 8 | 29–32 | Partitioned log; consumer groups; outbox; saga | Log with offsets build |
 | 9 | 33–38 | Modular monolith; bounded contexts; LLD of an LRU cache | LLD exercise from §38.10 |

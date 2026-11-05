@@ -61,7 +61,7 @@ The inverted index itself, BM25, segment merging and Elasticsearch internals are
 4. **Removals.** Legally required removals and pages that now return 404 disappear from results within hours, regardless of when the next index build happens.
 5. **Spell correction and query understanding.** Correct obvious misspellings and expand synonyms (consumed as a service; not designed here).
 
-Out of scope: ads, image and video verticals, knowledge panels, personalization and the ranking models themselves. The search-ranking models are the subject of Chapter 81 (Search Ranking case study); this case stops at the hand-off.
+Out of scope: ads, image and video verticals, knowledge panels, personalization and the ranking models themselves. The search-ranking models are the subject of §81.7 (Search Ranking case study); this case stops at the hand-off.
 
 ### 56.4.3 Non-functional requirements
 
@@ -144,7 +144,7 @@ $$\text{Cores} = \frac{\lambda_{\text{peak}}\,(1 - h)\,S\,c}{U} \qquad R = \left
 3. Repository writes: $4 \times 10^9 \times 12{,}500 = 50$ TB/day; latest copy of every page: $3 \times 10^{10} \times 12{,}500 = 375$ TB, or 562.5 TB with 1.5× erasure-coding overhead (§15.6).
 4. Distributing a new base index: 36 TB × 18 replicas = 648 TB per weekly build, a sustained $648 \times 10^{12} / (7 \times 86{,}400) = 1.07$ GB/s.
 
-**Interpretation.** Pushing the index to the fleet moves more bytes per week than the crawler fetches in a day. **Engineering implication.** Distribute shards peer to peer or by tree fan-out rather than from one source, ship deltas where possible, and stagger the swap so that capacity never drops below $R = 11$.
+**Interpretation.** Pushing the index to the fleet moves more bytes per week than the crawler fetches in a day. The fetch rate is also about 23 times the 2,000 pages/s of the §52.10 design, so that crawler's host-partitioned fleet must scale out by the same factor. **Engineering implication.** Distribute shards peer to peer or by tree fan-out rather than from one source, ship deltas where possible, and stagger the swap so that capacity never drops below $R = 11$.
 :::
 
 The results cache is small by comparison: 200 million cached result pages at 5 KB each (ten document IDs, snippets and metadata) is 1 TB, spread across a cache tier (Chapter 20).
@@ -487,6 +487,8 @@ sequenceDiagram
 - **Security and abuse.** Spam and SEO manipulation make spam scoring part of the build. Query logs are highly sensitive: restrict access, apply minimum-user thresholds to anything derived from them, and limit retention (§50.8). Rate-limit scrapers (§22.3).
 - **Cost.** Leaf servers dominate, and cost per thousand queries tracks corpus searched per query, so tiering, caching and early termination are the levers.
 - **Operations.** Index rollout is the riskiest routine change: one replica, canary, then region by region with a pinned fallback. Keep the crawler polite (§52.10); blocked sites become stale results.
+
+## 56.5 Recommendation System (systems view)
 
 ### 56.5.1 Problem statement
 
@@ -1003,7 +1005,7 @@ Distributed traces travel through the same collectors and Kafka cluster but are 
 3. Downsampled to 5-minute resolution for 13 months (395 days): $5 \times 10^7 \times 288 \times 395 \times 1.37 = 7.8$ TB.
 4. Ingester memory: $5 \times 10^7 \times 4{,}000 \times 3 = 600$ GB across the ingester fleet.
 
-**Interpretation.** Metrics are a hundred times cheaper than logs per day on disk, but their cost lives in memory and scales with the number of *series*, not samples. **Engineering implication.** The metrics platform's capacity limit is cardinality (§40.5.3); enforce it per tenant at ingestion.
+**Interpretation.** Metrics need about 17 times less disk per day than compressed logs (395 GB versus 6.91 TB), but their cost lives in memory and scales with the number of *series*, not samples. **Engineering implication.** The metrics platform's capacity limit is cardinality (§40.5.3); enforce it per tenant at ingestion.
 :::
 
 Kafka sits between agents and storage as a shock absorber, and its size follows from the outage it must ride out.
@@ -1670,7 +1672,7 @@ The OLAP store's own Kafka ingestion must also neither skip nor duplicate: Druid
 The OLAP stores in this space (Druid, Pinot, ClickHouse) share a design shaped by this workload: immutable, time-partitioned **columnar segments**; dictionary encoding and bitmap or inverted indexes on dimensions so filters are cheap; optional **ingestion-time rollup**; and a split between real-time servers that index recent events in memory and historical servers that load sealed segments from deep storage [Yang et al. 2014; Im et al. 2018; ClickHouse Docs].
 
 ::: industry
-**Druid: real-time and historical nodes over immutable segments.** The Druid paper describes an analytical store built for interactive queries on event streams: real-time nodes ingest from a message bus and make events queryable immediately, periodically hand off immutable columnar segments to deep storage, historical nodes load and serve those segments, broker nodes route queries and merge partial results, and coordinator nodes manage segment placement. The segment is the unit of distribution, replication and replacement, which is what makes batch corrections a matter of swapping segments for a time interval.
+**Druid: real-time and historical nodes over immutable segments.** The Druid paper describes an analytical store built for interactive queries on event streams: real-time nodes ingest from a message broker and make events queryable immediately, periodically hand off immutable columnar segments to deep storage, historical nodes load and serve those segments, broker nodes route queries and merge partial results, and coordinator nodes manage segment placement. The segment is the unit of distribution, replication and replacement, which is what makes batch corrections a matter of swapping segments for a time interval.
 *Evidence: Primary* — [Yang et al. 2014]
 :::
 
@@ -1978,4 +1980,3 @@ sequenceDiagram
 - Pixie: confirm that the paper describes the full pruned graph held in memory on each serving machine.
 - ClickHouse DDL (tokenbf_v1 parameters, `TTL … TO VOLUME` with a `DateTime64` column via `toDateTime`, `Map(LowCardinality(String), String)`, default granule 8,192 rows): test on a current release.
 - Illustrative ratios to replace with measurements: 3 bytes per posting, 4 KB of ingester memory per series, 1 GB/s per core scan rate, full-text index at 0.5× raw, 10:1 log compression.
-- Cross-references to §52.3 and §52.10 (Chapter 52 written in parallel) and to the Search Ranking case in Chapter 81 should be confirmed at integration.

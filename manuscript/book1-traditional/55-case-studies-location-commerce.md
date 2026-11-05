@@ -124,7 +124,7 @@ $$U = \frac{N_{\text{online}}}{\Delta t}, \qquad B_{\text{in}} = U \times s$$
 3. **Trip trails.** A 20-minute trip at one point per 4 s is $1{,}200 / 4 = 300$ points; at 50 bytes each, 15 KB per trip, $30 \times 10^6 \times 15{,}000 = 450$ GB/day, 164 TB/year.
 4. **Supply index memory.** 2 million drivers × 200 bytes (ID, position, cell, status, vehicle class, timestamp) = 400 MB. Even with 3× index overhead this fits in one machine's memory.
 5. **Ingestion servers.** If one location-service node handles 20,000 updates/s (parse, validate, map to a cell, update index, append to log), then $500{,}000 / 20{,}000 = 25$ nodes, 50 with 2× headroom.
-6. **Persistent connections.** $2 \times 10^6$ drivers $+ 5 \times 10^6$ riders $= 7 \times 10^6$ connections. At a blast-radius cap of 200,000 connections per gateway node (§9.6 sizes memory per connection), $7 \times 10^6 / 200{,}000 = 35$ nodes; with one zone of three lost, the survivors need $35 \times 3/2 = 52.5 \approx 53$.
+6. **Persistent connections.** $2 \times 10^6$ drivers $+ 5 \times 10^6$ riders $= 7 \times 10^6$ connections. At a blast-radius cap of 200,000 connections per gateway node (§9.9.2 sizes memory per connection), $7 \times 10^6 / 200{,}000 = 35$ nodes; to survive the loss of one zone of three, the §9.9.2 formula gives $3 \times \lceil 7 \times 10^6 / (2 \times 200{,}000) \rceil = 3 \times 18 = 54$.
 
 *Interpretation.* Memory is not the problem: 400 MB of driver state is tiny. Throughput, blast radius and locality are. *Engineering implication.* Partition the supply index by city (or region cell) for isolation and throughput, not for capacity; history goes to cheap columnar storage through a log.
 :::
@@ -334,7 +334,7 @@ A crashed supply-index node loses nothing that matters: within one update interv
 
 The supply index answers two questions: "which idle drivers are near this point?" (dispatch, §55.5) and "how many cars should this rider see on the map?" (the nearby-cars display). The second one is the 1 million reads per second of the estimate above, and it does not need per-rider precision. Compute, once per second per occupied resolution-9 hexagon, a small snapshot of cars in its k-ring; every rider whose position falls in that hexagon receives the same snapshot. A dense city with 20,000 occupied hexagons then costs 20,000 snapshot computations per second, independent of how many riders are watching, and each snapshot is cached and pushed over the riders' streams.
 
-Pricing needs a coarser view: supply (idle drivers) and demand (requests and app opens) per hexagon per minute. A stream aggregator consumes the location log and the trip event log, counts both per resolution-7 or resolution-8 hexagon (5.16 km² and 0.737 km², §17.9.5) in one-minute windows, and writes the table to a key-value store. The pricing service reads it when it builds a quote. How the multiplier is computed from supply, demand and forecasts is a machine-learning and economics problem (Chapter 83, §83.3); the system-design contract is only this: **the price is fixed in a signed quote with an expiry**, the request references the quote, and the trip stores the quote. Riders never pay a price they did not see.
+Pricing needs a coarser view: supply (idle drivers) and demand (requests and app opens) per hexagon per minute. A stream aggregator consumes the location log and the trip event log, counts both per resolution-7 or resolution-8 hexagon (5.16 km² and 0.737 km², §17.9.5) in one-minute windows, and writes the table to a key-value store. The pricing service reads it when it builds a quote. How the multiplier is computed from supply, demand and forecasts is a machine-learning and economics problem (Chapter 83, §83.6); the system-design contract is only this: **the price is fixed in a signed quote with an expiry**, the request references the quote, and the trip stores the quote. Riders never pay a price they did not see.
 
 ::: industry
 **H3 and surge at Uber.** Uber built H3, a hexagonal hierarchical grid, to analyze and optimize marketplace dynamics such as supply, demand and pricing by area, and open-sourced it in 2018; hexagons were chosen because all six neighbors are equidistant, which simplifies smoothing across adjacent areas [Brodsky 2018; H3 Docs]. Uber's SIGMOD paper on its real-time data infrastructure names dynamic pricing (surge) as a mission-critical use of that stack, computing demand and supply ratios per geofence from streaming data built on Kafka and Flink [Fu and Soman 2021].
@@ -1012,7 +1012,7 @@ flowchart TD
 
 Design a global mapping service: a map you can pan and zoom smoothly on any device, search for places and addresses, and turn-by-turn directions with arrival times that account for current traffic. Think of an atlas, a gazetteer and a road-trip planner in one book, except that the book is redrawn for each reader's screen, the index answers misspelled questions, and the road-trip planner listens to millions of drivers reporting how fast traffic is moving right now.
 
-The distinctive hard problems are two very different ones. **Tile serving** is a read-scaling problem: hundreds of thousands of small, cacheable objects per second, most of them identical across users, so the answer is a pyramid of precomputed tiles behind a CDN (§21.3). **Routing** is an algorithmic problem: Dijkstra's algorithm is correct but far too slow on a road graph of hundreds of millions of intersections, so the answer is preprocessing — A* with good lower bounds and, above all, **contraction hierarchies**. Live traffic and ETA prediction are covered briefly; the machine-learning ETA model is Chapter 83 (§83.2).
+The distinctive hard problems are two very different ones. **Tile serving** is a read-scaling problem: hundreds of thousands of small, cacheable objects per second, most of them identical across users, so the answer is a pyramid of precomputed tiles behind a CDN (§21.3). **Routing** is an algorithmic problem: Dijkstra's algorithm is correct but far too slow on a road graph of hundreds of millions of intersections, so the answer is preprocessing — A* with good lower bounds and, above all, **contraction hierarchies**. Live traffic and ETA prediction are covered briefly; the machine-learning ETA model is Chapter 83 (§83.5).
 
 *Evidence: Illustrative* — this is a teaching design for a Maps-like product, not a description of Google's internal architecture; published Google sources are cited where used.
 
@@ -1455,7 +1455,7 @@ A department store is a fair analogy: a huge, mostly static catalog on the shelv
 7. Support flash sales on limited stock with fair, bounded load.
 8. Sellers update listings, prices and stock.
 
-Out of scope: payment processing internals (§55.9), recommendation models (§56.2, Chapter 81), warehouse robotics, and seller payouts.
+Out of scope: payment processing internals (§55.9), recommendation models (§56.5, Chapter 81), warehouse robotics, and seller payouts.
 
 ### 55.7.3 Non-functional requirements
 
@@ -1668,7 +1668,7 @@ The gate is allowed to be approximate (an in-memory counter can lose a few decre
 
 #### Component 4: the product page and the recommendations hand-off
 
-A product page is assembled from tens of services. Its latency is the slowest required call, and its tail latency compounds with fan-out (§23.6). Classify each widget: **required** (title, price, buy box) or **optional** (recommendations, reviews summary, "frequently bought together"). Required calls get retries within a deadline; optional calls get a strict timeout and a fallback (cached or popular items), and the page renders without them if needed. Recommendations are computed by a separate system (§56.2 for the systems view, §81.5 for the model) and exposed as a low-latency lookup keyed by product and customer; the commerce platform only consumes them.
+A product page is assembled from tens of services. Its latency is the slowest required call, and its tail latency compounds with fan-out (§23.6). Classify each widget: **required** (title, price, buy box) or **optional** (recommendations, reviews summary, "frequently bought together"). Required calls get retries within a deadline; optional calls get a strict timeout and a fallback (cached or popular items), and the page renders without them if needed. Recommendations are computed by a separate system (§56.5 for the systems view, §81.8 for the model) and exposed as a low-latency lookup keyed by product and customer; the commerce platform only consumes them.
 
 ### 55.7.9 Data flow
 
@@ -1751,7 +1751,7 @@ stateDiagram-v2
 2. **Page fan-out tail latency**: parallel calls, deadlines, optional widgets with fallbacks, and caching of the assembled fragments.
 3. **Search index freshness** after price changes: price and availability are looked up at query time for the top results rather than trusted from the index.
 4. **The order database for one huge customer** (a business account placing thousands of orders): partition by customer, but split large accounts further by order ID.
-5. **Payment provider limits** during peaks: authorization calls are rate limited by the provider; queue and smooth them, and use multiple providers (§55.9.14).
+5. **Payment provider limits** during peaks: authorization calls are rate limited by the provider; queue and smooth them, and use multiple providers (§55.9.8).
 
 ### 55.7.11 Failure scenarios
 

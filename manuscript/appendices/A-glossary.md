@@ -272,6 +272,8 @@
 
 **Control group (cgroup)** — A kernel mechanism that groups processes into a hierarchy and applies resource accounting and limits to each group through **controllers** (cpu, memory, io, pids). **cgroup v2** is the unified hierarchy, stable since Linux 4.5 (2016), in which every controller uses one tree and one set of interface files [Linux Docs: cgroup v2]. *(§42.3.2)*
 
+**Control plane and data plane** — The **control plane** is the set of services that make decisions (who may watch, which file, from which server); the **data plane** is the set of components that move the bulk bytes once decided. They are scaled, deployed and failed independently: the data plane is sized for bandwidth, the control plane for request rate and availability. *(§54.5.1)*
+
 **Control plane and data plane (multi-tenant)** — The **data plane** serves tenants' requests: routers, services, caches and databases. The **control plane** manages tenants: onboarding and offboarding, provisioning and placement, configuration, tiers and limits, identities, and metering for billing. It serves operators and tenant administrators, not end-user traffic [AWS SaaS Fundamentals 2022]. *(§47.10.1)*
 
 **Coordinated omission** — A measurement error in which the load generator, by waiting for slow responses before sending more requests, fails to send (and therefore fails to measure) the requests that would have experienced the slowness. The tester and the system "coordinate" to omit the worst samples. The term and diagnosis are due to Gil Tene [Tene, How NOT to Measure Latency]. *(§23.5.3)*
@@ -346,6 +348,8 @@
 
 **Deterministic database** — A database in which replicas and partitions first agree on a global order of transaction *inputs*, then execute transactions so that the outcome depends only on that order and the initial state. Every node that executes the same log reaches the same state, so no node needs to ask another whether to commit [Thomson et al. 2012]. *(§28.9.1)*
 
+**Digital rights management (DRM) license** — A small, encrypted message issued by a license server that contains the content key (or keys) needed to decrypt an encrypted video, bound to a specific device and session and carrying usage rules (expiry, maximum resolution, offline permission). The video segments themselves are encrypted once and can be cached anywhere; only the license is personal. *(§54.5.1)*
+
 **Digital signature** — A scheme with three algorithms: key generation, **sign** (using the private key, produces a signature over a message) and **verify** (using the public key, checks a signature against a message). A valid signature shows that the message was approved by the holder of the private key and has not changed since. Because verification needs only the public key, *anyone* can verify, which provides non-repudiation. *(§10.4.5)*
 
 **Direct memory access (DMA)** — A mechanism that lets a device controller read from or write to main memory directly, without the CPU copying each word; the CPU only sets up the transfer and is told when it finishes. *(§5.7.3)*
@@ -395,6 +399,8 @@
 **Elasticsearch cluster** — A set of nodes that share one cluster state (index definitions, mappings and the location of every shard copy). An **index** is a logical collection of documents divided into **primary shards**; each primary has zero or more **replica shards**; every shard is one Lucene index. *(§16.8.1)*
 
 **Encapsulation** — The process by which each layer of the stack prepends its own header (and sometimes appends a trailer) to the data unit handed down by the layer above, treating that data unit as an opaque payload. **Decapsulation** is the reverse at the receiver. *(§7.3.1)*
+
+**End-to-end encryption (E2EE)** — Encryption in which the keys needed to decrypt a message exist only on the communicating endpoints, so intermediaries that store or forward the message, including the service operator, cannot read it. Transport encryption (TLS) protects each hop; E2EE protects the content from every hop. *(§53.5.8)*
 
 **Entity and value object** — An **entity** has a continuous identity that persists as its attributes change: two orders for the same pizza are two orders. A **value object** is defined entirely by its attributes, has no identity and is usually immutable: `Money(24.50, "USD")`, `Address` [Evans 2003]. *(§34.4.2)*
 
@@ -493,6 +499,8 @@
 **GraphQL** — A query language for APIs and a runtime for executing those queries against a strongly typed **schema**. The client sends a document describing exactly the fields it wants; the server returns JSON of the same shape [GraphQL Spec]. *(§8.7.1)*
 
 **Gray failure** — A component failure that is *differentially observable*: some observers (often the system's own failure detector) consider the component healthy, while others (often the applications using it) experience it as failed or badly degraded. *(§24.8.2)*
+
+**Group of pictures (GOP) and closed GOP** — Encoded video consists of **keyframes** (I-frames), which can be decoded alone, and predicted frames that reference other frames. A GOP is the run of frames from one keyframe to the next. A **closed GOP** references no frame outside itself, so a segment that starts at a closed-GOP keyframe can be encoded, stored and decoded independently of its neighbors. This independence is what makes parallel segment encoding and adaptive streaming possible. *(§54.4.1)*
 
 **gRPC** — An open-source RPC framework, originally developed at Google and released in 2015, that uses Protocol Buffers as its interface definition language and message format and HTTP/2 as its transport [gRPC Docs]. *(§8.8.2)*
 
@@ -726,6 +734,8 @@
 
 ## N
 
+**Namespace and journal** — A **namespace** is a unit of sharing and synchronization: a user's root folder or a shared folder, mounted into each member's tree. Each namespace has an append-only **journal** on the server: every committed change (add, modify, delete, move) gets the next journal ID. A device's sync position in a namespace is simply the last journal ID it has applied, its **cursor**. *(§54.8.1)*
+
 **Narrow and wide dependencies** — A **narrow dependency** exists when each partition of the parent RDD is used by at most one partition of the child (`map`, `filter`, `union`, a join of co-partitioned inputs). A **wide (shuffle) dependency** exists when a child partition may depend on many or all parent partitions (`groupByKey`, `reduceByKey`, a join of unpartitioned inputs), which requires a shuffle. *(§29.5.2)*
 
 **Natural and surrogate keys** — A **natural key** is a candidate key with business meaning (email address, ISBN, country code). A **surrogate key** is a meaningless value generated by the system (an auto-increment integer, a UUID) whose only job is identification. *(§11.4.2)*
@@ -772,6 +782,8 @@
 
 **Operating system (OS)** — The software layer that manages a computer's hardware (CPU, memory, storage, network) and provides running programs with safe, shared, abstract access to it. The privileged core of the OS that runs with full hardware access is the **kernel**. *(§6.3.1)*
 
+**Operational transformation (OT)** — A technique for real-time collaborative editing in which each user applies their own edits immediately, and edits received from others are **transformed** (their positions adjusted) against concurrent edits already applied, so that all copies converge to the same document while each edit keeps its intended effect [Ellis and Gibbs 1989]. *(§54.7.1)*
+
 **Operation, history** — An **operation** is one call by a client on a shared object, such as `write(x, 1)` or `read(x)`. It has an **invocation** event (the client sends the request, at real time $t_{\text{inv}}$) and, if the client hears back, a **response** event (at $t_{\text{resp}}$, carrying the return value). A **history** is the sequence of invocation and response events observed in one execution. An operation without a response is **pending**: it may or may not have taken effect. *(§25.3.1)*
 
 **Order of magnitude** — A factor of ten. Two quantities differ by *k* orders of magnitude when their ratio is about $10^k$. Reasoning in orders of magnitude means estimating only the *power of ten* of a quantity (is it 10, 1,000 or 1,000,000 requests per second?) because that, not the exact value, decides the architecture. *(§2.10.1)*
@@ -807,6 +819,8 @@
 **Percentile latency (p50, p95, p99, p99.9)** — The latency value below which the given percentage of requests fall. If p99 latency is 300 ms, 99% of requests completed in 300 ms or less and 1% took longer. p50 is the median. *(§1.7.1)*
 
 **Percolator transaction** — A snapshot-isolated, multi-row, multi-table transaction built entirely by a client library on top of a store that offers only single-row atomic updates and multiple timestamped versions per cell. Ordering comes from a central **timestamp oracle**; atomicity comes from making one row's lock, the **primary lock**, the commit point for the whole transaction [Peng and Dabek 2010]. *(§28.7.1)*
+
+**Per-conversation sequence number** — A strictly increasing integer assigned by the single owner of a conversation to each message at the moment it becomes durable. It defines the display order for every member and device, serves as the cursor for history paging and sync, and lets a client detect missing messages as gaps between consecutive numbers. *(§53.4.8)*
 
 **Performance engineering** — The practice of measuring, explaining and improving the **latency**, **throughput** and **resource efficiency** of a system against explicit targets, using repeatable methods rather than intuition. Its outputs are diagnoses (why is it slow?), changes (make it faster or cheaper) and predictions (how much capacity will we need?). *(§23.3.1)*
 
@@ -865,6 +879,8 @@
 **PUE and WUE** — **Power usage effectiveness (PUE)** is the ratio of total energy entering a datacenter facility to the energy delivered to its IT equipment (servers, storage, network) over a period, normally a year. An ideal facility has PUE 1.0. **Water usage effectiveness (WUE)** is the annual site water used for cooling and humidification divided by IT equipment energy, in liters per kWh. Both metrics were defined by The Green Grid [Avelar et al. 2012; The Green Grid 2011]; PUE is also standardized as ISO/IEC 30134-2. *(§51.10.1)*
 
 ## Q
+
+**Qualifying stream** — A play that counts toward royalty and chart calculations under the service's rules, typically a play that lasted at least a minimum duration (for example 30 seconds) and passed fraud checks. The definition is contractual: changing it changes who gets paid. *(§54.6.1)*
 
 **Queueing system** — A model in which **jobs** (requests, messages, packets) arrive at a **service center**, wait in a **queue** if all **servers** are busy, receive service, and depart. The **arrival rate** $\lambda$ is the average number of jobs arriving per second; the **service rate** $\mu$ is the average number of jobs one server can complete per second when it is never idle, so the average **service time** is $S = 1/\mu$. *(§4.10.1)*
 
@@ -1155,6 +1171,8 @@
 **Transaction** — A sequence of reads and writes that the database treats as one logical unit: either all of its effects become permanent together (**commit**) or none of them do (**abort** or **rollback**), and concurrently running transactions are isolated from each other's intermediate states. *(§11.11.1)*
 
 **Transactional outbox** — A pattern in which a service writes the events it wants to publish into an **outbox table** in its own database, in the same local transaction as the state change, and a separate **message relay** later reads committed outbox rows and publishes them to the broker, retrying until the broker acknowledges [Richardson 2018]. *(§32.5.2)*
+
+**Transcoding** — Decoding a video from its uploaded format (the **mezzanine** or source file) and re-encoding it into one or more target formats, each defined by a codec, a resolution, a frame rate and a target bitrate. A set of renditions of one video at increasing bitrates is a **bitrate ladder** (§21.8.1). *(§54.4.1)*
 
 **Transport Layer Security (TLS)** — A protocol that gives two communicating applications **confidentiality** (eavesdroppers cannot read the data), **integrity** (tampering is detected) and **authentication** (at least the server proves its identity, usually with an X.509 certificate). **HTTPS** is HTTP carried over TLS, on TCP port 443 by default. TLS 1.3 is specified in RFC 8446 (2018). *(§7.10.1)*
 

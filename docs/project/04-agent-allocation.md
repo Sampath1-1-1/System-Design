@@ -69,11 +69,11 @@ sequenceDiagram
 | Consistent hashing | 14.8 | 17, 19, 20, 27 |
 | Bloom filters | 17.4 | 13.10 |
 | WebSockets | 9.6 | 7.11 |
-| Idempotency | 22.15 | 30, 32, 55.6 |
+| Idempotency | 22.15 | 30, 32, 55.9 |
 | Sagas | 32.7 | 28.6 |
 | Distributed tracing | 40.6 | 34.9 |
 | Quantization | 67 (general), 73 (LLM-specific) | 64 |
 | Vector databases | 74 | 12.10, 75 |
 | Spark | 29.5 | 61 |
 | Capacity estimation | 89 | 2.11 (intro), every case study (applied) |
-| Feature stores | 62 | 85.1 (case study) |
+| Feature stores | 62 | 85.4 (case study) |

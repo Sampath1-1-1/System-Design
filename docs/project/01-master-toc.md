@@ -177,12 +177,12 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 
 ## Part X — Traditional System Design Case Studies (16-section format)
 
-**Ch 52 — Case Studies I: Foundational Services** — 52.1 URL Shortener · 52.2 Pastebin · 52.3 Rate Limiter · 52.4 Notification System · 52.5 Distributed Key-Value Store · 52.6 Distributed Job Scheduler · 52.7 Web Crawler
-**Ch 53 — Case Studies II: Social and Communication** — 53.1 Chat Application · 53.2 WhatsApp · 53.3 Instagram · 53.4 Facebook News Feed · 53.5 Twitter/X
-**Ch 54 — Case Studies III: Media and Files** — 54.1 YouTube · 54.2 Netflix · 54.3 Spotify · 54.4 Google Drive · 54.5 Dropbox
-**Ch 55 — Case Studies IV: Location, Commerce and Payments** — 55.1 Uber · 55.2 Ride Matching System · 55.3 Google Maps · 55.4 Amazon E-commerce · 55.5 Ticket Booking System · 55.6 Payment System
-**Ch 56 — Case Studies V: Data Platforms** — 56.1 Search Engine · 56.2 Recommendation System (systems view) · 56.3 Logging and Monitoring Platform · 56.4 Real-time Analytics Platform
-
+**Ch 52 — Case Studies I: Foundational Services** — 52.4 URL Shortener · 52.5 Pastebin · 52.6 Rate Limiter · 52.7 Notification System · 52.8 Distributed Key-Value Store · 52.9 Distributed Job Scheduler · 52.10 Web Crawler
+52.3 How to use these case studies · 52.4 URL shortener · 52.5 Pastebin · 52.6 Rate limiter (as a distributed service) · 52.7 Notification system · 52.8 Distributed key-value store · 52.9 Distributed job scheduler · 52.10 Web crawler
+**Ch 54 — Case Studies III: Media and Files** — 54.4 YouTube · 54.5 Netflix · 54.6 Spotify · 54.7 Google Drive · 54.8 Dropbox
+54.3 How to use these case studies · 54.4 YouTube · 54.5 Netflix · 54.6 Spotify · 54.7 Google Drive · 54.8 Dropbox
+**Ch 56 — Case Studies V: Data Platforms** — 56.4 Search Engine · 56.5 Recommendation System (systems view) · 56.6 Logging and Monitoring Platform · 56.7 Real-time Analytics Platform
+56.3 How to use these case studies · 56.4 Search Engine (web-scale) · 56.5 Recommendation System (systems view) · 56.6 Logging and Monitoring Platform · 56.7 Real-time Analytics Platform
 ---
 
 # BOOK II — MACHINE LEARNING AND AI SYSTEM DESIGN

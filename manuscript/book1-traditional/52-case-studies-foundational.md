@@ -1733,7 +1733,7 @@ The latency targets are stated at p99.9, as Dynamo's were, because a single page
 
 1. Partition size: $390\ \text{TB} / 16{,}384 = 23.8$ GB per partition replica. Partition replicas per node: $16{,}384 \times 3 / 150 = 328$.
 2. Writes that would have gone to the failed node: $10^6 \times 3 / 150 = 20{,}000$ per second. Over 1 hour: $7.2 \times 10^7$ hinted writes, about 72 GB of hints spread over its neighbors (§27.9).
-3. Rebuilding a dead node's 2.6 TB from one peer at 200 MB/s: $2.6 \times 10^{12} / 2 \times 10^8 = 13{,}000$ s, 3.6 hours. From 50 peers at 100 MB/s each, because its 328 partitions have replicas spread across the cluster: $2.6 \times 10^{12} / (5 \times 10^9) = 520$ s, under 9 minutes.
+3. Rebuilding a dead node's 2.6 TB from one peer at 100 MB/s: $2.6 \times 10^{12} / 10^8 = 26{,}000$ s, about 7.2 hours. From 50 peers at 100 MB/s each, because its 328 partitions have replicas spread across the cluster: $2.6 \times 10^{12} / (5 \times 10^9) = 520$ s, under 9 minutes.
 
 *Interpretation.* Many small partitions turn a multi-hour single-source rebuild into minutes of parallel streaming, shrinking the window in which a second failure could lose data. *Engineering implication.* Choose $Q$ much larger than the node count, and size hint storage for the longest outage you will tolerate before declaring a node dead and rebuilding it.
 :::
@@ -2478,7 +2478,7 @@ Politeness caps how fast the crawler can go, in a way more machines cannot fix.
 ::: formula
 **Politeness bound on crawl throughput**
 
-$$R \leq \frac{H_{active}}{d} \qquad\qquad d_{\min,host} = \frac{T_{cycle}}{P_{host}}$$
+$$R \leq \frac{H_{active}}{d} \qquad\qquad d_{\max,host} = \frac{T_{cycle}}{P_{host}}$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
@@ -2487,7 +2487,7 @@ $$R \leq \frac{H_{active}}{d} \qquad\qquad d_{\min,host} = \frac{T_{cycle}}{P_{h
 | $d$ | Minimum delay between requests to one host | s |
 | $T_{cycle}$ | Time allowed to crawl a host's pages once | s |
 | $P_{host}$ | Pages on one host that must be crawled per cycle | pages |
-| $d_{\min,host}$ | Largest delay that still crawls the host within the cycle | s |
+| $d_{\max,host}$ | Largest delay that still crawls the host within the cycle | s |
 :::
 
 ::: example
@@ -2495,7 +2495,7 @@ $$R \leq \frac{H_{active}}{d} \qquad\qquad d_{\min,host} = \frac{T_{cycle}}{P_{h
 
 1. With $d = 5$ s and a target of 2,000 pages/s: $H_{active} \geq 2{,}000 \times 5 = 10{,}000$ hosts must have URLs ready at every moment, 200 per node.
 2. A large site with $P_{host} = 10^7$ pages at $d = 5$ s takes $10^7 \times 5 = 5 \times 10^7$ s, which is 579 days, far longer than a 30-day cycle.
-3. To crawl it in 30 days: $d_{\min,host} = 2{,}592{,}000 / 10^7 = 0.26$ s, about 3.9 requests per second.
+3. To crawl it in 30 days: $d_{\max,host} = 2{,}592{,}000 / 10^7 = 0.26$ s, about 3.9 requests per second.
 
 *Interpretation.* The frontier must keep thousands of distinct hosts ready, and large sites need a per-host rate set from their capacity rather than a global default. *Engineering implication.* Make the delay adaptive (for example, a multiple of the host's recent response time, as Mercator-style frontiers do) and allow per-host overrides for large sites that can serve more; never raise the rate for a host without evidence it can take it.
 :::
@@ -2980,4 +2980,3 @@ sequenceDiagram
 - The SRE book's description of the `?` crontab extension (§52.9.8) is cited from memory of ch. 24; confirm the wording.
 - S3 request price ($0.005 per 1,000 PUTs, §52.5.6) is time-sensitive; confirm current list price.
 - The Mercator "ten times the last fetch duration" heuristic is taken from Manning et al. ch. 20 as an example, not from the Mercator paper itself.
-- Cross-references to Chapter 52 in other chapters use an older numbering: §9.8 cites "§52.4" for the notification system (now §52.7); §3.8 and §10 exercises cite "§52.1" for the URL shortener (now §52.4) and "§52.3" for the rate limiter (now §52.6).

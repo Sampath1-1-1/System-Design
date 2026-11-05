@@ -1905,7 +1905,7 @@ Dropbox has reported hundreds of millions of registered users; the assumptions b
 :::
 
 ::: example
-**Worked example — Block index size.** Assumptions: 1 EB of unique stored data; average block 2 MB (most files are smaller than the 4 MB maximum block); 64 B per index entry (32-byte SHA-256 plus location and reference count).
+**Worked example — Block index size.** Assumptions: 1 EB of unique stored data; average block 2 MB (most files are smaller than the 4 MiB maximum block); 64 B per index entry (32-byte SHA-256 plus location and reference count).
 
 1. Blocks: $10^{18} / 2 \times 10^6 = 5 \times 10^{11}$.
 2. Index: $5 \times 10^{11} \times 64 = 3.2 \times 10^{13}$ B $= 32$ TB.
@@ -2003,7 +2003,7 @@ flowchart LR
 
 When a file changes, the client splits it into blocks, hashes each block with SHA-256, and asks the server which hashes it lacks. Only missing blocks are uploaded. This gives three kinds of savings at once: an unchanged block of an edited file is not re-sent; a file copied or renamed within the account costs nothing; and a block the server already holds is not re-sent.
 
-**How to cut blocks.** Fixed-size blocks (every 4 MB) are simple and make block boundaries predictable, but an insertion near the start of a file shifts every later boundary, so every later block looks new. **Content-defined chunking** (CDC, §15.8.3) places boundaries where a rolling hash of the content matches a pattern, so boundaries move with the content and an insertion changes only the chunk that contains it.
+**How to cut blocks.** Fixed-size blocks (every 4 MiB) are simple and make block boundaries predictable, but an insertion near the start of a file shifts every later boundary, so every later block looks new. **Content-defined chunking** (CDC, §15.8.3) places boundaries where a rolling hash of the content matches a pattern, so boundaries move with the content and an insertion changes only the chunk that contains it.
 
 ::: formula
 **Upload size after a small insertion: fixed blocks versus CDC**
@@ -2031,7 +2031,7 @@ $$U_{\text{fixed}} \approx \left\lceil \frac{S - o}{B} \right\rceil B \qquad U_{
 :::
 
 ::: industry
-**Dropbox's published block design.** Measurements of the Dropbox client by Drago et al. found that it split files into chunks of up to 4 MB, deduplicated chunks already on the server, applied delta encoding to modified content and bundled small chunks into fewer requests, with separate servers for metadata, storage and change notification [Drago et al. 2012]. Dropbox's own description of Magic Pocket, its in-house block store, describes blocks of up to 4 MB, identified by their SHA-256 hash [Cowling 2016]. Dropbox's public API documents a file `content_hash` computed by hashing each 4 MB block with SHA-256 and hashing the concatenation [Dropbox API v2 docs].
+**Dropbox's published block design.** Measurements of the Dropbox client by Drago et al. found that it split files into chunks of up to 4 MB (4 MiB; the papers and Dropbox posts write "4 MB"), deduplicated chunks already on the server, applied delta encoding to modified content and bundled small chunks into fewer requests, with separate servers for metadata, storage and change notification [Drago et al. 2012]. Dropbox's own description of Magic Pocket, its in-house block store, describes blocks of up to 4 MB, identified by their SHA-256 hash [Cowling 2016]. Dropbox's public API documents a file `content_hash` computed by hashing each 4 MB block with SHA-256 and hashing the concatenation [Dropbox API v2 docs].
 *Evidence: Primary* — [Drago et al. 2012]; [Cowling 2016]; [Dropbox API v2 docs]
 :::
 
@@ -2130,7 +2130,7 @@ Notification servers subscribe to the namespaces of their connected clients on a
 
 #### Component 5 — Block storage and the migration to Magic Pocket
 
-Blocks are immutable, content-addressed and up to 4 MB, which makes the storage layer simple in principle: a key-value store from hash to bytes, with a block index locating each block in a storage **cell**; blocks are packed into large append-only extents, erasure-coded within a zone for cheap durability, and replicated to another zone so that the loss of a whole site loses nothing (§15.6). Immutability makes caching trivial and repairs verifiable: the hash checks the bytes.
+Blocks are immutable, content-addressed and up to 4 MiB, which makes the storage layer simple in principle: a key-value store from hash to bytes, with a block index locating each block in a storage **cell**; blocks are packed into large append-only extents, erasure-coded within a zone for cheap durability, and replicated to another zone so that the loss of a whole site loses nothing (§15.6). Immutability makes caching trivial and repairs verifiable: the hash checks the bytes.
 
 ::: industry
 **Magic Pocket.** Dropbox originally stored file blocks in Amazon S3 and in 2016 described moving the large majority of user data into Magic Pocket, its own exabyte-scale block storage system, built on custom hardware in its own data centers; the system stores immutable blocks keyed by SHA-256 hashes, replicates them across geographic zones and uses erasure coding [Gupta 2016; Cowling 2016]. Dropbox's 2018 registration statement attributed tens of millions of dollars of annual operating cost reductions to this infrastructure migration (§51.3) [Dropbox 2018].
@@ -2224,7 +2224,7 @@ sequenceDiagram
 | Decision | Option chosen | Alternative | Why |
 |---|---|---|---|
 | Conflict policy | Conflicted copies | Last-writer-wins | Never lose data; users resolve rarely |
-| Chunking | 4 MB blocks, CDC for large files | Whole-file upload | Dedup and resumable transfers |
+| Chunking | 4 MiB blocks, CDC for large files | Whole-file upload | Dedup and resumable transfers |
 | Notification | Long poll, stateless | Stateful push protocol | Proxy-friendly, crash-proof |
 | Sync state | Three trees from observations | Queue of pending operations | Restartable and testable |
 | Dedup scope | Within account or with proof of possession | Global blind dedup | Avoid side channels |
@@ -2395,4 +2395,3 @@ sequenceDiagram
 - Netflix: Q4 2024 membership figure; Izrailevsky 2016 venue (Netflix newsroom vs. TechBlog); "High Quality Video Encoding at Scale" post (chunked encoding) not cited because unverified; Basiri et al. 2016 describing region-failure (Chaos Kong) exercises.
 - Spotify: Kreitz & Niemelä figures beyond 8.8% and 265 ms not used; 30-second rule wording on Loud & Clear; author of the 2019 event-delivery post; whether hourly partitioning is described in Maravić 2016 or the 2019 post.
 - Dropbox: Cowling 2016 exact title/date and multi-zone/erasure-coding details; Gupta 2016 title; Day-Richter authorship of all three 2010 Docs posts.
-- Ch 21 (§21.10 mistake callout) points to "§54.2" for Netflix; under the case-study numbering it is §54.5.
