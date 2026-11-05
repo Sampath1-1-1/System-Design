@@ -1021,7 +1021,7 @@ flowchart LR
 Proactive fill turns caching into **replica placement**: with a known catalog and good popularity predictions, peak-hour hit ratios approach those of a perfect cache, and fill uses idle off-peak capacity. Embedding removes transit costs for both parties, which is why ISPs accept the boxes. It depends on a curated catalog, predictable demand and enormous volume; a site with viral user-generated content or modest volume is better served by a commercial CDN with tiered caching.
 
 ::: mistake
-**"Netflix streams from AWS."** Netflix runs its control plane in AWS, but the video bytes come from Open Connect appliances, mostly inside or next to the viewer's ISP. Conflating the two leads to wildly wrong egress estimates in interviews (§54.2 develops the full design).
+**"Netflix streams from AWS."** Netflix runs its control plane in AWS, but the video bytes come from Open Connect appliances, mostly inside or next to the viewer's ISP. Conflating the two leads to wildly wrong egress estimates in interviews (§54.5 develops the full design).
 :::
 
 ## 21.11 CDN security

@@ -273,3 +273,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-266 | 56 | Druid/Pinot store Kafka offsets with segment metadata (exactly-once ingestion); Pinot paper's star-tree index and member-facing uses; Pixie full pruned graph in memory per server | Open | |
 | UQ-267 | 56 | ClickHouse DDL details (tokenbf_v1 parameters; TTL … TO VOLUME with toDateTime(DateTime64); 8,192-row granule) untested on current release | Open | Version-dependent |
 | UQ-268 | 56 | Illustrative ratios (3 B/posting, 4 KB/series, 1 GB/s/core scan, full-text index 0.5× raw, 10:1 log compression) | Accepted | Labeled illustrative |
+| UQ-269 | 54 | YouTube "500 hours uploaded per minute" (no primary source); Goodrow 2017 "a billion hours a day" post title/author; Google Drive "over a billion users" (uncited) | Open | |
+| UQ-270 | 54 | Netflix end-2024 membership; Izrailevsky 2016 venue; whether Basiri et al. 2016 describes whole-region failure exercises | Open | |
+| UQ-271 | 54 | Spotify 30-second play rule wording; 2019 event-delivery post author; hourly partitions in 2016 vs 2019 post | Open | |
+| UQ-272 | 54 | Dropbox Magic Pocket posts (Cowling 2016, Gupta 2016) titles/dates/details; Day-Richter authorship of all three 2010 Google Docs posts | Open | |
