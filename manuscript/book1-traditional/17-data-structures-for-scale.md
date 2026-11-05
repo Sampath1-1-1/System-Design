@@ -1751,7 +1751,7 @@ flowchart LR
   LOG -.->|rebuild after failure| GI
 ```
 
-**Reading the diagram.** Drivers report every 4 seconds; the location service computes each position's cell and moves the driver between cells in an in-memory geo index sharded by region. Updates are also appended asynchronously (dotted) to a location stream for analytics and for rebuilding a failed shard. A rider's request is synchronous: the query service covers the circle with cells, reads candidates, filters by exact distance and ranks by arrival time. Load: 1 million drivers every 4 s is 250,000 writes per second, hence memory and partitioning. Failure points: stale entries from dead apps (use a TTL), hot shards during events (finer cells or shard splits), and circles straddling shard boundaries (two-shard fan-out). Chapter 55 (§55.1, §55.2) develops the full design.
+**Reading the diagram.** Drivers report every 4 seconds; the location service computes each position's cell and moves the driver between cells in an in-memory geo index sharded by region. Updates are also appended asynchronously (dotted) to a location stream for analytics and for rebuilding a failed shard. A rider's request is synchronous: the query service covers the circle with cells, reads candidates, filters by exact distance and ranks by arrival time. Load: 1 million drivers every 4 s is 250,000 writes per second, hence memory and partitioning. Failure points: stale entries from dead apps (use a TTL), hot shards during events (finer cells or shard splits), and circles straddling shard boundaries (two-shard fan-out). Chapter 55 (§55.4, §55.5) develops the full design.
 
 **Table 17.8 — Geospatial indexes compared.**
 

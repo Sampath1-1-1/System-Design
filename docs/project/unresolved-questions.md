@@ -282,3 +282,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-275 | 53 | Twitter Redis timeline details (800-entry cap, 3 replicas) via secondary sources; Krikorian 2013 post title/URL; 2023 recommendation-algorithm figures (search snippets) | Open | |
 | UQ-276 | 53 | Facebook Multifeed percentages; Lada et al. 2021 authors/URL; "~40 requests per query" (2012) | Open | |
 | UQ-277 | 53 | Discord 177→72 nodes (2023 migration); Instagram 2015 like-count/lease details; 2016 ranked-feed post title | Open | Secondary sources |
+| UQ-278 | 55 | Uber details (DISCO, S2 sharding, Ringpop, driver phones as backup store) from secondary summaries of Ranney 2015 / Hoff 2015; ringpop-node repo URL | Open | |
+| UQ-279 | 55 | Geisberger et al. 2008 query/preprocessing times; Xu et al. 2018 (Didi order dispatch) author list and matching method | Open | |
+| UQ-280 | 55 | Airbnb Orpheus (Chew 2019) library name; Stripe Ledger post date (~Feb 2024) and author; Ticketmaster 2022 statement (archived copy); Gray 2006 "100+ services per page" wording | Open | |
