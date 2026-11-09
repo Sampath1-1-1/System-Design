@@ -2,11 +2,11 @@
 
 > **Level:** 4 · **Track:** B (ML/AI) · **Estimated reading time:** 6 h
 
-Chapter 58 ended with two uncomfortable numbers. Training a 7-billion-parameter language model needs about 112 GB of accelerator memory before it has processed a single token, and its full training run needs about $4.2 \times 10^{22}$ floating-point operations, which one GPU would take more than three years to perform. Neither number is unusual: they describe a mid-sized open model of 2023. Every large model you have heard of was therefore trained on hundreds or thousands of accelerators working as one machine, and the engineering that makes that possible is the subject of this chapter.
+Chapter 58 ended with two uncomfortable numbers. Training a 7-billion-parameter language model needs about 112 GB of accelerator memory before it sees a single token, and its full training run needs about $4.2 \times 10^{22}$ floating-point operations, more than three years of work for one GPU. Every large model is therefore trained on hundreds or thousands of accelerators working as one machine; this chapter is about how.
 
-Distributing training is not like scaling a web service. A web tier scales by adding independent replicas that never talk to each other (§18.4). Training replicas talk to each other on *every step*, several times a second, exchanging gigabytes; they must stay in lockstep, so the slowest one sets the pace; and one failed GPU among 16,000 stops all of them. You will learn the five ways to split the work (data, tensor, pipeline, sequence and expert parallelism), the memory-sharding techniques ZeRO and FSDP, how they combine into "3D" and "4D" parallelism, and how to survive the hardware failures that arrive every few hours at scale. Every technique comes with the arithmetic you need to choose it: bytes per GPU, bytes on the wire per step, idle time, and days of wall-clock time.
+Distributing training is not like scaling a web service, whose replicas never talk to each other (§18.4). Training replicas exchange gigabytes on *every step*, must stay in lockstep so the slowest sets the pace, and one failed GPU among 16,000 stops them all. You will learn the ways to split the work (data, tensor, pipeline, context and expert parallelism), the memory-sharding techniques ZeRO and FSDP, how they combine into 3D and 4D layouts, and how to survive failures that arrive every few hours at scale, each with the arithmetic needed to choose it.
 
-This chapter builds on Chapter 58 (training memory and FLOPs, §58.11–§58.12), Chapter 64 (GPU architecture, number formats and interconnects), §49.9–§49.10 (MPI collectives, the α–β cost model, ring and tree all-reduce, RDMA) and Chapter 46 (gang scheduling, Slurm and Kubernetes for training). It owns parallelism strategies and training fault tolerance; serving (Chapter 66), recommender-specific training (Chapter 68) and fine-tuning (Chapter 76) are covered elsewhere.
+This chapter owns parallelism strategies and training fault tolerance. Serving (Chapter 66), recommender training (Chapter 68) and fine-tuning (Chapter 76) are covered elsewhere.
 
 ::: note
 **Assumptions used in this chapter.** Units are SI (1 GB = 10⁹ bytes); one multiply–add is 2 FLOPs (§58.2). An "H100-class" accelerator is modeled with round numbers that match Chapter 58: 80 GB of HBM, a dense BF16 peak of $10^{15}$ FLOP/s, NVLink at 450 GB/s per direction within an 8-GPU node, and one 400 Gb/s (50 GB/s) InfiniBand or RoCE network interface per GPU across nodes (Chapter 64; as of 2026). Achieved bandwidth is taken as 80% of peak (360 GB/s and 40 GB/s). A GPU-hour costs an illustrative \$2.50 (Chapter 60). The **7B model** has hidden size $h = 4{,}096$, $L = 32$ layers and $a = 32$ attention heads; the **70B model** has $h = 8{,}192$ and $L = 80$ (Llama-2-like shapes). QuickBite's ML numbers are those of Chapters 57–60; new QuickBite numbers are labeled as assumptions.
@@ -47,11 +47,11 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Imagine one cook preparing a 2,000-guest banquet. Two separate problems appear. The kitchen counter is too small to hold all the ingredients at once (memory), and even with infinite counter space, one cook chopping for 2,000 guests would finish next month (compute). Hiring more cooks helps with both, but in different ways: to finish sooner you give each cook a share of the guests (**data parallelism**); to fit the ingredients you give each cook a share of the recipe (**model parallelism**). And every extra cook adds conversation: they must agree on the seasoning, pass dishes along the line, and wait for the slowest. Distributed training is the discipline of choosing the split that minimizes that conversation.
+One cook preparing a 2,000-guest banquet faces two problems: the counter cannot hold all the ingredients (memory), and chopping for 2,000 guests would take a month (compute). More cooks help in different ways: give each a share of the guests (**data parallelism**) or a share of the recipe (**model parallelism**). Every extra cook adds conversation, and distributed training is the discipline of choosing the split that minimizes it.
 
 #### Why does this exist?
 
-Model size and data size have both grown faster than a single accelerator. Between 2018 and 2024, the largest published dense language models grew from hundreds of millions of parameters to hundreds of billions, and training sets from a few billion tokens to about 15 trillion [Dubey et al. 2024]. Accelerator memory grew from 32 GB to around 80–192 GB over the same years (Chapter 64). The scaling laws of §65.4 explain why the industry accepted this cost: loss falls predictably as compute grows, so whoever can apply more compute to one model gets a better model.
+Between 2018 and 2024 the largest dense language models grew from hundreds of millions of parameters to hundreds of billions, and training sets to about 15 trillion tokens [Dubey et al. 2024], while accelerator memory grew only from 32 GB to 80–192 GB (Chapter 64). The scaling laws of §65.4 explain why: loss falls predictably as compute grows.
 
 #### How it works internally
 
@@ -104,28 +104,9 @@ $$G_\text{mem} = \left\lceil \frac{16\,N + M_\text{act}}{M_\text{GPU}\, f} \righ
 **Interpretation.** For both models the compute wall, not the memory wall, sets the cluster size: memory needs 3 or 25 GPUs, time needs 41 or 568. **Engineering implication.** Size the cluster from $G_\text{time}$, then choose the model-splitting technique that makes each GPU's share of memory fit, with the least communication. Once $G_\text{time}$ GPUs exist, you have far more aggregate memory than the model needs; the question becomes how to *use* it without moving too many bytes.
 :::
 
-**Table 65.1 — Training budgets for the chapter's two reference models.**
-
-| Quantity | 7B model, 1T tokens | 70B model, 1.4T tokens |
-|---|---|---|
-| Model state at 16 B/param | 112 GB | 1,120 GB |
-| Activations per sequence, no recomputation | 30.6 GB ($s$ = 2,048) | 521 GB ($s$ = 4,096) |
-| Training compute $6ND$ | $4.2 \times 10^{22}$ FLOPs | $5.88 \times 10^{23}$ FLOPs |
-| One GPU at 40% MFU | 3.3 years | 46.6 years |
-| GPU-hours at 40% MFU | 29,167 | 408,333 |
-| Cost at \$2.50/GPU-hour | about \$73,000 | about \$1.0 million |
-
 ::: mistake
 **"Memory is the reason we distribute."** For most large training runs, time is the binding constraint. Memory determines *how* you split the model; compute determines *how many* GPUs you buy. Teams that size clusters by memory alone discover that the job fits but finishes next year.
 :::
-
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Out-of-memory error on step 1 | Model state or activations exceed HBM | CUDA OOM in logs | Shard more, recompute activations, smaller micro-batch | Compute $G_\text{mem}$ before launch; dry-run one step |
-| Out-of-memory error after hours | A longer-than-usual batch or memory fragmentation | OOM at a later step; memory high-water mark | Cap sequence length; restart from checkpoint | Pack sequences to a fixed length; test the worst-case batch |
-| Run takes 3× the plan | MFU assumed 40%, achieved 13% | Tokens/s per GPU against plan | Profile (§65.17) | Benchmark MFU on a small slice of the cluster first |
 
 ## 65.4 Training FLOPs estimation
 
@@ -496,7 +477,7 @@ $$\eta(B) = \eta_0 \cdot \frac{B}{B_0} \qquad \eta_t = \eta(B)\cdot\min\!\left(1
 
 §49.9 introduced MPI collectives and their α–β costs. Training uses five, summarized here with the bytes each GPU sends for a full tensor of $S$ bytes.
 
-**Table 65.2 — Collectives used in distributed training.**
+**Table 65.1 — Collectives used in distributed training.**
 
 | Collective | Result | Bytes sent per GPU (ring) | Used by |
 |---|---|---|---|
@@ -565,10 +546,6 @@ flowchart TB
 
 ::: recommendation
 **Debugging collectives.** Set `NCCL_DEBUG=INFO` once at start-up to see which transports, rings and trees NCCL chose; run `nccl-tests` (`all_reduce_perf`) on every new node pool and compare its bus bandwidth with the link speed before admitting the nodes to training; and alert when a job's all-reduce bus bandwidth drops by more than about 10%, which usually means one bad link or NIC.
-:::
-
-::: mistake
-**Comparing NCCL "algorithm bandwidth" with link speed.** `nccl-tests` prints algorithm bandwidth ($S/T$) and bus bandwidth ($V/T$). Only bus bandwidth is comparable with the link rate; algorithm bandwidth for all-reduce is about half of it at large $p$, which looks like a broken network when it is not.
 :::
 
 ## 65.8 Parameter servers
@@ -645,12 +622,6 @@ Asynchronous SGD was the standard for large models around 2012, when Google's Di
 **Parameter servers in production recommenders.** Li et al. [2014] describe a third-generation parameter server handling sparse logistic regression and topic models with billions of parameters across many machines. Meta's DLRM paper keeps the same split, placing embedding tables with model parallelism and MLPs with data parallelism [Naumov et al. 2019]. Chapter 68 covers the embedding-sharding systems that descend from these designs.
 *Evidence: Primary* — [Li et al. 2014; Naumov et al. 2019]
 :::
-
-| Approach | Advantages | Disadvantages | Choose when |
-|---|---|---|---|
-| Synchronous all-reduce | Deterministic math; no central bottleneck; bandwidth-optimal | Slowest worker sets pace; one failure stalls all | Dense models on GPUs (almost all deep learning) |
-| Asynchronous parameter server | Tolerates stragglers; elastic workers | Stale gradients hurt dense convergence; hot servers | Huge sparse embeddings; heterogeneous or preemptible workers |
-| Bounded staleness | Middle ground | Extra tuning parameter $s$ | Clusters with variable worker speed |
 
 ## 65.9 Sharded data parallelism: ZeRO and FSDP
 
@@ -733,7 +704,7 @@ $$V_\text{DDP} = V_1 = V_2 \approx 2\,\frac{p-1}{p}\,(2N) \qquad V_3 \approx 3\,
 
 Stages 1 and 2 cost no extra communication: an all-reduce *is* a reduce-scatter (to get gradient shards) plus an all-gather (of the updated parameter shards). Stage 3 adds one more all-gather, because weights are gathered once for forward and again for backward: 1.5× DDP's traffic.
 
-**Table 65.3 — Model-state memory per GPU for a 7B model (GB; activations excluded).**
+**Table 65.2 — Model-state memory per GPU for a 7B model (GB; activations excluded).**
 
 | GPUs $p$ | DDP | ZeRO-1 | ZeRO-2 | ZeRO-3 / FSDP |
 |---|---|---|---|---|
@@ -743,7 +714,7 @@ Stages 1 and 2 cost no extra communication: an all-reduce *is* a reduce-scatter 
 ::: example
 **Worked example — QuickBite continues pre-training a 7B model for its support chatbot.** Assumption: QuickBite adapts an open 7B model on 50 billion tokens of anonymized support transcripts, menus and policies (domain-adaptive pre-training; fine-tuning proper is Chapter 76) on 64 GPUs.
 
-1. *Memory, from Table 65.3:* DDP needs 112 GB, impossible. ZeRO-1 on 64 GPUs needs 29.3 GB, ZeRO-2 15.5 GB, ZeRO-3 1.75 GB, each plus activations: 30.6 GB per 2,048-token sequence without recomputation, or about 9.1 GB with selective recomputation (§65.14). ZeRO-2 with selective recomputation and micro-batch 2 uses about $15.5 + 18.2 = 33.7$ GB; ZeRO-3 frees room for micro-batch 6.
+1. *Memory, from Table 65.2:* DDP needs 112 GB, impossible. ZeRO-1 on 64 GPUs needs 29.3 GB, ZeRO-2 15.5 GB, ZeRO-3 1.75 GB, each plus activations: 30.6 GB per 2,048-token sequence without recomputation, or about 9.1 GB with selective recomputation (§65.14). ZeRO-2 with selective recomputation and micro-batch 2 uses about $15.5 + 18.2 = 33.7$ GB; ZeRO-3 frees room for micro-batch 6.
 2. *Compute:* $6 \times 7 \times 10^9 \times 5 \times 10^{10} = 2.1 \times 10^{21}$ FLOPs; on 64 GPUs at $4 \times 10^{14}$ FLOP/s: $8.2 \times 10^4$ s $= 22.8$ hours, 1,458 GPU-hours, about \$3,650.
 3. *Communication per step, ZeRO-3:* $V_3 = 3 \times \frac{63}{64} \times 14 = 41.3$ GB per GPU. On a rail-optimized cluster ($\approx 320$ GB/s effective): 129 ms. With 16,384 tokens per GPU per step, compute is $6 \times 7 \times 10^9 \times 16{,}384 / 4 \times 10^{14} = 1.72$ s, so communication is 7.5% of compute and overlaps with it.
 4. *ZeRO-2 instead:* $V_2 = 27.6$ GB, 86 ms, at the price of 13.8 GB more memory per GPU.
@@ -763,12 +734,6 @@ Stages 1 and 2 cost no extra communication: an all-reduce *is* a reduce-scatter 
 ::: mistake
 **"ZeRO-3 shards activations too."** ZeRO shards *model state*: weights, gradients and optimizer state. Activations are still per-micro-batch and per-rank; they are reduced by activation checkpointing (§65.14) or split by tensor, sequence and context parallelism (§65.10–§65.12).
 :::
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Throughput collapses at large $p$ | Shards so small that all-gathers are latency-bound | Exposed all-gather time in profile | Switch to HSDP | Shard within nodes, replicate across |
-| Out-of-memory error despite ZeRO-3 | Activations, not model state, dominate | Memory snapshot by category | Activation checkpointing; smaller micro-batch | Budget activations explicitly (§65.14) |
-| Checkpoint unusable on a different GPU count | Saved per-rank shards with a fixed layout | Load fails or mismatched shapes | Convert offline | Save resharding-capable distributed checkpoints (§65.15) |
 
 ## 65.10 Tensor parallelism
 
@@ -1203,11 +1168,11 @@ Checkpoint interval (checkpoint stall 20 s, restart 600 s)
 
 What to notice:
 
-- The memory table matches Table 65.3 and the ZeRO paper's formulas; the jump from ZeRO-2 to ZeRO-3 matters most at small $p$ relative to model size.
+- The memory table matches Table 65.2 and the ZeRO paper's formulas; the jump from ZeRO-2 to ZeRO-3 matters most at small $p$ relative to model size.
 - Full recomputation cuts per-layer activations 56-fold (0.956 to 0.017 GB) at the cost of a second forward pass; selective recomputation keeps 30% for a few percent of compute (§65.14).
 - At 30% instead of 40% MFU the 70B run takes 11 more days: the planning number with the largest error bars is MFU, not FLOPs.
 
-**Table 65.4 — Parallelism strategies compared.**
+**Table 65.3 — Parallelism strategies compared.**
 
 | Strategy | Splits | Communication | Where it runs | Main cost | Choose when |
 |---|---|---|---|---|---|
@@ -1342,7 +1307,7 @@ $$\tau_\text{Young} = \sqrt{2\,\delta\,M} \qquad \tau_\text{Daly} = \sqrt{2\delt
 
 ### 65.16.1 Failure rates at scale
 
-**Table 65.5 — Llama 3 405B pre-training interruptions over a 54-day snapshot [Dubey et al. 2024].**
+**Table 65.4 — Llama 3 405B pre-training interruptions over a 54-day snapshot [Dubey et al. 2024].**
 
 | Statistic | Reported value |
 |---|---|
@@ -1399,3 +1364,233 @@ stateDiagram-v2
 | Restart loop | Same bad node rescheduled | Repeated failure on one host | Cordon and drain | Automatic node health scoring |
 | Corrupt latest checkpoint | Crash during write | Missing manifest; load error | Use previous checkpoint | Manifest commit; keep several checkpoints |
 
+## 65.17 Bottlenecks and profiling
+
+A training step is as slow as the slowest of four things: compute, exposed communication, the slowest rank, and input data. Measure MFU first, then find which of the four is missing.
+
+::: formula
+**Measured MFU and the straggler penalty**
+
+$$\text{MFU} = \frac{6\,N\,X}{G\,R} \qquad \Pr[\text{slow step}] = 1 - (1-q)^{G} \qquad \mathbb{E}[T_\text{step}] \approx T_0\left(1 + \Pr[\text{slow step}]\,(\sigma - 1)\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $X$ | Measured training throughput of the whole job | tokens/s |
+| $G$, $R$ | GPUs; peak FLOP/s per GPU | GPUs, FLOP/s |
+| $q$ | Probability that a given GPU is slow in a given step (throttling, OS jitter, a slow link) | — |
+| $\sigma$ | Slowdown factor of a slow GPU | — |
+| $T_0$ | Step time with no stragglers | s |
+:::
+
+::: example
+**Worked example — Diagnosing a 7B job on 512 GPUs.**
+
+1. Measured 9,000 tokens/s per GPU: MFU $= 6 \times 7 \times 10^9 \times 9{,}000 / 10^{15} = 37.8\%$, close to the 40% plan.
+2. Measured 5,000 tokens/s per GPU: MFU 21%. The profile shows the GPUs idle 30% of each step waiting in all-reduce, but only on some steps.
+3. Stragglers: if each GPU independently has a 0.1% chance per step of running 1.5× slower, then $1 - 0.999^{512} = 40\%$ of steps contain at least one, and expected step time rises by $0.40 \times 0.5 = 20\%$. At 16,384 GPUs, essentially every step has one.
+4. Data loading: 512 GPUs × 9,000 tokens/s = 4.6 million tokens/s; at 4 bytes per token ID that is only 18 MB/s, trivial for text. For images it is not: 512 GPUs × 2,000 images/s × 110 KB = 113 GB/s of reads plus decoding, which can starve the GPUs unless decoding runs on many CPU workers or on the GPU.
+
+**Interpretation.** The synchronous step turns rare per-GPU hiccups into common job-wide slowdowns. **Engineering implication.** Monitor per-rank step time and all-reduce wait, not just the average; replace persistently slow nodes; prefetch and pre-tokenize data so the loader never appears in the profile.
+:::
+
+Profiling tools: the **PyTorch profiler** (operator and CUDA stream timelines, exported to a trace viewer) and **Nsight Systems** show whether NCCL kernels overlap compute or run alone; NCCL's bus bandwidth (§65.7) and per-rank step-time histograms locate bad links and stragglers. Typical MFU targets for large dense transformers on modern GPUs are about 35–55%: Llama 3 reports 38–43% [Dubey et al. 2024] and PaLM 46.2% on TPU v4 [Chowdhery et al. 2022]. Below about 30%, look for exposed communication, pipeline bubbles, recomputation, small micro-batches, or a data stall.
+
+::: mistake
+**Optimizing the average rank.** Collective training runs at the speed of its slowest rank in every step. A fleet whose median GPU is fine but whose p99.9 GPU is 30% slow loses throughput on most steps (§4.8 on tail latency at fan-out).
+:::
+
+## 65.18 Orchestrating training jobs
+
+Chapter 46 owns cluster scheduling; this section shows how training jobs use it. A distributed training job needs gang admission (§46.10), topology-aware placement on the NVLink and rail hierarchy (§46.11.2), a rendezvous, restart policies, and access to shared storage for data and checkpoints.
+
+**Table 65.5 — Orchestrators for training jobs (as of 2026).**
+
+| Orchestrator | Gang and topology | Failure handling | Strengths | Choose when |
+|---|---|---|---|---|
+| Slurm | Native: a job gets all its nodes at once; topology plugin for switch-aware placement | Requeue; `srun` restart; scripts | Simple, HPC-proven, low overhead | Dedicated research or pre-training clusters |
+| Kubernetes + Kueue or Volcano | Kueue job-level admission with quota and topology-aware scheduling; Volcano gang scheduler | Pod restart policies; JobSet or PyTorchJob operators; requeue | Shares a cluster with serving and pipelines; cloud-native tooling | Multi-team platforms; mixed workloads |
+| Ray Train | Placement groups reserve resources together on a Ray cluster | Worker restarts and checkpoint hooks | Python-native; integrates data loading and tuning | Teams already on Ray; heterogeneous pipelines |
+
+**Figure 65.17 — A training job on Kubernetes with Kueue admission.**
+
+```mermaid
+flowchart LR
+  ENG([ML engineer]) -->|apply job spec| API[(Kubernetes API)]
+  API -.->|suspended job| KQ[Kueue]
+  KQ -->|quota and topology OK:<br/>admit whole gang| API
+  API --> SCH[Scheduler]
+  SCH -->|bind 64 pods| NODES["GPU nodes,<br/>one rail group"]
+  NODES -->|torchrun rendezvous| RDZV[(c10d store)]
+  NODES -->|read shards| DATA[(Object store)]
+  NODES -.->|async checkpoints| CKPT[(Checkpoint store)]
+  NODES -.->|node unhealthy| KQ
+```
+
+**Reading the diagram.** The engineer submits a job that starts suspended. Kueue (asynchronously) admits it only when quota exists for every pod and, with topology-aware scheduling, when those pods fit inside one rail or block; the scheduler then binds all pods. The pods meet at a rendezvous store and read training shards from object storage (synchronous); checkpoints flow asynchronously to a checkpoint store. Storage boundaries: API state, rendezvous store, data and checkpoint stores. Failure points: a node health event evicts the job back to Kueue for requeue and restart from checkpoint; a partially admitted gang would deadlock without admission control. Scaling: admission decisions are per job, so large gangs do not overload the scheduler.
+
+A Slurm job spec for the 70B plan of §65.13, launching one `torchrun` agent per node:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=llm70b-pretrain
+#SBATCH --nodes=64
+#SBATCH --ntasks-per-node=1          # one torchrun agent per node
+#SBATCH --gpus-per-node=8
+#SBATCH --cpus-per-task=96
+#SBATCH --exclusive
+#SBATCH --time=48:00:00              # resubmitted from the latest checkpoint
+#SBATCH --requeue
+
+head=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+srun torchrun \
+  --nnodes=64 --nproc-per-node=8 \
+  --rdzv-backend=c10d --rdzv-endpoint="${head}:29500" --rdzv-id="$SLURM_JOB_ID" \
+  --max-restarts=3 \
+  train.py --tp 8 --pp 4 --dp 16 --micro-batch 1 --global-batch-tokens 4194304 \
+           --ckpt-dir /lustre/ckpt/llm70b --ckpt-interval-s 3600 --resume latest
+```
+
+What to notice:
+
+- `--exclusive` and one task per node give each `torchrun` agent all 8 GPUs, so TP groups stay inside NVLink domains.
+- The c10d rendezvous on the first node plus `--max-restarts` gives in-job restarts; `--requeue` and a bounded `--time` let the scheduler restart the whole job from `--resume latest`.
+- The layout flags multiply to $8 \times 4 \times 16 = 512$ GPUs, matching `--nodes` × `--gpus-per-node`; a mismatch is the most common launch error.
+
+::: recommendation
+**Platform choice.** If the cluster exists only for large training runs, Slurm is simpler and widely used. If GPUs are shared among training, batch inference and serving teams, use Kubernetes with Kueue (quota, borrowing, gang admission) and a training operator, and keep topology-aware placement on. Whichever you choose, wire node health checks into the scheduler so failed nodes are cordoned automatically.
+:::
+
+## 65.19 Summary and revision notes
+
+::: summary
+- Training is distributed for time more often than for memory: $G_\text{time} = 6ND / (R \cdot \text{MFU} \cdot T_\text{max})$ usually exceeds $G_\text{mem}$. Memory decides *how* to split; compute decides *how many* GPUs.
+- $C \approx 6ND$; wall-clock $= C/(G R\,\text{MFU})$. Chinchilla's compute-optimal ratio is about 20 tokens per parameter; models meant for heavy serving are trained far beyond it.
+- DDP keeps a replica per GPU and all-reduces gradients in buckets that overlap backward; each GPU sends $2\frac{p-1}{p}S$ bytes per step, nearly independent of $p$. Rail-optimized clusters (one NIC per GPU) make cross-node all-reduce nearly as fast as NVLink.
+- Large batches need learning-rate scaling and warmup, up to a critical batch size.
+- All-reduce = reduce-scatter + all-gather. ZeRO-1/2 shard optimizer state and gradients at DDP's traffic; ZeRO-3/FSDP shard everything at 1.5× traffic: $16N/p$ bytes per GPU.
+- Tensor parallelism: four all-reduces per layer on the critical path, so keep it inside an NVLink domain. Pipeline parallelism: bubble $(p-1)/(m+p-1)$; use $m \ge 4p$, 1F1B and interleaving. Context parallelism splits long sequences; expert parallelism moves tokens with all-to-all and needs capacity limits and load balancing.
+- 3D/4D layouts map the chattiest axis to the fastest links: TP in node, PP across nodes, DP outermost with sharded optimizer state.
+- Selective recomputation cuts activation memory about 3× for a few percent of compute; full recomputation about 20× for 33%.
+- Sharded asynchronous checkpoints reduce stalls from minutes to sub-second; choose the interval with $\sqrt{2\delta M}$. Job MTBF falls linearly with GPU count (about 3 hours at 16K GPUs in Llama 3), so restart time dominates waste at scale.
+- Track MFU × goodput; find stragglers by per-rank step time; orchestrate with gang admission and topology-aware placement (Slurm, Kubernetes + Kueue/Volcano, or Ray).
+:::
+
+## 65.20 Knowledge checkpoint
+
+1. A model has $N = 13 \times 10^9$. How much model-state memory does mixed-precision Adam need without sharding?
+2. How long does $6ND$ say a 13B model on 2T tokens takes on 1,024 GPUs at $10^{15}$ FLOP/s and 40% MFU?
+3. What is the compute-optimal model size for $C = 10^{24}$ FLOPs under the 20-tokens-per-parameter rule?
+4. Why does DDP all-reduce gradients in reverse layer order?
+5. BF16 gradients of a 3B model are all-reduced across 32 GPUs. How many bytes does each GPU send?
+6. Give ZeRO-2's per-GPU model state for $N = 13 \times 10^9$ on 16 GPUs.
+7. Why does ZeRO-3 send 1.5× DDP's bytes?
+8. How many all-reduces per transformer layer does Megatron tensor parallelism need per training step?
+9. Bubble fraction for $p = 4$, $m = 16$? With $v = 2$ interleaving?
+10. With $E = 32$, $k = 1$, $T = 65{,}536$ and cf $= 1.0$, what is the expert capacity?
+11. A checkpoint stalls training for 30 s and the job MTBF is 6 h. What is Young's interval?
+12. Why do large jobs prefer hot spares to elastic shrinking?
+13. 512 GPUs; each has a 0.2% chance per step of being 2× slow. What is the expected step-time inflation?
+14. What does Kueue add that the default Kubernetes scheduler lacks for training?
+
+<details><summary>Answers</summary>
+
+1. $16 \times 13 \times 10^9 = 208$ GB.
+2. $6 \times 1.3 \times 10^{10} \times 2 \times 10^{12} = 1.56 \times 10^{23}$; divided by $1{,}024 \times 4 \times 10^{14} = 4.1 \times 10^{17}$: $3.81 \times 10^5$ s, about 4.4 days.
+3. $N = \sqrt{10^{24}/120} = 9.1 \times 10^{10}$, about 91B parameters on 1.8T tokens.
+4. Last layers' gradients are ready first, so their buckets can be communicated while earlier layers are still computing.
+5. $2 \times \frac{31}{32} \times 6$ GB $= 11.6$ GB.
+6. $2 \times 13 + 14 \times 13/16 = 26 + 11.4 = 37.4$ GB.
+7. Weights are all-gathered for forward and again for backward, plus the gradient reduce-scatter: three $\frac{p-1}{p} \cdot 2N$ transfers instead of two.
+8. Four: two in forward (attention and MLP), two in backward.
+9. $3/19 = 15.8\%$; $3/35 = 8.6\%$.
+10. $65{,}536/32 = 2{,}048$ tokens.
+11. $\sqrt{2 \times 30 \times 21{,}600} = 1{,}138$ s, about 19 minutes.
+12. Tensor and pipeline layouts and the global batch depend on the GPU count; a spare preserves the layout and the optimization recipe.
+13. $1 - 0.998^{512} = 64\%$ of steps are slow; expected inflation $0.64 \times 1 = 64\%$.
+14. Job-level all-or-nothing admission against team quotas, borrowing, requeue on timeout, and topology-aware placement.
+
+</details>
+
+## 65.21 Interview questions
+
+### Basic
+
+**Q1. What is the difference between data and model parallelism?**
+**Answer.** Data parallelism replicates the model and splits examples, exchanging gradients once per step. Model parallelism (tensor, pipeline) splits the model itself, exchanging activations per layer or per stage. Use data parallelism when the model fits; split the model when it does not.
+
+**Q2. Why is DDP preferred to `DataParallel`?**
+**Answer.** One process per GPU avoids the interpreter lock and GPU-0 bottleneck, weights are never re-copied, gradient all-reduce overlaps backward through buckets, and it spans machines unchanged.
+
+### Intermediate
+
+**Q3. You must train a 30B model on 64 × 80 GB GPUs. What do you try first?**
+**Answer.** $16 \times 30 = 480$ GB of state; FSDP over 64 gives 7.5 GB per GPU plus activations with selective recomputation. Benchmark MFU; if all-gathers are exposed, use hybrid sharding within nodes. Add TP 2–8 only if activations do not fit.
+
+**Q4. Your 1,024-GPU job's MFU dropped from 42% to 30% overnight. How do you investigate?**
+**Answer.** Check per-rank step times for a straggler, NCCL bus bandwidth for a degraded link, data-loader wait, and recent configuration changes (micro-batch, recomputation). Run health checks on the slowest ranks' nodes and replace them.
+
+### Advanced
+
+**Q5. Design the parallel layout for a 70B model on 512 GPUs.**
+**Answer.** TP 8 inside each node; PP 4 so model state is about 10 GB per GPU with ZeRO-1; DP 16. With a 4M-token batch, 64 micro-batches give a 4.5% bubble. Use selective recomputation and sequence parallelism; DP all-reduce is 2% of the step. Benchmark against PP 2 × DP 32 and TP 8 + FSDP.
+
+**Q6. How would you get goodput above 95% on a 16K-GPU run?**
+**Answer.** Job MTBF is hours, so make checkpoints asynchronous (sub-second stall) and frequent; cut restart time with hot spares, pre-pulled images, fast checkpoint reload and automated cordoning; detect hangs with collective timeouts and silent corruption with loss and checksum monitors; track goodput and MFU together.
+
+## 65.22 Practical exercises
+
+1. Extend the ring simulation to a two-level hierarchical all-reduce (reduce-scatter in node, all-reduce across nodes, all-gather in node) and count bytes per link class.
+2. Add tensor- and pipeline-parallel memory to the calculator and reproduce the 70B plan of §65.13.
+3. Simulate 1,000 steps of 512 workers with a straggler probability and plot throughput against $q$.
+4. Compute the Daly interval and goodput for your own cluster's failure history.
+
+## 65.23 Design challenges
+
+1. **QuickBite support-chatbot training platform.** Design the cluster, parallel layout, checkpointing and scheduling for monthly domain-adaptive training of a 7B model on 50B tokens, sharing GPUs with serving.
+2. **A 1T-parameter MoE on 4,096 GPUs.** Choose EP, TP, PP and DP; compute all-to-all traffic and the capacity factor; plan load-balancing metrics.
+3. **Spot-instance training.** Train a 13B model on preemptible GPUs with a 2-hour mean time to preemption; choose elasticity, checkpoint interval and storage.
+
+## 65.24 References
+
+1. Li, S., Zhao, Y., Varma, R., Salpekar, O., Noordhuis, P., Li, T., Paszke, A., Smith, J., Vaughan, B., Damania, P., Chintala, S. *PyTorch Distributed: Experiences on Accelerating Data Parallel Training*. PVLDB 13(12), 2020.
+2. Rajbhandari, S., Rasley, J., Ruwase, O., He, Y. *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models*. SC, 2020.
+3. Zhao, Y., et al. *PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel*. PVLDB 16(12), 2023.
+4. Shoeybi, M., Patwary, M., Puri, R., LeGresley, P., Casper, J., Catanzaro, B. *Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism*. arXiv:1909.08053, 2019.
+5. Narayanan, D., et al. *Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM*. SC, 2021.
+6. Huang, Y., et al. *GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism*. NeurIPS, 2019.
+7. Narayanan, D., et al. *PipeDream: Generalized Pipeline Parallelism for DNN Training*. SOSP, 2019.
+8. Korthikanti, V., et al. *Reducing Activation Recomputation in Large Transformer Models*. MLSys, 2023.
+9. Lepikhin, D., et al. *GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding*. ICLR, 2021.
+10. Fedus, W., Zoph, B., Shazeer, N. *Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity*. JMLR 23, 2022.
+11. Kaplan, J., et al. *Scaling Laws for Neural Language Models*. arXiv:2001.08361, 2020.
+12. Hoffmann, J., et al. *Training Compute-Optimal Large Language Models*. NeurIPS, 2022.
+13. Goyal, P., et al. *Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour*. arXiv:1706.02677, 2017.
+14. Li, M., et al. *Scaling Distributed Machine Learning with the Parameter Server*. OSDI, 2014.
+15. Dubey, A., et al. (Llama Team, Meta). *The Llama 3 Herd of Models*. arXiv:2407.21783, 2024.
+16. Young, J. W. *A First Order Approximation to the Optimum Checkpoint Interval*. Communications of the ACM 17(9), 1974.
+17. Daly, J. T. *A Higher Order Estimate of the Optimum Checkpoint Interval for Restart Dumps*. Future Generation Computer Systems 22(3), 2006.
+18. Chowdhery, A., et al. *PaLM: Scaling Language Modeling with Pathways*. JMLR 24, 2023 (arXiv:2204.02311, 2022).
+19. McCandlish, S., Kaplan, J., Amodei, D., OpenAI Dota Team. *An Empirical Model of Large-Batch Training*. arXiv:1812.06162, 2018.
+20. You, Y., et al. *Large Batch Optimization for Deep Learning: Training BERT in 76 Minutes*. ICLR, 2020.
+21. Dean, J., et al. *Large Scale Distributed Deep Networks*. NeurIPS, 2012.
+22. Ho, Q., et al. *More Effective Distributed ML via a Stale Synchronous Parallel Parameter Server*. NeurIPS, 2013.
+23. Naumov, M., et al. *Deep Learning Recommendation Model for Personalization and Recommendation Systems*. arXiv:1906.00091, 2019.
+24. Micikevicius, P., et al. *Mixed Precision Training*. ICLR, 2018.
+25. Micikevicius, P., et al. *FP8 Formats for Deep Learning*. arXiv:2209.05433, 2022.
+26. DeepSeek-AI. *DeepSeek-V3 Technical Report*. arXiv:2412.19437, 2024.
+27. Chen, T., Xu, B., Zhang, C., Guestrin, C. *Training Deep Nets with Sublinear Memory Cost*. arXiv:1604.06174, 2016.
+28. Ren, J., et al. *ZeRO-Offload: Democratizing Billion-Scale Model Training*. USENIX ATC, 2021.
+29. Rajbhandari, S., et al. *ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning*. SC, 2021.
+30. Liu, H., Zaharia, M., Abbeel, P. *Ring Attention with Blockwise Transformers for Near-Infinite Context*. ICLR, 2024.
+31. Jacobs, S. A., et al. *DeepSpeed Ulysses: System Optimizations for Enabling Training of Extreme Long Sequence Transformer Models*. arXiv:2309.14509, 2023.
+32. Jeaugey, S. *Massively Scale Your Deep Learning Training with NCCL 2.4*. NVIDIA Technical Blog, 2019.
+33. PyTorch Docs: torchrun (Elastic Launch). https://pytorch.org/docs/stable/elastic/run.html
+
+## 65.25 Open verification items
+
+- Llama 3 reliability figures (466/47/419 interruptions, 78% hardware, 58.7% GPU, 30.1% faulty GPU, 17.2% HBM3, 3 manual interventions, >90% effective time, diurnal 1–2%), the 3.8 × 10²⁵ FLOPs and 38–43% MFU, and the 4D layouts: check against Dubey et al. 2024.
+- Megatron-LM 2019 (15.1 PFLOP/s, 76% efficiency) and SC 2021 (502 PFLOP/s, 52%) figures.
+- ZeRO's "over 100B on 400 GPUs, super-linear" and Turing-NLG attribution; Switch's "up to 7×"; GShard's "2,048 TPU v3 cores, four days".
+- PaLM MFU 46.2% and PaLM's JMLR venue; DDP "near-linear to 256 GPUs".
+- Jeaugey 2019 blog title; FSDP PVLDB volume; torchrun URL (not fetched).
+- Achieved-bandwidth assumptions (360 and 40 GB/s, 320 GB/s rail-optimized) are teaching approximations.
