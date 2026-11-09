@@ -307,3 +307,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-300 | 61 | Uber Hudi blog post (Rajaperumal & Chandar 2017) title/authors/year; Beauchemin "Functional Data Engineering" essay title/year (2018) | Open | |
 | UQ-301 | 61 | 2026 status: Iceberg format v3, Delta liquid clustering and UniForm; Delta default checkpoint interval (10 commits) and VACUUM retention (7 days) | Open | Version-dependent |
 | UQ-302 | 61 | Engine latency ranges and file-size defaults are typical values, not benchmarks | Accepted | Labeled |
+| UQ-303 | 62 | Airbnb Zipline talks (titles, speakers, years; Data Council 2019 vs 2020); Airbnb Chronon open-source post (2024) title/date; Orr et al. 2021 venue | Open | |
+| UQ-304 | 62 | Uber Palette name/source talk; Michelangelo 2017 details (~10,000 features; Samza, Cassandra, Hive) | Open | Merge with UQ-294 |
+| UQ-305 | 62 | Databricks–Tecton (reported Aug 2025) vs Databricks announcement; Feast API names (docs unreachable); Zinkevich Rules of ML numbers #29, #31, #32, #37 | Open | Time-sensitive |

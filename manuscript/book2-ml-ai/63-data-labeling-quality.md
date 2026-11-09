@@ -1297,7 +1297,7 @@ flowchart LR
 **Reading the diagram.** Offline, matured labels are split by time; only the training split is downsampled. The model is packaged together with its correction (which needs only $\beta$) and checked for calibration on a validation split that keeps the natural class ratio. The package reaches the online scorer asynchronously through the model registry (Chapter 69). Online, the checkout request is scored synchronously and the corrected probability feeds the decision. Failure points: applying the correction twice (once in the model, once in a downstream service), forgetting it entirely (thresholds tuned on uncorrected scores become wrong after a retrain with a new $\beta$), and downsampling the validation split, which makes calibration checks meaningless. Scaling: downsampling is a cheap filter in the training-data job (Chapter 61), and its main effect is to cut training cost roughly in proportion to $\beta$.
 
 ::: industry
-**Negative downsampling for ad click prediction at Facebook.** He et al. describe training click-prediction models on data in which negative examples (no click) were downsampled, and recalibrating the predictions with $q = p/(p + (1-p)/w)$, where $w$ is the negative sampling rate (the same formula as above). They reported that downsampling reduced training cost substantially with limited effect on model quality over the range of rates they tested.
+**Negative downsampling for ad click prediction at Facebook.** He et al. describe training click-prediction models on data in which negative examples (no click) were downsampled, and recalibrating the predictions with $q = p/(p + (1-p)/w)$, where $w$ is the negative sampling rate (the same formula as above). They studied how prediction quality varied with the sampling rate, treating the rate as a trade-off between training cost and accuracy rather than a free choice.
 *Evidence: Primary* — [He et al. 2014]
 :::
 
@@ -1406,4 +1406,118 @@ stateDiagram-v2
 
 ::: recommendation
 **Recommendation — Generate what you can, write what you must.** Fill counts, class balance, agreement statistics, label-source shares and noise estimates automatically from the pipeline's metadata on every version. Reserve human writing for motivation, intended and prohibited uses, known limitations and sensitive content. Link the datasheet from the model card of every model trained on the dataset (§59.10.3).
+:::
+
+## 63.14 Labeling operations at scale
+
+### 63.14.1 Vendors versus in-house
+
+::: definition
+**Definition — Labeling operations.** The organizational and operational side of labeling: who the annotators are (employees, contractors, vendor workforces or crowd platforms), how they are recruited, trained, paid, supervised and protected, how data reaches them securely, and how the cost, quality and throughput of the whole operation are measured.
+:::
+
+**Table 63.12 — Sourcing annotators.**
+
+| Row | In-house experts | Managed vendor | Crowd platform | LLM-assisted with human review |
+|---|---|---|---|---|
+| What it is | Employees with domain knowledge | Contracted, trained workforce | Open marketplace of workers | Model pre-labels; people verify a share |
+| Cost per label | Highest | Medium | Lowest human option | Lowest overall |
+| Quality control | Direct | Contracted SLAs plus your audits | Gold questions, redundancy, aggregation | Calibration against gold; human audits |
+| Data security | Strongest | Contractual and technical controls | Weakest; public tasks only | Depends on model hosting |
+| Ramp-up | Slow (hiring) | Weeks | Hours | Days (prompt and calibration) |
+| Choose when | Sensitive data, expert judgment, guideline authorship | Steady high volume with moderate expertise | Simple, non-sensitive, high-volume tasks | Well-defined tasks with measured LLM accuracy |
+
+Most mature teams mix them: in-house experts write guidelines, build gold sets and adjudicate; a vendor or LLM-assisted pipeline produces volume; and agreement and gold metrics are owned by the in-house team, never only by the vendor whose invoice depends on them.
+
+### 63.14.2 Security and personal data in annotation
+
+Annotation is a data-export path: it shows raw production data to people outside the core team, often in another company and country. QuickBite's reviews and support tickets contain names, phone numbers, addresses and sometimes payment complaints with partial card details. Treat the labeling tool as a production system inside the security architecture of Chapter 50.
+
+**Figure 63.14 — Annotation inside a security boundary.**
+
+```mermaid
+flowchart LR
+  subgraph QB["QuickBite security boundary"]
+    RAW[(Raw reviews and tickets)] --> RED[PII detection<br/>and redaction]
+    RED --> TOOL[Labeling tool]
+    TOOL --> J[(Judgments)]
+    AUD[(Audit log)]
+    TOOL --> AUD
+  end
+  subgraph VEN["Vendor workstation"]
+    VDI[Virtual desktop:<br/>no copy, no download]
+  end
+  VDI <-->|TLS, SSO with MFA| TOOL
+  RED -.->|redaction misses| REV[Sampled redaction audit]
+```
+
+**Reading the diagram.** Raw data never leaves QuickBite's boundary. A redaction service detects and masks personal data (names, phone numbers, addresses, card fragments) before tasks are created; the labeling tool runs inside the boundary and records every view and judgment in an audit log. Vendor annotators reach it from a virtual desktop that blocks copying, downloading and screenshots where the platform allows, over TLS with single sign-on and multi-factor authentication (Chapter 10). A sampled audit checks for redaction misses asynchronously. Failure points: redaction recall below 100% (it always is, so audit it), task screenshots shared outside the tool, overly broad access (every annotator can see every queue) and retention (judgments copied into vendor systems). Scaling the workforce does not widen the boundary: more annotators means more seats on the same controlled tool, with access limited per queue and per region for data-residency rules.
+
+::: recommendation
+**Recommendation — Minimize what annotators see.** Show only the fields the judgment needs (the review text, not the customer's order history); mask identifiers; set a retention period on judgments and tasks; require a data-processing agreement with every vendor; and give each annotator access only to the queues they work on. For data that cannot be adequately redacted, use in-house annotators.
+:::
+
+### 63.14.3 Annotator well-being and fair work
+
+Labeling is human work, and some of it is harmful. Content moderators who review violent, sexual or hateful material face risks of psychological harm documented in a growing literature [Steiger et al. 2021], and much annotation is performed as low-paid, invisible piecework [Gray and Suri 2019]. QuickBite's review moderation is milder than social-media moderation, but its "abuse" queue includes slurs and threats against couriers.
+
+Practical measures: blur or gray-scale images by default and reveal on demand; cap daily exposure time to the most harmful queues and rotate annotators between queues; give a "skip and escalate" option without penalty; provide access to counseling; pay for training and calibration time, not just for completed tasks; set productivity targets from measured task times so that quotas do not push people into rushing (which also destroys label quality); and include annotators' feedback on guideline ambiguity in the revision loop. Well-being and label quality are linked: tired, rushed and distressed annotators produce noisier labels.
+
+### 63.14.4 LLM-assisted labeling with human review
+
+Large language models can now label many text tasks zero-shot or with a few examples. Gilardi, Alizadeh and Kubli found that a general-purpose LLM outperformed crowd workers on most of the text-annotation tasks they studied, at a small fraction of the cost [Gilardi et al. 2023]. That makes LLM pre-labeling attractive, but it introduces risks that are easy to miss:
+
+- **Correlated errors.** An LLM's mistakes are systematic, not independent; aggregating several prompts to the same model does not average them out the way independent annotators do (§63.7.1).
+- **Automation bias.** Annotators shown an LLM's pre-label accept it more often than they would reach the same answer alone, so "human review" can degrade into rubber-stamping.
+- **Circularity.** If the same model (or model family) labels the training data and the evaluation data, the evaluation measures agreement with the labeler, not correctness. LLM-as-a-judge biases, such as preferring longer answers or answers in a particular position, are documented for evaluation tasks [Zheng et al. 2023] and covered in Chapter 78.
+- **Silent drift.** A hosted model's version changes can change labels overnight; pin the model version and record it with every label, like a guideline version.
+- **Privacy.** Sending reviews to an external model API is a data transfer subject to the same rules as sending them to a vendor (§63.14.2).
+
+**Figure 63.15 — LLM pre-labeling with confidence routing and human audit.**
+
+```mermaid
+flowchart LR
+  T[[Review tasks]] --> LLM[LLM labeler,<br/>pinned version]
+  LLM --> CAL[Calibrated confidence]
+  CAL --> R{Confidence<br/>at least 0.9?}
+  R -->|yes| ACC[Auto-accept]
+  R -->|no| HUM([Human annotators])
+  ACC --> AUD[Random 5% human audit]
+  AUD -.->|accuracy estimate| MON[Quality monitor]
+  ACC --> LS[(Label store with<br/>source = llm)]
+  HUM --> LS
+  GOLD[(Gold set)] -.->|weekly recalibration| CAL
+```
+
+**Reading the diagram.** Tasks are labeled by a pinned LLM version, whose raw confidence is mapped to a calibrated probability using a gold set (recalibrated weekly, dotted, asynchronous). A decision node auto-accepts high-confidence labels and sends the rest to human annotators, who label blind, without seeing the LLM's answer. A random 5% of auto-accepted labels is also labeled blind by humans, giving a continuous accuracy estimate to a quality monitor. Every label is written with its source, so that LLM-produced labels can be weighted, filtered or excluded from evaluation sets. Failure points: calibration drift after a model update, a gold set that no longer reflects production, and audit samples too small to detect a drop on a rare class. Scaling: the LLM tier scales with API capacity and cost; human capacity is sized from the fraction routed to people.
+
+::: formula
+**Cost and quality of a hybrid LLM–human labeling pipeline**
+
+$$c = c_{\text{llm}} + (1 - f)\,c_h + f\,s\,c_h \qquad A = f\,a_{\text{llm}} + (1 - f)\,a_h$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $c_{\text{llm}}$ | LLM labeling cost per item | \$/item |
+| $c_h$ | Cost of one human judgment | \$/judgment |
+| $f$ | Fraction of items auto-accepted | fraction |
+| $s$ | Audit rate on auto-accepted items | fraction |
+| $a_{\text{llm}}$ | Accuracy of auto-accepted LLM labels, measured on gold | fraction |
+| $a_h$ | Accuracy of a single human judgment on the routed items | fraction |
+| $c$, $A$ | Expected cost per item and expected label accuracy | \$/item, fraction |
+:::
+
+::: example
+**Worked example — Labeling 10,000 reviews per day.** One human judgment costs $c_h = \$15 \times 22\,\text{s} / (3600 \times 0.80) = \$0.115$ (§63.5.2, with $r = 1$). Assume (as of 2026, varying widely by model and provider) $c_{\text{llm}} = \$0.002$ per review. Calibration on a 2,000-item gold set shows that 70% of reviews get confidence ≥ 0.9, with accuracy 0.97 in that bucket; humans are 0.93 accurate on the remainder. Audit rate $s = 0.05$.
+
+1. Cost: $c = 0.002 + 0.30 \times 0.115 + 0.70 \times 0.05 \times 0.115 = 0.002 + 0.0345 + 0.0040 = \$0.0405$ per review.
+2. All-human single judgment: \$0.115 per review. Saving: $1 - 0.0405/0.115 = 65\%$; per day $10{,}000 \times (0.115 - 0.0405) = \$745$.
+3. Accuracy: $A = 0.70 \times 0.97 + 0.30 \times 0.93 = 0.679 + 0.279 = 0.958$.
+4. Audit precision: $0.05 \times 7{,}000 = 350$ audited labels per day; the 95% interval on a 0.97 accuracy estimate is $\pm 1.96\sqrt{0.97 \times 0.03 / 350} = \pm 0.018$.
+
+**Interpretation.** The hybrid is cheaper *and* more accurate than single human judgment, but only because the LLM is restricted to the bucket where it was measured to be good. **Engineering implication.** The audit is what keeps the claim true. Measure accuracy per class, not just overall (a 0.97 bucket can hide a 0.70 accuracy on the rare "abuse" class); never use LLM-sourced labels as the evaluation set for a model trained on them; and re-run calibration whenever the model version, the prompt or the guideline changes.
+:::
+
+::: note
+**Note — Preference data for LLMs (preview).** Aligning large language models uses a special kind of label: human (or AI) judgments of which of two model responses is better, used to train a reward model or to optimize the model directly [Ouyang et al. 2022]. Everything in this chapter applies (guidelines, agreement, annotator quality, well-being, LLM-assisted labeling), but preference judgments are more subjective, agreement between annotators is typically lower than on classification tasks, and the data is consumed by different training algorithms. Chapter 76 owns this topic.
 :::

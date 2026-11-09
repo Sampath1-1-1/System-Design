@@ -1068,7 +1068,7 @@ flowchart LR
 3. *Activations* with sequence parallelism and selective recomputation: $34\,s h / t = 34 \times 4{,}096 \times 8{,}192 / 8 = 143$ MB per layer per micro-batch; 20 layers per stage; up to 4 micro-batches in flight on stage 1 under 1F1B: $143 \times 20 \times 4 = 11.4$ GB. Total about 22 GB per GPU plus buffers: comfortable.
 4. *DP* $= 512 / (8 \times 4) = 16$. Each replica processes $1{,}024/16 = 64$ sequences per step: with micro-batch 1, $m = 64$, bubble $3/67 = 4.5\%$.
 5. *DP traffic*: each GPU's BF16 gradients are $2 \times 2.19 = 4.38$ GB; $V = 2 \times \frac{15}{16} \times 4.38 = 8.2$ GB, 205 ms at 40 GB/s, against a step of $6 \times 7 \times 10^{10} \times 4.19 \times 10^6 / 2.048 \times 10^{17} = 8.6$ s: 2.4%, and overlapped.
-6. *Time*: 33.2 days at 40% MFU (§65.4). Alternatives: PP 2 and DP 32 (about 31 GB per GPU, half the bubble stages), or TP 8 with FSDP across nodes and no PP; benchmark the two or three candidates on 64 GPUs before committing (Figure 65.2).
+6. *Time*: 33.2 days at 40% MFU (§65.4). Alternatives: PP 2 and DP 32 (about 31 GB per GPU and a smaller bubble), or TP 8 with FSDP across nodes and no PP; benchmark the two or three candidates on 64 GPUs before committing (Figure 65.2).
 
 **Interpretation.** Every degree is set by one constraint: TP by the NVLink domain, PP by memory, DP by what is left, and $m$ by the global batch. **Engineering implication.** Choose the smallest TP and PP that fit memory, because each wastes efficiency (communication or bubble), and let DP absorb the rest.
 :::
@@ -1227,4 +1227,175 @@ What to notice:
 **Megatron-LM at 3,072 GPUs and Llama 3 at 16,384.** Narayanan et al. [2021] trained a 1-trillion-parameter GPT model on 3,072 A100 GPUs with PTD-P at 502 PFLOP/s, 163 TFLOP/s per GPU (52% of peak), and derived the layout rules above. Meta reports a 4D layout for Llama 3 405B: TP 8, PP 16, and DP 64 or 128 for 8K-token training, with CP 16 added for 128K-token training, at 38–43% BF16 MFU [Dubey et al. 2024].
 *Evidence: Primary* — [Narayanan et al. 2021; Dubey et al. 2024]
 :::
+
+## 65.14 Mixed precision and memory techniques
+
+### 65.14.1 BF16 and FP8 training
+
+Chapter 64 describes the formats; here is what distribution changes. **BF16 mixed precision** [Micikevicius et al. 2018] is the default: matrix multiplies in BF16, an FP32 master copy and FP32 optimizer state, and no loss scaling because BF16 has FP32's exponent range. Distribution adds one decision: the precision of *reductions*. Summing gradients from thousands of ranks in BF16 loses low-order bits, so frameworks often reduce in FP32 (doubling gradient traffic) or reduce in BF16 and accept the loss; FSDP exposes this as a separate `reduce_dtype`. **FP8 training** [Micikevicius et al. 2022] runs matrix multiplies in 8-bit floats with per-tensor or finer-grained scaling factors, roughly doubling peak tensor-core throughput over BF16 on hardware that supports it, while master weights and optimizer state stay in higher precision. DeepSeek-AI [2024] report training DeepSeek-V3, a 671B-parameter MoE with 37B parameters active per token, largely in FP8 with block-wise scaling.
+
+### 65.14.2 Activation checkpointing
+
+::: definition
+**Definition — Activation checkpointing (recomputation).** Storing only selected activations during the forward pass (for example, each layer's input) and recomputing the rest during the backward pass [Chen et al. 2016]. **Selective recomputation** recomputes only the cheap-to-compute, memory-heavy parts, such as the attention scores [Korthikanti et al. 2023].
+:::
+
+::: formula
+**Checkpointing trade-off**
+
+$$M(k) \approx \frac{L}{k}\, a_\text{in} + k\, a_\text{layer} \qquad k^{*} = \sqrt{\frac{L\, a_\text{in}}{a_\text{layer}}} \qquad \frac{C_\text{full recompute}}{C} \approx \frac{8N}{6N} = 1.33$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M(k)$ | Activation memory when a checkpoint is kept every $k$ layers | bytes |
+| $L$ | Layers | count |
+| $a_\text{in}$ | Bytes of one layer's input ($2sbh$ in BF16) | bytes |
+| $a_\text{layer}$ | Bytes of one layer's full activations | bytes |
+| $k^{*}$ | Segment length minimizing $M$ | layers |
+| $C_\text{full recompute}/C$ | Compute with one extra forward pass relative to normal training | — |
+:::
+
+::: example
+**Worked example — 7B, $s = 2{,}048$, $b = 1$.** $a_\text{in} = 2 \times 2{,}048 \times 4{,}096 = 16.8$ MB, $a_\text{layer} = 0.956$ GB, $L = 32$.
+
+1. No checkpointing: $32 \times 0.956 = 30.6$ GB.
+2. $k^{*} = \sqrt{32 \times 0.0168 / 0.956} = 0.75$, so checkpoint every layer ($k = 1$): $M = 32 \times 0.0168 + 0.956 = 1.49$ GB, a 20-fold reduction.
+3. Cost: one extra forward pass, $8N$ instead of $6N$ FLOPs per token: 33% more compute. MFU (which counts $6N$) falls from, say, 40% to 30% even though the hardware is just as busy (HFU stays 40%).
+4. Selective recomputation: $0.285 \times 32 = 9.1$ GB, at a few percent of extra compute; Korthikanti et al. report it removes most of the recomputation overhead of full checkpointing.
+
+**Interpretation.** Memory falls by an order of magnitude for a third more compute, or by a factor of 3.4 for almost nothing. **Engineering implication.** Default to selective recomputation; use full recomputation per layer only where memory requires it, because every recomputed FLOP is paid for in wall-clock time.
+:::
+
+### 65.14.3 CPU and NVMe offload
+
+**ZeRO-Offload** keeps optimizer state and the Adam update on the CPU, moving gradients down and updated weights up over PCIe each step [Ren et al. 2021]; **ZeRO-Infinity** extends offload to NVMe [Rajbhandari et al. 2021]. The arithmetic decides when it pays: for the 7B model, BF16 gradients down plus BF16 weights up are $14 + 14 = 28$ GB per step; at about 50 GB/s achieved per direction on PCIe Gen5 x16 (Chapter 64), that is at least 0.28 s even with both directions overlapped, plus the CPU's Adam update over 7 billion parameters. Offload suits fine-tuning on few GPUs, where large per-GPU batches hide the transfer; it rarely pays in large-cluster pre-training, where sharding across GPUs is faster.
+
+## 65.15 Checkpointing
+
+### 65.15.1 What to save and how fast
+
+::: definition
+**Definition — Training checkpoint.** A durable snapshot sufficient to resume training as if it had not stopped: model weights, optimizer state, learning-rate scheduler and step counter, random-number-generator states, data-loader position, and the parallel layout. A **sharded (distributed) checkpoint** is written by every rank in parallel, each saving its own shard, with metadata that lets a different layout reload it (**resharding**). An **asynchronous checkpoint** copies the state to host memory and writes it to storage in the background while training continues.
+:::
+
+**Figure 65.15 — Asynchronous sharded checkpoint.**
+
+```mermaid
+sequenceDiagram
+  participant T as Training loop, all ranks
+  participant H as Host memory
+  participant W as Background writer
+  participant S as Object store or PFS
+  T->>T: reach step 4000 boundary
+  T->>H: copy shard to pinned host buffer
+  Note over T: stall ends here, about 0.1 s
+  T->>T: continue steps 4001 onward
+  W->>H: read staged shard
+  W->>S: write shard plus metadata in parallel
+  S-->>W: all shards durable
+  W->>S: commit manifest marking step 4000 complete
+```
+
+**Reading the diagram.** At a checkpoint boundary every rank copies its shard from GPU memory to pinned host memory (synchronous, the only stall), then training resumes. A background writer streams the staged shard to durable storage (the storage boundary: an object store or parallel file system, §49.11), asynchronously relative to training. Only when every rank's shard is durable is a manifest committed: the atomic marker that makes the checkpoint usable, so a crash mid-write leaves the previous checkpoint valid. Failure points: host memory too small for a staged copy; storage bandwidth too low, so the next checkpoint starts before the last one finishes; a missing manifest after a crash. Scaling: write bandwidth grows with ranks until the storage system saturates.
+
+::: example
+**Worked example — Checkpoint size and write time for the 70B job.** Save FP32 master weights and Adam moments ($12N$) plus BF16 weights for convenient evaluation ($2N$).
+
+1. Size: $14 \times 70 \times 10^9 = 980$ GB per checkpoint.
+2. Rank 0 gathers and writes everything at 2 GB/s: 490 s, during which 511 GPUs idle: 70 GPU-hours per checkpoint.
+3. Sharded, 512 ranks each write $980/512 = 1.9$ GB, limited by an assumed 100 GB/s aggregate storage bandwidth: 9.8 s.
+4. Asynchronous: copy 1.9 GB per GPU to host at about 25 GB/s: about 0.08 s of stall; the 9.8 s write overlaps training.
+5. Storage: keeping the last 5 checkpoints plus one per day for 34 days is about 39 checkpoints, 38 TB.
+
+**Interpretation.** Layout, not size, decides cost: the same terabyte takes 8 minutes or a tenth of a second of training time. **Engineering implication.** Use sharded asynchronous checkpoints (PyTorch Distributed Checkpoint, DeepSpeed or Megatron's distributed checkpointing), commit with a manifest, and size the storage system for checkpoint bursts.
+:::
+
+### 65.15.2 The optimal checkpoint interval
+
+Checkpoint too often and you pay the stall repeatedly; too rarely and each failure throws away more work. §29.9 used Young's approximation for stream processing; training uses the same result, refined by Daly for checkpoints that are not small relative to the MTBF.
+
+::: formula
+**Young/Daly optimal checkpoint interval and wasted fraction**
+
+$$\tau_\text{Young} = \sqrt{2\,\delta\,M} \qquad \tau_\text{Daly} = \sqrt{2\delta M}\left[1 + \tfrac{1}{3}\sqrt{\tfrac{\delta}{2M}} + \tfrac{1}{9}\tfrac{\delta}{2M}\right] - \delta \qquad w \approx \frac{\delta}{\tau} + \frac{\tau/2 + R}{M}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\tau$ | Time between checkpoints | s |
+| $\delta$ | Training time lost per checkpoint (the stall) | s |
+| $M$ | Mean time between failures of the *whole job* | s |
+| $R$ | Restart time: detect, reschedule, reload, warm up | s |
+| $w$ | Expected fraction of wall-clock time wasted | — |
+:::
+
+::: example
+**Worked example — Interval for a 16,384-GPU and a 512-GPU job.** From Llama 3's statistics (§65.16), 419 unexpected interruptions in 54 days on 16,384 GPUs is a job MTBF of 3.1 hours, or about 50,700 GPU-hours per interruption. Take $\delta = 20$ s (synchronous sharded checkpoint) and $R = 600$ s.
+
+1. 16,384 GPUs, $M = 11{,}160$ s: $\tau_\text{Young} = \sqrt{2 \times 20 \times 11{,}160} = 668$ s; Daly gives 655 s. Waste: $20/668 + (334 + 600)/11{,}160 = 3.0\% + 8.4\% = 11.4\%$.
+2. 512 GPUs at the same per-GPU rate, $M = 99$ h $= 356{,}400$ s: $\tau = 3{,}776$ s (about an hour); waste $0.5\% + 0.7\% = 1.2\%$.
+3. 16,384 GPUs with asynchronous checkpoints ($\delta = 0.1$ s): $\tau = 47$ s; waste $0.2\% + 0.2\% + 5.4\%$ from restarts.
+
+**Interpretation.** Job MTBF falls in proportion to GPU count, and at 16K GPUs restart time, not checkpoint cost, dominates the waste. **Engineering implication.** At scale, invest first in cheap checkpoints (asynchronous, in-memory) and then in fast restarts (hot spares, pre-pulled images, fast reload), which is where §65.16 begins.
+:::
+
+## 65.16 Fault tolerance and recovery
+
+### 65.16.1 Failure rates at scale
+
+**Table 65.5 — Llama 3 405B pre-training interruptions over a 54-day snapshot [Dubey et al. 2024].**
+
+| Statistic | Reported value |
+|---|---|
+| Cluster | Up to 16,384 H100 GPUs |
+| Total interruptions | 466 (47 planned, 419 unexpected) |
+| Unexpected interruptions attributed to confirmed or suspected hardware issues | About 78% |
+| Largest category | GPU issues, 58.7% of unexpected interruptions (faulty GPUs 30.1%, GPU HBM3 memory 17.2%) |
+| Interruptions needing significant manual intervention | 3 |
+| Effective training time | Higher than 90% |
+
+Two lessons follow. First, at this scale failures are routine (about one every three hours), so recovery must be automatic. Second, most are hardware, and some are silent: **silent data corruption** produces wrong numbers rather than crashes, detected only by loss spikes, NaNs or cross-replica checksums. The paper also reports a diurnal 1–2% throughput variation from temperature, and power swings of tens of megawatts when thousands of GPUs pause together, a constraint on the data center's power grid.
+
+### 65.16.2 Detection, restart and elastic training
+
+::: definition
+**Definition — Goodput (training).** The fraction of wall-clock time (or of GPU-hours) spent making training progress that is kept: total time minus checkpoint stalls, lost work since the last checkpoint, restart time and planned maintenance. **Elastic training** continues or restarts with a different number of workers, within configured bounds, when workers join or leave.
+:::
+
+**Figure 65.16 — Training job lifecycle with automatic recovery.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Pending: submitted
+  Pending --> Rendezvous: gang admitted
+  Rendezvous --> Training: all ranks joined
+  Training --> Checkpointing: every tau seconds
+  Checkpointing --> Training: shard staged
+  Training --> Failed: crash, hang timeout,<br/>health check fails
+  Failed --> Draining: cordon bad node
+  Draining --> Rendezvous: hot spare or<br/>fewer nodes
+  Training --> [*]: final step
+```
+
+**Reading the diagram.** A job waits until the scheduler admits the whole gang (§46.10), then ranks meet at a **rendezvous** (a store such as etcd or the PyTorch c10d store) to agree on membership and ranks. During training it periodically checkpoints. Failure arrives three ways: a process crash, a hang caught by the NCCL watchdog's collective timeout, or a health check (GPU errors reported by the driver, failed `nccl-tests`, thermal events). The faulty node is cordoned so it will not be rescheduled, and the job re-enters rendezvous with a hot spare, or with fewer nodes if elastic, and reloads the last complete checkpoint. Transitions are asynchronous events from the agent and scheduler. Scaling: recovery time must stay roughly constant as GPU count grows, because failure frequency does not.
+
+**TorchElastic**, invoked as `torchrun`, runs an agent per node that starts the worker processes, monitors them, and on a failure restarts *all* workers (up to `--max-restarts`) after a new rendezvous; with `--nnodes=MIN:MAX` it admits a varying node count [PyTorch Docs: torchrun]. Elasticity is easy for pure data parallelism (DP degree changes, with learning rate and batch adjusted) and hard for TP and PP layouts, which is why large jobs usually prefer **hot spares**: idle, pre-validated nodes that replace a failed node with the same layout.
+
+::: example
+**Worked example — Goodput of the 70B run.** Ideal compute time 33.2 days (797 h) on 512 GPUs; job MTBF 99 h; synchronous checkpoints with $\delta = 20$ s every hour.
+
+1. Expected failures: about $797/99 \approx 8$.
+2. Lost per failure: half an interval plus restart, $30 + 10 = 40$ min; total 5.3 h.
+3. Checkpoint stalls: 797 checkpoints × 20 s = 4.4 h.
+4. Goodput: $797 / (797 + 5.3 + 4.4) = 98.8\%$, consistent with the calculator's 1.2% waste.
+5. The same per-GPU reliability at 16,384 GPUs gives 88.6%; with asynchronous checkpoints and a 2-minute restart from hot spares and in-memory checkpoints, the waste is about $0.2\% + 0.2\% + 120/11{,}160 = 1.5\%$, so goodput is about 98.5%.
+
+**Interpretation.** Reliability engineering that is optional at 512 GPUs is the difference between 88% and 98% at 16K. **Engineering implication.** Track goodput as a first-class metric next to MFU; their product (effective MFU) is what the budget buys.
+:::
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Hang, no crash | Dead NIC or stuck kernel; collective waits forever | NCCL watchdog timeout; no step progress | Kill, cordon, restart | Collective timeouts of minutes, not hours |
+| Loss spike or NaN | Silent data corruption or numerical instability | Loss and gradient-norm monitors | Roll back to earlier checkpoint, skip batch | Cross-replica checksums; burn-in tests |
+| Restart loop | Same bad node rescheduled | Repeated failure on one host | Cordon and drain | Automatic node health scoring |
+| Corrupt latest checkpoint | Crash during write | Missing manifest; load error | Use previous checkpoint | Manifest commit; keep several checkpoints |
 

@@ -595,11 +595,11 @@ $$R_{\text{batch}} = \frac{K}{\Delta} \qquad R_{\text{online}} = \bar{\lambda} \
 :::
 
 ::: example
-**Worked example — Precompute QuickBite's search ETAs?** Assume QuickBite operates in 20 cities with 3,000 restaurants each, and each restaurant delivers to 200 zones: $K = 20 \times 3{,}000 \times 200 = 1.2 \times 10^7$ restaurant–zone pairs. Kitchen backlog changes within minutes, so $\Delta = 300$ s.
+**Worked example — Precompute QuickBite's search ETAs?** Assume QuickBite operates in 20 cities with 2,500 restaurants each (QuickBite's 50,000 restaurants), and each restaurant delivers to 200 zones: $K = 20 \times 2{,}500 \times 200 = 1.0 \times 10^7$ restaurant–zone pairs. Kitchen backlog changes within minutes, so $\Delta = 300$ s.
 
-1. $R_{\text{batch}} = 1.2 \times 10^7 / 300 = 40{,}000$ predictions/s, around the clock.
+1. $R_{\text{batch}} = 1.0 \times 10^7 / 300 \approx 33{,}300$ predictions/s, around the clock.
 2. Online: $\bar{\lambda} = 4{,}167$/s on average, 40,000/s only at peak.
-3. Precomputation costs $40{,}000 / 4{,}167 = 9.6$ times the online compute on average, is up to 5 minutes stale, and still ignores the customer's exact address and basket.
+3. Precomputation costs $33{,}300 / 4{,}167 \approx 8.0$ times the online compute on average, is up to 5 minutes stale, and still ignores the customer's exact address and basket.
 
 **Contrast — Restaurant recommendations for the home page.** One list per active user per day: $K = 2 \times 10^6$, $\Delta = 86{,}400$ s, $R_{\text{batch}} = 23$ predictions/s. Lookups cost ~1 ms. If 60% of users open the app before the next refresh, waste = 40%, which is cheap at this rate.
 
