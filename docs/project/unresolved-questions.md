@@ -289,3 +289,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-282 | 52 | Google email sender guidelines: 0.3% spam-rate threshold, one-click unsubscribe; help-page URL (from memory) | Open | Time-sensitive |
 | UQ-283 | 52 | Google SRE book ch. 24 "?" crontab extension wording; S3 PUT price ($0.005/1,000) | Open | Time-sensitive |
 | UQ-284 | 52 | Mercator "10× last fetch time" politeness delay is from Manning et al. ch. 20 as an example, not the Mercator paper | Accepted | Attributed accordingly |
+| UQ-285 | 57 | Uber DeepETA post author list and URL (uber.com unreachable) | Open | |
+| UQ-286 | 57 | Netflix 2017 interleaving post authors and "far smaller samples" claim | Open | |
+| UQ-287 | 57 | Kohavi et al. (2020) Bing ad-title example (~12% revenue lift, >$100M/yr) | Open | |
+| UQ-288 | 57 | Section numbers cited from Hastie et al., Bishop, Goodfellow et al., Murphy | Open | |
