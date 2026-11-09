@@ -303,3 +303,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-296 | 60 | TFX Google Play continuous-training description; ML Test Score 28 tests in four sections of seven | Open | |
 | UQ-297 | 59 | Google Cloud MLOps page current URL and trigger list; Microsoft MLOps maturity-level names/characteristics (from memory) | Open | |
 | UQ-298 | 59 / 60 | UberEATS feature examples (Hermann & Del Balso 2017); Booking.com finding paraphrase (Bernardi et al. 2019); ML Test Score 28 tests and scoring rule | Open | Merge with UQ-294–296 |
+| UQ-299 | 61 | Delta Lake (VLDB 2020) author list and "thousands of customers, exabyte scale" wording | Open | |
+| UQ-300 | 61 | Uber Hudi blog post (Rajaperumal & Chandar 2017) title/authors/year; Beauchemin "Functional Data Engineering" essay title/year (2018) | Open | |
+| UQ-301 | 61 | 2026 status: Iceberg format v3, Delta liquid clustering and UniForm; Delta default checkpoint interval (10 commits) and VACUUM retention (7 days) | Open | Version-dependent |
+| UQ-302 | 61 | Engine latency ranges and file-size defaults are typical values, not benchmarks | Accepted | Labeled |
