@@ -297,3 +297,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-290 | 57 / 58 | DeepETA (Hu et al. 2022): prior GBDT model and Uber's stated reasons (scale, latency); author list/URL | Open | Merge with UQ-285 |
 | UQ-291 | 58 | Haldar et al. 2019 (Airbnb): early neural models did not beat GBDT baseline | Open | |
 | UQ-292 | 58 | 10^15 FLOP/s accelerator in §58.12 is a round illustrative number | Accepted | Labeled |
+| UQ-293 | 60 | Netflix 2013 personalization-architecture post: technologies named per tier | Open | |
+| UQ-294 | 60 | Michelangelo (2017): UberEATS delivery-time example wording; Hive/Cassandra as offline/online stores | Open | |
+| UQ-295 | 60 | Booking.com: ~30% latency increase costing >0.5% conversion (Bernardi et al. KDD 2019) | Open | |
+| UQ-296 | 60 | TFX Google Play continuous-training description; ML Test Score 28 tests in four sections of seven | Open | |
