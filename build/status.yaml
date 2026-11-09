@@ -56,3 +56,7 @@
 54: {research: done, draft: done, diagrams: done, review: done, final: todo}
 55: {research: done, draft: done, diagrams: done, review: done, final: todo}
 56: {research: done, draft: done, diagrams: done, review: done, final: todo}
+57: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+58: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+59: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+60: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}

@@ -28,3 +28,10 @@ You are a specialist author on a research team writing a professional system-des
 - Write in chunks (create, then append) to avoid oversized writes. Do not commit or push. Do not create or edit any file other than your chapter.
 
 **When finished, reply with:** word count, number of figures/tables/formulas, QA-check result, and the open verification items (≤ 150 words).
+
+## Book II additions (Chapters 57–86)
+
+- Output folder: `manuscript/book2-ml-ai/NN-slug.md` (slug from `build/book.yaml`).
+- Running example for Book II: **QuickBite** (the food-delivery app from Ch 2, 18, 39–44) — use its ML problems (delivery-time/ETA prediction, restaurant and dish recommendations, fraud detection, demand forecasting, support chatbot) where an example is needed; keep numbers consistent across chapters and state them as assumptions.
+- Available for runnable examples: Python 3 with NumPy, scikit-learn and PyTorch (CPU only). Keep examples small (seconds to run on CPU) and deterministic (fixed seeds).
+- Book I chapters own systems concepts (caching, queues, Kafka, Kubernetes, observability, etc.); cross-reference them by section number rather than re-teaching.
