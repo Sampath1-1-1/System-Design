@@ -6,7 +6,7 @@ QuickBite's search page shows twenty restaurants, each with a delivery estimate 
 
 This chapter explains why. A machine learning (ML) system is a software system whose most important behavior is learned from data rather than written by hand, and that single difference changes how it fails, how it is tested and where its complexity lives. You will learn the two pipelines every production ML system has (training and inference), the three places computation can run (offline, nearline and online), when to precompute predictions and when to compute them on request, and how to turn product goals into latency, throughput, freshness, quality and cost requirements with numbers attached. The chapter ends with the technical debt that accumulates in ML systems and a complete reference architecture for QuickBite's delivery-time prediction.
 
-Chapters 57–59 cover what models are, how they learn and the lifecycle around them; this chapter is about the *system* that surrounds the model. Later chapters own the deep treatment of each component: data engineering (Chapter 61), feature stores (Chapter 62), model serving (Chapter 66), MLOps platforms (Chapter 69) and monitoring (Chapter 70).
+Chapters 57–59 cover models and their lifecycle; this chapter covers the *system* around the model. Later chapters own each component: data engineering (61), feature stores (62), serving (66), MLOps (69) and monitoring (70).
 
 ::: note
 **QuickBite ML assumptions used in this chapter.** These extend the Book I design point and are teaching assumptions, not measurements of a real company. 2 million daily active users and 500,000 orders a day (§2.11); search peaks at 2,000 requests per second (RPS), each showing 20 restaurants (§2.4), so the search page needs up to 40,000 delivery-time predictions per second; peak-to-average ratio 9.6 (§18.11); a mean delivery takes 35 minutes; CPU capacity costs \$0.048 per vCPU-hour (a 16-vCPU node at \$0.77 per hour, §42.13); a data-center GPU costs an illustrative \$2.50 per hour. The delivery-time model is called the **ETA model** (estimated time of arrival).
@@ -148,7 +148,7 @@ flowchart LR
   M -.->|ETAs read by| DSP
 ```
 
-**Reading the diagram.** Solid arrows are the synchronous request path: the ETA model quotes a time, the customer chooses a restaurant, the order service records the order and dispatch assigns a courier. Dotted arrows are asynchronous and slow: actual delivery times become labels in the training data, and a nightly job retrains the model. Two loops close here. First, the model only receives labels for restaurants customers chose, which are disproportionately those with short quoted ETAs; restaurants that were quoted long ETAs get fewer orders and therefore fewer labels, so the model learns least where it is most pessimistic. Second, dispatch reads ETAs to decide when to send couriers, so the model's predictions change the very delivery times it is trying to predict. The training data store is the storage boundary where both loops meet. Failure points: self-reinforcing bias and oscillation after retraining. Scaling does not help; design does.
+**Reading the diagram.** Solid arrows are the synchronous request path: the ETA model quotes a time, the customer chooses a restaurant, the order service records the order and dispatch assigns a courier. Dotted arrows are asynchronous and slow: actual delivery times become labels in the training data, and a nightly job retrains the model. Two loops close here. First, the model only receives labels for restaurants customers chose, which are disproportionately those with short quoted ETAs; restaurants that were quoted long ETAs get fewer orders and therefore fewer labels, so the model learns least where it is most pessimistic. Second, dispatch reads ETAs to decide when to send couriers, so the model's predictions change the very delivery times it is trying to predict. Failure points: self-reinforcing bias and oscillation after retraining; scaling does not help, design does.
 
 Direct loops are managed with **exploration** (occasionally showing items or estimates the model would not choose, so you collect unbiased labels), by logging the **propensity** (the probability that the system showed what it showed, so training can reweight), and by keeping a small randomized holdout. Hidden loops are harder: document which systems consume each model's output and review interactions when either changes. Chapter 68 treats feedback loops in recommendation in depth.
 
@@ -222,7 +222,7 @@ flowchart LR
   FS --> SRV
 ```
 
-**Reading the diagram.** Data flows left to right from source systems (hexagon, outside your control) through collection, verification and feature extraction into the ML code, the only box that contains a learning algorithm. Configuration and resource management feed it. Its output, a model, is served by serving infrastructure that also reads feature data (cylinder, the storage boundary shared by training and serving). Monitoring watches serving, and process management (dotted, asynchronous) triggers retraining and rollbacks. Every box except "ML code" is ordinary distributed-systems engineering, and every arrow is an interface that can break. The failure points cluster on the left (bad data) and at the shared feature store (skew). Each box scales independently, which is why ML platforms (Chapter 69) are collections of services rather than one program.
+**Reading the diagram.** Data flows left to right from source systems (hexagon, outside your control) through collection, verification and feature extraction into the ML code, the only box that contains a learning algorithm. Configuration and resource management feed it. Its output, a model, is served by serving infrastructure that also reads feature data (cylinder, the storage boundary shared by training and serving). Monitoring watches serving, and process management (dotted, asynchronous) triggers retraining and rollbacks. Every other box is ordinary distributed-systems engineering, and every arrow is an interface that can break; failures cluster on the left (bad data) and at the shared feature store (skew). Each box scales independently, which is why ML platforms (Chapter 69) are collections of services.
 
 ### 60.4.2 QuickBite example: where the ETA error went
 
@@ -370,7 +370,6 @@ $$A_{\max} = \Delta_{\text{retrain}} + T_{\text{pipe}} + T_{\text{deploy}} \qqua
 |---|---|---|---|---|
 | Upstream table arrives late | Source job delayed | Freshness check on partitions | Skip the run; keep current model | Explicit data-availability sensors in the orchestrator |
 | Label leakage | Feature uses data from after the prediction time | Suspiciously high offline metric | Rebuild dataset with point-in-time join | Point-in-time joins; leakage tests |
-| Gate blocks every retrain | Thresholds too strict for normal noise | Many consecutive "no new model" runs | Review gate; manual approval | Gates relative to current model with confidence intervals |
 | Silent regression on a slice | Only global metric checked | Slice dashboard, user complaints | Roll back | Per-slice gates (each city) |
 
 ## 60.6 The inference pipeline
@@ -457,7 +456,6 @@ $$V_{\text{day}} = \bar{\lambda} \times s \times b \times 86{,}400$$
 |---|---|---|---|---|
 | Feature store slow | Hot partition, GC pause | Per-dependency latency SLI | Defaults for missing features; fallback model | Deadlines, hedged reads (§23.7), replicas |
 | Defaults used silently for hours | Feature store outage masked by defaults | Metric of "features defaulted per request" | Page owner; switch to fallback model trained for missing features | Alert on default rate, not only errors |
-| Business rule fights the model | Rule changed without model owner | Prediction versus final output divergence | Revert rule | Rules versioned and logged with every response |
 | Prediction log blocks requests | Synchronous logging to a slow broker | Latency rises with broker lag | Make logging asynchronous, drop on overflow | Bounded in-memory buffer, async producer |
 
 ::: mistake
@@ -478,7 +476,7 @@ A restaurant kitchen works on three clocks. Overnight, the prep team makes stock
 
 #### Why does this exist?
 
-Amatriain and Basilico described Netflix's recommendation architecture in these three tiers [Amatriain and Basilico 2013]. Online computation responds to the latest events and context but must meet a strict latency limit and so cannot run expensive algorithms; it must also have a fallback when it cannot finish in time. Offline computation can run complex algorithms over large data with few constraints, but its results go stale between runs. Nearline computation sits between them: it is triggered by a user event, such as finishing a title, and updates stored results within seconds or minutes, without holding up a request. The split exists because no single tier offers freshness, depth and low latency at once.
+Amatriain and Basilico described Netflix's recommendation architecture in these three tiers [Amatriain and Basilico 2013]. Online computation sees the latest context but must meet a strict latency limit, so it cannot run expensive algorithms and needs a fallback. Offline computation can run complex algorithms over large data, but its results go stale between runs. Nearline computation, triggered by user events, updates stored results within seconds or minutes without holding up a request. No single tier offers freshness, depth and low latency at once.
 
 **Figure 60.6 — The three computation tiers (after Amatriain and Basilico 2013).**
 
@@ -498,7 +496,7 @@ flowchart TB
   REG -.->|deploy| NL
 ```
 
-**Reading the diagram.** The online service answers user requests synchronously and reads only from the low-latency online store (key-value database or cache, Chapter 12, Chapter 20). It emits events asynchronously (dotted) to an event stream such as Kafka (Chapter 31). Nearline processors consume those events, compute updated features or predictions within seconds, and write them to the online store. The same events are archived in the data lake, where offline jobs train models and compute bulk results, which are loaded into the online store and registered as models. Storage boundaries: online store (milliseconds), event stream (durable log), data lake (hours to years). Failure points: the online store is on the request path, so its outage needs a fallback; nearline lag silently increases staleness; a failed offline run leaves yesterday's results in place, which is usually acceptable. Each tier scales independently: online by replicas, nearline by stream partitions, offline by cluster size.
+**Reading the diagram.** The online service answers requests synchronously and reads only the low-latency online store (key-value database or cache, Chapters 12 and 20). It emits events asynchronously (dotted) to a stream such as Kafka (Chapter 31). Nearline processors consume them and write updated features or predictions to the online store within seconds. The same events are archived in the data lake, where offline jobs train models and compute bulk results that are loaded into the online store or registered as models. Storage boundaries: online store (milliseconds), event stream (durable log), data lake (hours to years). Failure points: the online store is on the request path and needs a fallback; nearline lag silently adds staleness; a failed offline run leaves yesterday's results, usually acceptable. Tiers scale independently: replicas, stream partitions, cluster size.
 
 **Table 60.9 — What belongs in each tier, for QuickBite.**
 
@@ -577,7 +575,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** In the batch subgraph, a scheduler triggers (dotted, asynchronous) a job that reads the warehouse, scores every key and bulk-loads a prediction table; the request path is a synchronous key lookup, so its latency is that of a key-value read (~1 ms) and it never touches a model. In the online subgraph, a stream processor keeps an online feature store fresh, and each request synchronously reads features and calls a model runtime. Storage boundaries: the prediction table holds outputs; the feature store holds inputs, which is why the online path can handle combinations nobody precomputed. Failure points: a failed batch job leaves stale predictions (usually tolerable); a failed model runtime on the online path needs a fallback. Scaling: batch scales with the number of keys; online scales with the request rate.
+**Reading the diagram.** In the batch subgraph, a scheduler triggers (dotted, asynchronous) a job that scores every key from the warehouse and bulk-loads a prediction table; the request path is a synchronous key lookup (~1 ms) that never touches a model. In the online subgraph, a stream processor keeps the online feature store fresh, and each request synchronously reads features and calls the model runtime. The prediction table stores outputs; the feature store stores inputs, which is why the online path handles combinations nobody precomputed. Failure points: a failed batch job leaves stale predictions (usually tolerable); a failed runtime needs a fallback. Batch scales with the number of keys, online with the request rate.
 
 #### Mathematical foundations
 
@@ -653,7 +651,7 @@ Requirements for an ML system follow the method of §1.6–§1.7 and §2.5, with
 | Explainability | Support agents can see the top contributing factors for a disputed order | Feature attributions stored with checkout prediction | Logging, Chapter 71 |
 | Compliance | Customer location retained ≤ 90 days in training data; no protected attributes as features | Data retention jobs; feature review | Data pipeline, Chapter 50 |
 
-Three requirements are specific to ML. **Prediction quality** has a target and a measurement window, because labels arrive late (here about 35 minutes, but days for fraud chargebacks). **Bias** matters separately from accuracy: an ETA that is accurate on average but always optimistic breaks customers' trust more than one that errs evenly in both directions. **Explainability** and **compliance** constrain which features and models are allowed, so they must be known before feature engineering starts (Chapter 71).
+Three requirements are specific to ML. **Prediction quality** needs a measurement window because labels arrive late (35 minutes here, months for fraud chargebacks). **Bias** matters separately from accuracy: an ETA that is accurate on average but always optimistic erodes trust more than one that errs evenly. **Explainability** and **compliance** constrain which features and models are allowed, so they must be known before feature engineering starts (Chapter 71).
 
 ::: tip
 **Interview tip — Ask for the cost of a wrong prediction.** Before choosing a model, ask what an error costs in each direction. For ETAs, being 10 minutes late costs more (refunds, churn) than being 10 minutes early (a lost order at most). That asymmetry becomes the loss function (predict a high quantile, not the mean) and the business rules, and it shows the interviewer you treat quality as a product requirement.
@@ -685,13 +683,13 @@ gantt
   section Post
   Calibrate and range        :p1, 55, 60
   Business rules             :r1, 60, 63
-  section Network
+  section Return
   Encode and outbound RPC    :n2, 63, 70
   section Slack
   Queueing and variance      :s1, 70, 100
 ```
 
-**Reading the diagram.** Time runs left to right in milliseconds from the moment the request reaches the ETA service's host. Each bar is a sequential stage; the feature fetch bar hides the parallel fan-out to two stores (Figure 60.5), whose slower branch sets its length. All stages are synchronous; the asynchronous prediction-log write is off the critical path and is not drawn. The storage boundaries are inside the feature-fetch bar (online feature store, travel grid). The failure point is the feature fetch: it has the largest share and the most variance because it crosses the network to stateful stores. The 30 ms of slack is deliberate; consuming it in design leaves nothing for incidents. Scaling more replicas shortens queueing but not any bar's inherent length.
+**Reading the diagram.** Time runs left to right in milliseconds from arrival at the ETA service. Each bar is a sequential, synchronous stage; the feature-fetch bar hides the parallel fan-out to two stores (Figure 60.5), whose slower branch sets its length, and it contains the storage boundaries. The asynchronous log write is off the critical path and not drawn. The feature fetch is the main failure point: the largest share and the most variance, because it crosses the network to stateful stores. The 30 ms of slack is deliberate. More replicas shorten queueing, not any bar's inherent length.
 
 **Table 60.12 — ETA latency budget.**
 
@@ -779,7 +777,7 @@ $$N_{\text{cpu}} = \left\lceil \frac{\lambda_{\text{peak}} \, c}{k \, u} \right\
 
 ### 60.11.2 Batching: a preview
 
-Accelerators are efficient only on batches: one GPU kernel over 64 rows costs little more than over 1 row. A server can therefore wait a few milliseconds to collect requests into a batch, trading latency for throughput, as in the $T(B) = t_0 + B t_1$ model of §4.18.6 and the size-and-time batching of §23.8.1. Crankshaw et al.'s Clipper serving system made this adaptive: it raised the batch size per model until latency approached the objective, then backed off [Crankshaw et al. 2017]. The trade-off is direct: every millisecond of batching delay comes out of the model's 20 ms budget in Table 60.12. Chapter 66 covers dynamic batching in depth.
+Accelerators are efficient only on batches: one GPU kernel over 64 rows costs little more than over 1 row. A server can wait a few milliseconds to fill a batch, trading latency for throughput ($T(B) = t_0 + B t_1$, §4.18.6; §23.8.1). Crankshaw et al.'s Clipper adapted the batch size per model to stay within the latency objective [Crankshaw et al. 2017]. Every millisecond of batching delay comes out of the model's 20 ms budget in Table 60.12; Chapter 66 covers dynamic batching.
 
 ## 60.12 Prediction quality as a system property
 
@@ -835,16 +833,11 @@ $$Q = \sum_{i} f_i \, q_i \qquad \sum_i f_i = 1$$
 **Interpretation.** The intermediate rung is worth building: it turns a breach into a survivable dip. **Engineering implication.** Measure each rung's quality offline, track $f_i$ in production as a metric, and alert on the fallback fraction, which moves immediately, rather than waiting for labels to show the quality drop 35 minutes later.
 :::
 
-::: industry
-**Netflix — online fallbacks.** Amatriain and Basilico note that because online computation must meet a response-time limit, the system needs a fallback, such as reverting to a precomputed result, when the online computation cannot complete in time. The same principle appears in Table 39.2 for QuickBite and in the reference architecture of §60.15.
-*Evidence: Primary* — [Amatriain and Basilico 2013]
-:::
-
 ## 60.13 Cost versus accuracy trade-offs
 
 ### 60.13.1 Diminishing returns
 
-Model quality usually improves roughly logarithmically with model size, data and compute, while serving cost grows roughly linearly with model compute per prediction. Each further point of accuracy therefore costs more than the last, the same "square-root tax" shape as §4.18.4. Three consequences follow. A bigger model consumes the latency budget (§60.10) as well as money. The value of a point of accuracy differs enormously between products. And the right question is never "which model is most accurate?" but "which accuracy is worth its cost at this prediction volume?".
+Model quality usually improves roughly logarithmically with model size, data and compute, while serving cost grows roughly linearly with compute per prediction, so each further point of accuracy costs more than the last (compare §4.18.4). A bigger model also consumes latency budget (§60.10), and the value of a point of accuracy differs enormously between products. The right question is not "which model is most accurate?" but "which accuracy is worth its cost at this prediction volume?".
 
 ::: formula
 **Break-even for a more expensive model**
@@ -1058,7 +1051,7 @@ flowchart LR
   ETA -.->|quality, drift, fallback rate| MON[Monitoring]
 ```
 
-**Reading the diagram.** *Online tier:* the customer app calls the search service over HTTPS; search calls the ETA service over gRPC with a 100 ms deadline for 20 restaurants. The ETA service reads the online feature store and the zone travel grid (two storage boundaries, one multi-get each), runs the model runtime in-process or as a sidecar, applies post-processing, business rules and the fallback ladder of Figure 60.9, and returns ranges. *Nearline tier:* order and courier events on Kafka drive stream jobs that update kitchen backlog and courier supply in the online store within about a minute (§60.7), and a re-predictor that refreshes the ETA of each in-flight order on every status change. *Offline tier:* the data lake feeds batch features (7-day prep averages, the travel grid) into the stores and feeds the nightly training pipeline of Figure 60.4, which registers validated models. *Feedback (dotted, asynchronous):* every prediction is logged to the event stream with its features; the stream is archived in the lake, where delivered orders supply the labels for the next training run; registered models reach the runtime through a canary rollout; monitoring tracks quality, drift and fallback rate. Failure points: the online store (fallback to the reduced model), the model runtime (fallback to the grid heuristic), the stream jobs (stale features detected by age checks), and the training pipeline (gates keep the last good model). Scaling: the ETA service and model runtime are stateless and scale on predictions per second (§60.11); the online store partitions by restaurant; stream jobs scale by Kafka partitions; training scales with the lake.
+**Reading the diagram.** *Online tier (solid, synchronous):* the app calls search over HTTPS; search calls the ETA service over gRPC with a 100 ms deadline. The ETA service makes one multi-get each to the online feature store and the zone travel grid (storage boundaries), runs the in-process model runtime, applies post-processing, rules and the fallback ladder of Figure 60.9. *Nearline tier:* stream jobs over Kafka update kitchen backlog and courier supply within about a minute (§60.7); a re-predictor refreshes in-flight orders' ETAs on each status event. *Offline tier:* the lake feeds batch features and the nightly training pipeline of Figure 60.4, which registers validated models. *Feedback (dotted, asynchronous):* predictions are logged with their features, archived in the lake and joined with delivery outcomes as labels; models reach the runtime through a canary; monitoring tracks quality, drift and fallback rate. Failure points and responses: online store (reduced model), model runtime (grid heuristic), stream jobs (age checks flag stale features), training (gates keep the last good model). Scaling: the ETA service and runtime are stateless and scale on predictions per second (§60.11); the store partitions by restaurant; stream jobs scale by Kafka partitions.
 
 How the requirements of Table 60.11 map onto the design:
 
@@ -1067,8 +1060,7 @@ How the requirements of Table 60.11 map onto the design:
 - **Freshness:** nearline backlog and supply ($F_{\max} \approx 93$ s); model age ≤ 30 h.
 - **Quality:** the prediction log joined with delivery events computes the within-±5-min SLI per city; per-slice gates in the training pipeline.
 - **Availability:** a four-rung fallback ladder, each rung with fewer dependencies.
-- **Cost:** about \$0.0001 of inference per order; the larger costs are the online store and stream jobs, which is typical of a data-centric system.
-- **Explainability and compliance:** feature attributions stored for checkout predictions; location data aged out of the lake after 90 days.
+- **Cost:** about \$0.0001 of inference per order; the online store and stream jobs cost more, as is typical of a data-centric system.
 
 ::: industry
 **Uber — UberEATS delivery-time prediction.** The Michelangelo post describes the delivery-time models as predicting, before an order is placed and again at each stage of the delivery, how long it will take, using gradient-boosted decision tree regression with request information, historical features and near-real-time features served from the platform's feature store. The QuickBite design above is a teaching architecture with the same structure; it is not a description of Uber's system.

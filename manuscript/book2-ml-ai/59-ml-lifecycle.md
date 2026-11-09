@@ -48,7 +48,7 @@ Think of a weather forecaster. She does not build one forecast and retire. Every
 
 #### Why does this exist?
 
-Traditional software encodes rules a programmer wrote; if the world changes, the code is still correct with respect to its specification. A model encodes rules *learned from data*, so its correctness is defined relative to the data it was trained on. When customers, restaurants, roads or fraudsters change, the model silently becomes wrong while every unit test still passes. Sculley et al. called this the "Changing Anything Changes Everything" (CACE) property: no input to a model is truly independent of the others, so a change anywhere in the data can change behavior everywhere [Sculley et al. 2015]. A lifecycle that loops is the engineering answer to a specification that drifts.
+Traditional software encodes rules a programmer wrote; a model encodes rules *learned from data*, so its correctness is relative to the data it was trained on. When customers, restaurants, roads or fraudsters change, the model silently becomes wrong while every unit test still passes. Sculley et al. called this the "Changing Anything Changes Everything" (CACE) property: no input to a model is truly independent of the others, so a change anywhere in the data can change behavior everywhere [Sculley et al. 2015]. A lifecycle that loops is the engineering answer to a specification that drifts.
 
 #### How it works internally
 
@@ -155,17 +155,17 @@ Asking a model to "improve deliveries" is like asking a carpenter to "improve th
 
 #### Why does this exist?
 
-The commonest way an ML project fails is not a bad model but a good model of the wrong thing. A model that minimizes average error may still promise times that are systematically too early, which is what customers punish. Booking.com's account of 150 customer-facing models reports that gains in offline model performance often did not translate into business gains, and that careful problem construction was one of the main levers [Bernardi et al. 2019].
+The commonest way an ML project fails is not a bad model but a good model of the wrong thing. A model that minimizes average error may still promise times that are systematically too early, which is what customers punish. Booking.com reports the same lesson from 150 customer-facing models (§59.10.3) [Bernardi et al. 2019].
 
 #### How it works internally
 
-1. **State the business objective** in business units: "reduce 'where is my order?' contacts and order cancellations caused by broken promises."
-2. **Name the decision** the prediction drives: "the ETA promised at checkout, and the ETA displayed next to each restaurant while browsing."
-3. **Define the prediction target precisely**: what is measured, from when to when, for which population. "Minutes from order confirmation to courier handoff at the door, for completed orders."
+1. **State the business objective** in business units: fewer support contacts and cancellations caused by broken promises.
+2. **Name the decision** the prediction drives: the ETA promised at checkout and shown while browsing.
+3. **Define the target precisely**: what is measured, from when to when, for which population.
 4. **Choose the ML task**: regression, classification, ranking, or a quantile of a distribution.
-5. **Choose offline metrics** that reflect the cost of errors (Chapter 57): here MAE, p90 absolute error, and the *late rate* (share of orders delivered more than 5 minutes after the promise).
-6. **Choose online metrics and guardrails**: the late rate and support contacts per 1,000 orders (primary), checkout conversion and cancellations (guardrails).
-7. **State constraints**: latency budget, freshness, interpretability, fairness, cost.
+5. **Choose offline metrics** that reflect the cost of errors (Chapter 57); for ETA these include the *late rate*, the share of orders delivered more than 5 minutes after the promise.
+6. **Choose online metrics and guardrails** measured in a live experiment.
+7. **State constraints**: latency, freshness, interpretability, fairness, cost.
 
 **Figure 59.3 — Framing QuickBite ETA: from business objective to metrics.**
 
@@ -181,7 +181,7 @@ flowchart LR
   GR -->|yes| SHIP([Keep model])
 ```
 
-**Reading the diagram.** Each box narrows the one before it. The business objective is not measurable by a model; the decision says where the model's output is used; the target says exactly what is predicted; the task says what kind of model; the offline metrics can be computed on historical data before launch; the online metrics need a live experiment. The guardrail diamond is the failure point most teams forget: a model that cuts the late rate by padding every ETA by 15 minutes will lose customers at checkout. A failed guardrail sends you back to the task definition, typically to change the target quantile. All steps here are human decisions, recorded in a framing document that later stages cite.
+**Reading the diagram.** Each box narrows the one before it: offline metrics can be computed on historical data before launch, online metrics need a live experiment. The guardrail diamond is the failure point most teams forget: a model that cuts the late rate by padding every ETA by 15 minutes will lose customers at checkout. A failed guardrail sends you back to the task definition, typically to change the target quantile.
 
 Table 59.2 is the resulting framing card. Keep it to one page; it is the contract between product, data science and engineering.
 
@@ -272,7 +272,7 @@ A detective can only solve a case from the evidence that was bagged at the scene
 
 #### Why does this exist?
 
-Product systems log what they need to *operate*: the current order status, the current courier location. Models need what happened *over time* and *at the moment of the decision*. Polyzotis et al. survey Google's experience and identify data understanding, validation, cleaning and preparation as the dominant, under-tooled challenges of production ML [Polyzotis et al. 2018]. Many of those problems start at collection.
+Product systems log what they need to *operate*; models need what happened *over time* and *at the moment of the decision*. Polyzotis et al. survey Google's experience and identify data understanding, validation, cleaning and preparation as the dominant, under-tooled challenges of production ML [Polyzotis et al. 2018]. Many of those problems start at collection.
 
 For ETA, QuickBite has four kinds of source (Figure 59.4):
 
@@ -294,7 +294,7 @@ flowchart LR
   K -.-> LAKE[(Data lake<br/>raw, partitioned)]
 ```
 
-**Reading the diagram.** User actions arrive synchronously over HTTPS at the order and dispatch services, which write current state to the orders database. Everything the ML lifecycle needs reaches the event log asynchronously (dotted arrows): database changes via change data capture, GPS pings and app events directly, the ETA service's own prediction log, and third-party weather and traffic data pulled on a schedule. The data lake is the storage boundary where raw, time-partitioned history accumulates for training. Failure points: a CDC connector that falls behind (training data silently missing recent days), an app release that changes an event schema, and a third-party API outage that leaves gaps. Scaling: the event log is partitioned by order or courier ID (§31.5); the lake scales by adding storage, not by changing the producers.
+**Reading the diagram.** User actions arrive synchronously over HTTPS at the order and dispatch services, which write current state to the orders database. Everything the ML lifecycle needs reaches the event log asynchronously (dotted arrows): database changes via change data capture, GPS pings and app events directly, the ETA service's own prediction log, and third-party weather and traffic data pulled on a schedule. The data lake is the storage boundary where raw, time-partitioned history accumulates for training. Failure points: a CDC connector that falls behind (training data silently missing recent days), an app release that changes an event schema, and a third-party API outage that leaves gaps. Scaling: the event log is partitioned by order or courier ID (§31.5).
 
 ### 59.5.2 Instrumentation for ML
 
@@ -330,7 +330,7 @@ sequenceDiagram
   J-->>J: training row with exact features
 ```
 
-**Reading the diagram.** The checkout service calls the ETA service synchronously; the ETA service reads current feature values from the online feature store (Chapter 62) and returns a promise. The prediction record (request ID, the feature values as used, model version, output) is written asynchronously, so logging never adds to the user's latency. The label (actual delivery minutes) arrives much later as a separate event. A batch or streaming join keyed on the request ID creates the training row. Storage boundary: the prediction log is durable and append-only. Failure points: dropped log writes (training data becomes a biased sample), and orders that are never delivered (canceled), which produce no label and must be handled explicitly rather than silently dropped. Scaling: the log is partitioned by request ID and compacted into columnar files for training.
+**Reading the diagram.** The checkout service calls the ETA service synchronously; the ETA service reads current feature values from the online feature store (Chapter 62) and returns a promise. The prediction record (request ID, the feature values as used, model version, output) is written asynchronously, so logging never adds to the user's latency. The label arrives much later as a separate event, and a join on the request ID creates the training row. Storage boundary: the durable, append-only prediction log. Failure points: dropped log writes (a biased sample), and canceled orders, which produce no label and must be handled explicitly. Scaling: the log is partitioned by request ID and compacted into columnar files for training.
 
 ::: example
 **Worked example — What does prediction logging cost?** Assume each checkout prediction record is 2 KB (about 60 features, IDs and metadata; SI units, 1 KB = 10³ bytes).
@@ -550,10 +550,10 @@ FAIL prep_min: missing rate 7.9% > 1%
 
 What to notice:
 
-- `infer_expectations` mirrors what TFDV does: derive a schema from trusted data, then let humans review and tighten it. Expectations are artifacts and are versioned with the pipeline.
+- `infer_expectations` mirrors TFDV: derive a schema from trusted data, then let humans review it. Expectations are versioned artifacts.
 - The reference batch passes its own checks: a validation suite that fails on known-good data will be ignored.
 - The unit bug trips three checks, but PSI (0.22) only just crosses its threshold, matching the worked example: distribution checks are weak bug detectors.
-- The new city is 3.0% of rows. Whether that should *block* training is a policy decision: a new category may be legitimate growth, in which case you update the schema deliberately.
+- Whether the new city should *block* training is a policy decision: it may be legitimate growth, in which case you update the schema deliberately.
 
 #### Failure scenarios
 
@@ -613,7 +613,7 @@ flowchart TB
   TRN -->|model v7| INF
 ```
 
-**Reading the diagram.** A single versioned definition drives two execution paths. The offline path computes historical values from the event history and joins them to labels *as of each order's timestamp* (a point-in-time join, Chapter 62), producing the training set. The online path computes the same feature from live events and stores the latest value for the ETA service to read synchronously. The trained model flows to the service with a version tag. The storage boundaries are the training set and the online store; the failure point is any divergence between the two paths: a different window boundary, time zone or null-handling rule. Feature stores (Chapter 62) exist largely to enforce this single definition at scale.
+**Reading the diagram.** A single versioned definition drives two execution paths. The offline path computes historical values from the event history and joins them to labels *as of each order's timestamp* (a point-in-time join, Chapter 62), producing the training set. The online path computes the same feature from live events and stores the latest value for the ETA service to read synchronously. The trained model flows to the service with a version tag. Storage boundaries: the training set and the online store. Failure point: any divergence between the paths, such as a different window boundary, time zone or null-handling rule; feature stores (Chapter 62) exist largely to prevent it.
 
 ### 59.8.3 Training–serving skew, previewed
 
@@ -641,7 +641,7 @@ Before you buy a racing bicycle, time yourself walking and on an ordinary bike. 
 
 #### Why does this exist?
 
-Without a baseline, a model's MAE of 3.2 minutes is uninterpretable: is that good? Baselines also catch bugs: a gradient-boosted model that barely beats the training median usually has a data or feature problem, not a modeling problem. For QuickBite the ladder is: constant median (no information), the current production rule (domain knowledge), a regularized linear model, and gradient-boosted decision trees (GBDT), the usual first strong model for tabular data. Chapter 58 discusses when deep learning earns its additional cost over such models.
+Without a baseline, an MAE of 3.2 minutes is uninterpretable. Baselines also catch bugs: a strong model that barely beats the median usually has a data problem. For QuickBite the ladder is: constant median (no information), the current production rule (domain knowledge), a regularized linear model, and gradient-boosted decision trees (GBDT), the usual first strong model for tabular data. Chapter 58 discusses when deep learning earns its additional cost over such models.
 
 ### 59.9.2 The experiment loop
 
@@ -649,7 +649,7 @@ Without a baseline, a model's MAE of 3.2 minutes is uninterpretable: is that goo
 
 ```mermaid
 flowchart LR
-  H[Hypothesis<br/>e.g. add rain feature] --> CH[Change data,<br/>features or config]
+  H["Hypothesis<br/>e.g. add rain feature"] --> CH["Change data,<br/>features or config"]
   CH --> RUN[Train on<br/>train split]
   RUN --> VAL[Score on<br/>validation split]
   VAL --> LOG[(Experiment<br/>tracker)]
@@ -657,10 +657,10 @@ flowchart LR
   CMP -->|no| H
   CMP -->|yes| EA[Error analysis<br/>by slice]
   EA --> H
-  EA -.->|candidate| TEST[Final check on<br/>test split, once]
+  EA -.->|candidate| TEST["Final check on<br/>test split, once"]
 ```
 
-**Reading the diagram.** Each iteration starts from a written hypothesis, changes one thing, trains on the training split and scores on the validation split. Every run, including failures, is recorded in an experiment tracker (Chapter 69 covers tools such as MLflow) with its data version, code commit, configuration and metrics. Runs that improve the best result go to error analysis, which generates the next hypothesis. The test split is touched once, asynchronously and at the end, by the chosen candidate; reusing it for decisions turns it into a second validation set and makes its estimate optimistic. Failure points: unlogged runs that cannot be reproduced, and "improvements" smaller than run-to-run noise. Scaling: runs are independent, so the loop parallelizes across machines; large models move training itself onto many GPUs (Chapter 65).
+**Reading the diagram.** Each iteration starts from a written hypothesis, changes one thing, trains on the training split and scores on the validation split. Every run, including failures, is recorded in an experiment tracker (Chapter 69 covers tools such as MLflow) with its data version, code commit, configuration and metrics. Improving runs go to error analysis, which generates the next hypothesis. The test split is touched once, at the end, by the chosen candidate; reusing it for decisions makes its estimate optimistic. Failure points: unlogged runs that cannot be reproduced, and "improvements" smaller than run-to-run noise. Scaling: runs are independent, so the loop parallelizes across machines; large models move training itself onto many GPUs (Chapter 65).
 
 ::: recommendation
 **Recommendation — Measure noise before celebrating.** Train the same configuration with three to five different seeds. If the spread of validation MAE is ±0.05 minutes, a 0.03-minute "gain" is noise.
@@ -719,7 +719,7 @@ $$C = N \times t \times p \qquad T_{\text{wall}} = \left\lceil \frac{N}{W} \righ
 
 ### 59.10.1 Aggregate metrics are necessary, not sufficient
 
-Offline evaluation applies the metrics of Chapter 57 to a held-out test set that the model never influenced. For QuickBite the framing card (Table 59.2) fixes MAE, p90 absolute error and the late rate. Evaluate every candidate against the *production* model and the baselines on the *same* time-based test window. The end-to-end pipeline (§59.14.4) produces this comparison on synthetic data:
+Offline evaluation applies the metrics of Chapter 57 to a held-out test set. Evaluate every candidate against the *production* model and the baselines on the *same* time-based test window. The end-to-end pipeline (§59.14.4) produces this comparison on synthetic data:
 
 **Table 59.7 — Synthetic QuickBite results on the final 7-day test window (from §59.14.4).**
 
@@ -788,7 +788,7 @@ Mitchell et al. proposed model cards with nine sections: model details, intended
 | Failure mode | Stale predictions if the job fails | Errors or timeouts on the request path |
 | QuickBite use | Daily demand forecast per restaurant | Checkout ETA, which depends on current courier load |
 
-Many systems mix both: restaurant-level prep-time estimates are batch-scored nightly and become *features* of the online ETA model. Chapter 66 covers model servers, batching and autoscaling; Chapter 60 places these modes in the offline, nearline and online architecture.
+Many systems mix both: nightly batch-scored prep-time estimates become *features* of the online ETA model. Chapter 66 covers model servers; Chapter 60 places these modes in the offline, nearline and online architecture.
 
 ### 59.11.2 Progressive rollout of a model
 
@@ -798,16 +798,16 @@ A new model is a new release and uses the machinery of §43.6 (canary releases) 
 
 ```mermaid
 flowchart LR
-  OFF[Offline eval<br/>passes gates] --> SH[Shadow<br/>v8 scores, v7 serves]
+  OFF[Offline eval<br/>passes gates] --> SH["Shadow<br/>v8 scores, v7 serves"]
   SH --> CAN[Canary<br/>1 to 5 percent on v8]
-  CAN --> AB[A/B test<br/>50/50 for 2 weeks]
+  CAN --> AB["A/B test<br/>50/50 for 2 weeks"]
   AB --> FULL([v8 serves 100 percent])
   SH -.->|skew or latency| RB[Roll back<br/>to v7]
   CAN -.->|errors or guardrails| RB
   AB -.->|online metric worse| RB
 ```
 
-**Reading the diagram.** In **shadow** mode the new model (v8) receives a copy of live requests and its predictions are logged but never shown; the current model (v7) still serves. This checks latency, errors and skew on real traffic at zero user risk, and for ETA it even measures accuracy, because the delivery time is largely independent of which promise was displayed. A **canary** then serves a small share of traffic for real, guarding against operational failures (§43.6). The **A/B test** splits traffic evenly for long enough to measure the online metric and guardrails with statistical power (Chapter 57). Each stage can roll back asynchronously to v7, which stays deployed and warm. Failure points: shadow traffic doubling feature-store load, and an A/B test stopped early on a noisy result. Scaling: shadow and canary traffic shares are flags, not deployments.
+**Reading the diagram.** In **shadow** mode the new model (v8) receives a copy of live requests and its predictions are logged but never shown; the current model (v7) still serves. This checks latency, errors and skew at zero user risk, and for ETA even accuracy, because delivery time barely depends on the promise displayed. A **canary** then serves a small share of traffic for real, guarding against operational failures (§43.6). The **A/B test** splits traffic evenly for long enough to measure the online metric and guardrails with statistical power (Chapter 57). Each stage can roll back asynchronously to v7, which stays deployed and warm. Failure points: shadow traffic doubling feature-store load, and an A/B test stopped early on a noisy result. Scaling: shadow and canary traffic shares are flags, not deployments.
 
 ::: warning
 **Warning — Shadow mode cannot measure everything.** Shadow mode measures prediction quality only when the outcome does not depend on the prediction. For a recommendation or ranking model, what the user clicks depends on what was shown, so the shadow model's "accuracy" on logged clicks is biased toward the production model. Those models need an A/B test (Chapter 68).
@@ -835,7 +835,7 @@ flowchart LR
   KPI --> AL
 ```
 
-**Reading the diagram.** From top to bottom the signals arrive later but say more about what matters. Operational metrics (latency, error rate) are available within seconds, as for any service (§40.5). **Data drift** (feature distributions) and **prediction drift** (the distribution of the model's outputs) can be computed from live requests within minutes, without labels, but they are only *proxies*: inputs can shift without harming accuracy. **Performance** needs labels and so arrives only after the label delay. Business metrics arrive last, over days. All feed one alert policy that pages on operational failures and sends drift findings to review. Failure point: monitoring only the fast signals and missing slow accuracy decay; or only the slow ones and learning about a broken feature from customers. Chapter 70 covers the statistical tests and dashboards.
+**Reading the diagram.** Signals lower in the diagram arrive later but say more about what matters. Operational metrics arrive within seconds (§40.5). **Data drift** (feature distributions) and **prediction drift** (the distribution of the model's outputs) can be computed from live requests within minutes, without labels, but they are only *proxies*: inputs can shift without harming accuracy. **Performance** needs labels and so arrives only after the label delay. Business metrics arrive last, over days. All feed one alert policy that pages on operational failures and sends drift findings to review. Failure point: watching only fast signals (missing slow decay) or only slow ones (learning of a broken feature from customers). Chapter 70 covers the tests and dashboards.
 
 ### 59.12.2 Label delay limits how fast you can detect decay
 
@@ -878,10 +878,7 @@ $$n = \left(\frac{(z_{1-\alpha/2} + z_{1-\beta})\,\sigma}{\delta}\right)^{2} \qq
 **Definition — Continuous training (CT).** Automatically retraining and validating a production model with fresh data, either on a schedule or when a trigger fires, through the same pipeline that produced the current model [Google Cloud 2020].
 :::
 
-A model's quality decays from the day it is trained, because the world it learned keeps moving. Retraining policies come in two kinds:
-
-- **Scheduled**: retrain every day, week or month. Simple, predictable in cost, easy to staff. It wastes compute when nothing changed and reacts slowly to sudden shifts.
-- **Triggered**: retrain when monitoring detects drift or performance decay, when enough new labeled data accumulates, or when the schema changes. It responds faster, but every trigger is an automated path to production that must be trusted.
+A model's quality decays from the day it is trained. **Scheduled** retraining (daily, weekly, monthly) is simple and predictable in cost but wastes compute when nothing changed and reacts slowly to sudden shifts. **Triggered** retraining (on drift, decay, new labeled data or a schema change) responds faster, but every trigger is an automated path to production that must be trusted.
 
 Google's MLOps guidance lists on-demand, scheduled, new-data, performance-degradation and data-distribution triggers [Google Cloud 2020]. In practice teams combine a schedule (the default) with triggers (the exception), and every retrained candidate passes the same validation and evaluation gates as the first model.
 
@@ -932,7 +929,7 @@ flowchart LR
   CUST -.->|orders only<br/>where ETA is short| DATA
 ```
 
-**Reading the diagram.** Solid arrows are immediate effects; dotted arrows close the loop through data over days or weeks. A restaurant with a long predicted ETA ranks lower and receives fewer orders, so the training data contains fewer recent observations for it, so its estimate stays stale and noisy, possibly long, which keeps it ranked low. Separately, customers order mostly where ETAs are short, so the data over-represents fast restaurants and under-represents the conditions where the model is weakest. The danger is that the loop is self-confirming: the model's error can never be corrected by data the model prevents from existing. Mitigations: reserve a small randomized exploration share (Chapter 68), log what was shown so later analysis can correct for selection, and monitor coverage (orders per restaurant) as well as accuracy.
+**Reading the diagram.** Solid arrows are immediate effects; dotted arrows close the loop through data over days or weeks. A restaurant with a long predicted ETA ranks lower and receives fewer orders, so the training data holds fewer recent observations for it, its estimate stays stale and possibly long, and it stays ranked low. Separately, customers order mostly where ETAs are short, so the data over-represents fast restaurants. The loop is self-confirming: the model's error cannot be corrected by data the model prevents from existing. Mitigations: reserve a small randomized exploration share (Chapter 68), log what was shown so later analysis can correct for selection, and monitor coverage (orders per restaurant) as well as accuracy.
 
 ::: warning
 **Warning — Some feedback loops destroy labels.** A fraud model that blocks a transaction never learns whether it was fraud: the blocked case has no label. Retrained only on unblocked transactions, the model sees fewer and fewer examples of the patterns it blocks and can forget them. The standard remedy is a small, randomly selected holdout that is allowed through (or reviewed by humans) to keep unbiased labels flowing (Chapter 82).
@@ -964,26 +961,26 @@ A model is a function of five things. Version all five, or you cannot answer "wh
 
 ```mermaid
 flowchart LR
-  RAW[(Raw orders<br/>snapshot 2026-03-01)] --> VAL[Validation run]
+  RAW[("Raw orders<br/>snapshot 2026-03-01")] --> VAL[Validation run]
   VAL --> FEAT[(Feature table<br/>defs v12)]
-  CODE[Git commit<br/>a1b2c3] --> TRAIN[Training run 4471]
-  CFG[Config<br/>q=0.75, seed 59] --> TRAIN
-  IMG[Image digest<br/>sha256 e3f...] --> TRAIN
+  CODE["Git commit<br/>a1b2c3"] --> TRAIN[Training run 4471]
+  CFG["Config<br/>q=0.75, seed 59"] --> TRAIN
+  IMG["Image digest<br/>sha256 e3f..."] --> TRAIN
   FEAT --> TRAIN
   TRAIN --> MODEL[(Model v8<br/>registry)]
   MODEL --> EVAL[Evaluation report<br/>and model card]
   EVAL --> DEP[Deployment<br/>canary 5 percent]
 ```
 
-**Reading the diagram.** Each arrow is a recorded "was used by" relationship, stored in an ML metadata store (Chapter 69). Read it backwards to debug: if model v8 misbehaves, you can find the exact raw snapshot, feature definitions, code commit, configuration and container image that produced it, and the evaluation report that justified deploying it. Read it forwards for impact analysis: if the 1 March snapshot turns out to be corrupt, every model and deployment downstream of it is found in one query. The storage boundaries are the snapshot, feature table and registry, all immutable. The failure point is any artifact produced outside the pipeline (a notebook model uploaded by hand) that breaks the chain.
+**Reading the diagram.** Each arrow is a recorded "was used by" relationship, stored in an ML metadata store (Chapter 69). Read it backwards to debug: if model v8 misbehaves, you can find the exact snapshot, feature definitions, commit, configuration and image that produced it. Read it forwards for impact analysis: if the 1 March snapshot is corrupt, every downstream model and deployment is found in one query. The storage boundaries are the snapshot, feature table and registry, all immutable. The failure point is any artifact produced outside the pipeline (a notebook model uploaded by hand) that breaks the chain.
 
 ### 59.14.2 What "reproducible" means in practice
 
 There are three useful levels:
 
-1. **Re-runnable**: you can re-run the pipeline from recorded inputs. Necessary for debugging and audit.
-2. **Statistically reproducible**: a re-run produces a model whose metrics match within run-to-run noise. This is the realistic target for most training, especially on GPUs.
-3. **Bitwise reproducible**: a re-run produces identical bytes. Achievable for small CPU models with fixed seeds and a fixed environment; expensive or impossible for large distributed GPU training.
+1. **Re-runnable**: the pipeline can be re-run from recorded inputs; needed for debugging and audit.
+2. **Statistically reproducible**: a re-run matches metrics within run-to-run noise; the realistic target for most training, especially on GPUs.
+3. **Bitwise reproducible**: a re-run produces identical bytes; achievable for small CPU models, expensive or impossible for large distributed GPU training.
 
 ### 59.14.3 Seeds and nondeterminism
 
@@ -1123,7 +1120,7 @@ median  valid {'MAE': 7.4, 'p90': 15.7}  test {'MAE': 7.88, 'p90': 16.97}
 What to notice:
 
 - **Baselines frame everything.** The GBDT's 3.22-minute test MAE means little alone; against the rule's 4.27 it is a 25% improvement, the number that justifies the model.
-- **Validation MAE (2.47) is better than test MAE (3.22)** because the test week is further from the training data (drift) and contains the bridge closure. The gap is information, not a bug.
+- **Validation MAE (2.47) beats test MAE (3.22)** because the test week is further from the training data and contains the bridge closure: information, not a bug.
 - **The random split is optimistic** (2.37 versus 3.22): it trains on rows from the test period, so the future leaks into training.
 - **Slices find the failure.** The east city's MAE of 7.31 is hidden inside the 3.22 average.
 - **Fingerprints identify inputs.** Re-running prints identical output. But run it with two threads instead of one and `model_bytes` changes (to `3fd104a85859` in our runs) while `model_behavior` and every metric stay the same: the serialized binning object records the thread count it was built with. A content hash of model bytes is a fragile identity; record a *behavioral* fingerprint (a hash of predictions on a fixed probe set) alongside it, and treat thread count as part of the environment.
@@ -1144,7 +1141,7 @@ flowchart TB
   subgraph L1["Level 1: ML pipeline automation"]
     P1[Automated training pipeline] --> R1[(Model registry)]
     R1 --> D1[Deploy model]
-    T1{{Triggers: schedule,<br/>new data, decay}} --> P1
+    T1{{"Triggers: schedule,<br/>new data, decay"}} --> P1
   end
   subgraph L2["Level 2: CI/CD pipeline automation"]
     C2[Pipeline code change] --> CI2[CI: build and test<br/>pipeline components]
@@ -1217,10 +1214,10 @@ sequenceDiagram
   MLE--)DS: monitoring alerts and slices
 ```
 
-**Reading the diagram.** Each arrow is a handoff of an artifact, not of a conversation: a framing card, a data contract, validated tables, a configuration and evaluation report, a pipeline definition. Solid arrows are requests; dashed returns are deliveries; the final asynchronous arrow is the loop back from production to the data scientist when monitoring finds a weak slice. Failure points are the handoffs themselves: at Google level 0, the data scientist's notebook is reimplemented by an engineer, and the reimplementation becomes a source of training–serving skew. The scaling answer is to make handoffs exchange *pipeline code and versioned artifacts* rather than files and documents, so the thing the data scientist evaluated is the thing that runs.
+**Reading the diagram.** Each arrow is a handoff of an artifact: a framing card, a data contract, validated tables, an evaluation report, a pipeline definition. Solid arrows are requests, dashed returns are deliveries, and the final asynchronous arrow is the loop back when monitoring finds a weak slice. Failure points are the handoffs themselves: at Google level 0, the data scientist's notebook is reimplemented by an engineer, and the reimplementation becomes a source of training–serving skew. The scaling answer is to make handoffs exchange *pipeline code and versioned artifacts* rather than files and documents, so the thing the data scientist evaluated is the thing that runs.
 
 ::: industry
-**Software engineering for ML at Microsoft.** Amershi et al. surveyed and interviewed Microsoft teams building AI features and found that data discovery, management and versioning were harder than for ordinary software, that model building required skills most software engineers did not have, and that ML components were harder to isolate as modules because models become entangled with each other and with their data. Their recommended responses include integrated, end-to-end tooling and shared processes across roles.
+**Software engineering for ML at Microsoft.** Amershi et al. surveyed and interviewed Microsoft teams building AI features and found that data discovery, management and versioning were harder than for ordinary software, that model building required skills most software engineers lacked, and that ML components were hard to isolate as modules because models become entangled. They recommend integrated end-to-end tooling and shared processes across roles.
 *Evidence: Primary* — [Amershi et al. 2019]
 :::
 
@@ -1280,7 +1277,7 @@ sequenceDiagram
 
 ### Intermediate
 
-**Q3. Your ETA model looked great offline and disappoints online. How do you investigate?** **Answer.** Suspect training–serving skew first: compare logged serving features with offline values for the same requests; check feature freshness and null handling. Check the evaluation: was the split random, leaking the future? Compare slices online and offline, and check that the online metric matches the offline target (mean versus the promised quantile). Finally check for feedback effects, such as ETAs changing which restaurants get orders.
+**Q3. Your ETA model looked great offline and disappoints online. How do you investigate?** **Answer.** Suspect training–serving skew first: compare logged serving features with offline values for the same requests, including freshness and null handling. Check whether a random split leaked the future, compare slices online and offline, confirm the online metric matches the offline target (mean versus quantile), and look for feedback effects.
 
 **Q4. How do you choose a retraining cadence?** **Answer.** Backtest old models on newer data to estimate decay rate $r$; with tolerance $\Delta$ and pipeline delay $D$, retrain at least every $\Delta/r - D$ days; balance retraining cost against decay cost with $T^{*} = \sqrt{2C/(kr)}$. Add triggers on drift, schema change and slice-level decay for step changes that a schedule misses.
 
