@@ -1,66 +1,60 @@
 # Chapter 63 — Data Labeling, Quality and Data-Centric AI
 
-> **Level:** 3 · **Track:** B (ML/AI) · **Estimated reading time:** 4.5 h
+> **Level:** 3 · **Track:** B (ML/AI) · **Estimated reading time:** 4 h
 
-A cook with a mediocre oven and excellent ingredients usually beats a cook with a superb oven and spoiled ingredients. Machine learning works the same way. The model is the oven; the labeled examples are the ingredients. Most of what you learned in Chapters 57–60 assumed that someone had already handed you a clean table of features and **labels** (the correct answers, §57.6.2). This chapter is about where those labels come from, how wrong they are, how to measure and repair them, and how to build the pipelines and operations that produce them at a predictable cost.
+A cook with a mediocre oven and excellent ingredients usually beats a cook with a superb oven and spoiled ingredients. In machine learning the model is the oven and the labeled examples are the ingredients. Chapters 57–60 assumed someone had already handed you a table of features and **labels** (§57.6.2). This chapter is about where labels come from, how wrong they are, how to measure and repair them, and how to run the pipelines and operations that produce them at a predictable cost.
 
-The running example is **QuickBite**, the hypothetical food-delivery platform of Chapter 2 and Chapters 57–60. Its shared assumptions are unchanged: 500,000 orders per day, about 60 orders/s at peak, a 0.5% fraud rate on orders and a 35-minute median delivery time. This chapter adds one assumption of its own: **4% of orders produce a written review**, so QuickBite receives about 20,000 reviews per day that a moderation model must screen. Every QuickBite number is a teaching assumption, not a measurement of any real company.
+The running example is **QuickBite**, the hypothetical food-delivery platform of Chapters 2 and 57–60, with its shared assumptions unchanged: 500,000 orders per day, a 0.5% fraud rate and a 35-minute median delivery time. This chapter adds one assumption: **4% of orders produce a written review**, about 20,000 reviews per day for a moderation model to screen. All QuickBite numbers are teaching assumptions, not measurements of any real company.
 
 ## 63.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Explain the data-centric view of ML and decide, from error analysis, whether to invest in labels or in the model.
-- Classify a label source as natural, delayed, human or programmatic, and compute a label-maturity window from a delay distribution.
-- Design a human labeling pipeline (task, guidelines, queue, gold questions, adjudication) and estimate its throughput, headcount and cost.
-- Compute percent agreement, Cohen's κ, Fleiss' κ and Krippendorff's α, and explain when each is appropriate.
-- Aggregate noisy labels with majority vote and with the Dawid–Skene EM algorithm, and say why the second usually wins.
-- Build a weak-supervision pipeline from labeling functions and evaluate them by coverage, overlap, conflict and accuracy.
-- Run an active-learning loop and estimate the labeling cost it saves.
-- Detect likely label errors with confident learning and loss-based filtering.
-- Downsample a rare class and correct the model's probabilities afterwards.
-- Decide when synthetic data helps and recognize distribution mismatch and model collapse.
-- Document a dataset with a datasheet or data card, and operate labeling at scale with attention to cost, privacy, annotator well-being and LLM-assisted labeling.
+- Explain the data-centric view of ML and use error analysis to choose between label work and model work.
+- Classify label sources and compute a label-maturity window from a delay distribution.
+- Design a human labeling pipeline and estimate its throughput, headcount and cost.
+- Compute Cohen's κ, Fleiss' κ and Krippendorff's α, and choose among them.
+- Aggregate noisy labels with majority vote and Dawid–Skene EM.
+- Build and evaluate labeling functions for weak supervision.
+- Run active learning and estimate the labeling cost it saves.
+- Detect label errors with confident learning and loss-based filtering.
+- Downsample a rare class and correct the model's probabilities.
+- Judge when synthetic data helps, document datasets, and operate labeling at scale, including LLM-assisted labeling.
 
 ## 63.2 Prerequisites
 
-- Features, labels, label sources and leakage — §57.6 (this chapter goes deeper on labels; leakage is owned there).
-- Classification metrics, calibration and log loss — §57.10 (used to evaluate label quality and to recalibrate after sampling).
-- The ML lifecycle, data validation, label delay and feedback loops — §59.5, §59.7, §59.12.2, §59.13.2 (labeling is one stage of that loop).
-- Data-centric versus model-centric architecture — §60.4 (the architectural argument this chapter turns into practice).
-- Probability, conditional probability and Bayes' rule — §4.6 (Dawid–Skene and the calibration correction are applications of Bayes' rule).
-- Message queues and work distribution — Chapter 30 (a labeling queue is a work queue with humans as consumers).
-- Privacy engineering — Chapter 50 (annotation exposes raw data to people outside the core team).
+- Features, labels, label delay and leakage — §57.6 (leakage is owned there).
+- Classification metrics and calibration — §57.10 (used to judge labels and recalibrate).
+- Label delay, data validation and feedback loops — §59.7, §59.12.2, §59.13.2.
+- Data-centric versus model-centric architecture — §60.4.
+- Conditional probability and Bayes' rule — §4.6 (Dawid–Skene and recalibration apply it).
+- Work queues — Chapter 30; privacy engineering — Chapter 50.
 
-Data quality checks at pipeline scale (schema validation, freshness, completeness, distribution tests) belong to Chapter 61. Fairness of labels and datasets is treated in Chapter 71. Human preference data for aligning large language models (RLHF and its successors) is a specialized labeling problem owned by Chapter 76; this chapter only previews it in §63.14.
+Pipeline-scale data quality checks belong to Chapter 61, fairness to Chapter 71, and preference data for aligning LLMs to Chapter 76 (previewed in §63.14).
 
 ## 63.3 Data-centric AI
 
 ### 63.3.1 Why data quality often beats model changes
 
 ::: definition
-**Definition — Data-centric AI.** An approach to building ML systems in which the model architecture is held roughly fixed and the main lever for improvement is the systematic engineering of the data: label definitions and consistency, coverage of rare cases, removal of errors, and the documentation and versioning of datasets. The contrast is **model-centric** development, in which the dataset is held fixed and the model is iterated (§60.4.1).
+**Definition — Data-centric AI.** An approach in which the model is held roughly fixed and the main lever for improvement is the systematic engineering of the data: label definitions and consistency, coverage of rare cases, removal of errors, and the documentation and versioning of datasets. **Model-centric** development holds the data fixed and iterates on the model (§60.4.1).
 :::
 
 #### First-principles explanation
 
-Think of a model as a student and the labeled dataset as the answer key it studies from. If 10% of the answers in the key are wrong, a brilliant student learns the wrong answers faithfully; a cleverer student learns them *more* faithfully. Large neural networks can fit completely random labels on their training set [Zhang et al. 2017], so a model's capacity is no protection against a bad answer key. Fixing the key helps every student at once.
+A model is a student and the labeled dataset is its answer key. If 10% of the key is wrong, a brilliant student learns the wrong answers faithfully. Large neural networks can fit completely random labels [Zhang et al. 2017], so capacity is no protection against a bad key. Fixing the key helps every student at once.
 
 #### Why does this exist?
 
-For a decade, ML research progressed by holding benchmark datasets fixed (ImageNet, GLUE) and competing on models. That is a sensible scientific protocol, but production teams do not have a fixed dataset; they have whatever their logging, labeling and pipelines produce. Andrew Ng popularized the term *data-centric AI* in a 2021 talk and the associated NeurIPS workshop and competition, arguing that for many applied problems, especially those with small datasets, systematically improving label consistency yields larger gains than changing the model [Ng 2021]. In the talk he showed industrial visual-inspection projects in which model-centric work on a fixed dataset added almost nothing while data-centric work on the same baseline added several points of accuracy, and in one case many more (the exact figures are listed in §63.21). The idea is older than the name: practitioners have long known that "garbage in, garbage out", and the hidden-technical-debt literature (§60.14) located most of an ML system's cost in data dependencies [Sculley et al. 2015].
-
-Sambasivan et al. interviewed 53 practitioners building high-stakes AI systems and named the failure mode **data cascades**: compounding, delayed problems that start with undervalued data work (poorly specified labels, unmeasured annotator quality, missing documentation) and surface much later as model failures. They reported that such cascades were close to universal in their sample [Sambasivan et al. 2021].
+ML research long progressed by holding benchmarks fixed and competing on models. Production teams have no fixed dataset; they have whatever their logging and labeling produce. Andrew Ng popularized the term *data-centric AI* in a 2021 talk and an associated NeurIPS workshop and competition, arguing that for many applied problems, particularly with small datasets, systematically improving label consistency yields larger gains than changing the model [Ng 2021]. Sambasivan et al. interviewed 53 practitioners in high-stakes domains and named the failure mode **data cascades**: compounding, delayed problems that start with undervalued data work and surface later as model failures; they found such cascades in almost every project they studied [Sambasivan et al. 2021].
 
 #### How it works internally
 
-A data-centric iteration replaces "try another model" with five steps:
-
-1. **Train a reasonable baseline** with an off-the-shelf model (gradient-boosted trees for tabular data, a pretrained network for text or images).
-2. **Do error analysis**: read the worst-scoring examples, grouped by slice (city, restaurant category, review language).
-3. **Diagnose the cause** of each cluster of errors: wrong label, ambiguous label definition, missing coverage, missing feature.
-4. **Fix the data**: relabel, rewrite the guideline, add examples of the rare case, add the feature (Chapter 62).
-5. **Version the dataset** and retrain with the *same* model so that the change in the metric is attributable to the data.
+1. Train a reasonable baseline with an off-the-shelf model.
+2. Do error analysis on the worst examples, grouped by slice.
+3. Diagnose each error cluster: wrong label, ambiguous definition, missing coverage, missing feature.
+4. Fix the data: relabel, rewrite the guideline, add rare cases, add the feature.
+5. Version the dataset and retrain the *same* model, so the metric change is attributable to the data.
 
 **Figure 63.1 — Model-centric and data-centric iteration loops.**
 
@@ -80,46 +74,31 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** The left subgraph is the classic research loop: one dataset (cylinder, a storage boundary that never changes), with iteration only between training and evaluation. The right subgraph moves the loop through the data: evaluation is by slice, error analysis routes failures to fixes in labels and coverage, and each fix produces a new dataset version that the *same* model is retrained on. All arrows are batch, offline steps; nothing here is on the serving path. The failure point of the left loop is a ceiling set by label noise; the failure point of the right loop is unversioned datasets, which make results irreproducible (§59.14). The right loop scales with labeling capacity, which is why the rest of this chapter is about labeling pipelines.
+**Reading the diagram.** On the left the dataset (cylinder) never changes and iteration runs only between training and evaluation; its ceiling is set by label noise. On the right the loop runs through the data: error analysis routes failures to label and coverage fixes, each producing a new dataset version for the same model. All steps are offline batch jobs. The right loop's failure point is unversioned data (§59.14); it scales with labeling capacity.
 
 ### 63.3.2 QuickBite's three labeled datasets
-
-QuickBite's ML problems show the three typical label situations. Each will reappear throughout the chapter.
 
 **Table 63.1 — Where QuickBite's labels come from.**
 
 | Problem | Label | Source | Delay | Main quality problems |
 |---|---|---|---|---|
-| Fraud detection | 1 if a fraud chargeback arrives | Card network chargeback feed | 15–90 days | Late arrival; non-fraud chargebacks ("friendly fraud", disputes about food); blocked orders never get a label |
-| ETA prediction | Minutes from order to delivery | Delivery events from the courier app | ~35 min | Courier taps "delivered" late; canceled orders have no label; batched deliveries |
-| Review moderation | Keep or remove (spam, abuse, personal data) | Human annotators | Hours to days | Ambiguous guidelines; annotator disagreement; rare positive class |
+| Fraud detection | 1 if a fraud chargeback arrives | Card network feed | 15–90 days | Late arrival; non-fraud chargebacks; blocked orders never labeled |
+| ETA prediction | Minutes from order to delivery | Courier app events | ~35 min | Late "delivered" taps; canceled orders unlabeled |
+| Review moderation | Keep or remove | Human annotators | Hours to days | Ambiguous guidelines; disagreement; rare positives |
 
-**Fraud labels from chargebacks.** A chargeback is the card network reversing a payment after the cardholder disputes it. It is a *natural* label (nobody is paid to produce it) but a dirty one. Chargeback **reason codes** distinguish "card not present fraud" from "goods not received" or "not as described"; only the first should become a fraud label, so the label pipeline must filter by reason code. A customer who disputes an order they really placed ("friendly fraud") produces a fraud-coded chargeback on a legitimate order, which is label noise. And orders that the current model *blocked* never produce a chargeback at all, so the training data contains labels only for orders the old model let through, a selection bias that feeds back into the next model (§59.13.2).
+**Fraud labels from chargebacks.** A chargeback is a payment reversal after a cardholder dispute: a free, natural label, but a dirty one. Only fraud **reason codes** should become fraud labels ("goods not received" is not fraud). "Friendly fraud", a customer disputing an order they really placed, puts fraud labels on legitimate orders. Orders the current model *blocked* never get a chargeback, so training data covers only orders the old model let through, a selection bias that feeds the next model (§59.13.2).
 
-**ETA labels from delivery events.** The label is computed by joining the `order_placed` and `order_delivered` events. Chapter 60 showed that replacing the courier's "delivered" tap with GPS arrival time cut ETA error more than a model change did (Table 60.4). Canceled orders are **censored**: their true delivery time is unknown, and silently dropping them biases the training set toward easy orders.
+**ETA labels from delivery events.** The label joins `order_placed` and `order_delivered` events. Replacing the courier's late "delivered" tap with GPS arrival time cut ETA error more than a model change did (Table 60.4). Canceled orders are **censored**; dropping them silently biases training toward easy orders.
 
-**Moderation labels for reviews.** No natural signal says whether a review is abusive, so QuickBite must pay people to decide. Here every label has a cost, a latency and a measurable disagreement rate, and the problem looks like the classic annotation problem studied since the 1960s.
-
-#### Real-world industry applications
+**Moderation labels for reviews.** No natural signal says whether a review is abusive, so QuickBite pays people to decide. Every label has a cost, a latency and a measurable disagreement rate.
 
 ::: industry
-**Data-centric AI in visual inspection.** In his 2021 talk, Ng described manufacturing inspection projects (for example, steel-sheet defects) where a team fixed the model and improved label consistency, for instance by rewriting the definition of a defect so that annotators drew boxes the same way, and obtained larger accuracy gains than another team that held the data fixed and searched over models. The broader lesson he drew was that small, consistent datasets often beat large, noisy ones.
+**Data-centric AI in visual inspection.** In his 2021 talk Ng described manufacturing-inspection projects, such as steel-sheet defect detection, in which improving label consistency on a fixed model (for example, agreeing on how to box a defect) produced larger accuracy gains than model search on fixed data.
 *Evidence: Primary* — [Ng 2021]
 :::
 
-::: industry
-**Data cascades.** Sambasivan et al.'s interview study of AI practitioners working in high-stakes domains (health, conservation, finance and others) described cascades triggered by data collection practices, by brittle real-world conditions and by poorly documented data, and found that they were rarely caught by standard model metrics.
-*Evidence: Primary* — [Sambasivan et al. 2021]
-:::
-
-#### Common misconceptions
-
 ::: mistake
-**Mistake — "More data always beats better data."** More data helps when the extra examples carry the same signal-to-noise ratio. Adding 1 million weakly labeled rows with 30% noise to 50,000 clean rows can lower accuracy on the cases that matter, because the noisy majority dominates the loss. Measure label quality before scaling label quantity.
-:::
-
-::: mistake
-**Mistake — "Data-centric means no model work."** It means attributing gains correctly. Hold the model fixed while you change data, hold the data fixed while you change the model, and version both. Error analysis decides which lever to pull next (§60.4.2).
+**Mistake — "More data always beats better data."** Extra data helps only at a similar signal-to-noise ratio. Adding a million rows with 30% label noise to 50,000 clean rows can lower accuracy on the cases that matter. Measure label quality before scaling quantity, and hold the model fixed while you change data so gains are attributable (§60.4.2).
 :::
 
 ## 63.4 Sources of labels
@@ -127,33 +106,27 @@ QuickBite's ML problems show the three typical label situations. Each will reapp
 ### 63.4.1 Four kinds of label
 
 ::: definition
-**Definition — Label sources.** A **natural label** is produced by the world as a side effect of the product: a delivery completes, a user clicks, a payment is reversed. A **delayed label** is any label (usually natural) that becomes known a significant time after the prediction. An **explicit human label** is produced by a person who is asked to judge an example against a written guideline. A **programmatic label** is produced by code: a heuristic, a rule, a lookup in a knowledge base, or another model.
+**Definition — Label sources.** A **natural label** is produced by the product as a side effect (a delivery completes, a payment is reversed). A **delayed label** becomes known long after the prediction. An **explicit human label** is a person's judgment against a written guideline. A **programmatic label** is produced by code: a rule, a lookup or another model.
 :::
-
-#### First-principles explanation
-
-Picture four ways a teacher could get the answers to a test. The world grades some questions itself (did the parcel arrive on time?). Some answers arrive by post weeks later (did the bank reverse the payment?). Some must be graded by hand by a hired marker. Some can be graded roughly by a rule of thumb ("any answer containing a phone number is spam"). Real systems mix all four, and each has a different cost, delay and error profile.
 
 **Table 63.2 — Comparison of label sources.**
 
 | Row | Natural | Delayed natural | Explicit human | Programmatic |
 |---|---|---|---|---|
-| What it is | Outcome logged by the product | Outcome that arrives later | Judgment by an annotator | Output of rules or models |
-| QuickBite example | ETA from delivery events | Fraud from chargebacks | Review moderation | "Contains a phone number → spam" |
-| Cost per label | ≈ 0 | ≈ 0 | \$0.05–\$5+ (task-dependent) | ≈ 0 after writing the rule |
+| QuickBite example | ETA from delivery events | Fraud from chargebacks | Review moderation | "Phone number → spam" |
+| Cost per label | ≈ 0 | ≈ 0 | Cents to dollars | ≈ 0 after writing |
 | Latency | Minutes | Weeks to months | Hours to days | Seconds |
-| Typical noise | Instrumentation errors, censoring | Immaturity, reason-code noise | Disagreement, fatigue | Systematic bias, low coverage |
-| Volume | All traffic | All traffic | Budget-limited | All matching traffic |
-| Choose when | Outcome is observable | Outcome is observable but slow | No outcome exists; judgment needed | Domain knowledge is cheap to encode |
+| Typical noise | Instrumentation, censoring | Immaturity, reason codes | Disagreement, fatigue | Systematic bias, low coverage |
+| Choose when | Outcome is observable | Outcome is slow | No outcome exists | Knowledge is cheap to encode |
 
-The human-label cost range is deliberately wide: a two-second binary judgment on a crowd platform and an hour of a radiologist's time are both "explicit human labels". Use your own pilot measurement, never a book's range, for budgeting (§63.5.3).
+Human-label cost varies by orders of magnitude, from a two-second crowd judgment to an hour of a radiologist's time; budget from your own pilot (§63.5.2).
 
 **Figure 63.2 — Label sources flowing into a label store.**
 
 ```mermaid
 flowchart LR
   APP([Courier and customer apps]) -->|delivery events| K[[Event log]]
-  CN{{Card network}} -.->|chargeback feed, days later| K
+  CN{{Card network}} -.->|chargebacks, days later| K
   K --> LJ[Label join service]
   PL[(Prediction log)] --> LJ
   HQ[Annotation queue] -->|human labels| LS[(Label store)]
@@ -162,11 +135,11 @@ flowchart LR
   LS --> TR[Training set builder]
 ```
 
-**Reading the diagram.** Natural labels arrive as events from QuickBite's apps into an event log (Kafka, Chapter 31). The external card network (hexagon) sends chargebacks asynchronously (dotted arrow), days or weeks after the order. A label join service matches each outcome to the prediction that was logged at serving time (§59.5.3), so that the label lands next to the exact features the model saw. Human labels from the annotation queue (§63.5) and programmatic labels from labeling functions (§63.8) are written to the same label store, a versioned table keyed by example ID, label source and label version. The training set builder reads the store with point-in-time rules (Chapter 62). Failure points: the join (missing or duplicated prediction IDs), the external feed (late or reformatted files) and the store's retention (features must be kept until labels mature). The store scales with examples × label sources × versions; keeping the source on every row is what lets you later weight or drop a bad source.
+**Reading the diagram.** App events and asynchronous chargebacks from the external card network (dotted) enter an event log (Chapter 31). A join service matches each outcome to the logged prediction and its serving-time features (§59.5.3). Human and programmatic labels land in the same versioned label store, each row tagged with its source. Failure points: the join (missing prediction IDs), the external feed and feature retention. Tagging the source lets you later reweight or drop a bad one.
 
 ### 63.4.2 Label delay and its effect
 
-A delayed label creates a window during which a positive example looks negative. Chapter 57 introduced the effect with an assumed QuickBite chargeback-delay distribution: 40% of eventual fraud chargebacks arrive within 15 days, 75% within 30, 95% within 60 and 100% within 90 (§57.6.2). Here we turn it into a design rule for building training sets.
+Chapter 57 assumed this QuickBite chargeback delay: 40% of eventual fraud chargebacks arrive within 15 days, 75% within 30, 95% within 60 and 100% within 90 (§57.6.2). Here it becomes a rule for building training sets.
 
 ::: formula
 **Label completeness and the maturity window**
@@ -175,25 +148,25 @@ $$\pi_{\text{obs}}(a) = \pi \cdot F(a) \qquad C(a_1, a_2) = \frac{1}{a_2 - a_1}\
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $a$ | Age of an example: time since the prediction | days |
-| $F(a)$ | Fraction of eventual positive labels that have arrived by age $a$ (delay CDF) | dimensionless |
-| $\pi$ | True positive rate in the population (fraud prevalence) | fraction |
-| $\pi_{\text{obs}}(a)$ | Observed positive rate among examples of age $a$ | fraction |
-| $C(a_1, a_2)$ | Average label completeness of a training window covering ages $a_1$ to $a_2$, uniform traffic assumed | fraction |
+| $a$ | Age of an example since its prediction | days |
+| $F(a)$ | Fraction of eventual positives that have arrived by age $a$ | fraction |
+| $\pi$ | True positive (fraud) rate | fraction |
+| $\pi_{\text{obs}}(a)$ | Observed positive rate at age $a$ | fraction |
+| $C(a_1, a_2)$ | Mean label completeness of a window of ages $a_1$–$a_2$ (uniform traffic) | fraction |
 | $\varepsilon$ | Tolerated fraction of missing positives | fraction |
-| $W_\varepsilon$ | Label-maturity window: minimum age before an example is used | days |
+| $W_\varepsilon$ | Label-maturity window | days |
 :::
 
 ::: example
-**Worked example — How old must QuickBite's fraud training data be?** Use the delay distribution above, interpolated linearly between the points (and $F(0) = 0$). Fraud prevalence $\pi = 0.5\%$, so QuickBite sees $500{,}000 \times 0.005 = 2{,}500$ fraudulent orders per day.
+**Worked example — How old must fraud training data be?** Interpolate $F$ linearly with $F(0) = 0$. At $\pi = 0.5\%$, QuickBite sees $500{,}000 \times 0.005 = 2{,}500$ frauds per day.
 
-1. **Naive window, ages 0–30 days.** Area under $F$: from 0 to 15 days, a triangle, $15 \times 0.40 / 2 = 3.0$; from 15 to 30 days, a trapezoid, $15 \times (0.40 + 0.75)/2 = 8.625$. $C(0, 30) = (3.0 + 8.625)/30 = 0.3875$. The observed fraud rate is $0.5\% \times 0.3875 = 0.194\%$: **61% of the fraud in the window is labeled "legitimate"**.
-2. **Maturity window.** With $\varepsilon = 0.05$, $W_{0.05} = 60$ days ($F(60) = 0.95$).
-3. **Matured window, ages 60–240 days** (180 days of data). From 60 to 90 days $F$ rises from 0.95 to 1.00, average 0.975; from 90 to 240 days $F = 1$. $C = (30 \times 0.975 + 150 \times 1.0)/180 = 179.25/180 = 0.9958$.
-4. Positives in the matured window: $2{,}500 \times 180 \times 0.9958 = 448{,}125$. Missing positives: $2{,}500 \times 180 - 448{,}125 = 1{,}875$, mislabeled among about $497{,}500 \times 180 = 89.55$ million negatives, a noise rate of $0.0021\%$ among negatives.
-5. **The price.** The freshest example the model learns from is 60 days old, and with a weekly retrain plus a week of rollout, a fraud pattern can run for 60 + 14 = 74 days before any model has trained on it.
+1. **Naive window, ages 0–30 days.** Area under $F$: $15 \times 0.40/2 = 3.0$ plus $15 \times (0.40 + 0.75)/2 = 8.625$. $C = 11.625/30 = 0.3875$; observed fraud rate $0.5\% \times 0.3875 = 0.194\%$. **61% of the window's fraud is labeled legitimate.**
+2. **Maturity window.** With $\varepsilon = 0.05$, $W = 60$ days.
+3. **Matured window, ages 60–240 days.** $F$ averages 0.975 over days 60–90 and is 1 after: $C = (30 \times 0.975 + 150)/180 = 0.9958$.
+4. Positives observed: $2{,}500 \times 180 \times 0.9958 = 448{,}125$; the 1,875 missing ones hide among 89.55 million negatives (0.0021% noise).
+5. **The price:** the freshest training example is 60 days old; with weekly retraining and a week of rollout, a new fraud pattern can run 74 days before any model learns it.
 
-**Interpretation.** The naive window does not just lose data; it teaches the model that recent fraud patterns are legitimate, which is exactly backwards. The matured window is nearly clean but stale. **Engineering implication.** Train on matured windows; cover the 60-day blind spot with faster, noisier signals: analyst-reviewed cases, customer dispute tickets and rules written by the fraud team, used as labels with their own source tag (§63.4.1). Alternatively, model the delay explicitly, as in delayed-feedback models that jointly estimate whether and when a positive will arrive [Chapelle 2014].
+**Interpretation.** The naive window teaches the model that recent fraud is legitimate. **Engineering implication.** Train on matured windows and cover the blind spot with faster, noisier labels tagged by source (analyst reviews, dispute tickets, fraud-team rules), or model the delay explicitly [Chapelle 2014].
 :::
 
 **Figure 63.3 — Timeline of a fraud model trained on matured labels.**
@@ -212,51 +185,43 @@ gantt
   Serve until next model :a4, 2026-07-08, 14d
 ```
 
-**Reading the diagram.** Time runs left to right. The training data (done) covers 180 days of orders that are at least 60 days old. The most recent 60 days of orders (active) exist in the prediction log but are excluded because their chargebacks are still arriving. Training and validation take about a week, and the model then serves for two weeks until the next one replaces it. Everything here is batch; the only synchronous component is the serving model. The storage boundary is the prediction log, which must retain features for at least 240 days. The failure point is the gap between the end of the training data and the end of serving: a new attack that starts during the active bar is invisible to every model trained in this schedule. Scaling the schedule (daily retrains) shortens the serving bar but not the 60-day maturation bar; only faster labels shrink that.
-
-#### Failure scenarios
+**Reading the diagram.** Training uses 180 days of orders at least 60 days old; the latest 60 days sit in the prediction log, excluded while chargebacks arrive. The model then trains for a week and serves for two. The prediction log must retain features for 240 days. An attack starting inside the active bar is invisible to every model on this schedule; daily retraining shortens the serving bar, but only faster labels shorten maturation.
 
 **Table 63.3 — Label-source failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Recent fraud labeled legitimate | Training window younger than maturity window | Positive rate by order age falls toward zero for recent cohorts | Rebuild training set with matured cutoff | Enforce $W_\varepsilon$ in the training set builder |
-| Non-fraud chargebacks become fraud labels | Reason codes ignored | Label rate jumps after a merchant dispute wave | Relabel by reason code | Explicit reason-code mapping, reviewed by the fraud team |
-| Blocked orders never labeled | Selection bias from the deployed model | Positive rate of training data drifts with model threshold | Use analyst labels for a sample of blocked orders | Keep a small, low-risk exploration sample (§59.13.2) |
-| ETA labels biased toward easy orders | Canceled orders dropped silently | Cancellation rate rises while ETA error falls | Model cancellations separately; impute censored labels | Treat censored rows explicitly in the label pipeline |
-| Label join drops rows | Prediction IDs missing in logs | Join rate below 99% | Backfill from raw logs | Monitor join rate as a data-quality check (Chapter 61) |
+| Recent fraud labeled legitimate | Window younger than $W_\varepsilon$ | Positive rate falls for recent cohorts | Rebuild with matured cutoff | Enforce $W_\varepsilon$ in the builder |
+| Non-fraud chargebacks as fraud | Reason codes ignored | Label rate jumps after a dispute wave | Relabel by reason code | Reviewed reason-code mapping |
+| Blocked orders never labeled | Selection bias | Training positive rate tracks threshold | Analyst labels on a sample | Small exploration sample (§59.13.2) |
+| Label join drops rows | Missing prediction IDs | Join rate below 99% | Backfill from raw logs | Monitor join rate (Chapter 61) |
 
 ::: mistake
-**Mistake — Evaluating on the most recent month "because it is most realistic".** For a delayed label, the most recent month is the *least* realistic: its positives have not arrived yet. A fraud model evaluated on last month's orders is graded against immature truth: most of its correct flags are not yet confirmed, so they count as false positives, and recall is measured against a fraction of the real fraud. Evaluate on the newest *matured* window.
+**Mistake — Evaluating on the most recent month "because it is most realistic".** Its positives have not arrived: correct flags count as false positives and recall is measured against a fraction of the real fraud. Evaluate on the newest *matured* window.
 :::
 
 ## 63.5 Labeling pipelines
 
-### 63.5.1 Task design and guidelines
+### 63.5.1 Task design, guidelines and architecture
 
 ::: definition
-**Definition — Labeling pipeline.** The system that turns unlabeled examples into trusted labels: it selects examples, presents them to annotators as **tasks** in a labeling tool, collects one or more **judgments** per example, checks annotator quality against **gold questions** (examples whose answer is known), resolves disagreements by **adjudication**, and writes versioned labels with provenance to a label store.
+**Definition — Labeling pipeline.** The system that turns unlabeled examples into trusted labels: it selects examples, presents them as **tasks** in a labeling tool, collects one or more **judgments** per example, checks annotators against **gold questions** (examples with known answers), resolves disagreements by **adjudication**, and writes versioned labels with provenance to a label store.
 :::
 
 #### First-principles explanation
 
-A labeling pipeline is a factory whose machines are people. Like any factory it has an intake (which examples to label), a work order (the guideline), workstations (the tool), a conveyor (the queue), quality inspection (gold questions and agreement checks) and a supervisor for disputed items (adjudication). Unlike machines, the workers interpret their instructions, get tired, learn, and disagree in patterned ways, so the factory must measure them continuously.
-
-#### Why does this exist?
-
-Ad hoc labeling, such as an engineer labeling a spreadsheet over a weekend, fails in three predictable ways: the label definition drifts as the labeler sees more examples, nobody can tell how accurate the labels are, and nobody can reproduce or extend the dataset six months later. A pipeline makes the definition explicit, the quality measurable and the output versioned.
+A labeling pipeline is a factory whose machines are people. It has an intake (which examples), a work order (the guideline), workstations (the tool), a conveyor (the queue), inspection (gold questions, agreement) and a supervisor for disputes (adjudication). Unlike machines, the workers interpret instructions, tire, learn and disagree in patterned ways, so the factory measures them continuously.
 
 #### How it works internally
 
-1. **Define the task.** Write the label schema: the classes, whether they are exclusive, and what "unsure" means. For QuickBite moderation: `keep`, `remove:spam`, `remove:abuse`, `remove:personal_data`, plus an `unsure` escape hatch. A binary question ("Should this review be removed?") is faster and more consistent than a free-form one; split a complex judgment into several simple ones.
-2. **Write the guideline.** Give a definition for each class, five to ten worked examples per class, and, most important, the **boundary cases**: "a review that names the courier is *not* personal data; a review that includes the courier's phone number *is*." Version the guideline; every label records the guideline version under which it was made.
-3. **Pilot.** Have three to five annotators label the same 200 examples, measure agreement (§63.6), read every disagreement and revise the guideline. Repeat until agreement plateaus. Most of the quality of a labeling project is set here.
-4. **Select examples.** Sample from production with stratification by slice (language, city, model score band) or by an active-learning policy (§63.9).
-5. **Queue and assign.** Put tasks on a queue; assign each example to $r$ annotators (the **redundancy**), never twice to the same person, and mix in gold questions at a fixed rate $g$.
-6. **Check quality online.** Score each annotator on gold questions and on agreement with peers; warn, retrain or remove annotators who fall below threshold.
-7. **Aggregate.** Combine the $r$ judgments into one label with a confidence (§63.7).
-8. **Adjudicate.** Send items with low aggregate confidence, or with disagreement on a high-stakes class, to an expert.
-9. **Publish.** Write the label, its confidence, the judgments, the annotator IDs (pseudonymous), the guideline version and the tool version to the label store, and cut a dataset version.
+1. **Define the task.** For QuickBite: `keep`, `remove:spam`, `remove:abuse`, `remove:personal_data`, plus `unsure`. Split complex judgments into simple ones.
+2. **Write the guideline**: definitions, examples per class and, above all, **boundary cases** ("naming the courier is not personal data; the courier's phone number is"). Every label records its guideline version.
+3. **Pilot**: three to five annotators label the same 200 items; measure agreement (§63.6), read every disagreement, revise, repeat until agreement plateaus. Most quality is set here.
+4. **Select** examples by stratified sampling or active learning (§63.9).
+5. **Queue** each example for $r$ different annotators (the **redundancy**), mixing in gold questions at rate $g$.
+6. **Check quality** against gold and peers; retrain or remove weak annotators.
+7. **Aggregate** judgments into a label with a confidence (§63.7); **adjudicate** low-confidence or high-stakes items.
+8. **Publish** labels with judgments, pseudonymous annotator IDs and guideline version, and cut a dataset version.
 
 **Figure 63.4 — Architecture of a human labeling pipeline.**
 
@@ -280,35 +245,9 @@ flowchart LR
   LS -.->|dataset version| TR[Training pipeline]
 ```
 
-**Reading the diagram.** Examples flow left to right. The selector draws from production data, optionally ranked by an active-learning scorer. A redaction step removes personal data before any human sees the example (§63.14). Tasks wait on a queue (a work queue in the sense of Chapter 30, with visibility timeouts so an abandoned task returns to the queue), mixed with items from the gold set. Annotators reach the labeling tool over HTTPS; each judgment is stored with its annotator and guideline version. Quality control reads judgments asynchronously, compares them with gold answers and peers, and feeds back to annotators. The aggregator turns judgments into labels with a confidence; a decision node sends low-confidence items to expert adjudication. Accepted labels land in the label store, and dataset versions are consumed asynchronously (dotted) by training. Failure points: a stale guideline, gold questions that annotators learn to recognize, a queue that starves adjudication, and redaction that misses personal data. The pipeline scales horizontally by adding annotators; the bottlenecks are adjudicators and gold-set maintenance, which scale with experts, not with crowd size.
+**Reading the diagram.** Selected examples are redacted (§63.14) and queued with gold items; the queue leases tasks with a visibility timeout so abandoned tasks return (Chapter 30). Annotators work in the tool over HTTPS; judgments feed quality control and the aggregator, which sends low-confidence items to experts. Training consumes dataset versions asynchronously. Failure points: stale guidelines, memorized gold items, adjudication backlog, missed PII. Annotators scale horizontally; experts are the bottleneck.
 
-**Figure 63.5 — One review through the labeling queue.**
-
-```mermaid
-sequenceDiagram
-  participant S as Selector
-  participant Q as Task queue
-  participant A as Annotator
-  participant QC as Quality control
-  participant G as Aggregator
-  participant X as Adjudicator
-  S->>Q: Enqueue review 8812, r = 3
-  Q->>A: Lease task, timeout 120 s
-  A->>Q: Judgment remove:abuse
-  Q--)QC: Judgment event
-  QC--)QC: Update annotator gold score
-  Q--)G: Third judgment received
-  G->>G: Posterior remove = 0.62
-  G->>X: Below 0.80, adjudicate
-  X->>G: Final remove:abuse
-  G--)S: Label written, version 14
-```
-
-**Reading the diagram.** The selector enqueues one review that needs three judgments. Each annotator leases the task with a 120-second visibility timeout (if the annotator abandons it, the queue re-offers it), and submits a judgment synchronously. Judgments flow asynchronously (open arrows) to quality control, which updates the annotator's running accuracy, and to the aggregator once all three have arrived. The aggregated posterior of 0.62 is below the 0.80 confidence threshold, so the item goes to an adjudicator, whose decision is final. The label is written with a dataset version. Failure points: leases that expire repeatedly (a task nobody wants, usually an ambiguous one, which is a signal to fix the guideline), and an adjudication backlog. Scaling: annotators are stateless consumers of the queue; adjudication is a second, smaller queue.
-
-#### Tooling
-
-Labeling tools range from open-source projects that a team hosts itself (Label Studio and CVAT are widely used, as of 2026) to managed services from cloud providers and labeling vendors. What matters for system design is less the brand than five properties: a task-definition format that is versioned with the guideline; an API for creating tasks and reading judgments, so the tool is a component rather than a silo; per-annotator audit logs; support for gold questions and redundancy; and access control fine enough to keep sensitive data inside a security boundary (§63.14).
+Labeling tools range from self-hosted open-source projects (Label Studio and CVAT are widely used, as of 2026) to managed services. What matters is versioned task definitions, an API for tasks and judgments, per-annotator audit logs, gold and redundancy support, and fine-grained access control.
 
 ### 63.5.2 Throughput and cost
 
@@ -320,61 +259,51 @@ $$H = \frac{N \cdot r \cdot t \cdot (1 + g)}{3600 \cdot u} \qquad H_{\text{adj}}
 | Symbol | Meaning | Units |
 |---|---|---|
 | $N$ | Examples to label | examples |
-| $r$ | Judgments per example (redundancy) | judgments/example |
+| $r$ | Judgments per example | judgments |
 | $t$ | Median time per judgment | seconds |
-| $g$ | Gold-question overhead: gold tasks per real task | fraction |
-| $u$ | Productive fraction of paid time (breaks, training, tool latency excluded) | fraction |
-| $a$ | Fraction of examples sent to adjudication | fraction |
-| $t_{\text{adj}}$ | Time per adjudication | seconds |
-| $w$, $w_{\text{adj}}$ | Loaded hourly cost of an annotator and of an adjudicator | \$/hour |
+| $g$ | Gold tasks per real task | fraction |
+| $u$ | Productive fraction of paid time | fraction |
+| $a$, $t_{\text{adj}}$ | Fraction adjudicated; time per adjudication | fraction; seconds |
+| $w$, $w_{\text{adj}}$ | Loaded hourly cost of annotator and adjudicator | \$/hour |
 | $H$, $H_{\text{adj}}$ | Paid annotator and adjudicator hours | hours |
-| $D$ | Working days available | days |
-| $h$ | Paid hours per person per day | hours/day |
+| $D$, $h$ | Working days; paid hours per person per day | days; hours/day |
 | $n_{\text{ann}}$ | Annotators needed | people |
 :::
 
 ::: example
-**Worked example — QuickBite's first moderation dataset.** QuickBite wants 30,000 labeled reviews in two working weeks to train its first moderation model. Assumptions from a 200-item pilot: $t = 20$ s, $r = 3$, $g = 0.10$, $u = 0.80$, $a = 0.08$, $t_{\text{adj}} = 60$ s. Assumed loaded costs (illustrative; real rates vary several-fold by region and vendor): $w = \$15$/h, $w_{\text{adj}} = \$40$/h. $D = 10$ days, $h = 8$ h/day.
+**Worked example — QuickBite's first moderation dataset.** Goal: 30,000 labeled reviews in 10 working days. Pilot measurements: $t = 20$ s, $r = 3$, $g = 0.10$, $u = 0.80$, $a = 0.08$, $t_{\text{adj}} = 60$ s. Assumed costs (illustrative; rates vary several-fold by region and vendor): $w = \$15$/h, $w_{\text{adj}} = \$40$/h; $h = 8$.
 
-1. Judgment-seconds: $30{,}000 \times 3 \times 20 \times 1.10 = 1{,}980{,}000$ s $= 550$ productive hours.
-2. Paid annotator hours: $H = 550 / 0.80 = 687.5$ h.
-3. Adjudication: $30{,}000 \times 0.08 \times 60 = 144{,}000$ s $= 40$ productive hours; $H_{\text{adj}} = 40/0.80 = 50$ h.
-4. Cost: $687.5 \times 15 + 50 \times 40 = \$10{,}312.50 + \$2{,}000 = \$12{,}312.50$, or **\$0.41 per final label**.
-5. Headcount: $687.5 / (10 \times 8) = 8.6$, so **9 annotators**; adjudication needs $50/80 = 0.63$ of one expert.
-6. Throughput per annotator: $3600 \times 0.80 / (20 \times 1.10) = 130.9$ judgments per paid hour; the team of 9 produces about $9 \times 8 \times 130.9 / 3 \approx 3{,}140$ finished labels per day.
+1. Judgment time: $30{,}000 \times 3 \times 20 \times 1.10 = 1{,}980{,}000$ s $= 550$ h; paid $H = 550/0.80 = 687.5$ h.
+2. Adjudication: $30{,}000 \times 0.08 \times 60 = 144{,}000$ s $= 40$ h; paid $H_{\text{adj}} = 50$ h.
+3. Cost: $687.5 \times 15 + 50 \times 40 = \$10{,}312.50 + \$2{,}000 = \$12{,}312.50$, **\$0.41 per final label**.
+4. Headcount: $687.5/80 = 8.6$, so **9 annotators**, plus $50/80 = 0.63$ of an expert.
+5. Throughput: $3600 \times 0.80/(20 \times 1.10) = 130.9$ judgments per paid hour; 9 annotators finish about $9 \times 8 \times 130.9/3 \approx 3{,}140$ labels per day.
 
-**Interpretation.** Redundancy is the largest multiplier: dropping from $r = 3$ to $r = 1$ would cut annotator cost by two-thirds, but would leave no way to measure disagreement or to aggregate. **Engineering implication.** Use $r = 3$ for the initial dataset and for a continuing audit sample; once annotator accuracy is measured, label routine production traffic with $r = 1$ and send only low-confidence or high-stakes items for more judgments (dynamic redundancy). Steady state, at 20,000 reviews per day QuickBite cannot label everything; it labels a sample (§63.9, §63.11).
+**Interpretation.** Redundancy is the biggest multiplier; $r = 1$ would cut annotator cost by two-thirds but remove any way to measure disagreement. **Engineering implication.** Use $r = 3$ for the initial set and a continuing audit sample, then $r = 1$ with **dynamic redundancy** (extra judgments only for low-confidence or high-stakes items). At 20,000 reviews per day QuickBite must label a sample, not everything (§63.9, §63.11).
 :::
-
-#### Failure scenarios
 
 **Table 63.4 — Labeling-pipeline failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Labels change meaning over time | Guideline edited without versioning | Label rate shifts on a date with no data change | Relabel affected batch | Version guidelines; store version on every label |
-| Annotators recognize gold questions | Small, reused gold set | Gold accuracy ≫ peer agreement | Rotate gold set | Grow gold set from adjudicated items |
-| Spammers click randomly | Pay per task, no checks | Gold accuracy near chance; very short task times | Remove judgments, relabel | Gold questions, minimum time, qualification tests |
-| Adjudication backlog | Experts are scarce | Queue age of adjudication tasks | Temporarily raise confidence threshold | Size adjudication capacity from $a$ |
-| Annotators anchor on a pre-label | Tool shows model prediction | Agreement with model ≫ agreement with gold | Re-label sample blind | Blind audit sample; show pre-labels only where measured safe |
+| Labels change meaning | Unversioned guideline edit | Label rate shifts on a date | Relabel the batch | Version on every label |
+| Gold items recognized | Small, reused gold set | Gold accuracy ≫ peer agreement | Rotate gold | Grow gold from adjudications |
+| Random clicking | Pay per task, no checks | Chance-level gold accuracy; very short times | Drop judgments | Gold, minimum time, qualification |
+| Anchoring on pre-labels | Tool shows model output | Agreement with model ≫ with gold | Blind relabel sample | Blind audit stream |
 
 ::: mistake
-**Mistake — Treating the guideline as documentation written once.** The guideline is the label definition; it *is* the specification of what the model learns. Every guideline change is a dataset change and needs a version, a changelog and, often, relabeling of old examples near the changed boundary.
+**Mistake — Treating the guideline as documentation written once.** The guideline *is* the specification of what the model learns. Every change is a dataset change and needs a version, a changelog and often relabeling near the changed boundary.
 :::
 
 ## 63.6 Human annotation quality
 
-### 63.6.1 Why agreement, and why not just percent agreement
+### 63.6.1 Agreement and why raw agreement misleads
 
 ::: definition
-**Definition — Inter-annotator agreement (IAA).** A statistic that measures how consistently independent annotators assign the same label to the same examples. **Percent agreement** is the raw fraction of matching judgments. **Chance-corrected** agreement coefficients (Cohen's κ, Fleiss' κ, Krippendorff's α) subtract the agreement that would be expected if annotators labeled at random with their observed label frequencies, and rescale so that 1 means perfect agreement and 0 means chance-level agreement.
+**Definition — Inter-annotator agreement (IAA).** How consistently independent annotators give the same label to the same examples. **Percent agreement** is the raw match rate. **Chance-corrected** coefficients (Cohen's κ, Fleiss' κ, Krippendorff's α) subtract the agreement expected if annotators labeled randomly at their observed class frequencies, so that 1 is perfect and 0 is chance.
 :::
 
-#### First-principles explanation
-
-On most labeling tasks you have no answer key, so you cannot measure accuracy directly. What you can measure is whether two people, working independently from the same guideline, give the same answer. If they rarely do, at least one of them is wrong much of the time, and probably the guideline is ambiguous. Agreement is therefore an upper-bound proxy for label quality: low agreement proves a problem; high agreement does not prove correctness (two annotators can share the same misunderstanding).
-
-Raw agreement is misleading when one class dominates. If 95% of reviews are fine and two lazy annotators both answer "keep" for everything, they agree 95% of the time while providing no information. Chance correction asks: how much better than that are they?
+Without an answer key you cannot measure accuracy, but you can measure whether two people using the same guideline agree. Low agreement proves a problem, usually an ambiguous guideline. Raw agreement misleads under imbalance: if 95% of reviews are fine, two annotators who always answer "keep" agree 95% of the time while conveying nothing.
 
 ### 63.6.2 Cohen's κ for two annotators
 
@@ -386,11 +315,10 @@ $$\kappa = \frac{p_o - p_e}{1 - p_e} \qquad p_o = \frac{1}{N}\sum_{k} n_{kk} \qq
 | Symbol | Meaning | Units |
 |---|---|---|
 | $N$ | Examples labeled by both annotators | examples |
-| $n_{jk}$ | Examples that annotator A put in class $j$ and annotator B in class $k$ | examples |
-| $n_{k\cdot}$, $n_{\cdot k}$ | Row and column totals: A's and B's counts for class $k$ | examples |
-| $p_o$ | Observed (percent) agreement | fraction |
-| $p_e$ | Agreement expected by chance from each annotator's own class frequencies | fraction |
-| $\kappa$ | Chance-corrected agreement; 1 perfect, 0 chance, below 0 worse than chance | dimensionless |
+| $n_{jk}$ | Examples A put in class $j$ and B in class $k$ | examples |
+| $n_{k\cdot}$, $n_{\cdot k}$ | A's and B's totals for class $k$ | examples |
+| $p_o$, $p_e$ | Observed and chance agreement | fraction |
+| $\kappa$ | Chance-corrected agreement | dimensionless |
 :::
 
 **Table 63.5 — Two QuickBite moderators label the same 200 reviews.**
@@ -404,38 +332,36 @@ $$\kappa = \frac{p_o - p_e}{1 - p_e} \qquad p_o = \frac{1}{N}\sum_{k} n_{kk} \qq
 ::: example
 **Worked example — Cohen's κ for the moderation pilot.**
 
-1. Observed agreement: $p_o = (140 + 30)/200 = 0.850$.
-2. Chance agreement on "keep": $(152/200)(158/200) = 0.760 \times 0.790 = 0.6004$. On "remove": $(48/200)(42/200) = 0.240 \times 0.210 = 0.0504$. $p_e = 0.6004 + 0.0504 = 0.6508$.
+1. $p_o = (140 + 30)/200 = 0.850$.
+2. $p_e = (152/200)(158/200) + (48/200)(42/200) = 0.6004 + 0.0504 = 0.6508$.
 3. $\kappa = (0.850 - 0.6508)/(1 - 0.6508) = 0.1992/0.3492 = 0.570$.
 
-**Interpretation.** 85% raw agreement sounds high, but more than three-quarters of it (0.651 of 0.850) is what two annotators with these class frequencies would reach by chance. κ = 0.57 is "moderate" on the widely quoted Landis–Koch scale (0.41–0.60 moderate, 0.61–0.80 substantial, above 0.80 almost perfect) [Landis and Koch 1977]; those bands are conventions, not laws. **Engineering implication.** Do not start production labeling at κ = 0.57 for a safety-relevant class. Read the 30 disagreements, find the boundary cases the guideline does not settle (sarcasm? a complaint that names the courier?), revise and re-pilot. Teams commonly aim for κ ≥ 0.7–0.8 on well-defined tasks before scaling.
+**Interpretation.** Of the 85% raw agreement, 65 points are what these class frequencies give by chance. κ = 0.57 is "moderate" on the Landis–Koch convention (0.41–0.60 moderate, 0.61–0.80 substantial, above 0.80 almost perfect) [Landis and Koch 1977]. **Engineering implication.** Do not scale labeling at 0.57 for a safety-relevant class: read the 30 disagreements, settle the boundary cases in the guideline and re-pilot. Teams commonly target 0.7–0.8 for well-defined tasks.
 :::
 
 ::: warning
-**Warning — The prevalence paradox.** κ depends on class balance. Suppose two annotators label 200 reviews, agree on "keep" 190 times, and disagree on the other 10 (5 each way), never both choosing "remove". Then $p_o = 0.95$ but $p_e = (195/200)^2 + (5/200)^2 = 0.9513$ and $\kappa = -0.026$. High agreement with near-zero κ means the annotators agree only on the easy majority and *never* on the rare class, which for moderation is the class that matters [Feinstein and Cicchetti 1990]. Always report per-class agreement (or the confusion matrix) alongside κ, and oversample the rare class in pilots so κ is measured where it matters.
+**Warning — The prevalence paradox.** Two annotators agree on "keep" 190 times out of 200 and split the other 10 (5 each way). Then $p_o = 0.95$, $p_e = (195/200)^2 + (5/200)^2 = 0.9513$ and $\kappa = -0.026$: they never agree on the rare class, the one that matters [Feinstein and Cicchetti 1990]. Report per-class agreement alongside κ, and oversample the rare class in pilots.
 :::
 
-### 63.6.3 Fleiss' κ for many annotators
+### 63.6.3 Fleiss' κ and Krippendorff's α
 
-Cohen's κ compares two fixed annotators. In a crowd pipeline, each item is labeled by $n$ annotators drawn from a larger pool, so "annotator A" is not the same person across items. Fleiss generalized chance-corrected agreement to this setting [Fleiss 1971]. (With two annotators Fleiss' κ is not identical to Cohen's κ, because it pools the two annotators' class frequencies; it reduces to Scott's π.)
+Crowd pipelines give each item to $n$ annotators drawn from a pool. Fleiss extended chance-corrected agreement to that setting [Fleiss 1971]; with two annotators it reduces to Scott's π, not to Cohen's κ, because it pools class frequencies.
 
 ::: formula
 **Fleiss' kappa**
 
-$$P_i = \frac{1}{n(n-1)}\sum_{j} n_{ij}(n_{ij}-1) \qquad \bar P = \frac{1}{N}\sum_i P_i \qquad p_j = \frac{1}{Nn}\sum_i n_{ij} \qquad \kappa_F = \frac{\bar P - \sum_j p_j^2}{1 - \sum_j p_j^2}$$
+$$P_i = \frac{\sum_{j} n_{ij}(n_{ij}-1)}{n(n-1)} \qquad \bar P = \frac{1}{N}\sum_i P_i \qquad p_j = \frac{1}{Nn}\sum_i n_{ij} \qquad \kappa_F = \frac{\bar P - \sum_j p_j^2}{1 - \sum_j p_j^2}$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $N$ | Items | items |
-| $n$ | Annotators per item (same for every item) | annotators |
+| $N$, $n$ | Items; annotators per item | items; annotators |
 | $n_{ij}$ | Annotators who put item $i$ in class $j$ | annotators |
-| $P_i$ | Fraction of annotator pairs on item $i$ that agree | fraction |
-| $\bar P$ | Mean pairwise agreement over items | fraction |
-| $p_j$ | Overall share of judgments in class $j$ | fraction |
+| $P_i$, $\bar P$ | Pairwise agreement on item $i$; its mean | fraction |
+| $p_j$ | Share of all judgments in class $j$ | fraction |
 | $\kappa_F$ | Fleiss' kappa | dimensionless |
 :::
 
-**Table 63.6 — Three annotators per review, three classes (counts $n_{ij}$).**
+**Table 63.6 — Three annotators per review, three classes.**
 
 | Review | keep | spam | abuse | $P_i$ |
 |---|---|---|---|---|
@@ -447,66 +373,41 @@ $$P_i = \frac{1}{n(n-1)}\sum_{j} n_{ij}(n_{ij}-1) \qquad \bar P = \frac{1}{N}\su
 | Total | 7 | 5 | 3 | |
 
 ::: example
-**Worked example — Fleiss' κ for five reviews.** Here $N = 5$, $n = 3$, so $n(n-1) = 6$.
+**Worked example — Fleiss' κ for five reviews.** $n(n-1) = 6$.
 
-1. Review 3: $[2 \times 1 + 1 \times 0 + 0]/6 = 2/6 = 0.333$. Review 5: no pair agrees, $P_5 = 0$. $\bar P = (1 + 1 + 0.333 + 0.333 + 0)/5 = 0.5333$.
-2. Class shares from the 15 judgments: $p_{\text{keep}} = 7/15 = 0.4667$, $p_{\text{spam}} = 5/15 = 0.3333$, $p_{\text{abuse}} = 3/15 = 0.2000$. Chance agreement $\bar P_e = 0.2178 + 0.1111 + 0.0400 = 0.3689$.
-3. $\kappa_F = (0.5333 - 0.3689)/(1 - 0.3689) = 0.1644/0.6311 = 0.261$.
+1. Review 3: $(2 \times 1)/6 = 0.333$; review 5: no agreeing pair. $\bar P = (1 + 1 + 0.333 + 0.333 + 0)/5 = 0.5333$.
+2. $p = (7, 5, 3)/15 = (0.4667, 0.3333, 0.2000)$; $\sum p_j^2 = 0.2178 + 0.1111 + 0.0400 = 0.3689$.
+3. $\kappa_F = (0.5333 - 0.3689)/(1 - 0.3689) = 0.261$.
 
-**Interpretation.** Only "fair" agreement: annotators split on three of the five reviews. **Engineering implication.** With so few items the estimate is very uncertain; agreement statistics need hundreds of items (and enough examples of each class) before you act on the second decimal place.
+**Interpretation.** "Fair" agreement. **Engineering implication.** Five items are far too few to act on; agreement estimates need hundreds of items with enough of each class.
 :::
 
-### 63.6.4 Krippendorff's α
-
-Real pipelines rarely have the same number of annotators on every item: tasks are abandoned, some items get extra judgments, and labels may be ordinal (a 1–5 severity) rather than nominal. Krippendorff's α handles any number of annotators, missing judgments and different measurement levels (nominal, ordinal, interval, ratio) through a distance function [Krippendorff 2018]. For nominal labels the distance is 0 for a match and 1 otherwise.
+Real pipelines have missing judgments and sometimes ordinal labels (a 1–5 severity). **Krippendorff's α** handles any number of annotators per item, missing data and nominal, ordinal, interval or ratio labels via a distance function [Krippendorff 2018]; for nominal labels the distance is 0 for a match and 1 otherwise.
 
 ::: formula
 **Krippendorff's alpha (nominal)**
 
-$$\alpha = 1 - \frac{D_o}{D_e} = 1 - (n_{\cdot\cdot} - 1)\,\frac{\sum_{c \ne k} o_{ck}}{\sum_{c \ne k} n_c\, n_k} \qquad o_{ck} = \sum_u \frac{\text{number of } (c, k) \text{ ordered pairs in unit } u}{m_u - 1}$$
+$$\alpha = 1 - \frac{D_o}{D_e} = 1 - (n_{\cdot\cdot} - 1)\,\frac{\sum_{c \ne k} o_{ck}}{\sum_{c \ne k} n_c\, n_k} \qquad o_{ck} = \sum_u \frac{\#\,(c, k)\ \text{pairs in unit}\ u}{m_u - 1}$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $u$ | A unit (item) with at least two judgments | — |
-| $m_u$ | Judgments on unit $u$ | judgments |
-| $o_{ck}$ | Coincidence count: weighted number of times values $c$ and $k$ were paired within a unit | pairs |
-| $n_c$ | Total of row $c$ of the coincidence matrix (pairable judgments with value $c$) | judgments |
-| $n_{\cdot\cdot}$ | Total pairable judgments | judgments |
+| $m_u$ | Judgments on unit (item) $u$, at least 2 | judgments |
+| $o_{ck}$ | Coincidences: ordered value pairs $(c, k)$ within units, weighted | pairs |
+| $n_c$, $n_{\cdot\cdot}$ | Pairable judgments with value $c$; in total | judgments |
 | $D_o$, $D_e$ | Observed and expected disagreement | dimensionless |
-| $\alpha$ | Krippendorff's alpha; 1 perfect, 0 chance | dimensionless |
 :::
 
 ::: example
-**Worked example — α for the same five reviews.** All 15 judgments are pairable, $n_{\cdot\cdot} = 15$, $m_u = 3$, so each ordered pair weighs $1/2$.
+**Worked example — α for the same five reviews.** $n_{\cdot\cdot} = 15$, $m_u = 3$, each ordered pair weighs 1/2.
 
-1. Off-diagonal coincidences. Review 3 (keep, keep, spam): 4 ordered keep–spam pairs × 1/2 = 2. Review 4 (keep, abuse, abuse): 4 pairs × 1/2 = 2. Review 5 (keep, spam, abuse): 6 ordered pairs, all different, × 1/2 = 3. Total $\sum_{c \ne k} o_{ck} = 7$.
-2. Expected: $n_c = (7, 5, 3)$; $\sum_{c \ne k} n_c n_k = 15^2 - (49 + 25 + 9) = 142$.
-3. $\alpha = 1 - 14 \times 7/142 = 1 - 98/142 = 0.310$.
+1. Disagreeing coincidences: review 3 has 4 ordered keep–spam pairs (weight 2), review 4 has 4 (weight 2), review 5 has 6 (weight 3): total 7.
+2. $\sum_{c \ne k} n_c n_k = 15^2 - (49 + 25 + 9) = 142$.
+3. $\alpha = 1 - 14 \times 7/142 = 0.310$.
 
-**Interpretation.** α (0.310) is slightly higher than Fleiss' κ (0.261) on the same data because α's expected disagreement includes a small-sample correction ($n_{\cdot\cdot} - 1$ rather than $n_{\cdot\cdot}$). Krippendorff recommends relying on data with α ≥ 0.800 and drawing only tentative conclusions for 0.667 ≤ α < 0.800 [Krippendorff 2018]. **Engineering implication.** Prefer α when your pipeline has missing judgments or ordinal labels; it is the most general of the three coefficients.
+**Interpretation.** α exceeds Fleiss' κ (0.261) slightly because of its small-sample correction. Krippendorff advises relying on α ≥ 0.800 and drawing only tentative conclusions for 0.667–0.800 [Krippendorff 2018]. **Engineering implication.** Use α in production pipelines with gaps or ordinal labels.
 :::
 
-**Figure 63.6 — Choosing an agreement statistic.**
-
-```mermaid
-flowchart TD
-  S([Labeled overlap sample]) --> Q1{Same two annotators<br/>on every item?}
-  Q1 -->|yes| Q2{Labels nominal and<br/>no missing values?}
-  Q2 -->|yes| CK[Cohen kappa]
-  Q2 -->|no| KA[Krippendorff alpha]
-  Q1 -->|no| Q3{Fixed number of judgments<br/>per item, nominal?}
-  Q3 -->|yes| FK[Fleiss kappa]
-  Q3 -->|no| KA
-  CK --> PC[Also report per-class<br/>agreement and confusion matrix]
-  FK --> PC
-  KA --> PC
-```
-
-**Reading the diagram.** Start from a sample of items with overlapping judgments. Two fixed annotators with complete nominal labels call for Cohen's κ; a rotating pool with a fixed number of nominal judgments calls for Fleiss' κ; anything with missing judgments or ordinal or interval labels calls for Krippendorff's α. Every path ends at the same box: a single coefficient hides which class annotators disagree on, so report per-class agreement as well. This is an offline analysis on a stored sample; its failure points are a sample too small or too imbalanced to estimate agreement on the rare class. It scales trivially: these statistics are counts over a table.
-
-### 63.6.5 Code example: agreement statistics from scratch
-
-The program implements the three coefficients, checks Cohen's κ against scikit-learn, and reproduces the worked examples.
+### 63.6.4 Code example: agreement statistics from scratch
 
 ```python
 import numpy as np
@@ -587,23 +488,21 @@ Krippendorff alpha (2 ratings missing) = 0.1600
 
 What to notice:
 
-- The hand-written κ matches `sklearn.metrics.cohen_kappa_score` exactly, and all four statistics match the worked examples.
-- The "rare" case has 95% raw agreement and κ below zero: the prevalence paradox in two lines.
-- Krippendorff's α accepts units with different numbers of judgments. Dropping one "spam" judgment from review 2 and one "abuse" judgment from review 4 leaves review 4 as a single disagreeing pair, and α falls to 0.16: with so few items, every judgment moves the estimate.
+- The hand-written κ matches `sklearn.metrics.cohen_kappa_score`, and every value matches the worked examples.
+- The "rare" case: 95% raw agreement, κ below zero.
+- α accepts units with different numbers of judgments. Dropping one judgment each from reviews 2 and 4 leaves review 4 as a single disagreeing pair, and α falls to 0.16: with few items, every judgment moves the estimate.
 
 **Table 63.7 — Agreement statistics compared.**
 
 | Row | Percent agreement | Cohen's κ | Fleiss' κ | Krippendorff's α |
 |---|---|---|---|---|
-| What it is | Fraction of matches | Chance-corrected, two raters | Chance-corrected, $n$ raters per item | Chance-corrected disagreement ratio |
-| Annotators | Any | Exactly two, fixed | Fixed count, rotating people | Any, including missing |
-| Label types | Nominal | Nominal (weighted κ for ordinal) | Nominal | Nominal, ordinal, interval, ratio |
-| Advantages | Intuitive | Standard, well understood | Fits crowd pipelines | Most general |
-| Disadvantages | Inflated by imbalance | Prevalence paradox; two raters only | Needs equal judgments per item | Less familiar; more computation |
-| Choose when | Never alone | Pilot with two experts | Fixed-redundancy crowd tasks | Production pipelines with gaps |
+| Annotators | Any | Two, fixed | Fixed count, rotating | Any, with gaps |
+| Label types | Nominal | Nominal (weighted κ: ordinal) | Nominal | Nominal to ratio |
+| Disadvantages | Inflated by imbalance | Prevalence paradox | Equal judgments per item | Less familiar |
+| Choose when | Never alone | Two-expert pilots | Fixed-redundancy crowds | Production pipelines |
 
 ::: mistake
-**Mistake — Reading high agreement as high accuracy.** Two annotators who share a misreading of the guideline agree perfectly and are both wrong. Agreement measures *reliability*; accuracy needs gold questions adjudicated by experts. Track both.
+**Mistake — Reading high agreement as high accuracy.** Agreement measures *reliability*. Two annotators who share a misreading agree perfectly and are both wrong; accuracy needs expert-adjudicated gold questions. Track both.
 :::
 
 ## 63.7 Aggregating noisy labels
@@ -611,75 +510,62 @@ What to notice:
 ### 63.7.1 Majority vote
 
 ::: definition
-**Definition — Label aggregation.** Combining several noisy judgments of the same example into a single label (a **hard label**) or a probability distribution over labels (a **soft label**). **Majority vote** picks the most frequent judgment. **Model-based aggregation** estimates each annotator's reliability and weights their judgments accordingly.
+**Definition — Label aggregation.** Combining several noisy judgments of one example into a **hard label** or a **soft label** (a probability per class). **Majority vote** picks the most frequent judgment; **model-based aggregation** estimates each annotator's reliability and weights judgments accordingly.
 :::
 
-#### First-principles explanation
-
-If three independent witnesses each identify the right suspect 80% of the time, the chance that at least two of them pick the right one is higher than 80%. That is the whole argument for redundancy. Its two hidden assumptions are that witnesses are equally reliable and that their mistakes are independent. Both are false for annotators: some are much better than others, and ambiguous guidelines make everyone err on the same items.
+If three independent witnesses each pick the right suspect 80% of the time, the chance that at least two are right exceeds 80%. That is the case for redundancy, resting on two assumptions that annotators violate: equal reliability and independent errors.
 
 ::: formula
-**Accuracy of majority vote with independent, equally accurate annotators**
+**Accuracy of majority vote (independent, equally accurate annotators)**
 
 $$P_{\text{MV}}(r, p) = \sum_{k = (r+1)/2}^{r} \binom{r}{k} p^{k} (1-p)^{r-k} \qquad (r \text{ odd, two classes})$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $r$ | Judgments per item (odd, to avoid ties) | judgments |
+| $r$ | Judgments per item | judgments |
 | $p$ | Accuracy of each annotator | probability |
 | $k$ | Number of correct judgments | judgments |
-| $P_{\text{MV}}$ | Probability that the majority is correct | probability |
+| $P_{\text{MV}}$ | Probability the majority is correct | probability |
 :::
 
 ::: example
-**Worked example — How much does redundancy buy?** Annotators with $p = 0.80$:
+**Worked example — How much does redundancy buy?** With $p = 0.80$: $r = 1$ gives 0.800; $r = 3$ gives $0.8^3 + 3(0.8^2)(0.2) = 0.512 + 0.384 = 0.896$; $r = 5$ gives $0.3277 + 0.4096 + 0.2048 = 0.942$.
 
-1. $r = 1$: $P = 0.800$.
-2. $r = 3$: $P = 0.8^3 + 3 \times 0.8^2 \times 0.2 = 0.512 + 0.384 = 0.896$.
-3. $r = 5$: $P = 0.8^5 + 5 \times 0.8^4 \times 0.2 + 10 \times 0.8^3 \times 0.2^2 = 0.3277 + 0.4096 + 0.2048 = 0.942$.
-
-**Interpretation.** Going from one to three judgments cuts the error from 20% to 10.4% at 3× the cost; going to five cuts it to 5.8% at 5× the cost. **Engineering implication.** Returns diminish quickly, and the formula is an upper bound: correlated errors on ambiguous items make real gains smaller. Sheng et al. showed that repeated labeling pays off most when individual labels are noisy and when the repeat labels are spent selectively on uncertain examples [Sheng et al. 2008]; fix the guideline before buying more judgments.
+**Interpretation.** Error falls from 20% to 10.4% at 3× cost and to 5.8% at 5× cost. **Engineering implication.** Returns diminish fast, and correlated errors on ambiguous items make real gains smaller. Repeated labeling pays most when spent selectively on uncertain items [Sheng et al. 2008]; fix the guideline before buying judgments.
 :::
 
 ### 63.7.2 The Dawid–Skene model
 
-Dawid and Skene, studying clinicians who disagreed about patient histories, proposed estimating each observer's error rates and the true labels together, without any ground truth, using the EM algorithm [Dawid and Skene 1979]. It remains the standard baseline for crowd label aggregation.
+Dawid and Skene, studying clinicians who disagreed about patient records, estimated each observer's error rates and the true labels jointly with the EM algorithm and no ground truth [Dawid and Skene 1979]. It remains the standard baseline for crowd aggregation.
 
 ::: formula
-**Dawid–Skene model and EM updates**
+**Dawid–Skene EM updates**
 
-$$\text{E-step: } T_{ik} \propto \pi_k \prod_{j \in A(i)} \theta^{(j)}_{k,\,y_{ij}} \qquad \text{M-step: } \pi_k = \frac{1}{N}\sum_i T_{ik}, \quad \theta^{(j)}_{kl} = \frac{\sum_{i:\, j \in A(i)} T_{ik}\,[y_{ij} = l]}{\sum_{i:\, j \in A(i)} T_{ik}}$$
+$$\text{E: } T_{ik} \propto \pi_k \prod_{j \in A(i)} \theta^{(j)}_{k,\,y_{ij}} \qquad \text{M: } \pi_k = \frac{1}{N}\sum_i T_{ik}, \quad \theta^{(j)}_{kl} = \frac{\sum_{i:\, j \in A(i)} T_{ik}\,[y_{ij} = l]}{\sum_{i:\, j \in A(i)} T_{ik}}$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $N$ | Items | items |
 | $A(i)$ | Annotators who labeled item $i$ | set |
-| $y_{ij}$ | Label annotator $j$ gave item $i$ | class |
-| $\pi_k$ | Prior probability of true class $k$ | probability |
-| $\theta^{(j)}_{kl}$ | Annotator $j$'s confusion matrix: probability of answering $l$ when the truth is $k$ | probability |
-| $T_{ik}$ | Posterior probability that item $i$'s true class is $k$ (normalized over $k$) | probability |
-| $[\cdot]$ | 1 if the condition holds, else 0 | — |
+| $y_{ij}$ | Label from annotator $j$ on item $i$ | class |
+| $\pi_k$ | Prior of true class $k$ | probability |
+| $\theta^{(j)}_{kl}$ | Annotator $j$'s probability of answering $l$ when truth is $k$ | probability |
+| $T_{ik}$ | Posterior that item $i$ is class $k$ | probability |
+| $[\cdot]$ | 1 if true, else 0 | — |
 :::
 
-#### How it works internally
-
-1. **Initialize** the posteriors $T$ with the soft majority vote (the fraction of votes for each class).
-2. **M-step.** Treat $T$ as fractional truth. Estimate the class prior and, for each annotator, a confusion matrix: of the items that are (fractionally) class $k$, how often did this annotator answer $l$?
-3. **E-step.** For each item, combine the prior with every judgment, weighting by how informative that annotator's answer is (the ratio of the confusion entries), and normalize.
-4. **Repeat** until the posteriors stop changing. Output $\arg\max_k T_{ik}$ as the hard label and $T_{ik}$ as its confidence.
+Initialize $T$ with the soft majority vote; the M-step estimates the prior and each annotator's confusion matrix from the current beliefs; the E-step recomputes each item's posterior, weighting each judgment by how informative that annotator is; repeat until stable.
 
 ::: example
-**Worked example — One review, three disagreeing annotators.** The prior probability of "remove" is 0.30. Annotator 1 (accuracy 0.95) says *keep*; annotators 6 and 7 (accuracies 0.60 and 0.55) say *remove*. Assume symmetric confusion matrices.
+**Worked example — One review, three disagreeing annotators.** Prior P(remove) = 0.30. Annotator 1 (accuracy 0.95) says *keep*; annotators 6 and 7 (0.60, 0.55) say *remove*. Symmetric confusions.
 
 1. Prior odds remove:keep $= 0.30/0.70 = 0.4286$.
-2. Annotator 1 says keep: likelihood ratio $P(\text{keep} \mid \text{remove}) / P(\text{keep} \mid \text{keep}) = 0.05/0.95 = 0.0526$.
-3. Annotator 6 says remove: $0.60/0.40 = 1.50$. Annotator 7: $0.55/0.45 = 1.222$.
-4. Posterior odds $= 0.4286 \times 0.0526 \times 1.50 \times 1.222 = 0.0414$, so $P(\text{remove}) = 0.0414/1.0414 = 0.040$.
+2. Likelihood ratios: annotator 1, $0.05/0.95 = 0.0526$; annotator 6, $0.60/0.40 = 1.50$; annotator 7, $0.55/0.45 = 1.222$.
+3. Posterior odds $= 0.4286 \times 0.0526 \times 1.50 \times 1.222 = 0.0414$; $P(\text{remove}) = 0.040$.
 
-**Interpretation.** Majority vote says "remove" (two against one). Dawid–Skene says "keep" with 96% confidence, because one expert outweighs two near-random annotators. **Engineering implication.** Aggregation needs per-annotator reliability estimates, which in turn need enough overlap between annotators; schedule tasks so that every annotator shares items with several others.
+**Interpretation.** Majority vote says remove; Dawid–Skene says keep with 96% confidence, because one expert outweighs two near-random annotators. **Engineering implication.** Reliability estimates need overlap, so schedule tasks so every annotator shares items with several others.
 :::
 
-**Figure 63.7 — The Dawid–Skene EM loop.**
+**Figure 63.5 — The Dawid–Skene EM loop.**
 
 ```mermaid
 flowchart LR
@@ -692,11 +578,11 @@ flowchart LR
   OUT -.->|weak annotators| QC[Quality control]
 ```
 
-**Reading the diagram.** The input is the stored table of judgments (a sparse item × annotator matrix). Initialization uses majority vote; the loop alternates the M-step (estimate parameters from current beliefs about the truth) and the E-step (update beliefs about the truth from the parameters) until convergence, typically tens of iterations. Outputs are hard labels, confidences for routing to adjudication, and annotator confusion matrices, which flow asynchronously to quality control. It is a batch job; each iteration is linear in the number of judgments, so millions of judgments take seconds to minutes. Failure points: annotators with very few items get unstable confusion estimates (smooth them), EM can converge to a label-swapped solution if most annotators are adversarial, and the model assumes errors are independent given the true class.
+**Reading the diagram.** A batch job reads the sparse item × annotator judgment table, alternates M- and E-steps (each linear in judgments) until convergence, and writes labels, confidences (for adjudication routing) and annotator confusion matrices, which flow asynchronously to quality control. Failure points: annotators with few items (smooth their estimates), mostly adversarial crowds (label-swapped solutions) and correlated errors, which the model assumes away.
 
 ### 63.7.3 Code example: majority vote versus Dawid–Skene
 
-The simulation creates 3,000 reviews (30% "remove"), seven annotators with accuracies from 0.95 down to 0.50 (a pure random clicker), and gives each review to three randomly chosen annotators.
+Seven simulated annotators with accuracies from 0.95 down to 0.50 (a random clicker) label 3,000 reviews (30% "remove"), three random annotators per review.
 
 ```python
 import numpy as np
@@ -766,15 +652,15 @@ annotator 6: true acc 0.50  estimated 0.52
 
 What to notice:
 
-- With no ground truth at all, EM recovers every annotator's accuracy to within 0.03, and those estimates are exactly what quality control needs to retrain or remove the random clicker.
-- Dawid–Skene cuts the error rate from 19.0% to 12.0%, more than a third, at zero extra labeling cost. The same gain from majority vote would need more judgments per item.
-- The estimated prior (0.345) is biased toward "remove" because the weak annotators flip many "keep" items; with three judgments per item there is limited information. Gold questions anchor such estimates.
-- The `-1` sentinel and the `seen` masks implement the sparse design: each annotator sees only about 43% of the items.
+- With no ground truth, EM recovers every annotator's accuracy within 0.03, which is exactly what quality control needs to remove the random clicker.
+- Error falls from 19.0% to 12.0% at zero extra labeling cost.
+- The prior estimate (0.345) is biased because weak annotators flip many "keep" items and three judgments carry limited information; gold questions anchor it.
+- The `-1` sentinel and `seen` masks implement the sparse design: each annotator sees about 3/7 of the items.
 
-Extensions relax the model's assumptions: item difficulty and annotator expertise [Whitehill et al. 2009], annotators who sometimes spam [Hovy et al. 2013], and learning the classifier and annotator models jointly [Raykar et al. 2010].
+Extensions model item difficulty [Whitehill et al. 2009], spamming annotators [Hovy et al. 2013] and joint training of classifier and annotator models [Raykar et al. 2010].
 
 ::: mistake
-**Mistake — Discarding the soft labels.** The posterior $T_{ik}$ is information. A review that is 55% "remove" is genuinely ambiguous; training on it as a hard "remove" overstates certainty. Keep confidences in the label store, route low-confidence items to adjudication, and consider training on soft labels or weighting by confidence.
+**Mistake — Discarding soft labels.** A review that is 55% "remove" is genuinely ambiguous. Store confidences, route low ones to adjudication, and consider training on soft labels.
 :::
 
 ## 63.8 Weak supervision
@@ -782,27 +668,22 @@ Extensions relax the model's assumptions: item difficulty and annotator expertis
 ### 63.8.1 Labeling functions and the label model
 
 ::: definition
-**Definition — Weak supervision.** Training with labels produced by noisy, programmatic sources instead of (or in addition to) hand labels. In **data programming**, domain experts write **labeling functions** (LFs): small programs that vote for a class or **abstain** on each example. A **label model** estimates the accuracy (and possibly correlations) of the LFs from their agreements and disagreements, without ground truth, and outputs a probabilistic label per example; a discriminative **end model** is then trained on those labels [Ratner et al. 2016; Ratner et al. 2017].
+**Definition — Weak supervision.** Training with labels from noisy programmatic sources. In **data programming**, experts write **labeling functions** (LFs) that vote for a class or **abstain**; a **label model** estimates LF accuracies from their agreements and disagreements, without ground truth, and outputs probabilistic labels; a discriminative **end model** is trained on them [Ratner et al. 2016; Ratner et al. 2017].
 :::
 
 #### First-principles explanation
 
-A senior moderator cannot label 20,000 reviews a day, but can tell you in an afternoon the rules of thumb they use: "a phone number is almost always spam", "slurs mean remove", "a three-word five-star review is fine". Each rule is wrong sometimes and silent most of the time. Weak supervision captures those rules as code, lets a statistical model figure out how much to trust each one, and uses the result to label far more data than any person could. It is Dawid–Skene (§63.7.2) with programs as annotators.
-
-#### Why does this exist?
-
-Hand labeling is slow to change. When QuickBite redefines "personal data" to include courier license plates, hand labels must be redone; a labeling function is a one-line edit followed by a re-run. Ratner et al. built Snorkel to make this workflow practical, reporting that subject-matter experts could build models faster with LFs than by hand labeling and reach comparable quality on their tasks [Ratner et al. 2017].
+A senior moderator cannot label 20,000 reviews a day, but can state the rules of thumb they use in an afternoon: "a phone number is almost always spam", "a three-word five-star review is fine". Each rule is sometimes wrong and usually silent. Weak supervision turns the rules into code, lets a statistical model decide how far to trust each, and labels far more data than people could. It is Dawid–Skene with programs as annotators. It also makes definitions cheap to change: when "personal data" expands to include license plates, an LF is a one-line edit and a re-run, while hand labels must be redone. Ratner et al. built Snorkel around this workflow [Ratner et al. 2017].
 
 #### How it works internally
 
-1. Experts write LFs; each maps an example to a class or ABSTAIN.
-2. Apply all LFs to the unlabeled pool, producing a sparse **label matrix** $\Lambda$ (examples × LFs).
-3. Evaluate each LF on a small hand-labeled **development set** (a few hundred examples) and on the unlabeled matrix (coverage, overlap, conflict).
-4. Fit the label model on $\Lambda$, which estimates LF accuracies from the pattern of agreements, and output probabilistic labels.
-5. Train the end model on the probabilistic labels with a noise-aware loss, using ordinary features (text, metadata), so that it generalizes to examples on which every LF abstained.
-6. Iterate: inspect end-model errors on the dev set and write LFs that fix them.
+1. Apply all LFs to the unlabeled pool, giving a sparse **label matrix** (examples × LFs).
+2. Evaluate each LF on the matrix and on a small hand-labeled **dev set**.
+3. Fit the label model and output probabilistic labels.
+4. Train the end model on ordinary features with a noise-aware loss, so it generalizes to examples where every LF abstained.
+5. Inspect dev-set errors and write or fix LFs.
 
-**Figure 63.8 — A weak-supervision pipeline.**
+**Figure 63.6 — A weak-supervision pipeline.**
 
 ```mermaid
 flowchart LR
@@ -818,58 +699,51 @@ flowchart LR
   EV -.->|write or fix LFs| LFS
 ```
 
-**Reading the diagram.** Unlabeled reviews (cylinder, left) pass through labeling functions, which may be regular expressions, keyword lists, lookups or existing models, producing a sparse label matrix. The label model reads only that matrix and outputs probabilistic labels, which, together with the raw reviews' features, train the end model. A small hand-labeled dev set is the only ground truth; it evaluates both the LFs and the end model, and the evaluation feeds back (dotted, human-in-the-loop) into writing and fixing LFs. Everything is batch. Failure points: LFs that are correlated (two keyword lists sharing most words) are counted as independent evidence unless the label model accounts for it; low total coverage leaves the end model with few examples of a class; and a dev set that is too small hides LF errors. The pipeline scales with compute (LFs are embarrassingly parallel over examples), not with people.
+**Reading the diagram.** LFs (regexes, lexicons, lookups, existing models) turn unlabeled reviews into a label matrix; the label model reads only that matrix; its probabilistic labels plus the raw features train the end model. The small dev set is the only ground truth, and evaluation feeds back (dotted, human-in-the-loop) into LF authoring. All batch, scaling with compute. Failure points: correlated LFs counted as independent evidence, low coverage of a class, and a dev set too small to expose LF errors.
 
 ### 63.8.2 Evaluating labeling functions
 
 ::: formula
-**Labeling-function statistics**
+**Labeling-function statistics** (each a fraction of the $N$ unlabeled examples, except accuracy)
 
-$$\text{cov}_j = \frac{|\{i : \lambda_j(x_i) \ne \varnothing\}|}{N} \qquad \text{ovl}_j = \frac{|\{i : \lambda_j(x_i) \ne \varnothing,\ \exists k \ne j:\ \lambda_k(x_i) \ne \varnothing\}|}{N}$$
-
-$$\text{con}_j = \frac{|\{i : \lambda_j(x_i) \ne \varnothing,\ \exists k \ne j:\ \lambda_k(x_i) \notin \{\varnothing, \lambda_j(x_i)\}\}|}{N} \qquad \text{acc}_j = \frac{|\{i \in \text{dev} : \lambda_j(x_i) = y_i\}|}{|\{i \in \text{dev} : \lambda_j(x_i) \ne \varnothing\}|}$$
+$$\text{cov}_j = \frac{\#\{\lambda_j \ne \varnothing\}}{N} \qquad \text{ovl}_j = \frac{\#\{\lambda_j \ne \varnothing,\ \text{another LF votes}\}}{N} \qquad \text{con}_j = \frac{\#\{\lambda_j \ne \varnothing,\ \text{another LF votes differently}\}}{N} \qquad \text{acc}_j = \frac{\#\{\text{dev}: \lambda_j = y\}}{\#\{\text{dev}: \lambda_j \ne \varnothing\}}$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $\lambda_j(x_i)$ | Output of labeling function $j$ on example $i$ | class or $\varnothing$ |
+| $\lambda_j$ | Output of LF $j$ on an example | class or $\varnothing$ |
 | $\varnothing$ | Abstain | — |
-| $N$ | Unlabeled examples | examples |
-| $\text{cov}_j$ | Coverage: fraction where LF $j$ votes | fraction |
-| $\text{ovl}_j$ | Overlap: fraction where LF $j$ and at least one other LF vote | fraction |
-| $\text{con}_j$ | Conflict: fraction where LF $j$ and another LF vote differently | fraction |
-| $\text{acc}_j$ | Empirical accuracy on the dev set, where LF $j$ votes | fraction |
+| $\text{cov}_j$, $\text{ovl}_j$, $\text{con}_j$ | Coverage, overlap, conflict | fraction |
+| $\text{acc}_j$ | Empirical accuracy on the dev set where LF $j$ votes | fraction |
 :::
 
-**Table 63.8 — QuickBite moderation labeling functions on 100,000 reviews (illustrative).**
+**Table 63.8 — QuickBite moderation LFs on 100,000 reviews (illustrative).**
 
 | Labeling function | Votes | Coverage | Overlap | Conflict | Dev accuracy |
 |---|---|---|---|---|---|
 | `phone_or_url` | remove | 2.5% | 1.2% | 0.3% | 0.91 |
 | `profanity_lexicon` | remove | 4.0% | 1.8% | 0.6% | 0.82 |
 | `toxicity_model_gt_0.9` | remove | 3.0% | 2.2% | 0.4% | 0.85 |
-| `short_positive` (≤ 6 words, rating ≥ 4) | keep | 30.0% | 6.0% | 0.5% | 0.97 |
-| `trusted_reviewer` (≥ 20 accepted reviews) | keep | 25.0% | 8.0% | 0.9% | 0.95 |
+| `short_positive` | keep | 30.0% | 6.0% | 0.5% | 0.97 |
+| `trusted_reviewer` | keep | 25.0% | 8.0% | 0.9% | 0.95 |
 
 ::: example
-**Worked example — Reading `profanity_lexicon`.** Applied to 100,000 reviews, the LF fires on 4,000; on 1,800 of those another LF also votes, and on 600 another LF votes *keep*.
+**Worked example — Reading `profanity_lexicon`.** It fires on 4,000 of 100,000 reviews; on 1,800 another LF votes, on 600 another LF votes *keep*.
 
-1. Coverage $= 4{,}000/100{,}000 = 4.0\%$; overlap $= 1.8\%$; conflict $= 0.6\%$.
-2. Conflict rate among its own votes: $600/4{,}000 = 15\%$, by far the highest in the table. Most conflicts are with `trusted_reviewer`: long-standing customers who swear about late food.
-3. On the 1,000-review dev set it fires 40 times and is right 33 times: accuracy $33/40 = 0.825$.
-4. Combined: a review flagged by `profanity_lexicon` (accuracy 0.82) and by `trusted_reviewer` (0.95), with a 5% prior of "remove", has posterior odds $(0.05/0.95) \times (0.82/0.18) \times (0.05/0.95) = 0.0126$, so $P(\text{remove}) \approx 1.2\%$ under a naive independent-vote model.
+1. Coverage 4.0%, overlap 1.8%, conflict 0.6%.
+2. Conflicts are $600/4{,}000 = 15\%$ of its votes, the highest in the table; most are with `trusted_reviewer`: loyal customers swearing about late food.
+3. Dev accuracy: right on 33 of 40 firings, 0.825, with a 95% interval of about ±0.12.
+4. If it votes *remove* and `trusted_reviewer` votes *keep*, with a 5% prior, an independent-vote model gives odds $(0.05/0.95)(0.82/0.18)(0.05/0.95) = 0.0126$, so P(remove) ≈ 1.2%.
 
-**Interpretation.** The LF is useful but blunt: swearing about food is not abuse. **Engineering implication.** Refine it (profanity *directed at a person*), or let the label model down-weight it; then check whether the end model, trained on probabilistic labels, catches abusive reviews that no LF covers. A dev-set accuracy based on 40 firings has a wide confidence interval (roughly ±0.12), so grow the dev set where LFs disagree.
+**Interpretation.** Swearing about food is not abuse. **Engineering implication.** Narrow the LF (profanity *directed at a person*) or let the label model down-weight it, and grow the dev set where LFs conflict.
 :::
 
-#### Real-world industry applications
-
 ::: industry
-**Snorkel DryBell at Google.** Bach et al. describe deploying weak supervision for content classification at Google. LFs were written over existing organizational resources (internal models, knowledge graphs, heuristics) that could not be served directly in production, the label model ran at scale on Google's batch infrastructure, and the resulting end models, trained only on servable features, reached quality comparable to models trained on large hand-labeled sets for the tasks reported.
+**Snorkel DryBell at Google.** Bach et al. describe weak supervision for content classification at Google: LFs drew on organizational resources (internal models, knowledge graphs, heuristics) that could not be served in production, and end models trained only on servable features reached quality comparable to models trained on large hand-labeled sets for the tasks reported.
 *Evidence: Primary* — [Bach et al. 2019]
 :::
 
 ::: warning
-**Warning — Weak supervision bakes in the experts' blind spots.** If no LF covers a kind of abuse (say, coded slurs in a minority language), the label model never sees it labeled, and the end model learns that it is acceptable. Monitor end-model recall on a hand-labeled, stratified sample of production traffic, and review per-slice coverage as part of fairness review (Chapter 71).
+**Warning — Weak supervision bakes in the experts' blind spots.** If no LF covers coded slurs in a minority language, the end model learns that they are acceptable. Monitor recall on a hand-labeled, stratified sample of production and review per-slice coverage (Chapter 71).
 :::
 
 ## 63.9 Active learning
@@ -877,53 +751,46 @@ $$\text{con}_j = \frac{|\{i : \lambda_j(x_i) \ne \varnothing,\ \exists k \ne j:\
 ### 63.9.1 Choosing which examples to label
 
 ::: definition
-**Definition — Active learning.** A labeling strategy in which the model chooses which unlabeled examples a human should label next, with the aim of reaching a target model quality with fewer labels than random sampling would need. In **pool-based** active learning the model scores a large pool of unlabeled examples and sends the most informative batch to annotators; the model is retrained and the cycle repeats [Settles 2009].
+**Definition — Active learning.** A strategy in which the model chooses which unlabeled examples people label next, aiming to reach a target quality with fewer labels than random sampling. In **pool-based** active learning the model scores a pool, sends the most informative batch to annotators, retrains and repeats [Settles 2009].
 :::
 
 #### First-principles explanation
 
-A tutor helping a student prepare for an exam does not assign a random page of the textbook. They find what the student gets wrong or is unsure about and practice that. Random sampling spends most of the labeling budget on examples the model already handles; at QuickBite, 95% of reviews are clean and easy, so most randomly sampled labels teach the moderation model nothing new. Active learning spends the budget near the decision boundary, where a label changes the model.
+A good tutor does not assign random textbook pages; they find what the student gets wrong and practice that. At QuickBite 95% of reviews are clean and easy, so most randomly sampled labels teach the moderation model nothing. Active learning spends the budget near the decision boundary, where a label changes the model.
 
 #### How it works internally
 
-1. Label a small random **seed set** (both classes must be present).
-2. Train a model on the labeled set.
-3. Score the unlabeled pool with an **acquisition function** and pick the top batch of $b$ examples.
-4. Send the batch to annotators (§63.5); add the labels.
-5. Repeat from step 2 until the budget is spent or the quality target is met.
+1. Label a random **seed set** containing both classes.
+2. Train; score the unlabeled pool with an **acquisition function**; send the top batch of $b$ examples to annotators.
+3. Add the labels, retrain and repeat until the budget or quality target is reached.
 
-Common acquisition functions [Settles 2009]:
-
-- **Uncertainty sampling** [Lewis and Gale 1994]: pick the examples the model is least sure about, measured as *least confidence*, *margin* or *entropy* (formula below).
-- **Query by committee** [Seung et al. 1992]: train several models (different seeds, bootstrap samples or model families) and pick examples on which they disagree most.
-- **Diversity** or **core-set** sampling: pick examples that cover the feature space, for instance cluster centers in an embedding space, so a batch does not contain 25 near-duplicates of the same confusing review [Sener and Savarese 2018].
-- **Hybrid**: pre-filter by uncertainty, then choose a diverse subset; this is the usual production choice for batch active learning.
+Acquisition functions [Settles 2009]: **uncertainty sampling** picks the examples the model is least sure of [Lewis and Gale 1994]; **query by committee** picks those on which several models disagree [Seung et al. 1992]; **diversity** or **core-set** sampling covers the feature space so a batch is not 25 near-duplicates [Sener and Savarese 2018]. Production systems usually pre-filter by uncertainty and then pick a diverse subset.
 
 ::: formula
-**Uncertainty scores for one example**
+**Uncertainty scores**
 
 $$u_{\text{LC}} = 1 - \max_k p_k \qquad u_{\text{M}} = p_{(1)} - p_{(2)} \qquad u_{\text{H}} = -\sum_k p_k \ln p_k$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $p_k$ | Model's predicted probability of class $k$ | probability |
-| $p_{(1)}$, $p_{(2)}$ | Largest and second-largest predicted probabilities | probability |
-| $u_{\text{LC}}$ | Least-confidence score: larger is more uncertain | probability |
-| $u_{\text{M}}$ | Margin: *smaller* is more uncertain | probability |
-| $u_{\text{H}}$ | Entropy: larger is more uncertain | nats |
+| $p_k$ | Predicted probability of class $k$ | probability |
+| $p_{(1)}$, $p_{(2)}$ | Largest and second-largest probabilities | probability |
+| $u_{\text{LC}}$ | Least confidence (larger = more uncertain) | probability |
+| $u_{\text{M}}$ | Margin (*smaller* = more uncertain) | probability |
+| $u_{\text{H}}$ | Entropy (larger = more uncertain) | nats |
 :::
 
 ::: example
-**Worked example — Which ticket to label?** QuickBite's support-intent model gives ticket A the probabilities (late order, missing item, refund) $= (0.50, 0.30, 0.20)$ and ticket B $(0.48, 0.47, 0.05)$.
+**Worked example — Which support ticket to label?** The intent model gives ticket A (late, missing, refund) $= (0.50, 0.30, 0.20)$ and ticket B $= (0.48, 0.47, 0.05)$.
 
-1. Least confidence: A $= 0.50$, B $= 0.52$. B is slightly more uncertain.
-2. Margin: A $= 0.50 - 0.30 = 0.20$, B $= 0.48 - 0.47 = 0.01$. B is far more uncertain.
-3. Entropy: A $= -(0.5\ln 0.5 + 0.3\ln 0.3 + 0.2\ln 0.2) = 0.347 + 0.361 + 0.322 = 1.030$ nats; B $= 0.352 + 0.355 + 0.150 = 0.857$ nats. A is more uncertain.
+1. Least confidence: A 0.50, B 0.52.
+2. Margin: A $0.20$, B $0.01$; B is far more uncertain.
+3. Entropy: A $= 0.347 + 0.361 + 0.322 = 1.030$ nats; B $= 0.352 + 0.355 + 0.150 = 0.857$ nats; A is more uncertain.
 
-**Interpretation.** The measures disagree because they ask different questions: margin asks "is the top decision close?", entropy asks "is the model confused overall?". **Engineering implication.** For a model whose output is a single decision (route the ticket), margin is usually the right signal; for two classes all three rank examples identically, by closeness to $p = 0.5$.
+**Interpretation.** Margin asks whether the top decision is close; entropy asks whether the model is confused overall. **Engineering implication.** For a single routing decision use margin; with two classes all three rank examples identically, by closeness to 0.5.
 :::
 
-**Figure 63.9 — The pool-based active-learning loop.**
+**Figure 63.7 — The pool-based active-learning loop.**
 
 ```mermaid
 flowchart LR
@@ -938,11 +805,11 @@ flowchart LR
   L --> EV[Evaluate on random<br/>held-out set]
 ```
 
-**Reading the diagram.** The current model scores the whole unlabeled pool (a batch inference job); the acquisition step chooses a batch that is uncertain and diverse; the batch goes through the ordinary labeling queue to annotators; new labels join the labeled set, the model is retrained, and the loop repeats. Two components keep it honest: a random audit sample enters the same queue so that some labels are drawn from the true distribution, and evaluation uses a random held-out set, never the actively chosen examples, whose distribution is deliberately skewed. All steps are asynchronous batch jobs; one cycle typically takes hours (dominated by human labeling), so batch size trades model freshness against annotator idle time. Failure points: a stale model choosing batches (if retraining lags), batches of near-duplicates, and evaluation contaminated by acquisition bias. Scaling: scoring a pool of millions is cheap compared with labeling; the expensive resource is still people.
+**Reading the diagram.** A batch job scores the pool, acquisition picks an uncertain and diverse batch, and the batch goes through the ordinary labeling queue; new labels trigger retraining. A random audit sample shares the queue so some labels reflect the true distribution, and evaluation uses a random held-out set, never the deliberately skewed actively chosen data. One cycle takes hours, dominated by people. Failure points: retraining lag (stale batches), near-duplicate batches, contaminated evaluation.
 
 ### 63.9.2 Code example: random versus uncertainty sampling
 
-The simulation mimics QuickBite moderation: 12,000 synthetic reviews with 30 features and about 5% positives (needs removal), 8,000 in the pool and 4,000 for testing. Both strategies start from the same 50 random labels and add 25 labels per round. Quality is PR-AUC (§57.10.2), appropriate for a rare positive class. Results are averaged over ten seeds.
+The simulation mimics moderation: 12,000 synthetic reviews, about 5% positive, 8,000 in the pool and 4,000 for testing. Both strategies start from the same 50 random labels and add 25 per round; quality is PR-AUC (§57.10.2), averaged over ten seeds.
 
 ```python
 import warnings
@@ -1015,9 +882,9 @@ positive share of labels bought (uncertainty): 22.4%
 
 What to notice:
 
-- Uncertainty sampling with 400 labels (0.685) matches random sampling with 1,600 (0.689), and with 800 labels it essentially matches a model trained on all 8,000 (0.721 versus 0.725).
-- The mechanism is visible in the last two lines: uncertainty sampling buys about four times as many positives (22.4% versus 5.3%), because the rare class lives near the decision boundary. For imbalanced problems, much of active learning's benefit is that it is a smart way to oversample the rare class.
-- Evaluation always uses the untouched random test split; the actively labeled set is deliberately unrepresentative.
+- Uncertainty sampling with 400 labels (0.685) matches random sampling with 1,600 (0.689); with 800 it nearly matches all 8,000 labels (0.721 versus 0.725).
+- It buys about four times as many positives (22.4% versus 5.3%), because the rare class lives near the boundary: for imbalanced problems, active learning is largely a smart way to oversample the rare class.
+- Evaluation always uses the untouched random test split.
 
 ### 63.9.3 How much does active learning save?
 
@@ -1028,33 +895,26 @@ $$S = 1 - \frac{n_{\text{AL}}(q^*)}{n_{\text{rand}}(q^*)} \qquad \Delta C = \big
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $q^*$ | Target model quality (here PR-AUC) | dimensionless |
-| $n_{\text{rand}}(q^*)$, $n_{\text{AL}}(q^*)$ | Labels needed to reach $q^*$ with random and with active sampling | labels |
+| $q^*$ | Target model quality | dimensionless |
+| $n_{\text{rand}}$, $n_{\text{AL}}$ | Labels needed to reach $q^*$ randomly and actively | labels |
 | $S$ | Fractional labeling savings | fraction |
-| $c_{\ell}$ | Cost per final label (§63.5.2) | \$/label |
-| $C_{\text{AL}}$ | Extra cost of running the loop: pool scoring, retraining, engineering | \$ |
+| $c_{\ell}$ | Cost per final label | \$/label |
+| $C_{\text{AL}}$ | Cost of running the loop (scoring, retraining, engineering) | \$ |
 | $\Delta C$ | Net saving | \$ |
 :::
 
 ::: example
-**Worked example — Budgeting QuickBite's moderation labels.** From the simulation, for $q^* \approx 0.685$: $n_{\text{rand}} = 1{,}600$, $n_{\text{AL}} = 400$.
+**Worked example — Budgeting moderation labels.** From the simulation at $q^* \approx 0.685$: $n_{\text{rand}} = 1{,}600$, $n_{\text{AL}} = 400$, so $S = 1 - 400/1{,}600 = 0.75$.
 
-1. $S = 1 - 400/1{,}600 = 0.75$.
-2. Suppose a pilot on real reviews shows the same shape at production scale: random sampling would need 40,000 labels to reach the launch target, active learning 10,000. At $c_\ell = \$0.41$ (§63.5.2): $40{,}000 \times 0.41 = \$16{,}400$ versus $10{,}000 \times 0.41 = \$4{,}100$, a gross saving of \$12,300.
-3. Loop cost: 30 rounds, each scoring a pool of 2 million reviews with a small model (minutes of CPU) and retraining (minutes), plus about one engineer-week to build and monitor the loop. Assume $C_{\text{AL}} \approx \$5{,}000$ including engineering time.
-4. Net saving $\Delta C \approx \$12{,}300 - \$5{,}000 = \$7{,}300$, and the loop is reusable for every later relabeling campaign.
+1. Suppose a pilot on real reviews shows the same shape: 40,000 random labels or 10,000 active ones to reach the launch target. At $c_\ell = \$0.41$ (§63.5.2): \$16,400 versus \$4,100, a gross saving of \$12,300.
+2. Loop cost: 30 rounds of scoring a 2-million-review pool and retraining (minutes of CPU each) plus about an engineer-week; assume $C_{\text{AL}} \approx \$5{,}000$.
+3. Net: $\Delta C \approx \$7{,}300$, and the loop is reusable for later campaigns.
 
-**Interpretation.** Savings are real but smaller than the headline 75% once the loop's own cost is counted, and they are dataset-specific. **Engineering implication.** Never assume the savings ratio; measure it on a pilot by running both strategies side by side for a few rounds against a random held-out set, as the simulation does.
+**Interpretation.** Real savings are smaller than the headline 75% once the loop's cost counts, and they are dataset-specific. **Engineering implication.** Measure the ratio with a side-by-side pilot against a random held-out set before budgeting on it.
 :::
-
-#### Failure scenarios and misconceptions
 
 ::: warning
-**Warning — Sampling bias.** The actively labeled set is deliberately unlike production traffic. Training on it can distort calibration (the model sees far more positives than reality), and evaluating on it gives meaningless numbers. Keep a random audit stream, recalibrate on random data (§63.11), and record the acquisition policy in the dataset's documentation (§63.13).
-:::
-
-::: mistake
-**Mistake — Active learning from a cold start.** With 20 labels the model's uncertainty is itself unreliable, and uncertainty sampling can fixate on one region of the space while ignoring another cluster of positives it has never seen. Start with a random or stratified seed set of a few hundred labels, include diversity in the acquisition, and keep some random sampling throughout.
+**Warning — Sampling bias and cold starts.** The actively labeled set is deliberately unrepresentative: training on it distorts calibration, and evaluating on it is meaningless. With only a few dozen seed labels, uncertainty estimates are unreliable and the loop can fixate on one region while missing another cluster of positives. Start from a stratified seed of a few hundred, keep a random audit stream, recalibrate on random data (§63.11) and record the acquisition policy in the datasheet (§63.13).
 :::
 
 ## 63.10 Label noise
@@ -1062,54 +922,51 @@ $$S = 1 - \frac{n_{\text{AL}}(q^*)}{n_{\text{rand}}(q^*)} \qquad \Delta C = \big
 ### 63.10.1 Types and impact
 
 ::: definition
-**Definition — Label noise.** A difference between the label recorded in the dataset and the true class. Noise is **uniform** (symmetric) when a wrong label is equally likely to be any other class, **class-conditional** when the probability of a flip depends on the true class (for example, "missing item" tickets are often filed as "refund"), and **instance-dependent** when it depends on the example itself (ambiguous reviews are mislabeled more often than clear ones) [Frénay and Verleysen 2014].
+**Definition — Label noise.** A difference between the recorded label and the true class. It is **uniform** when a wrong label is equally likely to be any class, **class-conditional** when the flip probability depends on the true class, and **instance-dependent** when it depends on the example (ambiguous reviews are mislabeled more often) [Frénay and Verleysen 2014].
 :::
 
-**Table 63.9 — Kinds of label noise at QuickBite.**
+**Table 63.9 — Label noise at QuickBite.**
 
-| Kind | Example | Typical cause | Effect on the model |
+| Kind | Example | Typical cause | Effect |
 |---|---|---|---|
-| Uniform | Random mis-clicks in the labeling tool | Fatigue, UI errors | Mostly lowers accuracy; large models can memorize it |
-| Class-conditional | "Missing item" filed as "refund" | Agents use the label that triggers the right workflow | Systematic confusion between two classes |
-| Instance-dependent | Sarcastic reviews labeled "keep" | Hard examples | Errors concentrated on exactly the hard cases |
-| Delayed-label noise | Recent fraud labeled legitimate | Label immaturity (§63.4.2) | Model learns that new fraud patterns are safe |
-| Definition drift | "Personal data" redefined mid-project | Guideline change | Inconsistent labels across time |
+| Uniform | Mis-clicks in the tool | Fatigue, UI errors | Lower accuracy; memorized by large models |
+| Class-conditional | "Missing item" filed as "refund" | Agents pick the label that triggers the right workflow | Systematic confusion |
+| Instance-dependent | Sarcastic reviews labeled "keep" | Hard examples | Errors on exactly the hard cases |
+| Delayed | Recent fraud labeled legitimate | Immaturity (§63.4.2) | New fraud learned as safe |
 
-Noise hurts in three places. In **training**, deep networks fit noisy labels after they fit the clean pattern, so noise degrades generalization the longer you train [Zhang et al. 2017; Arpit et al. 2017]. In **evaluation**, noisy *test* labels make the measured metric wrong; Northcutt, Athalye and Mueller estimated an average of a few percent label errors across the test sets of ten widely used benchmarks and showed that this can change which model looks best [Northcutt et al. 2021b]. In **decisions**, class-conditional noise produces biased probabilities, which matters whenever a threshold is set on the model's score.
+Noise hurts in three places. In **training**, deep networks fit the clean pattern first and memorize noise later, so noise degrades generalization the longer you train [Zhang et al. 2017; Arpit et al. 2017]. In **evaluation**, noisy test labels make the metric wrong: Northcutt, Athalye and Mueller found label errors in the test sets of ten widely used benchmarks, averaging a few percent, enough to change model rankings [Northcutt et al. 2021b]. In **decisions**, class-conditional noise biases probabilities that thresholds depend on.
 
-### 63.10.2 Detecting noise: confident learning and loss-based filtering
+### 63.10.2 Detecting noise: confident learning
 
-#### First-principles explanation
-
-A model trained on mostly-correct labels learns the true pattern. When it then looks at an example it has *not* trained on and says "I am 90% sure this is a missing-item ticket" while the label says "refund", one of them is probably wrong, and the more confident the model and the more systematic the confusion, the more likely it is the label. Two rules make this reliable: score each example with a model that did not see it (out-of-fold predictions), and judge "confident" relative to how confident the model usually is for that class, because some classes are inherently harder.
+A model trained on mostly correct labels learns the true pattern. If, on an example it did *not* train on, it is confident in "missing item" while the label says "refund", the label is suspect, especially if that confusion is systematic. Two rules make this reliable: use **out-of-fold** predictions, and judge confidence relative to each class's usual confidence.
 
 ::: formula
 **Confident learning: per-class thresholds and the confident joint** [Northcutt et al. 2021a]
 
-$$t_j = \frac{1}{|X_{\tilde y = j}|}\sum_{x \in X_{\tilde y = j}} \hat p(\tilde y = j \mid x) \qquad C_{ij} = \bigl|\{x \in X_{\tilde y = i} : \arg\max_{l:\ \hat p_l(x) \ge t_l} \hat p_l(x) = j\}\bigr|$$
+$$t_j = \frac{1}{|X_{\tilde y = j}|}\sum_{x \in X_{\tilde y = j}} \hat p_j(x) \qquad C_{ij} = \bigl|\{x \in X_{\tilde y = i} : \arg\max_{l:\ \hat p_l(x) \ge t_l} \hat p_l(x) = j\}\bigr|$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
 | $\tilde y$ | Given (possibly noisy) label | class |
-| $X_{\tilde y = j}$ | Examples whose given label is $j$ | set |
-| $\hat p_l(x)$ | Out-of-fold predicted probability of class $l$ for example $x$ | probability |
-| $t_j$ | Threshold for class $j$: average self-confidence of examples labeled $j$ | probability |
-| $C_{ij}$ | Confident joint: examples labeled $i$ whose confident prediction is $j$ | examples |
+| $X_{\tilde y = j}$ | Examples labeled $j$ | set |
+| $\hat p_l(x)$ | Out-of-fold predicted probability of class $l$ | probability |
+| $t_j$ | Class threshold: mean self-confidence of examples labeled $j$ | probability |
+| $C_{ij}$ | Confident joint: examples labeled $i$ confidently predicted $j$ | examples |
 :::
 
-Off-diagonal cells of $C$ ($i \ne j$) are the likely label errors; normalized, $C$ estimates the joint distribution of given and true labels, and therefore the noise rates themselves. A simpler alternative, **loss-based filtering**, ranks examples by their out-of-fold loss $-\ln \hat p_{\tilde y}(x)$ and inspects the top of the list.
+Off-diagonal cells of $C$ are likely label errors; normalized, $C$ estimates the noise rates. **Loss-based filtering** is simpler: rank examples by out-of-fold loss $-\ln \hat p_{\tilde y}(x)$ and inspect the top.
 
 ::: example
-**Worked example — Is this ticket mislabeled?** In the program below the class thresholds come out as $t = (0.663, 0.623, 0.747)$ for (late order, missing item, refund). A ticket labeled *refund* has out-of-fold probabilities $(0.05, 0.70, 0.25)$.
+**Worked example — Is this ticket mislabeled?** In the program below $t = (0.663, 0.623, 0.747)$ for (late, missing, refund). A ticket labeled *refund* has $\hat p = (0.05, 0.70, 0.25)$.
 
-1. Which classes clear their thresholds? Late order: $0.05 < 0.663$, no. Missing item: $0.70 \ge 0.623$, yes. Refund: $0.25 < 0.747$, no.
-2. The confident class is *missing item*; the given label is *refund*; the ticket counts in $C_{\text{refund},\,\text{missing}}$, an off-diagonal cell.
-3. Note that 0.70 would *not* clear a refund-class threshold of 0.747; per-class thresholds matter.
+1. Above threshold: late $0.05 < 0.663$, no; missing $0.70 \ge 0.623$, yes; refund $0.25 < 0.747$, no.
+2. Confident class *missing item* ≠ given *refund*: the ticket lands in the off-diagonal cell $C_{\text{refund},\text{missing}}$.
+3. Note that 0.70 would not clear the refund threshold of 0.747; per-class thresholds matter.
 
-**Interpretation.** The ticket is flagged as a likely "missing item" filed as "refund". **Engineering implication.** Flagged items should go to human review (§63.5) rather than be silently relabeled; the confident joint also tells the support team *which* confusion is systematic, which is usually a process fix (a workflow that rewards picking "refund") rather than a labeling fix.
+**Interpretation.** Flagged as a likely "missing item" filed as "refund". **Engineering implication.** Send flags to human review, not silent relabeling; and report the systematic confusion to the support team, since the fix is usually a workflow that rewards picking "refund".
 :::
 
-**Figure 63.10 — A label-error detection pipeline.**
+**Figure 63.8 — A label-error detection pipeline.**
 
 ```mermaid
 flowchart LR
@@ -1125,11 +982,11 @@ flowchart LR
   CJ -.->|noise rates by class pair| RPT[Report to data owners]
 ```
 
-**Reading the diagram.** The dataset is split into $K$ folds; each fold is scored by a model trained on the others, producing out-of-fold probabilities (stored, because they are reused). Thresholds and the confident joint are computed from them, as is a loss ranking. Flagged examples go through the ordinary human review queue, and corrected labels produce a new dataset version, never an in-place edit. The confident joint also yields per-class-pair noise rates, reported asynchronously to the teams that own the labeling process. All batch. Failure points: a model too weak to be confident (flags become random), in-fold scoring (the model has memorized the noisy labels and flags nothing), and auto-relabeling without review, which can delete the hard, correct examples a model most needs. Scaling: $K$ training runs per dataset version; for large datasets use a cheaper model for detection than for production.
+**Reading the diagram.** K models, each trained without one fold, produce stored out-of-fold probabilities; thresholds, the confident joint and a loss ranking flag examples, which go through human review into a new dataset version, never an in-place edit. Noise rates per class pair go asynchronously to the owners of the labeling process. Failure points: a weak model (random flags), in-fold scoring (memorized noise, nothing flagged) and auto-relabeling that deletes hard but correct examples. Cost: K training runs per version; use a cheaper model for detection.
 
 ### 63.10.3 Code example: finding label errors
 
-The program builds 5,000 synthetic support tickets in three intents, corrupts 25% of "missing item" labels to "refund" and 10% of "late order" labels to "missing item" (class-conditional noise), then applies confident learning and loss ranking.
+5,000 synthetic tickets in three intents; 25% of "missing item" labels are flipped to "refund" and 10% of "late order" to "missing item".
 
 ```python
 import warnings
@@ -1213,41 +1070,35 @@ test accuracy: noisy 0.899  pruned 0.930  true labels 0.964
 
 What to notice:
 
-- The largest off-diagonal cell, 226 tickets labeled *refund* that look like *missing item*, recovers the injected systematic confusion without being told about it; the second largest (79, *missing item* that looks like *late order*) recovers the other one.
-- Confident learning beats an equal-sized loss ranking on precision (0.78 versus 0.74), because per-class thresholds adjust for the refund class's higher typical confidence.
-- Simply dropping the 395 flagged rows recovers almost half of the accuracy lost to noise (0.899 → 0.930, against 0.964 with true labels), with no human effort. Sending them to review instead would recover more.
-- This is the core idea of the open-source `cleanlab` library by the confident-learning authors, which adds calibrated noise-rate estimation and ranking options [Northcutt et al. 2021a].
-
-::: industry
-**Label errors in benchmark test sets.** Applying confident learning followed by crowd verification to the test sets of ten popular benchmarks (including ImageNet, CIFAR, MNIST, Amazon Reviews and QuickDraw), Northcutt, Athalye and Mueller found label errors in every one, averaging a few percent, and showed that correcting them can reorder model rankings, with smaller models sometimes beating larger ones on the corrected labels.
-*Evidence: Primary* — [Northcutt et al. 2021b]
-:::
+- The largest off-diagonal cells (226 refund-looks-like-missing, 79 missing-looks-like-late) recover both injected confusions without being told about them.
+- At equal flag counts, confident learning beats loss ranking on precision (0.78 versus 0.74), because per-class thresholds adjust for the refund class's higher typical confidence.
+- Dropping the 395 flagged rows recovers about half of the accuracy lost to noise (0.899 → 0.930, against 0.964 with true labels). Reviewing them would recover more.
+- The open-source `cleanlab` library by the confident-learning authors implements refined versions of these steps [Northcutt et al. 2021a].
 
 ::: mistake
-**Mistake — Removing every high-loss example.** High loss also marks rare but correctly labeled examples (the unusual fraud pattern, the new slang). Automatic pruning can delete exactly the minority cases a model needs most, and can affect some user groups more than others. Route flags to review, cap automated removal, and compare slice metrics before and after cleaning (Chapter 71).
+**Mistake — Removing every high-loss example.** High loss also marks rare but correct examples: the new fraud pattern, new slang. Automatic pruning can delete exactly the minority cases a model needs and affect some user groups more than others. Route flags to review, cap automatic removal and compare slice metrics before and after cleaning (Chapter 71).
 :::
 
 ## 63.11 Class imbalance and sampling
 
-### 63.11.1 Stratification and downsampling
+### 63.11.1 Stratification and negative downsampling
 
 ::: definition
-**Definition — Class imbalance.** A dataset in which one class is much rarer than another, such as QuickBite fraud at 0.5% of orders or abusive reviews at a few percent. **Stratified sampling** draws separately from each class or slice so that each is represented in fixed proportions. **Negative downsampling** keeps all positive examples and a random fraction $\beta$ of negatives, to shrink the training set and rebalance it [He and Garcia 2009].
+**Definition — Class imbalance.** A dataset in which one class is much rarer than another, such as fraud at 0.5% of orders. **Stratified sampling** draws separately from each class or slice in fixed proportions. **Negative downsampling** keeps every positive and a random fraction $\beta$ of negatives [He and Garcia 2009].
 :::
 
 #### First-principles explanation
 
-If you want to learn what fraud looks like, a dataset of 90 million orders with 450,000 frauds is mostly a very expensive way of storing legitimate orders. Most of the negatives are near-identical and easy; a random twentieth of them carries almost the same information. Downsampling throws away redundant negatives, which makes training up to an order of magnitude cheaper and gives the rare class more weight in the loss. The catch is that the model now believes fraud is far more common than it is, so its probabilities must be corrected before they drive decisions.
+Ninety million orders containing 450,000 frauds are mostly an expensive way to store legitimate orders; a random twentieth of the negatives carries almost the same information. Downsampling makes training up to an order of magnitude cheaper and gives the rare class more weight. The catch: the model now believes fraud is far more common than it is, so its probabilities must be corrected before they drive decisions.
 
 #### How it works internally
 
-1. **Stratify splits.** Train, validation and test splits keep the natural class ratio within each time window (§57.7), so that evaluation reflects production.
-2. **Downsample only the training split.** Keep every positive; keep each negative with probability $\beta$; record $\beta$ in the dataset metadata.
-3. **Train** on the downsampled set.
-4. **Correct** the model's output with the formula below (or, equivalently, train with weight $1/\beta$ on each kept negative).
-5. **Verify calibration** on the untouched validation split with reliability bins (§57.10.3).
+1. Split by time and keep the natural class ratio in validation and test (§57.7).
+2. Downsample only the training split; record $\beta$ in the dataset metadata.
+3. Train, then correct outputs with the formula below (equivalently, weight kept negatives by $1/\beta$).
+4. Verify calibration on the untouched validation split (§57.10.3).
 
-Alternatives work at the algorithm level: **class weights** in the loss (cost-sensitive learning), **oversampling** positives, or synthesizing positives by interpolation (SMOTE [Chawla et al. 2002]). He and Garcia's survey compares sampling, cost-sensitive and algorithmic approaches and argues for evaluating with precision–recall measures rather than accuracy [He and Garcia 2009].
+Alternatives include class weights in the loss (cost-sensitive learning), oversampling positives and interpolating synthetic positives with SMOTE [Chawla et al. 2002]; He and Garcia's survey compares them and recommends precision–recall evaluation over accuracy [He and Garcia 2009].
 
 ::: formula
 **Calibration correction after negative downsampling**
@@ -1256,25 +1107,25 @@ $$p = \frac{\beta\, p_s}{\beta\, p_s + (1 - p_s)} \qquad \Longleftrightarrow \qq
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $\beta$ | Fraction of negatives kept during training | fraction |
-| $p_s$ | Model's predicted probability of the positive class, trained on the downsampled data | probability |
+| $\beta$ | Fraction of negatives kept | fraction |
+| $p_s$ | Predicted positive probability from the model trained on downsampled data | probability |
 | $p$ | Corrected probability under the true class ratio | probability |
 :::
 
-The correction follows from Bayes' rule: downsampling multiplies the number of negatives, and therefore the prior odds of the negative class, by $\beta$, while leaving the class-conditional feature distributions unchanged; so the posterior odds of a positive are inflated by $1/\beta$ and must be multiplied back by $\beta$.
+By Bayes' rule, downsampling multiplies the prior odds of a negative by $\beta$ while leaving class-conditional feature distributions unchanged, so posterior odds of a positive are inflated by $1/\beta$ and must be multiplied back by $\beta$.
 
 ::: example
-**Worked example — Downsampling QuickBite's fraud training data.** A 180-day matured window (§63.4.2) holds $500{,}000 \times 180 = 90$ million orders, of which $0.5\%$, or 450,000, are fraud. Keep $\beta = 0.05$ of negatives.
+**Worked example — Downsampling QuickBite's fraud data.** A 180-day matured window (§63.4.2) holds 90 million orders, 450,000 of them fraud. Keep $\beta = 0.05$.
 
-1. Negatives kept: $89{,}550{,}000 \times 0.05 = 4{,}477{,}500$. Training rows: $450{,}000 + 4{,}477{,}500 = 4{,}927{,}500$, about **18× fewer** than 90 million.
-2. Prevalence in the training set: $450{,}000 / 4{,}927{,}500 = 9.13\%$, versus 0.5% in production.
-3. The model scores an order $p_s = 0.30$. Correct it: $p = 0.05 \times 0.30 / (0.05 \times 0.30 + 0.70) = 0.015/0.715 = 0.021$.
-4. Check with odds: $0.30/0.70 = 0.4286$; $\times\, 0.05 = 0.02143$; $p = 0.02143/1.02143 = 0.021$.
+1. Negatives kept: $89{,}550{,}000 \times 0.05 = 4{,}477{,}500$; training rows $4{,}927{,}500$, about **18× fewer**.
+2. Training prevalence: $450{,}000/4{,}927{,}500 = 9.13\%$, versus 0.5% in production.
+3. The model scores an order $p_s = 0.30$: $p = 0.015/(0.015 + 0.70) = 0.021$.
+4. Odds check: $0.4286 \times 0.05 = 0.02143$; $p = 0.02143/1.02143 = 0.021$.
 
-**Interpretation.** A score that looks like "30% fraud" is really about 2.1% fraud in production, still four times the base rate but nothing like 30%. **Engineering implication.** Any consumer of the score that compares it with a cost (block if expected loss > friction cost, §57.10) must receive the corrected probability. Put the correction in the model artifact itself, not in downstream services, and record $\beta$ in the model card so that a later retrain with a different $\beta$ cannot silently shift every threshold.
+**Interpretation.** "30% fraud" is really about 2.1%: four times the base rate, nowhere near 30%. **Engineering implication.** Any expected-loss decision (§57.10) needs the corrected probability. Ship the correction inside the model artifact and record $\beta$ in the model card, so a retrain with a different $\beta$ cannot silently shift every threshold.
 :::
 
-**Figure 63.11 — Downsampling in training and correction in serving.**
+**Figure 63.9 — Downsampling in training, correction in serving.**
 
 ```mermaid
 flowchart LR
@@ -1282,7 +1133,7 @@ flowchart LR
     LS[(Matured labels)] --> SPL[Time-based split]
     SPL -->|train split| DS[Keep all positives,<br/>beta of negatives]
     DS --> TR[Train model]
-    SPL -->|validation split,<br/>natural ratio| CAL[Calibration check]
+    SPL -->|validation, natural ratio| CAL[Calibration check]
     TR --> PK[Package model plus<br/>correction with beta]
     PK --> CAL
   end
@@ -1294,15 +1145,15 @@ flowchart LR
   PK -.->|model registry| SRV
 ```
 
-**Reading the diagram.** Offline, matured labels are split by time; only the training split is downsampled. The model is packaged together with its correction (which needs only $\beta$) and checked for calibration on a validation split that keeps the natural class ratio. The package reaches the online scorer asynchronously through the model registry (Chapter 69). Online, the checkout request is scored synchronously and the corrected probability feeds the decision. Failure points: applying the correction twice (once in the model, once in a downstream service), forgetting it entirely (thresholds tuned on uncorrected scores become wrong after a retrain with a new $\beta$), and downsampling the validation split, which makes calibration checks meaningless. Scaling: downsampling is a cheap filter in the training-data job (Chapter 61), and its main effect is to cut training cost roughly in proportion to $\beta$.
+**Reading the diagram.** Offline, only the training split is downsampled; the packaged model carries its correction and is checked on a natural-ratio validation split. The package reaches serving asynchronously through the model registry (Chapter 69); online, checkout requests are scored synchronously and the corrected probability drives the decision. Failure points: correcting twice, not at all, or downsampling the validation split. Training cost falls roughly in proportion to $\beta$.
 
 ::: industry
-**Negative downsampling for ad click prediction at Facebook.** He et al. describe training click-prediction models on data in which negative examples (no click) were downsampled, and recalibrating the predictions with $q = p/(p + (1-p)/w)$, where $w$ is the negative sampling rate (the same formula as above). They studied how prediction quality varied with the sampling rate, treating the rate as a trade-off between training cost and accuracy rather than a free choice.
+**Negative downsampling at Facebook.** He et al. describe downsampling negative (no-click) examples when training ad click-prediction models and recalibrating with $q = p/(p + (1-p)/w)$, where $w$ is the negative sampling rate (the formula above), and study how prediction quality varies with the rate.
 *Evidence: Primary* — [He et al. 2014]
 :::
 
 ::: mistake
-**Mistake — Downsampling the test set.** A test set with 9% fraud reports precision that production, at 0.5% fraud, will never see: at a fixed false-positive rate, precision falls roughly in proportion to prevalence. Evaluate at the natural ratio, or re-weight negatives by $1/\beta$ when computing metrics.
+**Mistake — Downsampling the test set.** At 9% prevalence, measured precision is far higher than production will see at 0.5%. Evaluate at the natural ratio, or weight negatives by $1/\beta$ in the metrics.
 :::
 
 ## 63.12 Synthetic data
@@ -1310,32 +1161,29 @@ flowchart LR
 ### 63.12.1 Kinds and uses
 
 ::: definition
-**Definition — Synthetic data.** Training or evaluation examples that were generated rather than observed. **Augmentation** transforms real examples while preserving their label (crop or flip an image, paraphrase a sentence). **Simulation** generates examples from a model of the world (a traffic simulator, a game engine, a scripted attack). **Generative synthetic data** samples new examples from a learned generative model (a GAN, a diffusion model, a large language model). **Privacy-motivated** synthetic data aims to preserve a dataset's statistical properties without exposing real records.
+**Definition — Synthetic data.** Examples that were generated rather than observed. **Augmentation** applies label-preserving transforms to real examples; **simulation** generates them from a model of the world; **generative** synthesis samples from a learned model (GAN, diffusion model, LLM); **privacy-motivated** synthesis aims to preserve a dataset's statistics without exposing real records.
 :::
 
-#### First-principles explanation
-
-Pilots train in flight simulators because crashing a real aircraft to learn from it is unaffordable. Synthetic data serves the same purpose: it supplies examples that are rare, dangerous, expensive or private in the real world. Its weakness is the simulator's: the model learns the simulator's world, and only the parts of that world that match reality transfer.
+Like a flight simulator, synthetic data supplies examples that are rare, dangerous, expensive or private, and only the parts of its world that match reality transfer.
 
 **Table 63.10 — Synthetic data approaches.**
 
-| Row | Augmentation | Simulation | Generative models | Privacy-motivated synthesis |
+| Row | Augmentation | Simulation | Generative models | Privacy-motivated |
 |---|---|---|---|---|
-| What it is | Label-preserving transforms | Rule- or physics-based generator | Samples from a learned model | Generator trained to mimic a sensitive table |
-| QuickBite example | Paraphrase moderation examples | Simulated courier routes during a road closure | LLM-written abusive reviews in a new language | Synthetic orders shared with a vendor |
-| Advantages | Cheap; labels free; robustness | Covers rare and unsafe scenarios | Fills gaps in coverage quickly | Data can leave the security boundary |
-| Disadvantages | Only small variations | Sim-to-real gap | Mismatch, bias, collapse | Not private by default; utility loss |
-| Choose when | Model must be invariant to the transform | Real events are rare or dangerous | Bootstrapping a class with few examples | Sharing data under privacy constraints |
+| QuickBite example | Paraphrased moderation examples | Courier routes during a road closure | LLM-written abuse in a new language | Synthetic orders for a vendor |
+| Advantages | Cheap; free labels | Rare and unsafe scenarios | Fills coverage gaps fast | Data can leave the boundary |
+| Disadvantages | Small variations only | Sim-to-real gap | Mismatch, bias, collapse | Not private by default |
+| Choose when | Model must be invariant to the transform | Real events are rare or dangerous | Bootstrapping a sparse class | Sharing under privacy constraints |
 
-**Augmentation** is the oldest and safest form: a model that must not care whether an image is flipped can be shown flipped copies [Shorten and Khoshgoftaar 2019]. **Simulation** can close large gaps when the simulator is randomized widely enough that reality looks like one more variation; domain randomization trained object detectors on simulated images alone that transferred to real robots [Tobin et al. 2017]. **Generative** synthesis with large language models is now a common way to bootstrap text classifiers, for example to create abusive-review examples in a language with few real ones, but generated examples share the generator's style and blind spots. **Privacy** is the most misunderstood use: a generator trained on real records can memorize and reproduce them, and Stadler, Oprisanu and Troncoso showed that synthetic data does not by itself provide a better privacy–utility trade-off than traditional anonymization; formal guarantees need differential privacy in the generator (Chapter 71) [Stadler et al. 2022].
+Augmentation is the oldest and safest form [Shorten and Khoshgoftaar 2019]. Simulation can close large gaps when randomized widely enough that reality looks like one more variation; domain randomization trained detectors on simulated images alone that worked on a real robot [Tobin et al. 2017]. LLM-generated text is now a common way to bootstrap text classifiers, but it shares the generator's style and blind spots. Privacy is the most misunderstood use: generators can memorize training records, and Stadler, Oprisanu and Troncoso found that synthetic data does not by itself offer a better privacy–utility trade-off than traditional anonymization; formal guarantees need differential privacy (Chapter 71) [Stadler et al. 2022].
 
 ### 63.12.2 Risks: distribution mismatch and model collapse
 
-The first risk is **distribution mismatch**: synthetic examples are cleaner, more typical and more uniform than real ones. A moderation model trained largely on LLM-written abuse learns the LLM's idea of abuse; real abusers misspell, use coded language and mix languages. Always evaluate on real held-out data, and track the share of synthetic data in every dataset version.
+**Distribution mismatch**: synthetic examples are cleaner and more typical than real ones. A moderation model trained mostly on LLM-written abuse learns the LLM's idea of abuse, while real abusers misspell, use coded language and mix languages. Evaluate on real held-out data and track the synthetic share of every dataset version.
 
-The second risk is **model collapse**. Shumailov et al. showed, for language models, variational autoencoders and Gaussian mixtures, that when each generation of a model is trained on data generated by the previous generation, the tails of the original distribution disappear first and the models converge toward a narrow, distorted distribution; they argued that access to genuine human-generated data becomes increasingly valuable as generated content spreads [Shumailov et al. 2024].
+**Model collapse**: Shumailov et al. showed for language models, variational autoencoders and Gaussian mixtures that when each generation trains on the previous generation's output, the tails of the original distribution vanish first and the models converge to a narrow, distorted distribution; genuine human data becomes more valuable as generated content spreads [Shumailov et al. 2024].
 
-**Figure 63.12 — How recursive training on generated data loses the tails.**
+**Figure 63.10 — Recursive training on generated data loses the tails.**
 
 ```mermaid
 flowchart LR
@@ -1349,40 +1197,32 @@ flowchart LR
   H -.-> M2
 ```
 
-**Reading the diagram.** Each generation is trained on what the previous one produced (solid arrows). Because a finite sample of generated data under-represents rare events, and the generator's own approximation errors compound, rare cases vanish a little more each round and the distribution narrows toward the dotted endpoint. The dotted arrows from real human data show the mitigation: keeping genuine data in every generation's training mix slows or prevents the decay. Storage boundaries are the generated datasets; the failure point is the absence of provenance: if you cannot tell which reviews on your platform were written by people, you cannot keep generated text out of the next training set. For QuickBite the practical rule is to tag the source of every example (human, generated, augmented) in the label store and cap the generated share per dataset version.
+**Reading the diagram.** Each generation trains on its predecessor's output (solid arrows); finite samples under-represent rare events and approximation errors compound, so the distribution narrows toward the dotted endpoint. Mixing real data into every generation (dotted arrows from the left) slows or prevents the decay. The failure point is missing provenance: if QuickBite cannot tell human-written reviews from generated ones, it cannot keep generated text out of the next training set. Tag every example's source in the label store and cap the generated share per version.
 
 ::: mistake
-**Mistake — "Synthetic data is anonymous."** A synthetic record can be a near-copy of a real one, and membership-inference attacks can reveal whether a person's record was in the generator's training data. Treat synthetic data derived from personal data as personal data unless it was generated with a formal privacy guarantee and audited.
+**Mistake — "Synthetic data is anonymous."** A synthetic record can be a near-copy of a real one, and membership inference can reveal whether a person was in the generator's training data. Treat synthetic data derived from personal data as personal data unless it carries a formal, audited privacy guarantee.
 :::
 
 ## 63.13 Dataset documentation
 
-### 63.13.1 Datasheets, data cards and data statements
-
 ::: definition
-**Definition — Dataset documentation.** A structured, versioned description of a dataset that records why it was created, what it contains, how it was collected, labeled and processed, what it should and should not be used for, and who maintains it. **Datasheets for datasets** are a question-based template [Gebru et al. 2021]; **data cards** are modular, stakeholder-oriented summaries developed at Google [Pushkarna et al. 2022]; **data statements** are a schema for natural-language datasets that describes the language variety and the speakers and annotators [Bender and Friedman 2018].
+**Definition — Dataset documentation.** A structured, versioned description of why a dataset exists, what it contains, how it was collected, labeled and processed, what it should and should not be used for, and who maintains it. **Datasheets for datasets** are a question-based template [Gebru et al. 2021]; **data cards** are modular summaries for many stakeholders, developed at Google [Pushkarna et al. 2022]; **data statements** describe language datasets' language variety, speakers and annotators [Bender and Friedman 2018].
 :::
 
-#### First-principles explanation
+Electronic components ship with datasheets; Gebru et al. argued that datasets, components of many systems, need the same. Otherwise the knowledge that "this set covers English reviews from three cities, labeled under guideline v3, skewed toward borderline cases by active learning" leaves with one person, the documentation gap behind many data cascades (§63.3.1).
 
-Electronic components ship with a datasheet that says what voltage they tolerate and in which conditions they fail. Gebru et al. borrowed that idea: a dataset is a component in many systems, and an engineer who picks it up later needs to know its operating conditions. Without documentation, the knowledge that "this moderation set only covers English reviews from three cities, labeled under guideline v3, with an active-learning skew toward borderline cases" lives in one person's head and leaves with them, which is exactly the documentation gap that Sambasivan et al. found behind data cascades (§63.3.1).
-
-#### How it works internally
-
-A datasheet answers questions in seven groups [Gebru et al. 2021]: **motivation** (why, by whom, funded by whom), **composition** (what an instance is, how many, missing data, sensitive content), **collection process**, **preprocessing, cleaning and labeling**, **uses** (including uses to avoid), **distribution** and **maintenance**. For a labeled dataset the labeling section is the heart of it: guideline version, annotator pool and training, redundancy, aggregation method, agreement statistics per class, adjudication rate, label sources and their shares, known noise rates (from §63.10), and sampling or acquisition policy (from §63.9 and §63.11).
+A datasheet answers questions on **motivation**, **composition**, **collection**, **preprocessing, cleaning and labeling**, **uses** (including uses to avoid), **distribution** and **maintenance** [Gebru et al. 2021]. For labeled data the labeling section is the heart: guideline version, annotator pool and training, redundancy, aggregation method, per-class agreement, adjudication rate, label-source shares, estimated noise rates (§63.10) and the sampling or acquisition policy (§63.9, §63.11).
 
 **Table 63.11 — Documentation frameworks compared.**
 
-| Row | Datasheets for datasets | Data cards | Data statements |
+| Row | Datasheets | Data cards | Data statements |
 |---|---|---|---|
-| What it is | Question-driven document | Modular summary cards | Schema for language datasets |
-| Origin | Gebru et al., 2018 preprint, CACM 2021 | Pushkarna et al., FAccT 2022 | Bender and Friedman, TACL 2018 |
-| Audience | Dataset creators and consumers | Many stakeholders, from engineers to policy | NLP researchers and practitioners |
-| Strength | Comprehensive; forces reflection during creation | Scannable; adapts depth to reader | Captures speaker and annotator demographics |
-| Weakness | Long; can become a box-ticking exercise | Needs tooling and templates | Specific to language data |
-| Choose when | Any dataset that will outlive its creator | Platforms with many datasets and consumers | Text and speech datasets |
+| Origin | Gebru et al., CACM 2021 | Pushkarna et al., FAccT 2022 | Bender and Friedman, TACL 2018 |
+| Audience | Creators and consumers | Many stakeholders, engineers to policy | NLP practitioners |
+| Strength | Comprehensive; prompts reflection | Scannable; depth adapts to reader | Speaker and annotator demographics |
+| Weakness | Long; can become box-ticking | Needs templates and tooling | Language data only |
 
-**Figure 63.13 — Documentation gates in a dataset's lifecycle.**
+**Figure 63.11 — Documentation gates in a dataset's lifecycle.**
 
 ```mermaid
 stateDiagram-v2
@@ -1395,17 +1235,15 @@ stateDiagram-v2
   Deprecated --> [*]
 ```
 
-**Reading the diagram.** Each state is a status of one dataset version in the registry; each transition is a gate with an owner. A dataset cannot enter labeling until the pilot's agreement meets its target (§63.6), cannot be validated until a noise audit (§63.10) and slice checks (Chapter 61) pass, and cannot be released for training until its datasheet is complete and reviewed. A released dataset can go back to labeling (a relabel campaign produces a new version) or be deprecated, which must notify every model trained on it, using lineage from the model registry (Chapter 69). The failure point is a release gate that is not enforced in tooling; then documentation becomes optional and decays. Scaling: with hundreds of datasets, gates must be automated checks on metadata fields, not meetings.
-
-#### Real-world industry applications
+**Reading the diagram.** States are statuses of one dataset version in a registry; transitions are owned gates: pilot agreement (§63.6) before labeling, a noise audit (§63.10) and slice checks (Chapter 61) before validation, and a reviewed datasheet before release. Relabeling produces a new version; deprecation must notify every model trained on the dataset via registry lineage (Chapter 69). The failure point is a gate not enforced in tooling; at hundreds of datasets, gates must be automated metadata checks.
 
 ::: industry
-**Data cards at Google.** Pushkarna, Zaldivar and Kjartansson describe the design of data cards through iterative work with dataset creators and consumers across product, research and policy teams at Google, and propose principles and a framework for writing them, including adapting the depth of each section to different readers.
+**Data cards at Google.** Pushkarna, Zaldivar and Kjartansson describe designing data cards iteratively with dataset creators and consumers across product, research and policy teams at Google, and propose principles and a framework that adapt each section's depth to its readers.
 *Evidence: Primary* — [Pushkarna et al. 2022]
 :::
 
 ::: recommendation
-**Recommendation — Generate what you can, write what you must.** Fill counts, class balance, agreement statistics, label-source shares and noise estimates automatically from the pipeline's metadata on every version. Reserve human writing for motivation, intended and prohibited uses, known limitations and sensitive content. Link the datasheet from the model card of every model trained on the dataset (§59.10.3).
+**Recommendation — Generate what you can, write what you must.** Fill counts, class balance, agreement, label-source shares and noise estimates automatically from pipeline metadata on every version; reserve human writing for motivation, intended and prohibited uses, and limitations. Link the datasheet from every model card trained on it (§59.10.3).
 :::
 
 ## 63.14 Labeling operations at scale
@@ -1413,27 +1251,26 @@ stateDiagram-v2
 ### 63.14.1 Vendors versus in-house
 
 ::: definition
-**Definition — Labeling operations.** The organizational and operational side of labeling: who the annotators are (employees, contractors, vendor workforces or crowd platforms), how they are recruited, trained, paid, supervised and protected, how data reaches them securely, and how the cost, quality and throughput of the whole operation are measured.
+**Definition — Labeling operations.** The organizational side of labeling: who the annotators are (employees, vendor workforces, crowd workers or models), how they are trained, paid, supervised and protected, how data reaches them securely, and how cost, quality and throughput are measured.
 :::
 
 **Table 63.12 — Sourcing annotators.**
 
-| Row | In-house experts | Managed vendor | Crowd platform | LLM-assisted with human review |
+| Row | In-house experts | Managed vendor | Crowd platform | LLM-assisted with review |
 |---|---|---|---|---|
-| What it is | Employees with domain knowledge | Contracted, trained workforce | Open marketplace of workers | Model pre-labels; people verify a share |
 | Cost per label | Highest | Medium | Lowest human option | Lowest overall |
-| Quality control | Direct | Contracted SLAs plus your audits | Gold questions, redundancy, aggregation | Calibration against gold; human audits |
-| Data security | Strongest | Contractual and technical controls | Weakest; public tasks only | Depends on model hosting |
-| Ramp-up | Slow (hiring) | Weeks | Hours | Days (prompt and calibration) |
-| Choose when | Sensitive data, expert judgment, guideline authorship | Steady high volume with moderate expertise | Simple, non-sensitive, high-volume tasks | Well-defined tasks with measured LLM accuracy |
+| Quality control | Direct | SLAs plus your audits | Gold, redundancy, aggregation | Calibration and human audits |
+| Data security | Strongest | Contractual and technical controls | Weakest; public data only | Depends on model hosting |
+| Ramp-up | Slow (hiring) | Weeks | Hours | Days |
+| Choose when | Sensitive data, expert judgment, guidelines | Steady, moderate-expertise volume | Simple, non-sensitive tasks | Well-defined tasks with measured accuracy |
 
-Most mature teams mix them: in-house experts write guidelines, build gold sets and adjudicate; a vendor or LLM-assisted pipeline produces volume; and agreement and gold metrics are owned by the in-house team, never only by the vendor whose invoice depends on them.
+Mature teams mix them: in-house experts write guidelines, build gold sets and adjudicate; vendors or LLMs supply volume; quality metrics stay in-house.
 
 ### 63.14.2 Security and personal data in annotation
 
-Annotation is a data-export path: it shows raw production data to people outside the core team, often in another company and country. QuickBite's reviews and support tickets contain names, phone numbers, addresses and sometimes payment complaints with partial card details. Treat the labeling tool as a production system inside the security architecture of Chapter 50.
+Annotation is a data-export path: it shows production data to people outside the core team, often in another company and country. QuickBite's reviews and tickets contain names, phone numbers, addresses and card fragments, so the labeling tool is a production system inside the security architecture of Chapter 50.
 
-**Figure 63.14 — Annotation inside a security boundary.**
+**Figure 63.12 — Annotation inside a security boundary.**
 
 ```mermaid
 flowchart LR
@@ -1451,29 +1288,27 @@ flowchart LR
   RED -.->|redaction misses| REV[Sampled redaction audit]
 ```
 
-**Reading the diagram.** Raw data never leaves QuickBite's boundary. A redaction service detects and masks personal data (names, phone numbers, addresses, card fragments) before tasks are created; the labeling tool runs inside the boundary and records every view and judgment in an audit log. Vendor annotators reach it from a virtual desktop that blocks copying, downloading and screenshots where the platform allows, over TLS with single sign-on and multi-factor authentication (Chapter 10). A sampled audit checks for redaction misses asynchronously. Failure points: redaction recall below 100% (it always is, so audit it), task screenshots shared outside the tool, overly broad access (every annotator can see every queue) and retention (judgments copied into vendor systems). Scaling the workforce does not widen the boundary: more annotators means more seats on the same controlled tool, with access limited per queue and per region for data-residency rules.
+**Reading the diagram.** Raw data never leaves QuickBite's boundary: personal data is masked before tasks are created, and the tool, running inside the boundary, logs every view and judgment. Vendor annotators connect from locked-down virtual desktops over TLS with single sign-on and multi-factor authentication (Chapter 10). A sampled audit catches redaction misses asynchronously. Failure points: imperfect redaction recall, screenshots, over-broad queue access and judgments retained in vendor systems. Adding annotators adds seats on the same tool, with per-queue and per-region access for data residency.
 
 ::: recommendation
-**Recommendation — Minimize what annotators see.** Show only the fields the judgment needs (the review text, not the customer's order history); mask identifiers; set a retention period on judgments and tasks; require a data-processing agreement with every vendor; and give each annotator access only to the queues they work on. For data that cannot be adequately redacted, use in-house annotators.
+**Recommendation — Minimize what annotators see.** Show only the fields the judgment needs, mask identifiers, set retention on tasks and judgments, sign a data-processing agreement with every vendor, and restrict each annotator to their queues. Data that cannot be adequately redacted stays with in-house annotators.
 :::
 
-### 63.14.3 Annotator well-being and fair work
+### 63.14.3 Annotator well-being
 
-Labeling is human work, and some of it is harmful. Content moderators who review violent, sexual or hateful material face risks of psychological harm documented in a growing literature [Steiger et al. 2021], and much annotation is performed as low-paid, invisible piecework [Gray and Suri 2019]. QuickBite's review moderation is milder than social-media moderation, but its "abuse" queue includes slurs and threats against couriers.
-
-Practical measures: blur or gray-scale images by default and reveal on demand; cap daily exposure time to the most harmful queues and rotate annotators between queues; give a "skip and escalate" option without penalty; provide access to counseling; pay for training and calibration time, not just for completed tasks; set productivity targets from measured task times so that quotas do not push people into rushing (which also destroys label quality); and include annotators' feedback on guideline ambiguity in the revision loop. Well-being and label quality are linked: tired, rushed and distressed annotators produce noisier labels.
+Some labeling is harmful work. Content moderators exposed to violent, sexual or hateful material face documented psychological risks [Steiger et al. 2021], and much annotation is low-paid, invisible piecework [Gray and Suri 2019]. QuickBite's "abuse" queue includes slurs and threats against couriers. Practical measures: blur images by default; cap daily exposure to the worst queues and rotate people; allow "skip and escalate" without penalty; provide counseling; pay for training and calibration time; set quotas from measured task times; and feed annotators' reports of guideline ambiguity into revisions. Well-being and quality are linked: rushed, distressed annotators produce noisier labels.
 
 ### 63.14.4 LLM-assisted labeling with human review
 
-Large language models can now label many text tasks zero-shot or with a few examples. Gilardi, Alizadeh and Kubli found that a general-purpose LLM outperformed crowd workers on most of the text-annotation tasks they studied, at a small fraction of the cost [Gilardi et al. 2023]. That makes LLM pre-labeling attractive, but it introduces risks that are easy to miss:
+Gilardi, Alizadeh and Kubli found that a general-purpose LLM outperformed crowd workers on most text-annotation tasks they studied, at a small fraction of the cost [Gilardi et al. 2023]. LLM pre-labeling is therefore attractive, with risks that are easy to miss:
 
-- **Correlated errors.** An LLM's mistakes are systematic, not independent; aggregating several prompts to the same model does not average them out the way independent annotators do (§63.7.1).
-- **Automation bias.** Annotators shown an LLM's pre-label accept it more often than they would reach the same answer alone, so "human review" can degrade into rubber-stamping.
-- **Circularity.** If the same model (or model family) labels the training data and the evaluation data, the evaluation measures agreement with the labeler, not correctness. LLM-as-a-judge biases, such as preferring longer answers or answers in a particular position, are documented for evaluation tasks [Zheng et al. 2023] and covered in Chapter 78.
-- **Silent drift.** A hosted model's version changes can change labels overnight; pin the model version and record it with every label, like a guideline version.
-- **Privacy.** Sending reviews to an external model API is a data transfer subject to the same rules as sending them to a vendor (§63.14.2).
+- **Correlated errors.** An LLM errs systematically; re-asking the same model does not average errors away as independent annotators do (§63.7.1).
+- **Automation bias.** Reviewers shown a pre-label tend to accept it, so "human review" can become rubber-stamping; reviewers should label blind.
+- **Circularity.** If one model family labels both training and evaluation data, evaluation measures agreement with the labeler. LLM-as-a-judge biases such as position and length preferences are documented [Zheng et al. 2023] (Chapter 78).
+- **Silent drift.** A hosted model update can change labels overnight; pin and record the model version like a guideline version.
+- **Privacy.** Sending reviews to an external API is a data transfer, governed like a vendor (§63.14.2).
 
-**Figure 63.15 — LLM pre-labeling with confidence routing and human audit.**
+**Figure 63.13 — LLM pre-labeling with confidence routing and human audit.**
 
 ```mermaid
 flowchart LR
@@ -1489,35 +1324,182 @@ flowchart LR
   GOLD[(Gold set)] -.->|weekly recalibration| CAL
 ```
 
-**Reading the diagram.** Tasks are labeled by a pinned LLM version, whose raw confidence is mapped to a calibrated probability using a gold set (recalibrated weekly, dotted, asynchronous). A decision node auto-accepts high-confidence labels and sends the rest to human annotators, who label blind, without seeing the LLM's answer. A random 5% of auto-accepted labels is also labeled blind by humans, giving a continuous accuracy estimate to a quality monitor. Every label is written with its source, so that LLM-produced labels can be weighted, filtered or excluded from evaluation sets. Failure points: calibration drift after a model update, a gold set that no longer reflects production, and audit samples too small to detect a drop on a rare class. Scaling: the LLM tier scales with API capacity and cost; human capacity is sized from the fraction routed to people.
+**Reading the diagram.** A pinned LLM labels each task; its confidence is calibrated against a gold set (weekly, asynchronous). High-confidence labels are auto-accepted; the rest go to humans, who label blind. A random 5% of auto-accepted items is labeled blind by humans to estimate accuracy continuously. Every label records its source so LLM labels can be weighted or excluded from evaluation sets. Failure points: calibration drift after a model update, a stale gold set and audits too small for rare classes. Human capacity is sized from the routed fraction.
 
 ::: formula
-**Cost and quality of a hybrid LLM–human labeling pipeline**
+**Cost and quality of a hybrid LLM–human pipeline**
 
 $$c = c_{\text{llm}} + (1 - f)\,c_h + f\,s\,c_h \qquad A = f\,a_{\text{llm}} + (1 - f)\,a_h$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
-| $c_{\text{llm}}$ | LLM labeling cost per item | \$/item |
+| $c_{\text{llm}}$ | LLM cost per item | \$/item |
 | $c_h$ | Cost of one human judgment | \$/judgment |
-| $f$ | Fraction of items auto-accepted | fraction |
+| $f$ | Fraction auto-accepted | fraction |
 | $s$ | Audit rate on auto-accepted items | fraction |
-| $a_{\text{llm}}$ | Accuracy of auto-accepted LLM labels, measured on gold | fraction |
-| $a_h$ | Accuracy of a single human judgment on the routed items | fraction |
-| $c$, $A$ | Expected cost per item and expected label accuracy | \$/item, fraction |
+| $a_{\text{llm}}$, $a_h$ | Accuracy of auto-accepted LLM labels; of a human judgment on routed items | fraction |
+| $c$, $A$ | Expected cost per item; expected accuracy | \$/item; fraction |
 :::
 
 ::: example
-**Worked example — Labeling 10,000 reviews per day.** One human judgment costs $c_h = \$15 \times 22\,\text{s} / (3600 \times 0.80) = \$0.115$ (§63.5.2, with $r = 1$). Assume (as of 2026, varying widely by model and provider) $c_{\text{llm}} = \$0.002$ per review. Calibration on a 2,000-item gold set shows that 70% of reviews get confidence ≥ 0.9, with accuracy 0.97 in that bucket; humans are 0.93 accurate on the remainder. Audit rate $s = 0.05$.
+**Worked example — Labeling 10,000 reviews per day.** One human judgment costs $c_h = 15 \times 22/(3600 \times 0.80) = \$0.115$ (§63.5.2, $r = 1$). Assume $c_{\text{llm}} = \$0.002$ (as of 2026; varies widely). Calibration on a 2,000-item gold set: 70% of reviews reach confidence ≥ 0.9, with accuracy 0.97; humans are 0.93 accurate on the rest. $s = 0.05$.
 
-1. Cost: $c = 0.002 + 0.30 \times 0.115 + 0.70 \times 0.05 \times 0.115 = 0.002 + 0.0345 + 0.0040 = \$0.0405$ per review.
-2. All-human single judgment: \$0.115 per review. Saving: $1 - 0.0405/0.115 = 65\%$; per day $10{,}000 \times (0.115 - 0.0405) = \$745$.
-3. Accuracy: $A = 0.70 \times 0.97 + 0.30 \times 0.93 = 0.679 + 0.279 = 0.958$.
-4. Audit precision: $0.05 \times 7{,}000 = 350$ audited labels per day; the 95% interval on a 0.97 accuracy estimate is $\pm 1.96\sqrt{0.97 \times 0.03 / 350} = \pm 0.018$.
+1. $c = 0.002 + 0.30 \times 0.115 + 0.70 \times 0.05 \times 0.115 = 0.002 + 0.0345 + 0.0040 = \$0.0405$.
+2. Versus \$0.115 all-human: 65% cheaper, $10{,}000 \times 0.0745 = \$745$ saved per day.
+3. $A = 0.70 \times 0.97 + 0.30 \times 0.93 = 0.958$.
+4. Audit: $0.05 \times 7{,}000 = 350$ labels per day, a 95% interval of $\pm 1.96\sqrt{0.97 \times 0.03/350} = \pm 0.018$.
 
-**Interpretation.** The hybrid is cheaper *and* more accurate than single human judgment, but only because the LLM is restricted to the bucket where it was measured to be good. **Engineering implication.** The audit is what keeps the claim true. Measure accuracy per class, not just overall (a 0.97 bucket can hide a 0.70 accuracy on the rare "abuse" class); never use LLM-sourced labels as the evaluation set for a model trained on them; and re-run calibration whenever the model version, the prompt or the guideline changes.
+**Interpretation.** The hybrid is cheaper *and* more accurate than single human judgment only because the LLM is confined to the bucket where it measured well. **Engineering implication.** The audit keeps the claim true. Measure per class (0.97 overall can hide 0.70 on "abuse"), never evaluate a model on labels from the same LLM, and recalibrate whenever model, prompt or guideline changes.
 :::
 
 ::: note
-**Note — Preference data for LLMs (preview).** Aligning large language models uses a special kind of label: human (or AI) judgments of which of two model responses is better, used to train a reward model or to optimize the model directly [Ouyang et al. 2022]. Everything in this chapter applies (guidelines, agreement, annotator quality, well-being, LLM-assisted labeling), but preference judgments are more subjective, agreement between annotators is typically lower than on classification tasks, and the data is consumed by different training algorithms. Chapter 76 owns this topic.
+**Note — Preference data for LLMs (preview).** Aligning LLMs uses judgments of which of two responses is better, used to train a reward model or optimize the model directly [Ouyang et al. 2022]. Guidelines, agreement, annotator quality, well-being and LLM-assisted labeling all apply, but judgments are more subjective, agreement is typically lower and the consumers are different training algorithms. Chapter 76 owns this topic.
 :::
+
+## 63.15 Summary and revision notes
+
+::: summary
+- **Data-centric AI** holds the model fixed and engineers the data; error analysis decides whether the next gain is in labels, coverage, features or the model. Version datasets so gains are attributable.
+- Labels are **natural**, **delayed**, **human** or **programmatic**. Delayed labels need a **maturity window** $W_\varepsilon$; QuickBite's fraud labels need 60 days for 95% completeness, and a naive 30-day window labels 61% of its fraud as legitimate.
+- A **labeling pipeline** is task design, versioned guidelines, a queue, gold questions, aggregation, adjudication and versioned output. Cost scales with $N \cdot r \cdot t$; the first QuickBite moderation set costs about \$0.41 per label with $r = 3$.
+- **Agreement**: percent agreement is inflated by imbalance; Cohen's κ (two raters), Fleiss' κ (fixed count, rotating raters) and Krippendorff's α (any design, missing data, ordinal labels) correct for chance. Report per-class agreement.
+- **Aggregation**: majority vote assumes equal, independent annotators; Dawid–Skene EM learns each annotator's confusion matrix without ground truth (81% → 88% accuracy in the simulation).
+- **Weak supervision** turns expert heuristics into labeling functions, evaluated by coverage, overlap, conflict and dev-set accuracy, combined by a label model.
+- **Active learning** labels where the model is uncertain; in the simulation it matched random sampling with a quarter of the labels, largely by oversampling the rare class. Always evaluate on random data.
+- **Confident learning** flags likely label errors from out-of-fold probabilities and per-class thresholds; route flags to review rather than deleting them.
+- **Downsampling** negatives by $\beta$ requires the correction $p = \beta p_s / (\beta p_s + 1 - p_s)$; evaluate at the natural class ratio.
+- **Synthetic data** helps with rare or private cases but risks mismatch, privacy leakage and **model collapse**; track provenance.
+- **Document** datasets with datasheets, data cards or data statements, gated in tooling.
+- **Operations**: mix in-house experts with vendor or LLM-assisted volume; redact personal data; protect annotators; confine LLM labels to calibrated high-confidence buckets with blind human audits.
+:::
+
+## 63.16 Knowledge checkpoint
+
+1. Name the four kinds of label source and give a QuickBite example of each.
+2. With $F(15) = 0.40$ and $F(30) = 0.75$, what fraction of fraud in a 0–30-day window is observed?
+3. Why must the evaluation set for a delayed-label problem be matured?
+4. In the labeling cost formula, which parameter is the largest lever, and what is dynamic redundancy?
+5. Two annotators have $p_o = 0.90$ and $p_e = 0.60$. What is κ?
+6. Explain the prevalence paradox in one sentence.
+7. When would you choose Krippendorff's α over Fleiss' κ?
+8. Compute majority-vote accuracy for $r = 3$, $p = 0.7$.
+9. Why can Dawid–Skene outvote two annotators with one?
+10. Define coverage and conflict for a labeling function.
+11. Why should an active-learning project keep a random held-out set and a random audit stream?
+12. Why must confident learning use out-of-fold probabilities?
+13. A model trained with $\beta = 0.1$ outputs $p_s = 0.5$. What is the corrected probability?
+14. What is model collapse, and what mitigates it?
+15. Name three risks of LLM-assisted labeling.
+
+<details><summary>Answers</summary>
+
+1. Natural (ETA from delivery events), delayed (fraud from chargebacks), human (review moderation), programmatic (a rule that labels reviews containing phone numbers as spam).
+2. $C = (3.0 + 8.625)/30 = 0.3875$, so 38.75% observed and 61% missing.
+3. Recent examples' positives have not arrived; correct predictions count as false positives and recall is measured against a fraction of the truth.
+4. Redundancy $r$ multiplies everything; dynamic redundancy uses $r = 1$ and adds judgments only for low-confidence or high-stakes items.
+5. $(0.90 - 0.60)/0.40 = 0.75$.
+6. When one class dominates, chance agreement is so high that κ can be near zero or negative even with very high raw agreement.
+7. With missing judgments, varying judgments per item, or ordinal/interval labels.
+8. $0.7^3 + 3(0.7^2)(0.3) = 0.343 + 0.441 = 0.784$.
+9. It weights each judgment by that annotator's estimated reliability; a 0.95-accurate "keep" outweighs two near-random "removes".
+10. Coverage: fraction of examples where the LF does not abstain. Conflict: fraction where it votes and another LF votes a different class.
+11. Actively chosen examples are deliberately unrepresentative; evaluation and calibration need the true distribution, and random labels catch regions the acquisition function ignores.
+12. A model scored on rows it trained on has memorized their noisy labels and will not flag them.
+13. $p = 0.05/(0.05 + 0.5) = 0.091$.
+14. Progressive loss of the data distribution's tails when models are trained recursively on generated data; keep real human data in every generation and track provenance.
+15. Correlated errors, automation bias in reviewers, circular evaluation, silent drift after model updates, privacy of data sent to an API (any three).
+</details>
+
+## 63.17 Interview questions
+
+### Basic
+
+**Q1. Your classifier's accuracy is stuck. How do you decide between a bigger model and better data?**
+**Answer.** Do error analysis by slice. If errors trace to wrong labels, missing coverage or missing signals, fix the data and retrain the same model; if the signals were present and the model still missed, change the model. Check test-label quality first.
+
+**Q2. What is Cohen's κ and why not use percent agreement?**
+**Answer.** κ = $(p_o - p_e)/(1 - p_e)$, agreement corrected for what annotators would achieve by chance given their class frequencies. Percent agreement is inflated when one class dominates; κ exposes annotators who agree only on the easy majority.
+
+### Intermediate
+
+**Q3. Design the labeling pipeline for a review-moderation model at 20,000 reviews per day.**
+**Answer.** Versioned guideline piloted to κ ≥ 0.7; redaction before tasks; a queue with $r = 3$ for the seed set and audits, $r = 1$ plus dynamic redundancy in steady state; 10% gold questions; Dawid–Skene aggregation with adjudication below 0.8 confidence; active learning plus a random stream to choose what to label; label store with source, guideline and annotator provenance; per-class agreement and gold accuracy on a dashboard; datasheet per version.
+
+**Q4. Fraud chargebacks arrive over 90 days. How do you build training and evaluation sets?**
+**Answer.** Compute the delay CDF, choose a maturity window (60 days for 95%), and train and evaluate only on matured orders with a time-based split. Downsample negatives in training and correct probabilities. Cover the blind spot with faster proxy labels tagged by source and with label-free drift monitoring (Chapter 70); consider delayed-feedback models. Address blocked-order selection bias with analyst labels on a sample.
+
+### Advanced
+
+**Q5. Leadership wants to replace human annotators with an LLM. What do you propose?**
+**Answer.** A hybrid: calibrate the LLM against an expert gold set per class, auto-accept only buckets with measured accuracy above the human baseline, route the rest to blind human labeling, audit a random share of auto-accepted labels, pin model versions, keep LLM labels out of evaluation sets, and route data through the same privacy controls as a vendor. Report cost and accuracy with the hybrid formula, and recalibrate on any change of model, prompt or guideline.
+
+**Q6. Your dataset has about 10% label noise. Walk through finding and fixing it at scale.**
+**Answer.** Get out-of-fold probabilities with K-fold training, compute per-class thresholds and the confident joint, and rank flags by off-diagonal margin. Send top flags to expert review, not auto-deletion; cap automatic pruning and compare slice metrics. Use the confident joint's class-pair rates to fix the source process (guidelines, workflows). Version the cleaned dataset and verify on a separately relabeled test set.
+
+## 63.18 Practical exercises
+
+1. Extend the agreement program with weighted κ for a 1–5 severity scale and compare linear and quadratic weights.
+2. Make annotators in the Dawid–Skene simulation correlated (two share a misreading on 10% of items) and measure how both aggregators degrade.
+3. Add query-by-committee and a diversity filter to the active-learning simulation; plot all learning curves.
+4. Apply the confident-learning program at noise rates of 5%, 20% and 35% and plot flag precision and recall.
+
+## 63.19 Design challenges
+
+1. **Moderation in a new language.** QuickBite launches in a market whose reviews are in a language none of its moderators speak. Design labeling sources (vendor, weak supervision, LLM-assisted), quality checks and a budget for the first quarter.
+2. **Fraud labels without chargebacks.** For cash-on-delivery orders no chargeback exists. Define a label, its delay and its noise, and design the pipeline.
+3. **ETA labels with censoring.** Ten percent of orders are canceled after pickup. Design the label pipeline and explain how training treats censored orders.
+
+## 63.20 References
+
+1. Arpit, D., et al. *A Closer Look at Memorization in Deep Networks*. ICML, 2017.
+2. Bach, S. H., et al. *Snorkel DryBell: A Case Study in Deploying Weak Supervision at Industrial Scale*. SIGMOD, 2019.
+3. Bender, E. M., Friedman, B. *Data Statements for Natural Language Processing: Toward Mitigating System Bias and Enabling Better Science*. Transactions of the ACL 6, 2018.
+4. Chapelle, O. *Modeling Delayed Feedback in Display Advertising*. KDD, 2014.
+5. Chawla, N. V., et al. *SMOTE: Synthetic Minority Over-sampling Technique*. Journal of Artificial Intelligence Research 16, 2002.
+6. Cohen, J. *A Coefficient of Agreement for Nominal Scales*. Educational and Psychological Measurement 20(1), 1960.
+7. Dawid, A. P., Skene, A. M. *Maximum Likelihood Estimation of Observer Error-Rates Using the EM Algorithm*. Journal of the Royal Statistical Society, Series C (Applied Statistics) 28(1), 1979.
+8. Feinstein, A. R., Cicchetti, D. V. *High Agreement but Low Kappa: I. The Problems of Two Paradoxes*. Journal of Clinical Epidemiology 43(6), 1990.
+9. Fleiss, J. L. *Measuring Nominal Scale Agreement Among Many Raters*. Psychological Bulletin 76(5), 1971.
+10. Frénay, B., Verleysen, M. *Classification in the Presence of Label Noise: A Survey*. IEEE Transactions on Neural Networks and Learning Systems 25(5), 2014.
+11. Gebru, T., et al. *Datasheets for Datasets*. Communications of the ACM 64(12), 2021.
+12. Gilardi, F., Alizadeh, M., Kubli, M. *ChatGPT Outperforms Crowd Workers for Text-Annotation Tasks*. PNAS 120(30), 2023.
+13. Gray, M. L., Suri, S. *Ghost Work: How to Stop Silicon Valley from Building a New Global Underclass*. Houghton Mifflin Harcourt, 2019.
+14. He, H., Garcia, E. A. *Learning from Imbalanced Data*. IEEE Transactions on Knowledge and Data Engineering 21(9), 2009.
+15. He, X., et al. *Practical Lessons from Predicting Clicks on Ads at Facebook*. ADKDD Workshop at KDD, 2014.
+16. Hovy, D., et al. *Learning Whom to Trust with MACE*. NAACL-HLT, 2013.
+17. Krippendorff, K. *Content Analysis: An Introduction to Its Methodology*, 4th ed. SAGE, 2018 (2nd ed. 2004).
+18. Landis, J. R., Koch, G. G. *The Measurement of Observer Agreement for Categorical Data*. Biometrics 33(1), 1977.
+19. Lewis, D. D., Gale, W. A. *A Sequential Algorithm for Training Text Classifiers*. SIGIR, 1994.
+20. Ng, A. *A Chat with Andrew on MLOps: From Model-centric to Data-centric AI*. DeepLearning.AI live event (video), 2021.
+21. Northcutt, C. G., Jiang, L., Chuang, I. L. *Confident Learning: Estimating Uncertainty in Dataset Labels*. Journal of Artificial Intelligence Research 70, 2021. (Cited as Northcutt et al. 2021a.)
+22. Northcutt, C. G., Athalye, A., Mueller, J. *Pervasive Label Errors in Test Sets Destabilize Machine Learning Benchmarks*. NeurIPS Datasets and Benchmarks Track, 2021. (Cited as Northcutt et al. 2021b.)
+23. Ouyang, L., et al. *Training Language Models to Follow Instructions with Human Feedback*. NeurIPS, 2022.
+24. Pushkarna, M., Zaldivar, A., Kjartansson, O. *Data Cards: Purposeful and Transparent Dataset Documentation for Responsible AI*. ACM FAccT, 2022.
+25. Ratner, A., et al. *Data Programming: Creating Large Training Sets, Quickly*. NeurIPS, 2016.
+26. Ratner, A., et al. *Snorkel: Rapid Training Data Creation with Weak Supervision*. Proceedings of the VLDB Endowment 11(3), 2017.
+27. Raykar, V. C., et al. *Learning from Crowds*. Journal of Machine Learning Research 11, 2010.
+28. Sambasivan, N., et al. *"Everyone wants to do the model work, not the data work": Data Cascades in High-Stakes AI*. ACM CHI, 2021.
+29. Sener, O., Savarese, S. *Active Learning for Convolutional Neural Networks: A Core-Set Approach*. ICLR, 2018.
+30. Settles, B. *Active Learning Literature Survey*. Computer Sciences Technical Report 1648, University of Wisconsin–Madison, 2009.
+31. Seung, H. S., Opper, M., Sompolinsky, H. *Query by Committee*. COLT, 1992.
+32. Sheng, V. S., Provost, F., Ipeirotis, P. G. *Get Another Label? Improving Data Quality and Data Mining Using Multiple, Noisy Labelers*. KDD, 2008.
+33. Shorten, C., Khoshgoftaar, T. M. *A Survey on Image Data Augmentation for Deep Learning*. Journal of Big Data 6, 2019.
+34. Shumailov, I., et al. *AI Models Collapse When Trained on Recursively Generated Data*. Nature 631, 2024.
+35. Stadler, T., Oprisanu, B., Troncoso, C. *Synthetic Data – Anonymisation Groundhog Day*. USENIX Security Symposium, 2022.
+36. Steiger, M., et al. *The Psychological Well-Being of Content Moderators*. ACM CHI, 2021.
+37. Tobin, J., et al. *Domain Randomization for Transferring Deep Neural Networks from Simulation to the Real World*. IEEE/RSJ IROS, 2017.
+38. Whitehill, J., et al. *Whose Vote Should Count More: Optimal Integration of Labels from Labelers of Unknown Expertise*. NeurIPS, 2009.
+39. Zhang, C., et al. *Understanding Deep Learning Requires Rethinking Generalization*. ICLR, 2017.
+40. Zheng, L., et al. *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*. NeurIPS Datasets and Benchmarks Track, 2023.
+
+## 63.21 Open verification items
+
+- Ng 2021: exact title, date and venue of the talk, and the specific steel-defect figures (reported secondhand as a ~76% baseline improved to ~93% by data work, with no gain from model work); the chapter states the result only qualitatively.
+- Sambasivan et al. 2021: the participant count (53) and the "nearly all projects" prevalence wording, against the paper.
+- Bach et al. 2019: the wording of the quality comparison with hand-labeled models.
+- Gilardi et al. 2023: number of tasks on which the LLM beat crowd workers, and the cost ratio.
+- Northcutt et al. 2021b: the average test-set error rate across the ten benchmarks.
+- He et al. 2014: the negative downsampling rates studied and their reported effect.
+- Pushkarna et al. 2022: the name and structure of the data-card framework.
+- Steiger et al. 2021: full title and subtitle.
+- Label Studio and CVAT as widely used tools (as of 2026).

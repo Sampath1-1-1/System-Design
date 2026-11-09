@@ -313,3 +313,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-306 | 64 | H100 clock figures (1.98 GHz boost; ~1.83 GHz implied by tensor rate); "2× A100 FMA per clock per SM" claim; latency values in Table 64.2 | Open | |
 | UQ-307 | 64 | B200 specs (vary across NVIDIA documents); Blackwell technical brief title; NVFP4 block size and scale format | Open | Time-sensitive |
 | UQ-308 | 64 | PaLM 46.2% MFU / 57.8% HFU; Gholami et al. 2024 ("AI and Memory Wall") volume/issue; MI300X 5.3 TB/s; Trn1 chip count | Open | |
+| UQ-309 | 63 | Ng 2021 data-centric AI talk title/date/venue; steel-defect figures (stated qualitatively) | Open | |
+| UQ-310 | 63 | Sambasivan et al. CHI 2021: 53 participants and prevalence wording; Bach et al. 2019 (Snorkel DryBell) comparison wording | Open | |
+| UQ-311 | 63 | Gilardi et al. 2023 (LLM vs crowd workers) task count and cost ratio; Northcutt et al. 2021b average test-set error rate; He et al. 2014 downsampling rates | Open | |
+| UQ-312 | 63 | Data cards framework name; Steiger et al. 2021 full title; Label Studio/CVAT adoption (as of 2026) | Open | |
