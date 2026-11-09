@@ -93,23 +93,25 @@ Amershi et al. described Microsoft's nine-stage workflow, from model requirement
 **Figure 59.2 — Where ML code sits in a production ML system (after Sculley et al. 2015).**
 
 ```mermaid
-flowchart TB
-  subgraph Surrounding["Surrounding infrastructure: most of the code"]
-    CFG[Configuration]
-    DCOL[Data collection]
-    FEX[Feature extraction]
+flowchart LR
+  subgraph In["Inputs: surrounding code"]
+    DCOL[Data collection] --> FEX[Feature extraction]
     DVER[Data verification]
+    CFG[Configuration]
+  end
+  subgraph Sup["Support: surrounding code"]
     RES[Machine resource<br/>management]
     ANA[Analysis tools]
     PM[Process management<br/>tools]
-    SRV[Serving<br/>infrastructure]
-    MON[Monitoring]
   end
   MLC["ML code"]
-  DCOL --> FEX --> MLC
+  subgraph Out["Outputs: surrounding code"]
+    SRV[Serving<br/>infrastructure] --> MON[Monitoring]
+  end
+  FEX --> MLC
   DVER --> MLC
   CFG --> MLC
-  MLC --> SRV --> MON
+  MLC --> SRV
   RES -.-> MLC
   ANA -.-> MLC
   PM -.-> MLC
