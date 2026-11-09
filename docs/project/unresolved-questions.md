@@ -293,3 +293,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-286 | 57 | Netflix 2017 interleaving post authors and "far smaller samples" claim | Open | |
 | UQ-287 | 57 | Kohavi et al. (2020) Bing ad-title example (~12% revenue lift, >$100M/yr) | Open | |
 | UQ-288 | 57 | Section numbers cited from Hastie et al., Bishop, Goodfellow et al., Murphy | Open | |
+| UQ-289 | 58 | Grinsztajn et al. 2022: "45 datasets" and ~10,000-example medium-size regime | Open | |
+| UQ-290 | 57 / 58 | DeepETA (Hu et al. 2022): prior GBDT model and Uber's stated reasons (scale, latency); author list/URL | Open | Merge with UQ-285 |
+| UQ-291 | 58 | Haldar et al. 2019 (Airbnb): early neural models did not beat GBDT baseline | Open | |
+| UQ-292 | 58 | 10^15 FLOP/s accelerator in §58.12 is a round illustrative number | Accepted | Labeled |

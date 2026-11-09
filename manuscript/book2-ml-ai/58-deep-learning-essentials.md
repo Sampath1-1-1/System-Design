@@ -25,7 +25,7 @@ After this chapter you should be able to:
 
 ## 58.2 Prerequisites
 
-- Loss functions, gradient descent, train/validation/test splits, overfitting and metrics — Chapter 57 (this chapter builds directly on them).
+- Loss functions and gradient descent — §57.9; splits — §57.7; overfitting and regularization — §57.8; training versus inference — §57.5 (this chapter builds directly on them).
 - Vectors, matrices and matrix multiplication — §4.9 (every layer is a matrix multiply).
 - SIMD and accelerators — §5.11 (why matrix multiplies run fast on GPUs; Chapter 64 goes deeper).
 - Back-of-the-envelope estimation — §2.11 (all sizing in this chapter uses the same method).
@@ -43,7 +43,7 @@ Units: this chapter uses SI prefixes (1 GB = 10⁹ bytes) and counts one multipl
 
 #### First-principles explanation
 
-Think of a QuickBite dispatcher estimating delivery time. She looks at the distance, how busy the kitchen is and whether it is raining, gives each a weight in her head, adds them up and adjusts for a fixed overhead. That is a linear model, and Chapter 57 trained exactly this with gradient descent. A neuron is the same weighted sum followed by a "switch": the **activation function** decides how strongly the neuron fires. The most common switch today is the **rectified linear unit**, $\text{ReLU}(z) = \max(0, z)$: it passes positive values unchanged and outputs zero for negative ones. One neuron can learn a rule such as "if distance is long *and* it is raining, add time", but only if its threshold falls in the right place; many neurons together can carve the input space into many such regions.
+Think of a QuickBite dispatcher estimating delivery time. She looks at the distance, how busy the kitchen is and whether it is raining, gives each a weight in her head, adds them up and adjusts for a fixed overhead. That is a linear model, trained with gradient descent in §57.9. A neuron is the same weighted sum followed by a "switch": the **activation function** decides how strongly the neuron fires. The most common switch today is the **rectified linear unit**, $\text{ReLU}(z) = \max(0, z)$: it passes positive values unchanged and outputs zero for negative ones. One neuron can learn a rule such as "if distance is long *and* it is raining, add time", but only if its threshold falls in the right place; many neurons together can carve the input space into many such regions.
 
 #### Why does this exist?
 
@@ -520,7 +520,7 @@ $$M_\text{emb} = V \times d \times s \qquad M_\text{train} \approx M_\text{emb} 
 4. With row-wise Adagrad (one accumulator per row): state is $10^8 \times 4 = 0.4$ GB, and gradients exist only for the rows in the current batch.
 5. Compare the MLP above it: a ranking MLP of a few million parameters is about 10–20 MB.
 
-**QuickBite version.** Assume 10 million registered customers (5× the 2M DAU), 50,000 restaurants and 5 million dishes (50,000 × 100 menu items, §2.11), all at $d = 64$ in FP32: users 2.56 GB, restaurants 12.8 MB, dishes 1.28 GB. The whole model fits on one server; the 100M-user version does not fit on one accelerator for training.
+**QuickBite version.** Assume 10 million registered customers (against about 4 million weekly active users, Chapter 57), 50,000 restaurants and 5 million dishes (50,000 × 100 menu items, §2.11), all at $d = 64$ in FP32: users 2.56 GB, restaurants 12.8 MB, dishes 1.28 GB. The whole model fits on one server; the 100M-user version does not fit on one accelerator for training.
 
 **Interpretation.** In large recommendation models the embedding tables are often more than 99% of the parameters but a tiny fraction of the FLOPs: a lookup reads 256 bytes and does almost no arithmetic. **Engineering implication.** Such models are **memory-capacity and bandwidth bound**. Tables are partitioned by rows across hosts, hot rows are cached, and values are compressed (FP16, INT8, hashing). Chapter 68 covers serving and Chapter 74 the vector search over the same vectors.
 :::
@@ -1090,8 +1090,8 @@ flowchart TD
 **Reading the diagram.** The first decision is input type: unstructured data goes to deep learning, usually fine-tuning a pretrained model. Tabular problems with huge ID spaces and data volumes (recommendations) favor embeddings, possibly feeding a GBDT. Everything else starts with a GBDT baseline, and deep learning must beat it by enough to pay for its operational cost. These are offline design decisions, not request-path steps. The failure point is skipping the baseline: you cannot tell whether a network's accuracy is good without one.
 
 ::: industry
-**Airbnb's path from GBDT to neural networks.** Airbnb's search-ranking team reports that its gradient-boosted tree ranker was a strong baseline, that its first neural networks did not beat it, and that gains came only after iterating on architecture, feature normalization and training data [Haldar et al. 2019]. Uber describes moving delivery-time prediction from gradient-boosted trees to a deep model (DeepETA) that predicts a residual correction on top of its routing engine's estimate, citing the need to scale to more data with low serving latency [Uber Engineering 2022].
-*Evidence: Primary* — [Haldar et al. 2019], [Uber Engineering 2022]
+**Airbnb's path from GBDT to neural networks.** Airbnb's search-ranking team reports that its gradient-boosted tree ranker was a strong baseline, that its first neural networks did not beat it, and that gains came only after iterating on architecture, feature normalization and training data [Haldar et al. 2019]. Uber describes moving delivery-time prediction from gradient-boosted trees to a deep model (DeepETA) that predicts a residual correction on top of its routing engine's estimate, to scale to more data at low serving latency [Hu et al. 2022]; §57.3 discusses the same hybrid design.
+*Evidence: Primary* — [Haldar et al. 2019], [Hu et al. 2022]
 :::
 
 For QuickBite: fraud detection on a few hundred engineered features starts with GBDT; dish photos and the support chatbot are deep learning; restaurant recommendation over 10 million users is the hybrid case (Chapter 68); ETA starts with GBDT and earns its way to a neural model as data grows.
@@ -1229,36 +1229,36 @@ What a system designer needs to know: (1) compile time is real, sometimes minute
 12. Goyal, P., et al. *Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour*. arXiv:1706.02677, 2017.
 13. Grinsztajn, L., Oyallon, E., Varoquaux, G. *Why Do Tree-Based Models Still Outperform Deep Learning on Typical Tabular Data?* NeurIPS Datasets and Benchmarks Track, 2022.
 14. Haldar, M., et al. *Applying Deep Learning to Airbnb Search*. ACM KDD, 2019.
-15. He, K., Zhang, X., Ren, S., Sun, J. *Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification*. ICCV, 2015.
-16. He, K., Zhang, X., Ren, S., Sun, J. *Deep Residual Learning for Image Recognition*. CVPR, 2016.
+15. He, K., Zhang, X., Ren, S., Sun, J. *Deep Residual Learning for Image Recognition*. CVPR, 2016.
+16. He, K., Zhang, X., Ren, S., Sun, J. *Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification*. ICCV, 2015.
 17. Hochreiter, S., Schmidhuber, J. *Long Short-Term Memory*. Neural Computation 9(8), 1997.
 18. Hornik, K., Stinchcombe, M., White, H. *Multilayer Feedforward Networks Are Universal Approximators*. Neural Networks 2(5), 1989.
-19. Ioffe, S., Szegedy, C. *Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift*. ICML, 2015.
-20. Kaplan, J., et al. *Scaling Laws for Neural Language Models*. arXiv:2001.08361, 2020.
-21. Kingma, D. P., Ba, J. *Adam: A Method for Stochastic Optimization*. ICLR, 2015.
-22. Korthikanti, V., et al. *Reducing Activation Recomputation in Large Transformer Models*. MLSys, 2023.
-23. Krizhevsky, A., Sutskever, I., Hinton, G. E. *ImageNet Classification with Deep Convolutional Neural Networks*. NeurIPS, 2012.
-24. LeCun, Y., Bottou, L., Bengio, Y., Haffner, P. *Gradient-Based Learning Applied to Document Recognition*. Proceedings of the IEEE 86(11), 1998.
-25. Loshchilov, I., Hutter, F. *SGDR: Stochastic Gradient Descent with Warm Restarts*. ICLR, 2017.
+19. Hu, X., et al. *DeepETA: How Uber Predicts Arrival Times Using Deep Learning*. Uber Engineering Blog, 2022. https://www.uber.com/blog/deepeta-how-uber-predicts-arrival-times/
+20. Ioffe, S., Szegedy, C. *Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift*. ICML, 2015.
+21. Kaplan, J., et al. *Scaling Laws for Neural Language Models*. arXiv:2001.08361, 2020.
+22. Kingma, D. P., Ba, J. *Adam: A Method for Stochastic Optimization*. ICLR, 2015.
+23. Korthikanti, V., et al. *Reducing Activation Recomputation in Large Transformer Models*. MLSys, 2023.
+24. Krizhevsky, A., Sutskever, I., Hinton, G. E. *ImageNet Classification with Deep Convolutional Neural Networks*. NeurIPS, 2012.
+25. LeCun, Y., Bottou, L., Bengio, Y., Haffner, P. *Gradient-Based Learning Applied to Document Recognition*. Proceedings of the IEEE 86(11), 1998.
 26. Loshchilov, I., Hutter, F. *Decoupled Weight Decay Regularization*. ICLR, 2019.
-27. McCandlish, S., Kaplan, J., Amodei, D., OpenAI Dota Team. *An Empirical Model of Large-Batch Training*. arXiv:1812.06162, 2018.
-28. Micikevicius, P., et al. *Mixed Precision Training*. ICLR, 2018.
-29. Montúfar, G., Pascanu, R., Cho, K., Bengio, Y. *On the Number of Linear Regions of Deep Neural Networks*. NeurIPS, 2014.
-30. Naumov, M., et al. *Deep Learning Recommendation Model for Personalization and Recommendation Systems*. arXiv:1906.00091, 2019.
-31. Pascanu, R., Mikolov, T., Bengio, Y. *On the Difficulty of Training Recurrent Neural Networks*. ICML, 2013.
-32. Paszke, A., et al. *PyTorch: An Imperative Style, High-Performance Deep Learning Library*. NeurIPS, 2019.
-33. Polyak, B. T. *Some Methods of Speeding up the Convergence of Iteration Methods*. USSR Computational Mathematics and Mathematical Physics 4(5), 1964.
-34. Rajbhandari, S., Rasley, J., Ruwase, O., He, Y. *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models*. SC, 2020.
-35. Rumelhart, D. E., Hinton, G. E., Williams, R. J. *Learning Representations by Back-Propagating Errors*. Nature 323, 1986.
-36. Srivastava, N., Hinton, G., Krizhevsky, A., Sutskever, I., Salakhutdinov, R. *Dropout: A Simple Way to Prevent Neural Networks from Overfitting*. JMLR 15, 2014.
-37. Sutskever, I., Martens, J., Dahl, G., Hinton, G. *On the Importance of Initialization and Momentum in Deep Learning*. ICML, 2013.
-38. Uber Engineering. *DeepETA: How Uber Predicts Arrival Times Using Deep Learning*. Uber Engineering Blog, 2022.
+27. Loshchilov, I., Hutter, F. *SGDR: Stochastic Gradient Descent with Warm Restarts*. ICLR, 2017.
+28. McCandlish, S., Kaplan, J., Amodei, D., OpenAI Dota Team. *An Empirical Model of Large-Batch Training*. arXiv:1812.06162, 2018.
+29. Micikevicius, P., et al. *Mixed Precision Training*. ICLR, 2018.
+30. Montúfar, G., Pascanu, R., Cho, K., Bengio, Y. *On the Number of Linear Regions of Deep Neural Networks*. NeurIPS, 2014.
+31. Naumov, M., et al. *Deep Learning Recommendation Model for Personalization and Recommendation Systems*. arXiv:1906.00091, 2019.
+32. Pascanu, R., Mikolov, T., Bengio, Y. *On the Difficulty of Training Recurrent Neural Networks*. ICML, 2013.
+33. Paszke, A., et al. *PyTorch: An Imperative Style, High-Performance Deep Learning Library*. NeurIPS, 2019.
+34. Polyak, B. T. *Some Methods of Speeding up the Convergence of Iteration Methods*. USSR Computational Mathematics and Mathematical Physics 4(5), 1964.
+35. Rajbhandari, S., Rasley, J., Ruwase, O., He, Y. *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models*. SC, 2020.
+36. Rumelhart, D. E., Hinton, G. E., Williams, R. J. *Learning Representations by Back-Propagating Errors*. Nature 323, 1986.
+37. Srivastava, N., Hinton, G., Krizhevsky, A., Sutskever, I., Salakhutdinov, R. *Dropout: A Simple Way to Prevent Neural Networks from Overfitting*. JMLR 15, 2014.
+38. Sutskever, I., Martens, J., Dahl, G., Hinton, G. *On the Importance of Initialization and Momentum in Deep Learning*. ICML, 2013.
 39. Vaswani, A., et al. *Attention Is All You Need*. NeurIPS, 2017.
 40. Wu, Y., et al. *Google's Neural Machine Translation System: Bridging the Gap between Human and Machine Translation*. arXiv:1609.08144, 2016.
 
 ## 58.21 Open verification items
 
 - Grinsztajn et al. 2022: confirm the benchmark size (45 datasets) and the "around 10,000 training examples" medium-size regime as stated.
-- Uber Engineering 2022 (DeepETA): confirm the residual-on-routing-engine framing, the prior XGBoost model and the stated motivation; exact URL not verified.
+- Hu et al. 2022 (Uber DeepETA): confirm the prior gradient-boosted-tree model and the stated motivation (scale and latency); author list and URL not verified (same as UQ-285).
 - Haldar et al. 2019: confirm the characterization that early neural models did not beat the GBDT baseline.
 - The $10^{15}$ FLOP/s accelerator in §58.12 is an illustrative round number, not a specific product's specification.
