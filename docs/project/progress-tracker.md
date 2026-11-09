@@ -68,11 +68,11 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 58 | Deep Learning Essentials for System Designers | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,979 | 12 | 6 | 0 |
 | 59 | The ML Lifecycle | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,063 | 14 | 15 | 0 |
 | 60 | ML System Architecture | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,999 | 12 | 13 | 0 |
-| 61 | Data Engineering for ML | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 62 | Feature Engineering and Feature Stores | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 63 | Data Labeling, Quality and Data-Centric AI | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 64 | GPU Architecture and Performance | 3-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 65 | Distributed ML Training | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 61 | Data Engineering for ML | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 62 | Feature Engineering and Feature Stores | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 63 | Data Labeling, Quality and Data-Centric AI | 3 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 64 | GPU Architecture and Performance | 3-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 65 | Distributed ML Training | 4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 66 | Model Serving | 3 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 67 | ML Model Optimization | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 68 | Recommendation and Ranking Systems Architecture | 4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
