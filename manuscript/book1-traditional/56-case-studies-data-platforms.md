@@ -928,7 +928,7 @@ sequenceDiagram
 - *"How does the feed react to what I just did?"* Events go through Kafka to a stream job that updates the real-time feature store within seconds; the next request reads it, and the session cache is invalidated by significant actions.
 - *"What if the feature store is down?"* Rankers use defaults, record that they did, and set `degraded`; if the rankers are down, serve precomputed lists, then trending.
 - *"How do you avoid training–serving skew?"* Log the features exactly as served, keyed by request, and train on those logs.
-- *"How would you A/B test a new ranker?"* Hash users into arms, pin the ranker version per arm, log the arm with every impression, and compare engagement and guardrail metrics (Chapter 57 owns the statistics).
+- *"How would you A/B test a new ranker?"* Hash users into arms, pin the ranker version per arm, log the arm with every impression, and compare engagement and guardrail metrics (§57.14 owns the statistics).
 
 **What distinguishes senior and staff answers.** A senior answer draws the funnel, sizes the ranker fleet and puts deadlines on stages. A staff answer derives the feature-placement decision from the lookup rate, treats logging as a product with completeness SLOs and a delayed-label join, designs degraded modes explicitly, and recognizes that the serving system shapes the training data and therefore the future model, so changes to filtering, re-ranking or logging are experiments, not refactors.
 

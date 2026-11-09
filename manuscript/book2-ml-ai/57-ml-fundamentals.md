@@ -300,14 +300,14 @@ flowchart LR
 **Reading the diagram.** Two deployment boundaries. In the online boundary, the client calls the API over HTTPS and the API calls the inference service synchronously over gRPC; the inference service reads fresh features from an online feature store (a low-latency key-value store, Chapter 62) and returns a prediction within the request's latency budget. In the offline boundary, a training job reads history from the warehouse, is evaluated, and writes a versioned model to the registry. The dotted arrows are asynchronous: model deployment, prediction logging to an event log (§31.3) and the later join of logged predictions with labels. Failure points: an inference outage hits users directly (so the API needs a fallback such as the route-engine ETA), whereas a failed training job only delays freshness. A mismatch between how features are computed in the two boundaries causes **training–serving skew**, the model seeing different inputs in production than in training (Chapter 62). Scaling: inference scales horizontally with replicas sized for peak RPS; training scales with bigger or more parallel jobs (Chapter 65).
 
 ::: example
-**Worked example — Where QuickBite's ETA compute actually goes.** Assumptions: the ETA model is retrained daily on the last 90 days of deliveries. Browse traffic is 60 million reads per day with a peak of 7,000 RPS (§2.11), and each browse response shows 20 restaurants, each with an ETA.
+**Worked example — Where QuickBite's ETA compute actually goes.** Assumptions: the ETA model is retrained daily on the last 90 days of deliveries. The search page peaks at 2,000 RPS, each response showing 20 restaurants with an ETA (§2.4), and QuickBite's peak-to-average ratio is 9.6 (§18.11). (The 7,000 RPS browse peak of §2.11 counts all browse reads, not only search pages.)
 
 1. Training examples per run: $90 \times 500{,}000 = 45{,}000{,}000$ deliveries.
-2. Inference per day: $60{,}000{,}000 \times 20 = 1.2 \times 10^{9}$ predictions, about 27 times the training set *every day*.
-3. Peak inference rate: $7{,}000 \times 20 = 140{,}000$ predictions per second.
-4. If one prediction costs 5 µs of CPU for a tree ensemble (an assumed figure), peak needs $140{,}000 \times 5\ \mu\text{s} = 0.7$ CPU-seconds per second, under one core. If a neural model costs 200 µs, the same peak needs 28 cores before headroom.
+2. Peak inference rate: $2{,}000 \times 20 = 40{,}000$ predictions per second.
+3. Inference per day: $40{,}000 / 9.6 \times 86{,}400 = 3.6 \times 10^{8}$ predictions, about 8 times the training set *every day*.
+4. If one prediction costs 5 µs of CPU for a tree ensemble (an assumed figure), peak needs $40{,}000 \times 5\ \mu\text{s} = 0.2$ CPU-seconds per second, under one core. If a neural model costs 200 µs, the same peak needs 8 cores before headroom.
 
-**Interpretation.** Over a year, the model scores about $365 \times 1.2 \times 10^9 \approx 4.4 \times 10^{11}$ inputs but trains on $4.5 \times 10^7$ rows per run. **Engineering implication.** For high-traffic features, per-prediction cost dominates lifetime cost and latency budgets constrain model choice. Caching ETAs per (restaurant, zone, 5-minute bucket) can cut the 140,000 per second by orders of magnitude (Chapter 20). Chapter 60 develops these trade-offs into full architectures.
+**Interpretation.** Over a year, the model scores about $365 \times 3.6 \times 10^8 \approx 1.3 \times 10^{11}$ inputs but trains on $4.5 \times 10^7$ rows per run. **Engineering implication.** For high-traffic features, per-prediction cost dominates lifetime cost and latency budgets constrain model choice. Caching ETAs per (restaurant, zone, 5-minute bucket) can cut the 40,000 per second by orders of magnitude (Chapter 20). Chapter 60 develops these trade-offs into full architectures.
 :::
 
 ::: mistake
@@ -385,7 +385,7 @@ sequenceDiagram
 :::
 
 ::: example
-**Worked example — A fraud model with 0.99 AUC.** A data scientist builds QuickBite's first fraud model from the `orders` table and gets ROC-AUC 0.99 (§57.10.4), far better than the rule baseline's 0.80. The top three features by importance are:
+**Worked example — A fraud model with 0.99 AUC.** A data scientist builds QuickBite's first fraud model from the `orders` table and gets ROC-AUC 0.99 (§57.10.2), far better than the rule baseline's 0.80. The top three features by importance are:
 
 1. `account_status = 'suspended'`. The trust team suspends accounts *after* confirming fraud. At checkout time a fraudster's new account is always `active`. The feature is a copy of the label.
 2. `refund_amount`. Refunds are issued after the chargeback. It is zero at checkout for every order.
@@ -1285,7 +1285,7 @@ flowchart LR
 **Definition — A/B test (online controlled experiment).** Users are randomly assigned to control (A, old model) or treatment (B, new model), and a metric is compared between the groups. Randomization makes the groups alike in everything except the model, so a difference larger than chance is caused by the model [Kohavi et al. 2020].
 :::
 
-The **null hypothesis** $H_0$ is "no difference". The **p-value** is the probability of a difference at least as large as observed *if $H_0$ were true*; it is not the probability that $H_0$ is true. Rejecting $H_0$ when $p < \alpha$ (commonly $\alpha = 0.05$) means accepting a 5% **false-positive** (type I) rate. **Power** $1 - \beta$ is the probability of detecting a real effect of a given size; missing it is a **type II** error. The **minimum detectable effect** (MDE) is the smallest effect the test is sized to detect with that power.
+The **null hypothesis** $H_0$ is "no difference". The **p-value** is the probability of a difference at least as large as observed *if $H_0$ were true*; it is not the probability that $H_0$ is true. Rejecting $H_0$ when $p < \alpha$ (commonly $\alpha = 0.05$) means accepting a 5% **false-positive** (type I) rate. **Power** $1 - \beta$ is the probability of detecting a real effect of a given size; missing it is a **type II** error. The **minimum detectable effect** (MDE) is the smallest effect the test is sized to detect with that power. The canary judge of §43.6.4 applies the same pooled two-proportion test to error rates, one-sided because only a regression matters there; a model A/B test is two-sided because the new model can move the metric either way.
 
 ::: formula
 **Two-proportion z-test and confidence interval**
@@ -1469,14 +1469,14 @@ flowchart TD
 
 1. Fraud: many interacting signals, adversarial drift, chargeback labels. Fees: short, stable, must be exact, no label to learn.
 2. Self-supervised: the target (other dishes in the basket) comes from the data itself.
-3. It scores every displayed restaurant: 1.2 billion predictions per day versus 45 million training rows per run.
+3. It scores every displayed restaurant: about 360 million predictions per day versus 45 million training rows per run.
 4. `account_status`: set after fraud is confirmed.
 5. Training contains rows from the test period, so the model has already seen future patterns.
 6. Overfitting (training below the noise floor). Regularize, simplify, or add data.
 7. $p = 0.5$, gradient $-0.5$, so $w = 0.5$.
 8. Precision 0.30, recall 0.60, F1 $= 0.36/0.90 = 0.40$.
 9. FPR divides by the huge negative count; precision divides by flagged orders, which become mostly false positives.
-10. The one with Brier 0.07: its probabilities are calibrated.
+10. The one with Brier 0.07: with the same ranking, its probabilities are better calibrated.
 11. MAE 6; RMSE $\sqrt{68} = 8.25$.
 12. Late: $0.9 \times 10 = 9$; early: $0.1 \times 10 = 1$.
 13. $(1 + 0.5 + 0.2)/3 = 0.567$.

@@ -190,9 +190,9 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part XI — ML Foundations
 
 **Ch 57 — Machine Learning Fundamentals for System Designers** (L2, B) — what ML is; supervised, unsupervised, self-supervised, reinforcement learning; training vs inference; features and labels; train/validation/test splits; overfitting/underfitting; bias–variance; loss functions and gradient descent; classification metrics (precision, recall, F1, ROC-AUC, PR-AUC, log loss, calibration); regression metrics (MAE, RMSE, MAPE); ranking metrics (NDCG, MAP, MRR); offline vs online evaluation; A/B testing statistics
-**Ch 58 — Deep Learning Essentials for System Designers** (L2–L3, B) — neurons, MLPs, backpropagation, optimizers, embeddings, CNNs, RNNs, transformers (preview), training dynamics, memory footprint of training; traditional ML vs deep learning
+57.3 What machine learning is · 57.4 Learning paradigms · 57.5 Training versus inference · 57.6 Features and labels · 57.7 Train, validation and test splits · 57.8 Overfitting, underfitting and the bias–variance trade-off · 57.9 Loss functions and gradient descent · 57.10 Classification metrics · 57.11 Regression metrics · 57.12 Ranking metrics · 57.13 Offline versus online evaluation · 57.14 A/B testing statistics for ML launches
 **Ch 59 — The ML Lifecycle** (L2, B) — data collection, ingestion, validation, feature engineering, training, evaluation, deployment, monitoring, retraining, versioning, reproducibility; maturity levels
-**Ch 60 — ML System Architecture** (L3, B) — ML vs traditional systems; data-centric vs model-centric; training and inference pipelines; offline/online/nearline; batch vs real-time ML; requirements; latency, throughput and quality; cost vs accuracy; hidden technical debt
+59.3 The lifecycle as a loop · 59.4 Problem framing · 59.5 Data collection · 59.6 Data ingestion · 59.7 Data validation · 59.8 Feature engineering · 59.9 Model training · 59.10 Model evaluation · 59.11 Model deployment · 59.12 Monitoring · 59.13 Retraining · 59.14 Versioning and reproducibility · 59.15 MLOps maturity levels · 59.16 Roles and handoffs
 
 ## Part XII — ML Data Infrastructure
 

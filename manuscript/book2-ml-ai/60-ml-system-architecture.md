@@ -9,7 +9,7 @@ This chapter explains why. A machine learning (ML) system is a software system w
 Chapters 57–59 cover models and their lifecycle; this chapter covers the *system* around the model. Later chapters own each component: data engineering (61), feature stores (62), serving (66), MLOps (69) and monitoring (70).
 
 ::: note
-**QuickBite ML assumptions used in this chapter.** These extend the Book I design point and are teaching assumptions, not measurements of a real company. 2 million daily active users and 500,000 orders a day (§2.11); search peaks at 2,000 requests per second (RPS), each showing 20 restaurants (§2.4), so the search page needs up to 40,000 delivery-time predictions per second; peak-to-average ratio 9.6 (§18.11); a mean delivery takes 35 minutes; CPU capacity costs \$0.048 per vCPU-hour (a 16-vCPU node at \$0.77 per hour, §42.13); a data-center GPU costs an illustrative \$2.50 per hour. The delivery-time model is called the **ETA model** (estimated time of arrival).
+**QuickBite ML assumptions used in this chapter.** These extend the Book I design point and are teaching assumptions, not measurements of a real company. 2 million daily active users and 500,000 orders a day (§2.11); search peaks at 2,000 requests per second (RPS), each showing 20 restaurants (§2.4), so the search page needs up to 40,000 delivery-time predictions per second; peak-to-average ratio 9.6 (§18.11); the median delivery takes 35 minutes (Chapter 57); CPU capacity costs \$0.048 per vCPU-hour (a 16-vCPU node at \$0.77 per hour, §42.13); a data-center GPU costs an illustrative \$2.50 per hour. The delivery-time model is called the **ETA model** (estimated time of arrival).
 :::
 
 ## 60.1 Learning objectives
@@ -150,7 +150,7 @@ flowchart LR
 
 **Reading the diagram.** Solid arrows are the synchronous request path: the ETA model quotes a time, the customer chooses a restaurant, the order service records the order and dispatch assigns a courier. Dotted arrows are asynchronous and slow: actual delivery times become labels in the training data, and a nightly job retrains the model. Two loops close here. First, the model only receives labels for restaurants customers chose, which are disproportionately those with short quoted ETAs; restaurants that were quoted long ETAs get fewer orders and therefore fewer labels, so the model learns least where it is most pessimistic. Second, dispatch reads ETAs to decide when to send couriers, so the model's predictions change the very delivery times it is trying to predict. Failure points: self-reinforcing bias and oscillation after retraining; scaling does not help, design does.
 
-Direct loops are managed with **exploration** (occasionally showing items or estimates the model would not choose, so you collect unbiased labels), by logging the **propensity** (the probability that the system showed what it showed, so training can reweight), and by keeping a small randomized holdout. Hidden loops are harder: document which systems consume each model's output and review interactions when either changes. Chapter 68 treats feedback loops in recommendation in depth.
+Direct loops are managed with **exploration** (occasionally showing items or estimates the model would not choose, so you collect unbiased labels), by logging the **propensity** (the probability that the system showed what it showed, so training can reweight), and by keeping a small randomized holdout. Hidden loops are harder: document which systems consume each model's output and review interactions when either changes. §59.13.2 shows a hidden ETA loop through restaurant ranking and the fraud loop that destroys labels. Chapter 68 treats feedback loops in recommendation in depth.
 
 ### 60.3.5 Testing differences
 
@@ -202,7 +202,7 @@ A restaurant can improve its food by buying a better oven or by buying better in
 
 #### Why does this matter architecturally?
 
-Where the improvement comes from decides where the engineering effort and the system's complexity live. Sculley et al. illustrate a mature ML system as a small box labeled "ML code" surrounded by much larger boxes for configuration, data collection, feature extraction, data verification, machine resource management, analysis tools, process management, serving infrastructure and monitoring [Sculley et al. 2015]. Figure 60.3 redraws that idea as data flow.
+Where the improvement comes from decides where the engineering effort and the system's complexity live. Sculley et al. illustrate a mature ML system as a small box labeled "ML code" surrounded by much larger boxes for configuration, data collection, feature extraction, data verification, machine resource management, analysis tools, process management, serving infrastructure and monitoring [Sculley et al. 2015]. Figure 59.2 reproduces the original component layout; Figure 60.3 redraws the same idea as data flow.
 
 **Figure 60.3 — The model is a small part of an ML system (after Sculley et al. 2015).**
 
@@ -226,7 +226,7 @@ flowchart LR
 
 ### 60.4.2 QuickBite example: where the ETA error went
 
-Suppose QuickBite's ETA team spends one quarter on improvements and measures each change by its effect on mean absolute error (MAE) in minutes on a fixed holdout. The figures are illustrative but typical in shape.
+Suppose QuickBite's ETA team spends one quarter on improvements and measures each change by its effect on mean absolute error (MAE) in minutes on a fixed holdout. The figures are illustrative but typical in shape. They are not comparable with the absolute MAEs of the synthetic pipeline in §59.14.4, which come from a simpler simulated world; only the relative sizes of the changes matter here.
 
 **Table 60.4 — One quarter of ETA improvements (illustrative).**
 
@@ -272,12 +272,12 @@ A notebook that trains a model is like a chef cooking once for a food critic. A 
 
 #### Why does this exist?
 
-Models decay as the world changes, so they must be retrained regularly (Chapter 59). A retraining process that depends on a person running cells in a notebook fails in three ways: it is not reproducible, it skips checks under time pressure, and it cannot run at 02:00. Baylor et al. describe how Google built TFX after observing that teams kept rebuilding the same pieces (data analysis, transformation, validation, training, evaluation and serving) and that the glue between them, not the learning algorithm, caused most production problems [Baylor et al. 2017].
+Models decay as the world changes, so they must be retrained regularly (§59.13). A retraining process that depends on a person running cells in a notebook fails in three ways: it is not reproducible, it skips checks under time pressure, and it cannot run at 02:00. Baylor et al. describe how Google built TFX after observing that teams kept rebuilding the same pieces (data analysis, transformation, validation, training, evaluation and serving) and that the glue between them, not the learning algorithm, caused most production problems [Baylor et al. 2017].
 
 #### How it works internally
 
 1. **Data extraction.** Read a training window (for QuickBite's ETA model, the last 90 days of delivered orders) from the data lake or warehouse (Chapter 61), joined with labels. Use point-in-time joins so that each example sees only feature values that existed when the prediction was made (Chapter 62).
-2. **Data validation.** Compare the new dataset's schema and statistics with expectations and with the previous run: required columns, ranges, null rates, category vocabularies, and distribution distance. Stop the pipeline on a hard failure; warn on drift.
+2. **Data validation** (§59.7). Compare the new dataset's schema and statistics with expectations and with the previous run: required columns, ranges, null rates, category vocabularies, and distribution distance. Stop the pipeline on a hard failure; warn on drift.
 3. **Feature computation.** Apply the same transformation code that serving will use (normalization, bucketing, encodings, aggregates). Materialize the result as a versioned training dataset.
 4. **Training.** Fit the model on the training split with configuration (hyperparameters, seed, feature list) recorded. Large models need distributed training (Chapter 65).
 5. **Evaluation and validation.** Compute offline metrics on a holdout, overall and per slice (each city, each restaurant category, peak hours). Compare with the currently deployed model. Run behavioral tests (monotonicity in distance). Only a candidate that passes every gate is "blessed".
@@ -317,9 +317,9 @@ flowchart LR
 | Component | Input → output | Failure it prevents | Owner chapter |
 |---|---|---|---|
 | Data extraction | Lake tables → training window | Label leakage via point-in-time joins | 61, 62 |
-| Data validation | Dataset → pass, warn or fail | Training on corrupted or shifted data | 61, 63 |
+| Data validation | Dataset → pass, warn or fail | Training on corrupted or shifted data | 59, 61, 63 |
 | Feature computation | Raw columns → feature tensors | Training–serving skew (shared code) | 62 |
-| Training | Features, configuration → model | Irreproducible models (recorded seeds and versions) | 58, 65 |
+| Training | Features, configuration → model | Irreproducible models (recorded seeds and versions) | 58, 59, 65 |
 | Evaluation and validation | Model, holdout → metrics, verdict | Regressions overall or on a slice | 57, 70 |
 | Registry | Model, lineage → versioned entry | Unknown provenance; no rollback target | 69 |
 
@@ -341,7 +341,7 @@ $$A_{\max} = \Delta_{\text{retrain}} + T_{\text{pipe}} + T_{\text{deploy}} \qqua
 :::
 
 ::: example
-**Worked example — How old is QuickBite's ETA model?** Retraining runs nightly ($\Delta_{\text{retrain}} = 24$ h). The pipeline takes $T_{\text{pipe}} = 3$ h. A canary at 5% traffic for 2 h, then full rollout over 1 h, gives $T_{\text{deploy}} = 3$ h.
+**Worked example — How old is QuickBite's ETA model?** Retraining runs nightly ($\Delta_{\text{retrain}} = 24$ h), more often than the twice-weekly cadence that §59.13.1 derives as sufficient. The pipeline takes $T_{\text{pipe}} = 3$ h. A canary at 5% traffic for 2 h, then full rollout over 1 h, gives $T_{\text{deploy}} = 3$ h.
 
 1. $A_{\max} = 24 + 3 + 3 = 30$ h.
 2. $A_{\text{avg}} = 12 + 3 + 3 = 18$ h.
@@ -423,7 +423,7 @@ sequenceDiagram
 
 ### 60.6.2 Logging for training
 
-The prediction log is where serving feeds training. Logging the features **as served** rather than recomputing them later has three benefits: training sees exactly the values the model saw, which removes one source of training–serving skew; monitoring can compare served feature distributions with training distributions; and debugging can replay any request. The outcome (actual delivery time) arrives later on a different stream and is joined by order ID. This "log and wait" pattern is how most production systems build training data for online models (Chapter 62 compares it with point-in-time backfills).
+The prediction log is where serving feeds training. Logging the features **as served** (§59.5.3) rather than recomputing them later has three benefits: training sees exactly the values the model saw, which removes one source of training–serving skew; monitoring can compare served feature distributions with training distributions; and debugging can replay any request. The outcome (actual delivery time) arrives later on a different stream and is joined by order ID. This "log and wait" pattern is how most production systems build training data for online models (Chapter 62 compares it with point-in-time backfills).
 
 ::: formula
 **Prediction log volume**
@@ -858,7 +858,7 @@ $$\Delta V \ge \Delta C \qquad \Delta C = (c_{\text{new}} - c_{\text{old}}) \fra
 
 **Fraud model at checkout.** $N = 15 \times 10^6$ orders/month; $c_{\text{old}} = \$0.05$, so serving costs \$750/month; at 3× it costs \$2,250, so $\Delta C = \$1{,}500$. Fraud losses are \$450,000/month (assumed). Replaying last quarter at the same manual-review capacity, the new model catches 2% more fraud dollars: $\Delta V = 0.02 \times 450{,}000 = \$9{,}000$. Net +\$7,500/month. **Ship it.**
 
-**Restaurant ranking on the home page.** 6 million home-page loads a day × 200 candidates × 30 days: $N = 3.6 \times 10^{10}$; $c_{\text{old}} = \$0.0005$, so \$18,000/month; at 3×, \$54,000: $\Delta C = \$36{,}000$. An A/B test (Chapter 57) shows +0.05% orders: $0.0005 \times 15 \times 10^6 = 7{,}500$ orders × \$2 contribution margin = $\Delta V = \$15{,}000$. Net −\$21,000/month. **Do not ship as is.**
+**Restaurant ranking on the home page.** 6 million home-page loads a day × 200 candidates × 30 days: $N = 3.6 \times 10^{10}$; $c_{\text{old}} = \$0.0005$, so \$18,000/month; at 3×, \$54,000: $\Delta C = \$36{,}000$. An A/B test (§57.14) shows +0.05% orders: $0.0005 \times 15 \times 10^6 = 7{,}500$ orders × \$2 contribution margin = $\Delta V = \$15{,}000$. Net −\$21,000/month. **Do not ship as is.**
 
 **Cascade rescue.** Score all 200 candidates with the old model and re-score only the top 30 (15%) with the new one: cost $= 1 + 3 \times 0.15 = 1.45$ times the original, $\Delta C = 0.45 \times 18{,}000 = \$8{,}100$. If the re-ranked top keeps 90% of the gain, $\Delta V = \$13{,}500$. Net +\$5,400/month. **Ship the cascade.**
 
@@ -963,7 +963,7 @@ What to notice:
 - **Most of the gain for a fraction of the cost.** The expensive model adds 1.74 accuracy points over the cheap one (0.8282 − 0.8108). Band 0.2 recovers 1.48 points (85%) at \$0.0099 per 1,000, a third of the expensive model's cost; band 0.3 recovers 97% at half the cost. The formula agrees: $0.002 + 0.263 \times 0.030 = \$0.0099$.
 - **Median latency drops, p99 does not.** Once more than 1% of inputs escalate, the p99 is set by the expensive path (6–7 ms), as the formula predicts. Cascades save cost and average latency; they do not rescue a p99 budget that the expensive model alone cannot meet.
 - **The band is a dial.** Choosing it is a business decision on the cost–accuracy curve, made with the break-even rule above, and it must be re-tuned when either model is retrained, because the cheap model's confidence distribution changes.
-- **Uncertainty must be meaningful.** The cascade works because the cheap model's probability near 0.5 identifies the hard cases. A poorly calibrated cheap model escalates the wrong inputs (Chapter 57 covers calibration).
+- **Uncertainty must be meaningful.** The cascade works because the cheap model's probability near 0.5 identifies the hard cases. A poorly calibrated cheap model escalates the wrong inputs (§57.10.3 covers calibration).
 
 ::: warning
 **Warning — Accuracy is not the only axis.** Bernardi et al. report from Booking.com that slower models cost conversion: in their experiments, an increase of about 30% in latency cost more than 0.5% in conversion rate [Bernardi et al. 2019]. A model that is more accurate but slower can lose money even when serving is free. Put latency into the break-even calculation through an online test.

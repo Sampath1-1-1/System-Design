@@ -6,7 +6,7 @@ Chapter 57 treated a model as a function with parameters that gradient descent a
 
 You do not need to invent architectures to design systems around them. You need to know what a layer computes, why training costs about three times inference, where the memory goes, which architectures parallelize, how to read a loss curve, and when a gradient-boosted tree is the better choice. This chapter gives you that, with arithmetic reused in Chapters 64, 65, 67, 68, 72–73 and 89. For a full textbook treatment of the mathematics, see Goodfellow et al. [2016].
 
-The running example is **QuickBite**, the food-delivery company from Chapter 2. Its machine-learning problems include predicting delivery time (ETA), recommending restaurants and dishes, and detecting fraud. QuickBite's numbers below (2 million daily active users, 50,000 restaurants, a browse peak of 7,000 requests per second) come from §2.11; anything new is stated as an assumption.
+The running example is **QuickBite**, the food-delivery company from Chapter 2. Its machine-learning problems include predicting delivery time (ETA), recommending restaurants and dishes, and detecting fraud. QuickBite's numbers below (2 million daily active users and 50,000 restaurants, §2.11; a search peak of 2,000 requests per second showing 20 restaurants each, §2.4) come from Chapter 2; anything new is stated as an assumption.
 
 ## 58.1 Learning objectives
 
@@ -453,7 +453,7 @@ The optimizer keeps per-parameter state between steps, and that state is part of
 1. $m$: $7 \times 10^9 \times 4$ bytes $= 28$ GB. $v$: another 28 GB. Total: **56 GB** of optimizer state.
 2. That is two extra copies of the model in FP32, more than the 14 GB of the model itself in 16-bit precision.
 
-**Interpretation.** For Adam, the optimizer state is the single largest fixed memory item in training. **Engineering implication.** This is the first thing that sharded data parallelism (ZeRO, FSDP; Chapter 65) partitions across GPUs, and why a training checkpoint is several times larger than the model you deploy: a 14 GB inference model may have a 100 GB+ training checkpoint.
+**Interpretation.** For Adam, the optimizer state is the single largest fixed memory item in training. **Engineering implication.** This is the first thing that sharded data parallelism (ZeRO, FSDP; Chapter 65) partitions across GPUs, and why a training checkpoint is several times larger than the model you deploy: a 14 GB inference model may have a training checkpoint of about 84 GB (28 GB of FP32 master weights plus 56 GB of moments) or more.
 :::
 
 ::: mistake
@@ -972,9 +972,9 @@ $$C_\text{infer} \approx 2N \qquad C_\text{train/example} \approx 6N \qquad C_\t
 2. Assume an accelerator with $10^{15}$ FLOP/s peak 16-bit throughput (the class of a 2023-era data-center GPU, as of 2026; Chapter 64) at 40% model FLOPs utilization (MFU): $4 \times 10^{14}$ FLOP/s achieved.
 3. Time: $4.2 \times 10^{22} / 4 \times 10^{14} = 1.05 \times 10^8$ GPU-seconds $\approx 29{,}200$ GPU-hours; on 512 GPUs, about 57 hours.
 
-*Inference.* The ETA MLP has $N \approx 1.58 \times 10^6$. Assume each browse request shows 20 restaurants, each needing an ETA, at the §2.11 peak of 7,000 requests/s.
+*Inference.* The ETA MLP has $N \approx 1.58 \times 10^6$. Each search request shows 20 restaurants, each needing an ETA, at the §2.4 peak of 2,000 requests/s.
 
-4. Predictions: $7{,}000 \times 20 = 140{,}000$/s. FLOPs: $140{,}000 \times 2 \times 1.58 \times 10^6 \approx 4.4 \times 10^{11}$ FLOP/s, a few CPU servers' worth of vectorized arithmetic.
+4. Predictions: $2{,}000 \times 20 = 40{,}000$/s. FLOPs: $40{,}000 \times 2 \times 1.58 \times 10^6 \approx 1.3 \times 10^{11}$ FLOP/s, about an eighth of one CPU server's sustained $10^{12}$ FLOP/s of vectorized arithmetic (step 5).
 5. Training it on 90 million past orders (180 days × 500,000/day) for 10 epochs: $6 \times 1.58 \times 10^6 \times 9 \times 10^8 \approx 8.5 \times 10^{15}$ FLOPs: about 2.4 hours at a sustained $10^{12}$ FLOP/s on a CPU server, seconds of pure compute on one accelerator.
 
 **Interpretation.** The same formula spans seven orders of magnitude: the LLM run is a capital project, the ETA model is a cron job whose cost is dominated by the data pipeline and feature joins, not FLOPs. **Engineering implication.** Always estimate $6ND$ before choosing hardware. Chapter 65 extends this to compute-optimal choices of $N$ and $D$ and to cluster sizing [Kaplan et al. 2020]; Chapter 73 shows that LLM *decoding* is limited by memory bandwidth rather than by $2N$ FLOPs.

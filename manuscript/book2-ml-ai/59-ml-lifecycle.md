@@ -25,7 +25,7 @@ After this chapter you should be able to:
 ## 59.2 Prerequisites
 
 - Supervised learning, features and labels, train/validation/test splits, overfitting — Chapter 57 (the lifecycle wraps around these ideas).
-- Regression and classification metrics (MAE, RMSE, precision, recall) and online A/B testing — Chapter 57 (evaluation and deployment use them without re-deriving them).
+- Regression and classification metrics (MAE, RMSE, precision, recall) and online A/B testing — §57.10–§57.14 (evaluation and deployment use them without re-deriving them).
 - Mean, median, normal distribution and percentiles — §4.7, §4.8 (validation and monitoring checks are simple statistics).
 - Batch and stream processing — §29.3, §29.8 (ingestion paths are summarized, not re-taught).
 - Event logs and Kafka — §31.3 (prediction logs and label events travel through logs).
@@ -83,7 +83,7 @@ flowchart LR
 Three forces turn the line into a loop.
 
 1. **The world drifts.** Input distributions change (a new city, a new app version), and so does the relationship between inputs and the label (a bridge closes, so the same distance now takes longer). Chapter 70 names these **data drift** and **concept drift**.
-2. **The model changes the world.** An ETA shown to a customer changes which restaurant she orders from, so tomorrow's training data depends on today's model. These **feedback loops** are covered in §59.13.3.
+2. **The model changes the world.** An ETA shown to a customer changes which restaurant she orders from, so tomorrow's training data depends on today's model. These **feedback loops** are covered in §59.13.2.
 3. **Learning is empirical.** You do not know in advance which features or model will work. Each pass through evaluation and production teaches you something that changes the next pass.
 
 Amershi et al. described Microsoft's nine-stage workflow, from model requirements to monitoring, as highly non-linear, with feedback from almost every stage to earlier ones [Amershi et al. 2019]; Huyen likewise stresses that ML systems development is iterative and never finished [Huyen 2022].
@@ -193,7 +193,7 @@ Table 59.2 is the resulting framing card. Keep it to one page; it is the contrac
 |---|---|
 | Business objective | Reduce support contacts and cancellations caused by late deliveries |
 | Decision | ETA promised at checkout (500,000 orders/day) and shown per restaurant while browsing |
-| Target | Minutes from order confirmation to handoff; mean ≈ 32 min |
+| Target | Minutes from order confirmation to handoff; median ≈ 35 min (Chapter 57 assumption) |
 | Current baseline | Rule: 10 min + kitchen prep estimate + 3 min per km |
 | ML task | Regression of a chosen quantile (§59.4.2) |
 | Offline metrics | MAE, p90 absolute error, late rate (actual > promise + 5 min) |
@@ -249,6 +249,8 @@ Machine learning is expensive to build and expensive to keep alive. Google's *Ru
 For QuickBite, the rule baseline (10 min + prep estimate + 3 min/km) is the right first launch. It produces promises, and every delivered order produces a label against which a future model can be measured. The model earns its place only when it beats the rule by enough to pay for the rest of this chapter. The pipeline in §59.14.4 shows that it does, by about 1 minute of MAE on held-out data.
 
 #### Failure scenarios
+
+**Table 59.4 — Problem-framing failure scenarios.**
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
@@ -338,8 +340,8 @@ sequenceDiagram
 **Worked example — What does prediction logging cost?** Assume each checkout prediction record is 2 KB (about 60 features, IDs and metadata; SI units, 1 KB = 10³ bytes).
 
 1. Checkout predictions: 500,000 per day × 2 KB = 1 GB/day; 365 GB per year. Cheap: log all of them.
-2. Browse predictions: 60 million browse reads per day (§2.11) × 20 restaurant ETAs each = 1.2 billion predictions per day. At 1 KB each that is 1.2 TB/day, about 438 TB per year.
-3. Sample 1% of browse requests (all 20 ETAs in each sampled request, so a whole page stays consistent): 12 GB/day.
+2. Search-page predictions: 2,000 searches per second at peak × 20 restaurant ETAs each (§2.4) = 40,000 predictions per second, or about 360 million per day at QuickBite's peak-to-average ratio of 9.6 (§18.11). At 1 KB each that is 360 GB/day, about 131 TB per year.
+3. Sample 1% of search requests (all 20 ETAs in each sampled request, so a whole page stays consistent): 3.6 GB/day. (§60.6.2 sizes the same log with a leaner 300-byte row.)
 
 *Interpretation:* log every high-value decision, sample high-volume ones by request, not by row. *Engineering implication:* the sampling rate is a versioned configuration; any model trained on browse data must know it, because the logged rows are a sample, not the population.
 :::
@@ -405,7 +407,7 @@ A restaurant kitchen checks deliveries at the back door: is this the fish we ord
 
 Bad data rarely crashes a training job. A column that switches from kilometers to meters, a field that becomes 8% null after an app release, or a new city code all produce a model that trains happily and predicts badly. Google's TFX paper describes data validation as a first-class pipeline component precisely because such errors are silent [Baylor et al. 2017], and Breck et al. report that at Google the validation system flags anomalies that would otherwise reach training [Breck et al. 2019].
 
-**Table 59.4 — Data validation checks and what they catch.**
+**Table 59.5 — Data validation checks and what they catch.**
 
 | Check | Example expectation | Catches |
 |---|---|---|
@@ -559,6 +561,8 @@ What to notice:
 
 #### Failure scenarios
 
+**Table 59.6 — Data-validation failure scenarios.**
+
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Alert fatigue | Thresholds too tight for large batches | Many failures, none acted on | Re-tune to effect sizes | Calibrate on months of known-good data |
@@ -581,7 +585,7 @@ What to notice:
 
 A model is a very literal student. Given a raw timestamp, it sees a number in the billions; given "hour of day" and "is peak," it sees something it can learn from. Feature engineering is the teacher translating raw facts into the language the student understands.
 
-**Table 59.5 — Feature types for QuickBite ETA.**
+**Table 59.7 — Feature types for QuickBite ETA.**
 
 | Type | Example | Computation | Freshness needed |
 |---|---|---|---|
@@ -626,7 +630,7 @@ flowchart TB
 In practice the three causes look like this: (1) different code computes the same feature offline and online; (2) the data differs, for example training reads corrected warehouse data while serving reads raw live events; (3) a feedback loop changes the serving distribution. Its signature is a model that looks excellent offline and disappoints online, with no error anywhere in the logs. The defenses are a shared feature definition (Figure 59.7), prediction-time logging (§59.5.3), and a skew check that compares logged serving features with offline recomputation for the same requests. Chapter 62 treats point-in-time correctness and skew detection in depth.
 
 ::: mistake
-**"A random train/test split tells me how the model will do in production."** Random splits put future orders in the training set and past orders in the test set, so window features and drifting trends leak information backwards in time. For any problem where time matters, split by time: train on the past, test on the most recent period. The pipeline in §59.14.4 shows a random split reporting an MAE of 2.37 minutes where an honest time split reports 3.22.
+**"A random train/test split tells me how the model will do in production."** Random splits put future orders in the training set and past orders in the test set, so window features and drifting trends leak information backwards in time. For any problem where time matters, split by time (§57.7): train on the past, test on the most recent period. The pipeline in §59.14.4 shows a random split reporting an MAE of 2.37 minutes where an honest time split reports 3.22.
 :::
 
 ## 59.9 Model training
@@ -672,7 +676,7 @@ flowchart LR
 
 **Hyperparameters** are settings chosen before training (learning rate, tree depth, regularization strength), as opposed to parameters learned from data. Three search strategies dominate:
 
-**Table 59.6 — Hyperparameter search strategies.**
+**Table 59.8 — Hyperparameter search strategies.**
 
 | Strategy | How it works | Advantages | Disadvantages | Choose when |
 |---|---|---|---|---|
@@ -721,9 +725,9 @@ $$C = N \times t \times p \qquad T_{\text{wall}} = \left\lceil \frac{N}{W} \righ
 
 ### 59.10.1 Aggregate metrics are necessary, not sufficient
 
-Offline evaluation applies the metrics of Chapter 57 to a held-out test set. Evaluate every candidate against the *production* model and the baselines on the *same* time-based test window. The end-to-end pipeline (§59.14.4) produces this comparison on synthetic data:
+Offline evaluation applies the metrics of §57.10–§57.12 to a held-out test set. Evaluate every candidate against the *production* model and the baselines on the *same* time-based test window. The end-to-end pipeline (§59.14.4) produces this comparison on synthetic data:
 
-**Table 59.7 — Synthetic QuickBite results on the final 7-day test window (from §59.14.4).**
+**Table 59.9 — Synthetic QuickBite results on the final 7-day test window (from §59.14.4).**
 
 | Model | MAE (min) | p90 absolute error (min) |
 |---|---|---|
@@ -741,6 +745,8 @@ The GBDT beats the rule by about 1 minute of MAE. Ridge regression beats the rul
 :::
 
 An average hides the people a model fails. The same synthetic GBDT, broken down by city:
+
+**Table 59.10 — Synthetic GBDT test error by city slice (from §59.14.4).**
 
 | Slice | Orders | MAE (min) | p90 (min) |
 |---|---|---|---|
@@ -779,7 +785,7 @@ Mitchell et al. proposed model cards with nine sections: model details, intended
 **Definition — Online serving.** Running a model on demand, inside a request, using features available at that moment, and returning the prediction within a latency budget.
 :::
 
-**Table 59.8 — Batch scoring versus online serving.**
+**Table 59.11 — Batch scoring versus online serving.**
 
 | Aspect | Batch scoring | Online serving |
 |---|---|---|
@@ -790,7 +796,7 @@ Mitchell et al. proposed model cards with nine sections: model details, intended
 | Failure mode | Stale predictions if the job fails | Errors or timeouts on the request path |
 | QuickBite use | Daily demand forecast per restaurant | Checkout ETA, which depends on current courier load |
 
-Many systems mix both: nightly batch-scored prep-time estimates become *features* of the online ETA model. Chapter 66 covers model servers; Chapter 60 places these modes in the offline, nearline and online architecture.
+Many systems mix both: nightly batch-scored prep-time estimates become *features* of the online ETA model. Chapter 66 covers model servers; §60.7–§60.8 place these modes in the offline, nearline and online architecture.
 
 ### 59.11.2 Progressive rollout of a model
 
@@ -812,7 +818,7 @@ flowchart LR
 **Reading the diagram.** In **shadow** mode the new model (v8) receives a copy of live requests and its predictions are logged but never shown; the current model (v7) still serves. This checks latency, errors and skew at zero user risk, and for ETA even accuracy, because delivery time barely depends on the promise displayed. A **canary** then serves a small share of traffic for real, guarding against operational failures (§43.6). The **A/B test** splits traffic evenly for long enough to measure the online metric and guardrails with statistical power (Chapter 57). Each stage can roll back asynchronously to v7, which stays deployed and warm. Failure points: shadow traffic doubling feature-store load, and an A/B test stopped early on a noisy result. Scaling: shadow and canary traffic shares are flags, not deployments.
 
 ::: warning
-**Warning — Shadow mode cannot measure everything.** Shadow mode measures prediction quality only when the outcome does not depend on the prediction. For a recommendation or ranking model, what the user clicks depends on what was shown, so the shadow model's "accuracy" on logged clicks is biased toward the production model. Those models need an A/B test (Chapter 68).
+**Warning — Shadow mode cannot measure everything.** Shadow mode measures prediction quality only when the outcome does not depend on the prediction. For a recommendation or ranking model, what the user clicks depends on what was shown, so the shadow model's "accuracy" on logged clicks is biased toward the production model. Those models need an A/B test (§57.14).
 :::
 
 ## 59.12 Monitoring
@@ -840,6 +846,8 @@ flowchart LR
 **Reading the diagram.** Signals lower in the diagram arrive later but say more about what matters. Operational metrics arrive within seconds (§40.5). **Data drift** (feature distributions) and **prediction drift** (the distribution of the model's outputs) can be computed from live requests within minutes, without labels, but they are only *proxies*: inputs can shift without harming accuracy. **Performance** needs labels and so arrives only after the label delay. Business metrics arrive last, over days. All feed one alert policy that pages on operational failures and sends drift findings to review. Failure point: watching only fast signals (missing slow decay) or only slow ones (learning of a broken feature from customers). Chapter 70 covers the tests and dashboards.
 
 ### 59.12.2 Label delay limits how fast you can detect decay
+
+The sample-size logic of an A/B test (§57.14.2) applies to monitoring too, with one addition: no sample exists until the labels arrive.
 
 ::: formula
 **Time to detect a shift in model error**
@@ -931,7 +939,7 @@ flowchart LR
   CUST -.->|orders only<br/>where ETA is short| DATA
 ```
 
-**Reading the diagram.** Solid arrows are immediate effects; dotted arrows close the loop through data over days or weeks. A restaurant with a long predicted ETA ranks lower and receives fewer orders, so the training data holds fewer recent observations for it, its estimate stays stale and possibly long, and it stays ranked low. Separately, customers order mostly where ETAs are short, so the data over-represents fast restaurants. The loop is self-confirming: the model's error cannot be corrected by data the model prevents from existing. Mitigations: reserve a small randomized exploration share (Chapter 68), log what was shown so later analysis can correct for selection, and monitor coverage (orders per restaurant) as well as accuracy.
+**Reading the diagram.** Solid arrows are immediate effects; dotted arrows close the loop through data over days or weeks. A restaurant with a long predicted ETA ranks lower and receives fewer orders, so the training data holds fewer recent observations for it, its estimate stays stale and possibly long, and it stays ranked low. Separately, customers order mostly where ETAs are short, so the data over-represents fast restaurants. The loop is self-confirming: the model's error cannot be corrected by data the model prevents from existing. Mitigations: reserve a small randomized exploration share (Chapter 68), log what was shown so later analysis can correct for selection, and monitor coverage (orders per restaurant) as well as accuracy. §60.3.4 adds the direct loop through dispatch and propensity logging.
 
 ::: warning
 **Warning — Some feedback loops destroy labels.** A fraud model that blocks a transaction never learns whether it was fraud: the blocked case has no label. Retrained only on unblocked transactions, the model sees fewer and fewer examples of the patterns it blocks and can forget them. The standard remedy is a small, randomly selected holdout that is allowed through (or reviewed by humans) to keep unbiased labels flowing (Chapter 82).
@@ -949,7 +957,7 @@ flowchart LR
 
 A model is a function of five things. Version all five, or you cannot answer "why did the model change?"
 
-**Table 59.9 — What to version for a reproducible model.**
+**Table 59.12 — What to version for a reproducible model.**
 
 | Input | What to record | Typical tool (Ch 61, 69) |
 |---|---|---|
@@ -1155,7 +1163,7 @@ flowchart TB
 
 **Reading the diagram.** At **level 0**, a data scientist trains a model interactively and hands a file to engineers, who deploy only the prediction service; releases are rare, and there is no continuous training or active performance monitoring. At **level 1**, the *training pipeline* is what gets deployed, and it retrains continuously when triggers fire, with automated data and model validation, a feature store and a metadata store; the experimental and production pipelines are the same code. At **level 2**, the pipeline's own code goes through CI/CD: changes to components are built, tested and deployed automatically, so teams can try new ideas and ship new pipelines quickly. Thick arrows show progression, not data flow. The failure point at level 0 is the handover; at level 1, pipeline changes are still manual.
 
-**Table 59.10 — Google's MLOps levels (as published, 2020).**
+**Table 59.13 — Google's MLOps levels (as published, 2020).**
 
 | Level | What is automated | Release cadence | Typical gap |
 |---|---|---|---|
@@ -1167,7 +1175,7 @@ flowchart TB
 
 Microsoft's Azure Architecture Center publishes a five-level model that grades people, model creation, model release and application integration [Microsoft n.d.].
 
-**Table 59.11 — Microsoft's MLOps maturity model (summary).**
+**Table 59.14 — Microsoft's MLOps maturity model (summary).**
 
 | Level | Name | Characteristics |
 |---|---|---|
@@ -1187,7 +1195,7 @@ The two models agree on the direction of travel: first make training reproducibl
 
 The lifecycle crosses several specialties. Names vary by company; the responsibilities do not.
 
-**Table 59.12 — Roles across the lifecycle.**
+**Table 59.15 — Roles across the lifecycle.**
 
 | Role | Owns | Hands off |
 |---|---|---|

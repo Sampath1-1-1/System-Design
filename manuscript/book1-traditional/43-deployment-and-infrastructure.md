@@ -444,7 +444,7 @@ The required $n$ falls quickly as the effect grows: about 6,000 requests per gro
 :::
 
 ::: warning
-**Warning — Peeking inflates false positives.** If the judge re-runs the test every minute and fails the canary the first time $p < \alpha$, the chance of a false failure over many looks is much larger than $\alpha$. Either test once at the planned sample size, divide $\alpha$ across the planned looks (a Bonferroni correction: 10 looks at $\alpha = 0.001$ each keeps the total at or below 0.01), or use a sequential test designed for repeated looks. The same issue appears in A/B testing (Chapter 57).
+**Warning — Peeking inflates false positives.** If the judge re-runs the test every minute and fails the canary the first time $p < \alpha$, the chance of a false failure over many looks is much larger than $\alpha$. Either test once at the planned sample size, divide $\alpha$ across the planned looks (a Bonferroni correction: 10 looks at $\alpha = 0.001$ each keeps the total at or below 0.01), or use a sequential test designed for repeated looks. The same issue appears in A/B testing (§57.14.3).
 :::
 
 #### Code example: a canary judge
@@ -623,7 +623,7 @@ Without flags every deploy is also a product launch, and undoing the launch mean
 Hodgson classifies flags by how long they live and how dynamic they are [Hodgson 2017]:
 
 - **Release toggles** hide unfinished or not-yet-launched features. They should live days to weeks.
-- **Experiment toggles** split users between variants for A/B tests (Chapter 57). They live for the experiment.
+- **Experiment toggles** split users between variants for A/B tests (§57.14). They live for the experiment.
 - **Ops toggles** control operational behavior, including **kill switches** that disable an expensive or failing feature under load. Some live for years by design.
 - **Permissioning toggles** enable features for specific users or plans (beta testers, premium tier). They are long-lived and are really product configuration.
 
