@@ -301,3 +301,5 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-294 | 60 | Michelangelo (2017): UberEATS delivery-time example wording; Hive/Cassandra as offline/online stores | Open | |
 | UQ-295 | 60 | Booking.com: ~30% latency increase costing >0.5% conversion (Bernardi et al. KDD 2019) | Open | |
 | UQ-296 | 60 | TFX Google Play continuous-training description; ML Test Score 28 tests in four sections of seven | Open | |
+| UQ-297 | 59 | Google Cloud MLOps page current URL and trigger list; Microsoft MLOps maturity-level names/characteristics (from memory) | Open | |
+| UQ-298 | 59 / 60 | UberEATS feature examples (Hermann & Del Balso 2017); Booking.com finding paraphrase (Bernardi et al. 2019); ML Test Score 28 tests and scoring rule | Open | Merge with UQ-294–296 |
