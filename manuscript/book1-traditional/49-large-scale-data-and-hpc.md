@@ -308,7 +308,7 @@ flowchart LR
 
 Hadoop-era clusters co-located data and computation on the same nodes, because networks were slow (§29.7). Modern platforms **separate storage from compute**: data lives in a shared storage service; compute clusters are stateless and sized per workload, started for a job and stopped afterwards. The benefits are elasticity (pay for compute only while it runs), isolation (a heavy batch job and an interactive dashboard use different clusters on the same data), and independent scaling (storage grows with data, compute with queries). The costs are network bandwidth between the tiers, higher first-byte latency, and the need for local SSD caches. Fast datacenter networks (§7.17) made the trade worth it; §29.7 worked out that locality's advantage shrank from about 8× to about 2×.
 
-The **lakehouse** combines the open files of a data lake with warehouse features (transactions, schema enforcement, indexing, caching) implemented by the table format and engines [Armbrust et al. 2021]. Chapter 61 owns the deep treatment of table formats and lakehouses.
+The **lakehouse** combines the open files of a data lake with warehouse features (transactions, schema enforcement, indexing, caching) implemented by the table format and engines [Armbrust et al. 2021]. Chapter 61 owns the deep treatment of table formats and lakehouses (§61.8).
 
 ## 49.6 Warehouses at scale
 
@@ -646,7 +646,7 @@ $$n^{*} = \frac{(p - 1 - \log_2 p)\,\alpha}{\left(\log_2 p - \frac{p-1}{p}\right
 3. Crossover: $n^{*} = 57 \times 5 \times 10^{-6} / ((6 - 0.984) \times 4 \times 10^{-11}) = 2.85 \times 10^{-4} / 2.006 \times 10^{-10} \approx 1.42$ MB.
 4. Rabenseifner at 1 GB: $0.06 + 78.75 = 78.8$ ms, best of both.
 
-**Interpretation.** Latency terms dominate small messages and bandwidth terms dominate large ones; no single algorithm wins everywhere. **Engineering implication.** Libraries switch algorithms by size (MPI implementations use tuned thresholds; NCCL uses rings and double binary trees), and training frameworks **bucket** many small gradient tensors into messages of several megabytes so they land on the bandwidth-optimal side of the crossover (Chapter 65).
+**Interpretation.** Latency terms dominate small messages and bandwidth terms dominate large ones; no single algorithm wins everywhere. **Engineering implication.** Libraries switch algorithms by size (MPI implementations use tuned thresholds; NCCL uses rings and double binary trees), and training frameworks **bucket** many small gradient tensors into messages of several megabytes so they land on the bandwidth-optimal side of the crossover (§65.5.2).
 :::
 
 **Figure 49.8 — Ring all-reduce on four ranks: reduce-scatter, then all-gather.**

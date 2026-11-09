@@ -1017,7 +1017,7 @@ $$C = \sum_{\text{tiers } i} V \cdot p_i \cdot t_i \;+\; \sum_{\text{transitions
 ## 15.14 Design challenges
 
 1. **Video archive.** Design storage for a service ingesting 2 PB of video per month, with hot playback of the newest 30 days and rare access afterwards. Choose redundancy per tier, a chunking and upload protocol, metadata design, and a lifecycle policy; estimate raw capacity, repair traffic and monthly cost.
-2. **Training-data lake.** Thousands of GPU nodes read a 5 PB dataset of 50 billion small images each epoch. Choose a parallel file system or object storage, pack samples into shards, and keep metadata off the critical path (see Chapter 61).
+2. **Training-data lake.** Thousands of GPU nodes read a 5 PB dataset of 50 billion small images each epoch. Choose a parallel file system or object storage, pack samples into shards, and keep metadata off the critical path (see §61.9.3 on per-file overhead, and Chapter 80).
 
 ## 15.15 References
 

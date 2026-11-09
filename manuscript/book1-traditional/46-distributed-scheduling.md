@@ -846,7 +846,7 @@ $$L = r_p \left(\frac{\tau}{2} + t_r\right) G \qquad \text{fraction lost} = \fra
 2. Per day: $2 \times 170.7 = 341$ GPU·h of $256 \times 24 = 6{,}144$: **5.6%**.
 3. With 15-minute checkpoints: $(0.125 + 0.167) \times 256 = 74.7$ GPU·h per preemption; $149$ per day: **2.4%**.
 
-**Interpretation.** Lost progress and restart are multiplied by the job's whole footprint. **Engineering implication.** Preempt large gangs rarely and as a unit (evicting one worker stalls all, §46.10), checkpoint frequently and asynchronously (Chapter 65), and prefer preempting small jobs.
+**Interpretation.** Lost progress and restart are multiplied by the job's whole footprint. **Engineering implication.** Preempt large gangs rarely and as a unit (evicting one worker stalls all, §46.10), checkpoint frequently and asynchronously (§65.15), and prefer preempting small jobs.
 :::
 
 #### Common misconceptions

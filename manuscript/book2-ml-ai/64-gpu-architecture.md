@@ -6,7 +6,7 @@ Chapter 58 gave you two numbers for any neural network: about $6N$ floating-poin
 
 This chapter explains why. You will open the GPU up: thousands of simple arithmetic lanes scheduled 32 threads at a time and fed by a memory hierarchy whose largest level, high-bandwidth memory (HBM), is too slow to keep the arithmetic busy for most operations. You will learn the **roofline model**, the precision formats from FP32 down to FP4, the utilization metrics that separate a busy GPU from a productive one, and the interconnects that join GPUs into servers. Chapters 65 (distributed training), 67 (model optimization) and 73 (LLM inference) build on this foundation.
 
-QuickBite's GPU workloads serve as examples: the deep ETA model of §60.11 and a 7-billion-parameter support-chatbot model it fine-tunes and serves (the 7B shape of §58.11), at an illustrative \$2.50 per GPU-hour (§60.11). These are teaching assumptions, not measurements of a real company.
+QuickBite's GPU workloads serve as examples: the deep ETA model of §60.11 and a 7-billion-parameter support-chatbot model it adapts by continued pre-training on 50 billion tokens (§65.9.1) and serves (the 7B shape of §58.11), at an illustrative \$2.50 per GPU-hour (§60.11). These are teaching assumptions, not measurements of a real company.
 
 The reference GPU is the NVIDIA H100 SXM, fully documented in a vendor whitepaper and widely deployed as of 2026; newer generations and other vendors appear where published figures exist. Units: SI prefixes for bandwidth and capacity (1 GB = 10⁹ bytes, 1 TB/s = 10¹² bytes/s) unless KiB/MiB is stated; one multiply–add counts as 2 FLOPs, as in Chapter 58.
 
@@ -269,7 +269,7 @@ $$F_\text{peak} = n_\text{SM} \times o_\text{clk} \times f$$
 
 1. FP32 on CUDA cores: 128 lanes × 2 FLOPs per FMA = 256 FLOPs/clock/SM. At a boost clock of about 1.98 GHz: $132 \times 256 \times 1.98 \times 10^9 = 66.9 \times 10^{12}$, matching the datasheet's 67 TFLOP/s [NVIDIA 2022a].
 2. Dense FP16/BF16 on tensor cores: the whitepaper gives H100 twice A100's 1,024 dense FP16 FMA per clock per SM, so 2,048 FMA = 4,096 FLOPs/clock/SM [NVIDIA 2022b]. The datasheet's 989 TFLOP/s then implies $989 \times 10^{12} / (132 \times 4{,}096) \approx 1.83$ GHz.
-3. Ratio: $4{,}096 / 256 = 16$ FLOPs per clock, about 15× in practice after the clock difference.
+3. Ratio: $4{,}096 / 256 = 16\times$ per clock, about 15× in practice after the clock difference.
 
 **Interpretation.** More than 93% of the GPU's 16-bit arithmetic capability lives in its tensor cores. **Engineering implication.** Code that does its math on CUDA cores (FP32 without TF32, custom scalar loops) can use at most about 7% of the GPU's dense BF16 peak. Getting work onto tensor cores, with the right shapes and precisions (§64.7), is the first lever.
 :::
@@ -851,7 +851,7 @@ $$g = \frac{\nabla_\theta (S \cdot L)}{S} \qquad S \leftarrow \begin{cases} S / 
 
 1. Without scaling, every gradient below about $6 \times 10^{-8}$ becomes zero: values from $10^{-9}$ up to that threshold are lost.
 2. With $S = 2^{16} = 65{,}536$: the smallest becomes $6.6 \times 10^{-5}$ (above FP16's smallest normal) and the largest $655$ (far below 65,504). Nothing underflows or overflows.
-3. If one batch produced a gradient of 2.0, then $2 \times 65{,}536 = 131{,}072 > 65{,}504$: overflow. The scaler skips that step and halves $S$ to 32,768, which fits ($65{,}536$ would still overflow; one more halving may be needed).
+3. If one batch produced a gradient of 2.0, then $2 \times 65{,}536 = 131{,}072 > 65{,}504$: overflow. The scaler skips that step and halves $S$ to 32,768. A gradient of 2.0 would still overflow ($2 \times 32{,}768 = 65{,}536 > 65{,}504$), so if it recurs the scaler halves again to 16,384, giving 32,768, which fits.
 
 **Interpretation.** Loss scaling slides the gradient distribution into the representable window; dynamic scaling finds the largest safe shift automatically and costs only occasional skipped steps. **Engineering implication.** Monitor the loss-scale value and skipped-step count; a scale that keeps collapsing signals exploding gradients, not a scaling problem. On BF16 hardware, avoid the issue entirely.
 :::
@@ -1017,13 +1017,13 @@ $$\text{MFU} = \frac{X \cdot (6N + 12\,L\,h\,s)}{n \cdot F_\text{peak}} \qquad \
 :::
 
 ::: example
-**Worked example — MFU of QuickBite's 7B fine-tuning run.** 64 H100s (BF16, $F_\text{peak} = 989$ TFLOP/s), $N = 7 \times 10^9$, $L = 32$, $h = 4{,}096$, $s = 4{,}096$, measured $X = 600{,}000$ tokens/s; full activation checkpointing; nvidia-smi shows 100% on every GPU (assumed figures).
+**Worked example — MFU of QuickBite's 7B continued pre-training run.** 64 H100s (BF16, $F_\text{peak} = 989$ TFLOP/s), $N = 7 \times 10^9$, $L = 32$, $h = 4{,}096$, $s = 4{,}096$, measured $X = 600{,}000$ tokens/s; full activation checkpointing; nvidia-smi shows 100% on every GPU (assumed figures).
 
 1. Model FLOPs per token: $6N = 4.2 \times 10^{10}$; attention $12 \times 32 \times 4{,}096 \times 4{,}096 = 6.4 \times 10^9$; total $4.84 \times 10^{10}$.
 2. Achieved model FLOP/s: $600{,}000 \times 4.84 \times 10^{10} = 2.91 \times 10^{16}$.
 3. Peak: $64 \times 989 \times 10^{12} = 6.33 \times 10^{16}$. **MFU** $= 2.91 / 6.33 = 46\%$ (40% if the attention term is left out, as the $6N$ shortcut of §58.12 does).
 4. Recomputation: $c_\text{re} = 2N + 4Lhs = 1.4 \times 10^{10} + 2.1 \times 10^{9} = 1.61 \times 10^{10}$. **HFU** $= 600{,}000 \times 6.45 \times 10^{10} / 6.33 \times 10^{16} = 61\%$.
-5. Cost: a run of $10^{12}$ tokens takes $10^{12}/600{,}000 = 1.67 \times 10^6$ s $= 463$ h, $\times 64 = 29{,}600$ GPU-hours, about \$74,000 at \$2.50/GPU-hour. At 20% MFU it would cost about \$170,000.
+5. Cost: QuickBite's 50-billion-token run (§65.9.1) takes $5 \times 10^{10}/600{,}000 = 83{,}300$ s $= 23.1$ h, $\times 64 = 1{,}480$ GPU-hours, about \$3,700 at \$2.50/GPU-hour. At 20% MFU it would cost about \$8,500.
 
 **Interpretation.** The GPUs report 100% "utilization" while performing 46% of their possible useful arithmetic; 15 points of HFU go to recomputing activations, which buys memory, not progress. **Engineering implication.** Report MFU (and state whether attention FLOPs are included) as the efficiency metric for training; use HFU and DCGM tensor and DRAM activity to find where the rest went. PaLM reported 46.2% MFU and 57.8% HFU for its 540B model on TPU v4 [Chowdhery et al. 2022].
 :::
@@ -1155,7 +1155,7 @@ $$T_\text{xfer} = \alpha + \frac{S}{B_\text{link}} \qquad T_\text{AR} \approx 2\
 1. *Point to point, 1 GB:* PCIe Gen5 x16: $10^9 / 64 \times 10^9 = 15.6$ ms. NVLink 4: $10^9 / 450 \times 10^9 = 2.2$ ms; 7× faster.
 2. *All-reduce across 8 GPUs over NVLink 4:* $2 \times \tfrac{7}{8} \times 14 \times 10^9 / 450 \times 10^9 = 54$ ms.
 3. *Same over PCIe Gen5:* $24.5 \times 10^9 / 64 \times 10^9 = 383$ ms.
-4. *Across 16 servers with one 400 Gb/s NIC per GPU (50 GB/s):* the inter-server phase is limited to roughly $2 \times 14 \times 10^9 / 50 \times 10^9 = 560$ ms.
+4. *Across 16 servers with one 400 Gb/s NIC per GPU (50 GB/s):* a single ring that crossed each server boundary through one NIC would need roughly $2 \times 14 \times 10^9 / 50 \times 10^9 = 560$ ms. NCCL instead runs one ring per NIC, so the eight NICs of a server share the traffic: about $560/8 = 70$ ms (§65.6.2).
 
 **Interpretation.** Compared with a step time of a few seconds, NVLink makes gradient exchange nearly free inside a server; the network between servers is ten times slower and must be overlapped with backward computation or reduced by sharding and hierarchical collectives. **Engineering implication.** Keep the most communication-heavy parallelism (tensor parallelism) inside the NVLink domain and data parallelism across the network; Chapter 65 develops collectives, NCCL and parallelism layouts in depth.
 :::

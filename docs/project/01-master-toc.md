@@ -197,13 +197,13 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part XII — ML Data Infrastructure
 
 **Ch 61 — Data Engineering for ML** (L3, B) — ingestion, batch and streaming pipelines, ETL vs ELT, data lakes, warehouses, lakehouses (Delta, Iceberg, Hudi), Spark, Flink, Beam, file formats (Parquet, ORC, Avro), validation, quality, lineage, versioning (DVC, lakeFS), governance, orchestration
-**Ch 62 — Feature Engineering and Feature Stores** (L3, B) — feature engineering, transformations, pipelines, offline and online stores, point-in-time correctness, training–serving skew, freshness, Feast and other architectures (Uber Michelangelo, Airbnb Zipline, Tecton), feature computation patterns; feature store vs data warehouse
+61.3 What ML needs from data infrastructure · 61.4 Ingestion · 61.5 Batch pipelines · 61.6 Streaming pipelines for ML · 61.7 ETL versus ELT · 61.8 Data lakes, warehouses and lakehouses · 61.9 File formats · 61.10 Apache Beam and the unified batch/stream model · 61.11 Data quality and validation at pipeline scale · 61.12 Data lineage · 61.13 Data versioning · 61.14 Governance · 61.15 Orchestration · 61.16 Reference architecture: QuickBite ML data platform
 **Ch 63 — Data Labeling, Quality and Data-Centric AI** (L3, B) — labeling pipelines, human annotation, weak supervision, active learning, label noise, synthetic data, dataset documentation (datasheets)
-
+63.3 Data-centric AI · 63.4 Sources of labels · 63.5 Labeling pipelines · 63.6 Human annotation quality · 63.7 Aggregating noisy labels · 63.8 Weak supervision · 63.9 Active learning · 63.10 Label noise · 63.11 Class imbalance and sampling · 63.12 Synthetic data · 63.13 Dataset documentation · 63.14 Labeling operations at scale
 ## Part XIII — Training Infrastructure
 
 **Ch 64 — GPU Architecture and Performance** (L3–L4, B) — CPU vs GPU, SMs, warps, memory hierarchy (HBM, SRAM), CUDA model, tensor cores, memory bandwidth, FLOPS, roofline model, precision formats (FP32, TF32, FP16, BF16, FP8, INT8, FP4), utilization and MFU, compute- vs memory-bound, NVLink/NVSwitch/PCIe/InfiniBand, GPU scheduling (MIG, MPS, time-slicing)
-**Ch 65 — Distributed ML Training** (L4, B) — single-machine → multi-GPU → multi-node; data parallelism (DDP), ZeRO/FSDP, tensor, pipeline, sequence/context and expert parallelism; 3D/4D parallelism; collectives (all-reduce, ring, tree, all-gather, reduce-scatter); NCCL; parameter servers; gradient synchronization; mixed precision; activation checkpointing; checkpointing and fault recovery; elastic training; bottlenecks; training FLOPs estimation; Ray, Slurm and Kubernetes for training
+64.3 CPU versus GPU · 64.4 GPU organization · 64.5 GPU memory hierarchy · 64.6 The CUDA programming model · 64.7 Tensor cores and matrix math · 64.8 FLOPS and memory bandwidth · 64.9 The roofline model · 64.10 Precision formats · 64.11 Utilization metrics · 64.12 Compute-bound versus memory-bound workloads · 64.13 Memory optimization · 64.14 Multi-GPU communication · 64.15 GPU sharing and scheduling · 64.16 Other accelerators
 
 ## Part XIV — Model Serving and Optimization
 

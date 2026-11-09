@@ -423,7 +423,7 @@ sequenceDiagram
 
 ### 60.6.2 Logging for training
 
-The prediction log is where serving feeds training. Logging the features **as served** (§59.5.3) rather than recomputing them later has three benefits: training sees exactly the values the model saw, which removes one source of training–serving skew; monitoring can compare served feature distributions with training distributions; and debugging can replay any request. The outcome (actual delivery time) arrives later on a different stream and is joined by order ID. This "log and wait" pattern is how most production systems build training data for online models (Chapter 62 compares it with point-in-time backfills).
+The prediction log is where serving feeds training. Logging the features **as served** (§59.5.3) rather than recomputing them later has three benefits: training sees exactly the values the model saw, which removes one source of training–serving skew; monitoring can compare served feature distributions with training distributions; and debugging can replay any request. The outcome (actual delivery time) arrives later on a different stream and is joined by order ID. This "log and wait" pattern is how most production systems build training data for online models (§62.9.4 compares it with point-in-time backfills).
 
 ::: formula
 **Prediction log volume**

@@ -977,7 +977,7 @@ $$C_\text{infer} \approx 2N \qquad C_\text{train/example} \approx 6N \qquad C_\t
 4. Predictions: $2{,}000 \times 20 = 40{,}000$/s. FLOPs: $40{,}000 \times 2 \times 1.58 \times 10^6 \approx 1.3 \times 10^{11}$ FLOP/s, about an eighth of one CPU server's sustained $10^{12}$ FLOP/s of vectorized arithmetic (step 5).
 5. Training it on 90 million past orders (180 days × 500,000/day) for 10 epochs: $6 \times 1.58 \times 10^6 \times 9 \times 10^8 \approx 8.5 \times 10^{15}$ FLOPs: about 2.4 hours at a sustained $10^{12}$ FLOP/s on a CPU server, seconds of pure compute on one accelerator.
 
-**Interpretation.** The same formula spans seven orders of magnitude: the LLM run is a capital project, the ETA model is a cron job whose cost is dominated by the data pipeline and feature joins, not FLOPs. **Engineering implication.** Always estimate $6ND$ before choosing hardware. Chapter 65 extends this to compute-optimal choices of $N$ and $D$ and to cluster sizing [Kaplan et al. 2020]; Chapter 73 shows that LLM *decoding* is limited by memory bandwidth rather than by $2N$ FLOPs.
+**Interpretation.** The same formula spans seven orders of magnitude: the LLM run is a capital project, the ETA model is a cron job whose cost is dominated by the data pipeline and feature joins, not FLOPs. **Engineering implication.** Always estimate $6ND$ before choosing hardware. Chapter 65 (§65.4) extends this to compute-optimal choices of $N$ and $D$ and to cluster sizing [Kaplan et al. 2020]; Chapter 73 shows that LLM *decoding* is limited by memory bandwidth rather than by $2N$ FLOPs.
 :::
 
 ### 58.12.2 Measuring instead of estimating

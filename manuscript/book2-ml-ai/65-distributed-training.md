@@ -120,7 +120,7 @@ $$G_\text{mem} = \left\lceil \frac{16\,N + M_\text{act}}{M_\text{GPU}\, f} \righ
 
 Every weight in a dense layer does one multiply–add per token in the forward pass: 2 FLOPs per parameter per token. Backward does that work twice, once for the gradient with respect to the layer's input and once with respect to the weight, so a training step costs 2 + 4 = 6 FLOPs per parameter per token (§58.4.2, verified there with PyTorch's FLOP counter).
 
-Two refinements matter. Attention adds about $2Lsh$ forward FLOPs per token that do not correspond to parameters [Kaplan et al. 2020]: for the 7B model at $s = 2{,}048$ that is $5.4 \times 10^8$ against $2N = 1.4 \times 10^{10}$, about 4%, but at $s = 32{,}768$ it is 61%. And activation recomputation (§65.14) repeats forward work: **MFU** counts only the $6N$ model FLOPs, while **hardware FLOPs utilization (HFU)** counts recomputation too [Chowdhery et al. 2022].
+Two refinements matter. Attention adds about $2Lsh$ forward FLOPs per token that do not correspond to parameters [Kaplan et al. 2020]: for the 7B model at $s = 2{,}048$ that is $5.4 \times 10^8$ against $2N = 1.4 \times 10^{10}$, about 4%, but at $s = 32{,}768$ it is 61%. And activation recomputation (§65.14) repeats forward work: **MFU** counts only model FLOPs (this chapter uses the $6N$ shortcut; §64.11 adds PaLM's attention term, $12Lhs$ per token for forward and backward, so always state which convention a quoted MFU uses), while **hardware FLOPs utilization (HFU)** counts recomputation too [Chowdhery et al. 2022].
 
 #### Mathematical foundations
 
@@ -1191,7 +1191,7 @@ What to notice:
 
 ### 65.14.1 BF16 and FP8 training
 
-Chapter 64 covers the formats. **BF16 mixed precision** [Micikevicius et al. 2018] is the default: BF16 matrix multiplies, FP32 master weights and optimizer state, no loss scaling. Distribution adds one decision, the precision of *reductions*: summing thousands of ranks' gradients in BF16 loses low-order bits, so frameworks may reduce in FP32 at twice the traffic (FSDP's `reduce_dtype`). **FP8 training** [Micikevicius et al. 2022] runs matrix multiplies in 8-bit floats with scaling factors, roughly doubling peak throughput over BF16 where supported; DeepSeek-AI [2024] trained DeepSeek-V3, a 671B-parameter MoE with 37B active parameters, largely in FP8 with block-wise scaling.
+Chapter 64 covers the formats. **BF16 mixed precision** is the default: BF16 matrix multiplies, FP32 master weights and optimizer state, and none of the loss scaling that the original FP16 recipe needs [Micikevicius et al. 2018] (§64.10.2). Distribution adds one decision, the precision of *reductions*: summing thousands of ranks' gradients in BF16 loses low-order bits, so frameworks may reduce in FP32 at twice the traffic (FSDP's `reduce_dtype`). **FP8 training** [Micikevicius et al. 2022] runs matrix multiplies in 8-bit floats with scaling factors, roughly doubling peak throughput over BF16 where supported; DeepSeek-AI [2024] trained DeepSeek-V3, a 671B-parameter MoE with 37B active parameters, largely in FP8 with block-wise scaling.
 
 ### 65.14.2 Activation checkpointing
 

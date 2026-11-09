@@ -747,7 +747,7 @@ flowchart LR
   AL -->|no| DB[(Skew dashboard)]
 ```
 
-**Reading the diagram.** The ETA service writes served vectors asynchronously (dotted) to the prediction log, which lands in the lakehouse. A scheduled job feeds the logged keys and timestamps to the *training* pipeline, which recomputes each feature with a point-in-time join over the offline store. The comparator joins served and recomputed rows by request ID and computes two statistics per feature: the row-level mismatch rate (skew) and the population stability index against the training snapshot (shift). The alert routes to the feature's owner from the registry. Everything here is offline and batch; it never touches the request path. Failure points: an unsampled log, or a recompute that shares the serving bug (then both agree and the detector is blind). Scaling: sample a few thousand requests per hour per model.
+**Reading the diagram.** The ETA service writes served vectors asynchronously (dotted) to the prediction log, which lands in the lakehouse. A scheduled job feeds the logged keys and timestamps to the *training* pipeline, which recomputes each feature with a point-in-time join over the offline store. The comparator joins served and recomputed rows by request ID and computes two statistics per feature: the row-level mismatch rate (skew) and the population stability index against the training snapshot (shift, §59.7.2). The alert routes to the feature's owner from the registry. Everything here is offline and batch; it never touches the request path. Failure points: an unsampled log, or a recompute that shares the serving bug (then both agree and the detector is blind). Scaling: sample a few thousand requests per hour per model.
 
 ::: formula
 **Skew and shift statistics per feature**
