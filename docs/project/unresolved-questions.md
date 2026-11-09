@@ -310,3 +310,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-303 | 62 | Airbnb Zipline talks (titles, speakers, years; Data Council 2019 vs 2020); Airbnb Chronon open-source post (2024) title/date; Orr et al. 2021 venue | Open | |
 | UQ-304 | 62 | Uber Palette name/source talk; Michelangelo 2017 details (~10,000 features; Samza, Cassandra, Hive) | Open | Merge with UQ-294 |
 | UQ-305 | 62 | Databricks–Tecton (reported Aug 2025) vs Databricks announcement; Feast API names (docs unreachable); Zinkevich Rules of ML numbers #29, #31, #32, #37 | Open | Time-sensitive |
+| UQ-306 | 64 | H100 clock figures (1.98 GHz boost; ~1.83 GHz implied by tensor rate); "2× A100 FMA per clock per SM" claim; latency values in Table 64.2 | Open | |
+| UQ-307 | 64 | B200 specs (vary across NVIDIA documents); Blackwell technical brief title; NVFP4 block size and scale format | Open | Time-sensitive |
+| UQ-308 | 64 | PaLM 46.2% MFU / 57.8% HFU; Gholami et al. 2024 ("AI and Memory Wall") volume/issue; MI300X 5.3 TB/s; Trn1 chip count | Open | |

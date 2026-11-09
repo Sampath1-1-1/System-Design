@@ -2,13 +2,13 @@
 
 > **Level:** 3–4 · **Track:** B (ML/AI) · **Estimated reading time:** 5 h
 
-Chapter 58 gave you two numbers for any neural network: about $6N$ floating-point operations (FLOPs) per training example and about 16 bytes of accelerator memory per parameter. Those numbers tell you *how much* work a model needs. They do not tell you *how long* the work takes, and the gap between the two is where most of the money in machine learning goes. A team that divides $6ND$ by a GPU's advertised peak and expects that runtime is usually off by a factor of two to five; a team that runs a large language model one request at a time can use less than 1% of the arithmetic it pays for.
+Chapter 58 gave you two numbers for any neural network: about $6N$ floating-point operations (FLOPs) per training example and about 16 bytes of accelerator memory per parameter. They tell you *how much* work a model needs, not *how long* it takes, and that gap is where most ML money goes. Dividing $6ND$ by a GPU's advertised peak usually underestimates runtime two- to fivefold; serving a large language model one request at a time uses under 1% of the arithmetic you pay for.
 
-This chapter explains why. You will open the GPU up: thousands of simple arithmetic lanes grouped into streaming multiprocessors, scheduled 32 threads at a time, fed by a memory hierarchy whose fastest levels hold kilobytes and whose largest level, high-bandwidth memory (HBM), is still too slow to keep the arithmetic busy for most operations. You will learn the **roofline model**, which predicts from two hardware numbers and one property of your code whether a kernel is limited by arithmetic or by memory traffic; the precision formats (FP32 down to FP4) that trade numerical range and precision for speed; the utilization metrics that separate a busy GPU from a productive one; and the interconnects that join GPUs into servers and clusters. Chapter 65 builds distributed training on this foundation, Chapter 67 builds model optimization and quantization on it, and Chapter 73 builds large-language-model (LLM) inference on it.
+This chapter explains why. You will open the GPU up: thousands of simple arithmetic lanes scheduled 32 threads at a time and fed by a memory hierarchy whose largest level, high-bandwidth memory (HBM), is too slow to keep the arithmetic busy for most operations. You will learn the **roofline model**, the precision formats from FP32 down to FP4, the utilization metrics that separate a busy GPU from a productive one, and the interconnects that join GPUs into servers. Chapters 65 (distributed training), 67 (model optimization) and 73 (LLM inference) build on this foundation.
 
-QuickBite, the food-delivery company from Chapter 2, appears where a concrete workload helps. Its GPU workloads are the deep ETA (delivery-time) model of §60.11, the restaurant recommender of Chapter 68, and a 7-billion-parameter support-chatbot model that it fine-tunes and serves (the 7B shape of §58.11). Its numbers (an illustrative \$2.50 per GPU-hour, §60.11; the 7B training example of §58.12) are teaching assumptions, not measurements of a real company.
+QuickBite's GPU workloads serve as examples: the deep ETA model of §60.11 and a 7-billion-parameter support-chatbot model it fine-tunes and serves (the 7B shape of §58.11), at an illustrative \$2.50 per GPU-hour (§60.11). These are teaching assumptions, not measurements of a real company.
 
-Hardware specifications in this chapter use the NVIDIA H100 SXM as the reference data-center GPU, because its architecture is fully documented in a vendor whitepaper and it remains widely deployed as of 2026; newer generations (Blackwell) and other vendors are given where published figures exist. Units: SI prefixes for bandwidth and capacity (1 GB = 10⁹ bytes, 1 TB/s = 10¹² bytes/s) unless KiB/MiB is stated; one multiply–add counts as 2 FLOPs, as in Chapter 58.
+The reference GPU is the NVIDIA H100 SXM, fully documented in a vendor whitepaper and widely deployed as of 2026; newer generations and other vendors appear where published figures exist. Units: SI prefixes for bandwidth and capacity (1 GB = 10⁹ bytes, 1 TB/s = 10¹² bytes/s) unless KiB/MiB is stated; one multiply–add counts as 2 FLOPs, as in Chapter 58.
 
 ## 64.1 Learning objectives
 
@@ -44,18 +44,18 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a sports car and a freight train. The sports car (a CPU core) gets one passenger across town in minutes, weaving through traffic, predicting turns, never waiting. The train (a GPU) is slow to start and useless for one passenger, but it moves ten thousand tonnes at once. Neither is better; they answer different questions. A web request, a database transaction or a compiler is one passenger with a twisting route full of branches: a CPU's job. Multiplying two 4,096 × 4,096 matrices is ten thousand tonnes of identical cargo: $2 \times 4096^3 \approx 137$ billion floating-point operations, each independent of the others until the final sums. That is a train's job.
+Think of a sports car and a freight train. The sports car (a CPU core) gets one passenger across town fast, weaving through traffic. The train (a GPU) is useless for one passenger but moves ten thousand tonnes at once. A web request or a database transaction is one passenger on a twisting route: a CPU's job. Multiplying two 4,096 × 4,096 matrices is $2 \times 4096^3 \approx 137$ billion independent operations of identical cargo: a train's job.
 
 #### Why does this exist?
 
-GPUs began as graphics chips: shading millions of pixels per frame, each by the same small program, is massively parallel. Around 2006–2007 NVIDIA exposed that hardware to general programs through CUDA [NVIDIA CUDA C++ Programming Guide], and in 2012 a GPU-trained convolutional network won the ImageNet competition [Krizhevsky et al. 2012]. Deep learning is dominated by dense linear algebra (§58.3: every layer is a matrix multiply), so the hardware built for pixels fit almost perfectly. Since then, vendors have reshaped GPUs around ML: tensor cores for matrix math, 16-, 8- and 4-bit formats, and stacked HBM memory.
+GPUs began as graphics chips: shading millions of pixels with the same small program is massively parallel. NVIDIA exposed that hardware to general programs through CUDA in 2007 [NVIDIA CUDA C++ Programming Guide], and in 2012 a GPU-trained network won ImageNet [Krizhevsky et al. 2012]. Deep learning is dense linear algebra (§58.3), so hardware built for pixels fit; vendors have since added tensor cores, 16- to 4-bit formats and stacked HBM.
 
 #### How it works internally
 
-Both chips are built from the same transistors under the same power budget (a data-center GPU draws up to about 700 W; a server CPU socket a few hundred watts). They spend them differently:
+Both chips spend similar transistor and power budgets (up to about 700 W for a data-center GPU) differently:
 
 1. **Control logic.** A CPU core devotes a large share of its area to predicting branches, reordering instructions and speculating. A GPU issues instructions in order and shares one instruction stream across 32 threads (§64.4), so control is amortized.
-2. **Caches.** A CPU has megabytes of cache *per core* so that one thread's working set fits. A GPU has far less cache per thread and instead keeps enough threads in flight that while some wait for memory, others compute (latency hiding, §64.5.3).
+2. **Caches.** A CPU has megabytes of cache per core; a GPU has far less per thread and instead keeps enough threads in flight that some compute while others wait (latency hiding, §64.5.3).
 3. **Arithmetic.** A CPU core executes a few vector instructions per cycle, each 8–16 FP32 lanes wide (AVX-512, §5.11). A GPU has thousands of FP32 lanes plus tensor cores that each perform a small matrix multiply per cycle.
 4. **Memory.** A CPU socket reads DDR5 DRAM at roughly 300–600 GB/s (§5.9); a data-center GPU reads HBM stacked next to the die at 3–8 TB/s, about ten times more, but holds only 80–192 GB.
 
@@ -86,7 +86,7 @@ flowchart LR
   CPU -->|PCIe: launch work, copy data| GPU
 ```
 
-**Reading the diagram.** Each side shows a top-to-bottom path from instruction control through arithmetic and caches to main memory. The CPU (left) spends area on control and large caches so a single thread rarely waits; the GPU (right) spends it on arithmetic lanes and keeps only small caches plus a scratchpad (shared memory) that programs manage explicitly. Main memory is a storage boundary on each side: DDR5 holds terabytes at hundreds of GB/s; HBM holds tens to low hundreds of GB at several TB/s. The arrow between them is PCIe, over which the CPU launches GPU work and copies data; launches are asynchronous (the CPU continues while the GPU runs). Failure points: a GPU whose work does not fill its lanes, or whose data arrives slowly over PCIe, delivers a small fraction of its rating. Scaling: CPUs scale with cores and sockets; GPUs scale with more GPUs joined by NVLink and networks (§64.14).
+**Reading the diagram.** Each side runs from instruction control through arithmetic and caches to main memory. The CPU spends area on control and large caches so one thread rarely waits; the GPU spends it on arithmetic lanes, with small caches plus a program-managed scratchpad (shared memory). Main memory is the storage boundary on each side: DDR5 holds terabytes at hundreds of GB/s, HBM tens to low hundreds of GB at several TB/s. The CPU launches GPU work and copies data over PCIe, asynchronously. Failure points: work that does not fill the lanes, or data arriving slowly over PCIe. Scaling: CPUs add cores and sockets; GPUs add more GPUs over NVLink and networks (§64.14).
 
 ### 64.3.2 Why matrix multiplication suits GPUs
 
@@ -96,7 +96,7 @@ Three properties make dense matrix multiplication (**GEMM**, general matrix mult
 2. **No data-dependent branches.** Every thread runs the same instructions, so groups of 32 threads never diverge (§64.4.4).
 3. **High data reuse.** Each input element is used $N$ (or $M$) times. Loading a tile of $A$ and a tile of $B$ into on-chip memory once and reusing them many times means the arithmetic grows as $n^3$ while memory traffic grows only as $n^2$ (§64.9). This is the property that lets a GEMM keep thousands of lanes busy despite limited memory bandwidth.
 
-Workloads that lack any of these properties (pointer chasing, branchy control flow, small batches, operations that touch each byte once) fit GPUs poorly.
+Pointer chasing, branchy code, small batches and operations that touch each byte once fit GPUs poorly.
 
 **Table 64.1 — CPU versus data-center GPU (approximate, as of 2026).**
 
@@ -129,7 +129,7 @@ GPU figures come from the H100 datasheet and architecture whitepaper [NVIDIA 202
 
 #### First-principles explanation
 
-Picture a factory with 132 identical workshops (SMs). Each workshop has four workbenches (processing blocks), and each bench has a foreman (warp scheduler) directing a crew of 32 workers who always do the same step at the same time (a warp). Each bench also has one specialized machine for multiplying small matrices (a tensor core), which does in one cycle what the crew would need dozens of cycles for. The workshops share a central stockroom (L2 cache) and a warehouse down the road (HBM).
+Picture a factory with 132 workshops (SMs), each with four benches (processing blocks). At each bench a foreman (warp scheduler) directs a crew of 32 workers who always do the same step together (a warp), next to a machine that multiplies small matrices in one cycle (a tensor core). The workshops share a stockroom (L2) and a warehouse down the road (HBM).
 
 #### How it works internally
 
@@ -167,7 +167,7 @@ flowchart TB
   HOST([Host CPU]) -->|PCIe Gen5 x16| HBM
 ```
 
-**Reading the diagram.** Read from the top: HBM is the GPU's main memory (a storage boundary: data must be copied here from the host before kernels can use it), reached through memory controllers and the shared L2 cache. Every SM connects to L2. Inside an SM, four processing blocks each own a warp scheduler, a register-file slice, scalar lanes and a tensor core; they share the SM's L1/shared-memory SRAM. Solid arrows are synchronous data paths from the hardware's point of view; the host's PCIe path is asynchronous to kernels (copies and launches are queued, §64.6.4). Failure points: an HBM error (corrected by ECC, or uncorrectable and fatal to the job), a thermally throttled clock, a disabled SM. Scaling: performance scales with SM count and clock within a GPU, and with more GPUs beyond it (§64.14).
+**Reading the diagram.** HBM is the GPU's main memory (a storage boundary: host data must be copied here first), reached through the shared L2 cache to which every SM connects. Inside an SM, four processing blocks each own a warp scheduler, register-file slice, scalar lanes and a tensor core, and share the SM's L1/shared memory. On-chip paths are synchronous; the host's PCIe path is asynchronous (copies and launches are queued, §64.6.4). Failure points: uncorrectable HBM errors (fatal to the job), thermal throttling. Scaling: more SMs and clock within a GPU, more GPUs beyond it (§64.14).
 
 ### 64.4.2 Warps and SIMT
 
@@ -177,7 +177,7 @@ flowchart TB
 
 #### First-principles explanation
 
-A rowing crew of 32 pulls on one coxswain's call. They go fast because nobody waits for a separate command. If half the crew must row and the other half must hold water, the coxswain calls the two strokes one after the other, and each half sits idle during the other's stroke. SIMT gives the programmer the illusion of 32 independent threads while the hardware runs them as one wide instruction stream.
+A rowing crew of 32 pulls on one coxswain's call. If half must row and half hold water, the coxswain calls the two strokes one after the other and each half idles during the other's. SIMT presents 32 independent threads to the programmer while the hardware runs them as one wide instruction stream.
 
 #### How it works internally
 
@@ -192,7 +192,7 @@ A rowing crew of 32 pulls on one coxswain's call. They go fast because nobody wa
 **Definition — Occupancy.** The ratio of warps resident on an SM to the maximum the SM supports (64 warps, 2,048 threads per SM on H100). Occupancy is limited by whichever resource a kernel exhausts first: registers per thread, shared memory per block, threads per block or blocks per SM (32 on H100).
 :::
 
-Occupancy matters because latency hiding needs eligible warps: if only 8 warps are resident and all are waiting for memory, the SM idles. But occupancy is a means, not a goal. Well-tuned GEMM kernels often run at 12–25% occupancy, using many registers per thread to hold tiles, because each warp keeps the tensor cores busy with **instruction-level parallelism** instead of relying on other warps [NVIDIA CUDA C++ Best Practices Guide].
+Latency hiding needs eligible warps, but occupancy is a means, not a goal: well-tuned GEMM kernels often run at low occupancy, using many registers per thread for tiles and keeping tensor cores busy through **instruction-level parallelism** [NVIDIA CUDA C++ Best Practices Guide].
 
 ::: formula
 **Occupancy limited by registers and shared memory**
@@ -237,7 +237,7 @@ flowchart TB
   ONE --> R
 ```
 
-**Reading the diagram.** A warp evaluates a condition per lane. If every lane agrees, one path runs at full width. If lanes disagree, the hardware runs the "then" path with only the true lanes enabled, then the "else" path with the others, then reconverges; the passes are sequential, so a 50/50 split costs the time of both branches. Since the Volta generation, each thread has its own program counter (independent thread scheduling), which avoids deadlock in some fine-grained synchronization patterns but does not remove the serialization cost [NVIDIA CUDA C++ Programming Guide]. The failure mode is silent: code is correct but slow. Scaling: arrange data so threads of a warp make the same decision, for example by sorting work by type or by assigning branch outcomes per block rather than per thread.
+**Reading the diagram.** A warp evaluates a condition per lane. If all lanes agree, one path runs at full width; otherwise the "then" lanes run, then the "else" lanes, sequentially, before reconverging, so a 50/50 split costs both branches. Independent thread scheduling (since Volta) gives each thread its own program counter but does not remove this cost [NVIDIA CUDA C++ Programming Guide]. The failure is silent: correct but slow code. Remedy: arrange data so a warp's threads make the same decision.
 
 ::: example
 **Worked example — Cost of divergence.** A kernel's branch has a "then" path of 200 cycles and an "else" path of 100 cycles.
@@ -274,10 +274,6 @@ $$F_\text{peak} = n_\text{SM} \times o_\text{clk} \times f$$
 **Interpretation.** More than 93% of the GPU's 16-bit arithmetic capability lives in its tensor cores. **Engineering implication.** Code that does its math on CUDA cores (FP32 without TF32, custom scalar loops) can use at most about 7% of the GPU's dense BF16 peak. Getting work onto tensor cores, with the right shapes and precisions (§64.7), is the first lever.
 :::
 
-::: mistake
-**"High occupancy means the GPU is working hard."** Occupancy counts resident warps, not useful work. A kernel can be 100% occupied by warps that are all waiting on memory, or be at 25% occupancy while keeping tensor cores saturated. Use it as one diagnostic among several (§64.11).
-:::
-
 ## 64.5 GPU memory hierarchy
 
 ### 64.5.1 Levels, capacities and bandwidths
@@ -311,11 +307,11 @@ flowchart TB
   HBM <-->|"NVLink 450 GB/s each way"| PEER[("Other GPUs' HBM")]
 ```
 
-**Reading the diagram.** Each level up is smaller and faster; each arrow is a bandwidth bottleneck between adjacent levels. Registers and shared memory sit inside each SM; L2 is shared on-chip; HBM is off-die but on-package. Below HBM, two exits leave the GPU: PCIe to host memory (about 50 times slower than HBM) and NVLink to other GPUs (§64.14). All data movement is synchronous for the warp that issues a load, but asynchronous copy engines (TMA, `cudaMemcpyAsync`) move tiles and buffers in the background. Storage boundaries: HBM holds the model, optimizer state and activations for the job's duration; nothing on-chip survives a kernel's end except what is written back to HBM. Failure points: HBM capacity (out-of-memory errors), HBM bandwidth (memory-bound kernels), PCIe (input pipelines that starve the GPU). Scaling: more HBM per GPU with newer generations; more GPUs for more total memory.
+**Reading the diagram.** Each level up is smaller and faster; each arrow is a bandwidth bottleneck. Registers and shared memory sit in each SM, L2 is shared on-chip, HBM is on-package. Two exits leave the GPU: PCIe to host memory (about 50 times slower than HBM) and NVLink to other GPUs (§64.14). Loads are synchronous for the issuing warp; copy engines (TMA, `cudaMemcpyAsync`) move data asynchronously. Storage boundary: HBM holds model, optimizer state and activations; nothing on-chip survives a kernel. Failure points: HBM capacity (out-of-memory), HBM bandwidth (memory-bound kernels), PCIe (starved input). Scaling: more HBM per generation, more GPUs.
 
 ### 64.5.2 Why HBM bandwidth is the bottleneck
 
-Every byte a kernel uses must at some point travel from HBM to an SM. A GEMM reuses each byte hundreds of times on-chip; most other operations (adding a bias, applying an activation, normalizing a layer, reading LLM weights during decoding) use each byte once or twice. For those, the 3.35 TB/s road, not the 989 TFLOP/s of arithmetic, sets the speed. And the gap is not closing: across GPU generations, peak arithmetic has grown faster than memory bandwidth, the **memory wall** [Gholami et al. 2024].
+A GEMM reuses each byte from HBM hundreds of times on-chip; most other operations (bias, activation, normalization, reading LLM weights while decoding) use each byte once or twice, so the 3.35 TB/s road, not the 989 TFLOP/s, sets their speed. Peak arithmetic has grown faster than memory bandwidth across generations: the **memory wall** [Gholami et al. 2024].
 
 **Table 64.3 — Compute-to-bandwidth ratio across NVIDIA data-center generations (dense 16-bit tensor FLOP/s, as of 2026; vendor datasheets).**
 
@@ -327,7 +323,7 @@ Every byte a kernel uses must at some point travel from HBM to an SM. A GEMM reu
 | H200 SXM (2024) | 989 TFLOP/s | 4.8 TB/s | 141 GB | ~206 |
 | B200 (2024–2025) | ~2,250 TFLOP/s | ~8 TB/s | ~180–192 GB | ~280 |
 
-The last column is the ridge point of §64.9: a kernel must perform at least that many FLOPs per byte read from HBM to be limited by arithmetic. The H200 kept the H100's compute and raised bandwidth by 43%, a direct response to memory-bound LLM inference (§64.12).
+The last column is the ridge point of §64.9. The H200 kept the H100's compute and raised bandwidth 43%, a response to memory-bound LLM inference (§64.12).
 
 ### 64.5.3 Latency hiding and bytes in flight
 
@@ -367,7 +363,7 @@ $$Q = B \times t_\text{lat}$$
 **Definition — CUDA execution hierarchy.** A **kernel** is a function that runs on the GPU, launched from the host. A launch creates a **grid** of **thread blocks**; each block contains up to 1,024 **threads**. Every thread runs the same kernel code and finds its own data from its indices (`blockIdx`, `threadIdx`, `blockDim`). Threads in one block run on one SM, can share **shared memory** and can synchronize with a barrier (`__syncthreads()`); blocks are independent and may run in any order on any SM [NVIDIA CUDA C++ Programming Guide].
 :::
 
-The independence of blocks is the design's key idea. Because blocks cannot wait for each other, the hardware can schedule them onto however many SMs exist: the same program runs on a 20-SM laptop GPU and a 132-SM data-center GPU, just with more blocks in parallel. AMD's HIP programming model mirrors this structure almost one-to-one.
+Because blocks are independent, the hardware can spread them over however many SMs exist: the same program runs on a 20-SM laptop GPU and a 132-SM data-center GPU. AMD's HIP mirrors this model almost one-to-one.
 
 **Figure 64.5 — From a kernel launch to warps on SMs.**
 
@@ -383,7 +379,7 @@ flowchart LR
   SMA --> W["8 warps of 32 threads<br/>share the block's shared memory"]
 ```
 
-**Reading the diagram.** The host launches a kernel asynchronously (the call returns at once) with a grid of blocks. The GPU's block scheduler assigns each block in its entirety to one SM that has room for its registers and shared memory; blocks that do not fit wait until earlier blocks finish, so a grid can be much larger than the GPU. Inside the SM, each block becomes warps of 32 threads (§64.4.2). Shared memory is a storage boundary scoped to the block and discarded when the block ends. Failure points: a block whose resource needs exceed an SM fails to launch; a grid with fewer blocks than SMs leaves SMs idle (the "tail effect" or under-filled wave). Scaling: grids scale automatically to more SMs, which is why kernels launch many more blocks than there are SMs.
+**Reading the diagram.** The host launches a kernel asynchronously with a grid of blocks. The block scheduler assigns each whole block to an SM with room for its registers and shared memory; the rest wait, so a grid can be far larger than the GPU. Each block becomes warps of 32 threads (§64.4.2). Shared memory is scoped to the block and discarded when it ends. Failure points: a block too large for an SM fails to launch; fewer blocks than SMs leaves SMs idle. Scaling: grids spread automatically over more SMs.
 
 ### 64.6.2 A kernel in CUDA style
 
@@ -411,10 +407,10 @@ cudaStreamSynchronize(stream);                       // wait for all three
 
 What to notice:
 
-- Each thread computes one global index from block and thread indices; the `if (i < n)` guard handles a size that is not a multiple of 256.
-- Thread `i` reads `x[i]`, so the 32 threads of a warp read 32 consecutive floats: a **coalesced** access (§64.6.3).
-- The kernel does 2 FLOPs per element and moves 8 bytes (read 4, write 4): it is hopelessly memory-bound (§64.9), which is why frameworks fuse such operations into the preceding matrix multiply.
-- The launch syntax `<<<blocks, threads, shared_bytes, stream>>>` queues work on a **stream**; copies and kernel run in order on that stream, asynchronously to the host.
+- Each thread computes a global index; the `if (i < n)` guard handles sizes that are not multiples of 256.
+- A warp's 32 threads read 32 consecutive floats: a **coalesced** access (§64.6.3).
+- 2 FLOPs per 8 bytes moved makes the kernel hopelessly memory-bound (§64.9); frameworks fuse such operations into the preceding matrix multiply.
+- `<<<blocks, threads, shared_bytes, stream>>>` queues work on a **stream**, in order and asynchronously to the host.
 
 ### 64.6.3 Memory coalescing
 
@@ -458,13 +454,13 @@ column of a 1024-wide row-major matrix        32        1024      12.5%
 
 What to notice:
 
-- A misaligned but contiguous access costs one extra sector (80% efficiency): minor.
-- Reading a column of a row-major matrix, one element per thread, uses 12.5% of the bandwidth moved; a memory-bound kernel doing that runs up to 8× slower. The fix is to transpose through shared memory or to assign threads along rows.
-- The model is simplified (caches can rescue some reuse), but the rule holds: **adjacent threads should touch adjacent addresses.**
+- Misaligned but contiguous access costs one extra sector: minor.
+- Reading a column of a row-major matrix uses 12.5% of the bytes moved, up to 8× slower for a memory-bound kernel; transpose through shared memory or assign threads along rows.
+- Caches can rescue some reuse, but the rule holds: **adjacent threads should touch adjacent addresses.**
 
 ### 64.6.4 Streams, launch overhead and kernel fusion
 
-A **stream** is an ordered queue of GPU work. Operations in different streams may overlap, which lets a program copy the next batch to the GPU while the current batch computes. Every kernel launch, however, costs the host a few microseconds (driver work, queueing) and leaves a small gap on the GPU between kernels. For large kernels this is noise; for the hundreds of small kernels in an eager-mode training step or a decoding step it can dominate. **CUDA Graphs** record a sequence of launches once and replay it with one call, removing most per-launch host cost.
+A **stream** is an ordered queue of GPU work; different streams may overlap, so the next batch can be copied while the current one computes. Each kernel launch costs a few microseconds of host time and a small GPU gap: noise for large kernels, dominant for the hundreds of small kernels in an eager training or decoding step. **CUDA Graphs** record a launch sequence once and replay it with one call.
 
 **Figure 64.6 — Overlapping copies and compute with two streams.**
 
@@ -483,7 +479,7 @@ sequenceDiagram
   G-->>H: event: batch k done
 ```
 
-**Reading the diagram.** The host enqueues work and returns immediately; all calls are asynchronous. Stream 1 runs batch $k$'s kernels on the SMs while the GPU's separate copy engine, driven by stream 2, transfers batch $k+1$ over PCIe. Ordering is guaranteed only within a stream; cross-stream dependencies need events. The dotted arrow is an asynchronous completion event the host waits on. Storage boundaries: host buffers must be **pinned** (page-locked) for asynchronous copies. Failure points: pageable host memory silently serializes copies; a missing event lets a kernel read a buffer before its copy finishes (a race). Scaling: more streams overlap more work, up to the copy engines' and SMs' capacity.
+**Reading the diagram.** The host enqueues work and returns immediately. Stream 1 runs batch $k$'s kernels while the copy engine, driven by stream 2, transfers batch $k+1$ over PCIe. Ordering holds only within a stream; cross-stream dependencies need events (the dotted completion arrow). Host buffers must be **pinned** (page-locked) for asynchronous copies. Failure points: pageable memory silently serializes copies; a missing event causes a race. Scaling: more streams overlap more work, up to the engines' capacity.
 
 ::: formula
 **Memory traffic of elementwise operations**
@@ -536,7 +532,7 @@ flowchart LR
   ACC -->|"epilogue: bias, activation,<br/>cast to BF16"| HC[("C tile in HBM")]
 ```
 
-**Reading the diagram.** Each thread block owns one output tile of $C$. It streams matching tiles of $A$ and $B$ from HBM into shared memory with asynchronous copies (double-buffered, so the next tile loads while the current one computes), feeds them to the tensor cores, and keeps the running sums in FP32 registers across the whole $K$ loop. Only when the loop ends does the **epilogue** apply a bias or activation (a free fusion, §64.6.4), round to BF16 and write the tile to HBM once. Storage boundaries: HBM at the ends, on-chip SRAM and registers in between. Failure points: tiles that do not fit shared memory, misaligned shapes that fall off the tensor-core path, and FP16 overflow in the epilogue. Scaling: more blocks cover a larger $C$; libraries (cuBLAS, CUTLASS) pick tile sizes per shape.
+**Reading the diagram.** Each thread block owns one output tile of $C$. It streams tiles of $A$ and $B$ from HBM into shared memory asynchronously (double-buffered), feeds the tensor cores, and keeps FP32 running sums in registers across the $K$ loop. The **epilogue** then applies bias or activation (a free fusion, §64.6.4), rounds to BF16 and writes the tile once. Storage boundaries: HBM at the ends, SRAM and registers between. Failure points: misaligned shapes that leave the tensor-core path, FP16 overflow in the epilogue. Scaling: more blocks for a larger $C$; libraries (cuBLAS, CUTLASS) pick tile sizes.
 
 **Why dimensions should be multiples of 8 or 16.** Tensor-core instructions consume fixed-size fragments, and the fastest loads are 16 bytes wide. NVIDIA's guidance is to make GEMM dimensions (batch × sequence, hidden size, vocabulary, channels) multiples of 8 for FP16/BF16 and of 16 for INT8/FP8, which is 16 bytes in each case; older libraries otherwise fell back to slower paths, and current ones still waste work on padding [NVIDIA Deep Learning Performance Guide]. Two further effects reward "round" shapes: **tile quantization** (a dimension one element over a multiple of the tile size needs a whole extra, nearly empty tile) and **wave quantization** (a tile count slightly above a multiple of the SM count leaves most SMs idle for the last wave).
 
@@ -587,7 +583,7 @@ Source: [NVIDIA 2022a]; the datasheet marks the larger figures as "with sparsity
 
 #### First-principles explanation
 
-A bakery has ovens that can bake 1,000 loaves an hour and a delivery van that brings enough flour for 300 loaves an hour. Bread that needs a lot of flour per loaf is limited by the van; bread that needs little flour per loaf but long baking is limited by the ovens. Arithmetic intensity is "loaves per sack of flour": a kernel's FLOPs per byte. The ridge point is the intensity at which the van and the ovens are exactly matched. Below it, buying faster ovens is wasted money.
+A bakery's ovens can bake 1,000 loaves an hour, but its van brings flour for only 300. Flour-heavy bread is limited by the van; bread needing little flour but long baking is limited by the ovens. Arithmetic intensity is loaves per sack of flour (FLOPs per byte); the ridge point is where van and ovens match. Below it, faster ovens are wasted money.
 
 ::: formula
 **Roofline: arithmetic intensity, ridge point and attainable throughput**
@@ -635,7 +631,7 @@ flowchart LR
   RIDGE --> COMP
 ```
 
-**Reading the diagram.** This is a roofline flattened onto one axis. Operations on the left have arithmetic intensity below the ridge, so their attainable rate is intensity times 3.35 TB/s: the elementwise add reaches 0.6 TFLOP/s (0.06% of peak) at best. Operations on the right can in principle reach the 989 TFLOP/s compute roof. The arrow shows the remedies that move an operation rightward: batching (more FLOPs per weight byte), fusion (fewer bytes per FLOP) and tiling into on-chip memory (FlashAttention moves attention from 62 to about 2,048). The intensities come from the calculator below. Failure points: a model whose time is dominated by left-side operations will show low MFU however fast the tensor cores are. Scaling: the compute roof scales with precision and generation; the memory roof with HBM bandwidth.
+**Reading the diagram.** This is a roofline flattened onto one axis. Operations left of the ridge attain intensity × 3.35 TB/s: the elementwise add reaches 0.6 TFLOP/s (0.06% of peak) at best. Operations on the right can reach the 989 TFLOP/s compute roof. The arrow shows the remedies that move work rightward: batching, fusion and tiling into on-chip memory (FlashAttention moves attention from 62 to about 2,048). Intensities come from the calculator in §64.9.3. Failure point: a model dominated by left-side operations shows low MFU however fast its tensor cores. Scaling: the compute roof rises with precision and generation, the memory roof with HBM bandwidth.
 
 ### 64.9.2 Worked examples: GEMM, elementwise, attention and decode
 
@@ -801,7 +797,7 @@ flowchart LR
   E43 -->|"blocks of 32 plus shared scale"| F4
 ```
 
-**Reading the diagram.** Each box is one format, drawn as sign, exponent and mantissa fields. BF16 is FP32 with the mantissa cut from 23 to 7 bits, so it keeps FP32's range and converts by truncation. TF32 is an internal tensor-core input format: FP32 values are read with only 10 mantissa bits used. FP16 spends its bits differently, 5 exponent and 10 mantissa, so it is more precise than BF16 but overflows at 65,504. The two FP8 variants mirror that trade-off at 8 bits: E4M3 for precision (weights, activations), E5M2 for range (gradients) [Micikevicius et al. 2022]. FP4 has only eight magnitudes and is usable only with a scale per small block (§64.10.4). There is no data flow here; the arrows show how formats derive from one another. The failure modes are overflow (values above the maximum become infinity or NaN) and underflow (small values become zero).
+**Reading the diagram.** Each box is one format's sign, exponent and mantissa fields; arrows show derivation, not data flow. BF16 is FP32 with the mantissa cut to 7 bits, keeping FP32's range. TF32 is a tensor-core input mode reading FP32 with 10 mantissa bits. FP16 spends 5 bits on exponent and 10 on mantissa: more precise than BF16 but overflowing at 65,504. FP8 mirrors the trade-off: E4M3 for precision (weights, activations), E5M2 for range (gradients) [Micikevicius et al. 2022]. FP4 has eight magnitudes and needs a scale per small block (§64.10.4). Failure modes: overflow to infinity or NaN, underflow to zero.
 
 **Table 64.5 — Numeric properties of ML formats.**
 
@@ -877,7 +873,7 @@ flowchart TB
   SKIP --> NEXT
 ```
 
-**Reading the diagram.** The forward and backward passes run in FP16 on tensor cores; the loss is multiplied by $S$ before backward. The scaler checks every gradient for overflow. On overflow the update is skipped (no weights change) and $S$ halves; otherwise gradients are unscaled in FP32, the FP32 master weights are updated, and a fresh FP16 copy is made for the next forward pass. After $n$ consecutive clean steps, $S$ doubles to probe for more headroom. All steps are synchronous within one training step; in data-parallel training, the overflow check must agree across all GPUs (one all-reduce of a flag) so that replicas skip together. Failure point: repeated skips stall training. Scaling: the logic is per step and independent of model size.
+**Reading the diagram.** Forward and backward run in FP16 with the loss multiplied by $S$. On any overflow the update is skipped and $S$ halves; otherwise gradients are unscaled in FP32, FP32 master weights are updated and copied to FP16. After $n$ clean steps $S$ doubles. In data-parallel training the overflow flag is all-reduced so replicas skip together. Failure point: repeated skips stall training.
 
 ### 64.10.3 Runnable demonstration: range, underflow and accumulation
 
@@ -991,7 +987,7 @@ What to notice:
 **Definition — GPU utilization metrics.** **nvidia-smi "GPU utilization"** is the percentage of time in the sample period during which at least one kernel was running, regardless of how many SMs it used [NVIDIA nvidia-smi documentation]. **SM activity** is the fraction of time an average SM had at least one warp resident; **SM occupancy** the average resident warps relative to the maximum (§64.4.3); **tensor pipe activity** the fraction of cycles tensor cores were busy; **DRAM activity** the fraction of cycles HBM was transferring (all exposed by NVIDIA's Data Center GPU Manager, DCGM). **Model FLOPs utilization (MFU)** is the throughput of the *model's* required FLOPs divided by the hardware peak; **hardware FLOPs utilization (HFU)** also counts FLOPs the implementation performs beyond the model's needs, such as activation recomputation [Chowdhery et al. 2022].
 :::
 
-A restaurant whose lights are on 24 hours a day is "100% utilized" by the nvidia-smi definition, even if one cook is making toast. SM activity asks how many cooks are in the kitchen; tensor activity asks how many are at the grill; MFU asks how many meals the customers actually received compared with what a full kitchen could produce.
+A restaurant with its lights on all day is "100% utilized" by the nvidia-smi definition even if one cook is making toast. SM activity asks how many cooks are in the kitchen; MFU asks how many meals were served versus what a full kitchen could produce.
 
 **Table 64.7 — What each metric tells you.**
 
@@ -1053,18 +1049,18 @@ flowchart TB
   AI -->|"neither roof reached"| LAT["Latency-bound:<br/>more parallelism, occupancy,<br/>fix divergence or coalescing"]
 ```
 
-**Reading the diagram.** Start from a profiler trace (PyTorch Profiler, Nsight Systems) of one representative step. If the GPU timeline has gaps, no kernel optimization will help: the host, the input pipeline or synchronization is the bottleneck. Otherwise rank kernels by total time and place each on the roofline. High DRAM activity with low intensity means memory-bound; high tensor activity near the compute roof means compute-bound; neither means the kernel cannot keep enough work in flight. Each branch lists the remedies of §64.6, §64.9, §64.10 and §64.13. Failure points: optimizing a kernel that is 2% of step time, and profiling a warm-up step. The loop repeats after each fix, because removing one bottleneck exposes the next.
+**Reading the diagram.** Start from a profiler trace (PyTorch Profiler, Nsight Systems) of a steady-state step. Gaps in the GPU timeline mean the host, input pipeline or synchronization is the bottleneck. Otherwise rank kernels by time and place each on the roofline: high DRAM activity means memory-bound, high tensor activity compute-bound, neither latency-bound. Failure points: optimizing a kernel that is 2% of step time, or profiling a warm-up step. Repeat after each fix; removing one bottleneck exposes the next.
 
-**Batch size moves the bound.** For a layer with a weight matrix, intensity is roughly the number of rows (tokens or examples) that share each weight read (§64.9.2). Small batches are memory-bound; growing the batch is nearly free until the ridge (roughly 300 rows on an H100 in BF16), after which time grows linearly. This is why QuickBite's GPU-served ETA model in §60.11 needs batches of 64 to beat CPUs, and why GPU inference servers batch dynamically (Chapter 66).
+**Batch size moves the bound.** A weight layer's intensity is roughly the number of rows sharing each weight read (§64.9.2). Growing the batch is nearly free until the ridge (about 300 rows on an H100 in BF16), then time grows linearly. Hence QuickBite's GPU-served ETA model needs batches of 64 (§60.11), and inference servers batch dynamically (Chapter 66).
 
-**LLM prefill versus decode (preview of Chapter 73).** **Prefill** processes the whole prompt at once: a 2,000-token prompt multiplies each weight by 2,000 rows, intensity about 2,000, compute-bound. **Decode** generates one token per sequence per step: intensity about equal to the batch size, memory-bound unless hundreds of sequences are batched, and further burdened by reading each sequence's KV cache. The two phases want different hardware settings, which motivates the continuous batching and disaggregated prefill/decode designs of Chapter 73.
+**LLM prefill versus decode (preview of Chapter 73).** **Prefill** processes a 2,000-token prompt at once: intensity about 2,000, compute-bound. **Decode** generates one token per sequence per step: intensity about the batch size, memory-bound unless hundreds of sequences are batched, and burdened further by KV-cache reads. The phases want different settings, motivating continuous batching and disaggregated prefill/decode (Chapter 73).
 
 ## 64.13 Memory optimization
 
-HBM is limited in two ways, capacity and bandwidth, and the main techniques trade one resource for another. This section previews them; Chapters 65, 67 and 73 own the details.
+HBM limits both capacity and bandwidth; the main techniques trade one resource for another (Chapters 65, 67 and 73 own the details).
 
-- **Mixed precision** (§64.10) halves activation memory and bytes moved per operation, and moves GEMMs onto faster tensor-core paths. With Adam, fixed memory stays near 16 bytes per parameter (§58.11).
-- **Activation checkpointing** stores only some layers' activations and recomputes the rest during backward [Chen et al. 2016]: memory for compute, about one extra forward pass (the HFU–MFU gap of §64.11). Selective recomputation of only the cheap-to-recompute, memory-heavy parts recovers most of the saving at a few percent of extra compute [Korthikanti et al. 2023].
+- **Mixed precision** (§64.10) halves activation memory and bytes per operation; with Adam, fixed memory stays near 16 bytes per parameter (§58.11).
+- **Activation checkpointing** stores some activations and recomputes the rest in backward [Chen et al. 2016], costing about one extra forward pass (the HFU–MFU gap of §64.11); selective recomputation of the memory-heavy, cheap parts keeps most of the saving for a few percent of compute [Korthikanti et al. 2023].
 - **Fused kernels** remove intermediate tensors from HBM (§64.6.4): fused optimizers, fused layer norm, GEMM epilogues.
 - **IO-aware algorithms** restructure an operation around the memory hierarchy. **FlashAttention** computes exact attention in tiles that fit in shared memory, using an online softmax that rescales partial results, so the $s \times s$ score matrix never reaches HBM [Dao et al. 2022]. It reduces HBM traffic and removes the quadratic activation memory; recomputing scores in backward is cheaper than storing them.
 
@@ -1084,7 +1080,7 @@ sequenceDiagram
   SM->>HBM: write O block i and softmax statistics
 ```
 
-**Reading the diagram.** One thread block owns a block of query rows. It loads that block once, then streams key and value blocks from HBM. Each score tile is computed, normalized with a running maximum and sum (so the final softmax is exact), and multiplied by its value block entirely in on-chip memory. Only the output block and two small statistics per row go back to HBM. All steps are synchronous inside the block; blocks run in parallel across SMs. The storage boundary is the point: the quadratic matrix lives only in SRAM, tile by tile. Failure points: head dimensions or tile sizes that exceed shared memory, and kernels specific to one GPU generation. Scaling: memory grows linearly with sequence length instead of quadratically; later versions improve parallelism and use Hopper's asynchronous features and FP8 (Chapter 73).
+**Reading the diagram.** A thread block loads its query rows once, then streams key and value blocks from HBM. Each score tile is computed, normalized with a running maximum and sum (so the softmax is exact) and multiplied by its value block on-chip; only the output and two statistics per row return to HBM. Blocks run in parallel across SMs. The storage boundary is the point: the quadratic matrix exists only in SRAM, one tile at a time. Failure points: tiles exceeding shared memory, generation-specific kernels. Scaling: memory grows linearly with sequence length; later versions exploit Hopper's asynchronous features and FP8 (Chapter 73).
 
 ::: example
 **Worked example — Attention memory for QuickBite's chatbot at $s = 8{,}192$.** 32 heads, BF16, one sequence, one layer.
@@ -1099,7 +1095,7 @@ sequenceDiagram
 
 ### 64.14.1 Interconnects
 
-When a model or batch outgrows one GPU (Chapter 65), GPUs exchange gradients, activations and parameters. Four interconnect tiers carry this traffic, with bandwidth falling roughly tenfold at each step outward.
+When work outgrows one GPU (Chapter 65), GPUs exchange gradients, activations and parameters over interconnect tiers whose bandwidth falls roughly tenfold at each step outward.
 
 ::: definition
 **Definition — GPU interconnects.** **PCIe** is the general expansion bus between CPU, GPUs, NICs and storage. **NVLink** is NVIDIA's point-to-point GPU-to-GPU link; **NVSwitch** is a switch chip that connects all GPUs in a server (or rack) so every pair communicates at full NVLink bandwidth. **InfiniBand** and **RoCE** carry GPU traffic between servers using RDMA (§49.10); with **GPUDirect RDMA** the NIC reads and writes GPU memory directly, bypassing host memory.
@@ -1138,7 +1134,7 @@ flowchart TB
   N47 -->|"InfiniBand or RoCE"| FAB
 ```
 
-**Reading the diagram.** Each GPU connects to NVSwitch chips (four in DGX H100) with 900 GB/s of total NVLink bandwidth, so any GPU pair talks at full speed. Each GPU also sits under a PCIe switch shared with a 400 Gb/s NIC; GPUDirect RDMA lets that NIC move GPU memory to other servers without touching the CPU. The CPUs launch work and feed data over PCIe but are off the hot path for collectives. Synchronous collectives (all-reduce) run over NVLink inside the server and over the fabric between servers. Failure points: one NIC or link degrading slows every collective it joins; a GPU falling off the bus fails the job; PCIe placement that puts a GPU and its NIC under different switches halves effective bandwidth. Scaling: "rail-optimized" fabrics connect NIC $i$ of every server to the same leaf switch group (§46.11.2, §49.10.4); Blackwell NVL72 racks extend the NVLink domain to 72 GPUs.
+**Reading the diagram.** Each GPU connects to the NVSwitch chips (four in DGX H100) with 900 GB/s of NVLink bandwidth, so any pair talks at full speed. Each GPU shares a PCIe switch with a 400 Gb/s NIC; GPUDirect RDMA moves GPU memory to other servers without the CPU, which only launches work and feeds data. Synchronous collectives run over NVLink inside the server and over the fabric between servers. Failure points: one degraded NIC or link slows every collective it joins; a GPU falling off the bus fails the job. Scaling: rail-optimized fabrics connect NIC $i$ of every server to the same leaf group (§46.11.2, §49.10.4); Blackwell NVL72 racks extend NVLink to 72 GPUs.
 
 ::: formula
 **Transfer time and ring all-reduce time**
@@ -1183,7 +1179,7 @@ On an H100 80 GB, MIG profiles range from seven 1g.10gb instances (one-seventh o
 
 ## 64.16 Other accelerators
 
-All ML accelerators answer the same question as the GPU, how to keep matrix units fed, but with different trade-offs. Published facts only:
+Other accelerators also exist to keep matrix units fed, with different trade-offs (published facts only):
 
 - **Google TPU.** TPU v1 (inference, deployed 2015) used a $256 \times 256$ **systolic array** of 65,536 8-bit multiply–accumulate units delivering 92 TOPS [Jouppi et al. 2017]. Later generations added BF16 training, HBM and inter-chip links; TPU v4 joins 4,096 chips with optical circuit switches that reconfigure the 3D-torus topology, and adds SparseCores for embeddings [Jouppi et al. 2023]. TPUs are programmed through XLA (JAX, TensorFlow, PyTorch/XLA).
 - **AWS Trainium and Inferentia.** AWS-designed chips for training and inference, programmed through the AWS Neuron SDK and available as EC2 instances (Trn and Inf families); Trn1 instances have 16 Trainium chips [AWS Docs: Trainium].
@@ -1204,7 +1200,7 @@ flowchart LR
   PE23 --> O3["Output column 3"]
 ```
 
-**Reading the diagram.** Each cell is a multiply–accumulate unit holding one weight (loaded asynchronously beforehand, dotted arrow). Activations flow left to right, each cell multiplying the passing value by its weight and adding it to the partial sum flowing top to bottom; finished dot products leave at the bottom. Data moves only between neighbors, one step per clock, so each value read from memory is used by an entire row or column of cells without register files or caches in between: very high arithmetic intensity for little control logic. Failure points: matrices smaller than the array leave cells idle, and non-matrix work must run on separate vector units. Scaling: larger arrays or more arrays per chip, more chips via inter-chip links.
+**Reading the diagram.** Each cell is a multiply–accumulate unit holding one preloaded weight (dotted arrow). Activations flow left to right; partial sums flow top to bottom, gaining one product per cell; finished dot products leave at the bottom. Data moves only between neighbors each clock, so each value read from memory is reused across a whole row or column with no register file or cache: high intensity, little control logic. Failure points: matrices smaller than the array idle cells; non-matrix work needs separate vector units. Scaling: more arrays per chip, more chips over inter-chip links.
 
 **Table 64.10 — Accelerator families compared.**
 
