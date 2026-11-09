@@ -2,14 +2,14 @@
 
 > **Level:** 4 · **Track:** B (ML/AI) · **Estimated reading time:** 5 h
 
-A trained model is a first draft. It was built to learn, in 32-bit or 16-bit floating point, with every weight it might need and a graph of operations written for a researcher's convenience. Serving it as-is usually works, and usually costs two to ten times more than it needs to: more memory than the hardware has, more bytes moved per prediction than the latency budget allows, and more servers than the business case assumed.
+A trained model is a first draft: built to learn, in 32-bit or 16-bit floating point, with a graph of operations written for a researcher's convenience. Serving it as-is usually works and often costs several times more than it needs to: more memory than the hardware has, more bytes moved per prediction than the latency budget allows, more servers than the business case assumed.
 
-**Model optimization** closes that gap. You will learn to shrink the numbers (quantization), remove weights (pruning), train a smaller model to imitate a large one (distillation), choose architectures that are cheap by construction, and hand the model to a compiler or runtime (ONNX Runtime, TensorRT, torch.compile) that fuses operations, picks kernels and plans memory for a specific device. Each technique answers a specific bottleneck, so the chapter starts with measurement and ends with a release workflow that proves the optimized model is still good enough.
+**Model optimization** closes that gap. You will learn to shrink the numbers (quantization), remove weights (pruning), train a smaller model to imitate a large one (distillation), choose architectures that are cheap by construction, and hand the model to a compiler or runtime (ONNX Runtime, TensorRT, torch.compile) that fuses operations, picks kernels and plans memory for a specific device. Each technique answers a specific bottleneck, so the chapter starts with measurement and ends with a release workflow.
 
-Chapter 64 explained why a GPU is fast or slow (the roofline, precision formats, memory-bound versus compute-bound kernels); this chapter uses those results rather than re-deriving them. Chapter 66 serves the optimized model, and Chapter 73 owns the techniques that exist only for large language model (LLM) generation: the KV cache, PagedAttention, speculative decoding and continuous batching. LLM *weight* quantization (GPTQ, AWQ) is a model-level technique and lives here.
+This chapter uses Chapter 64's roofline, precision formats and memory-bound analysis without re-deriving them. Chapter 66 serves the optimized model; Chapter 73 owns techniques specific to large language model (LLM) generation (KV cache, PagedAttention, speculative decoding, continuous batching). LLM *weight* quantization (GPTQ, AWQ) is a model-level technique and lives here.
 
 ::: note
-**Assumptions used in this chapter.** Units are SI (1 GB = 10⁹ bytes; 1 TB/s = 10¹² bytes/s); one multiply–add is 2 FLOPs (§58.12). The reference GPU is an NVIDIA H100 SXM: 80 GB HBM at 3.35 TB/s, 989 TFLOP/s dense BF16, 1,979 TFLOP/s dense FP8 and INT8 (Table 64.4, as of 2026). QuickBite numbers reuse earlier chapters: the deep ETA model is the 512–1,024–1,024–1 MLP of §58.12.2 ($N \approx 1.58$ million), served at 40,000 predictions/s peak and costing 2 ms of CPU per prediction on 16-vCPU nodes at \$0.77/hour (§60.11); the support chatbot is a 7B model with $h = 4{,}096$ and $L = 32$ (§58.11); the 70B shape has $h = 8{,}192$, $L = 80$ and 8 key–value heads (Llama-2-like, §65). New numbers are labeled as assumptions. Latencies measured on a laptop or CI machine are machine-dependent; sizes and accuracy figures in the code are deterministic.
+**Assumptions used in this chapter.** Units are SI (1 GB = 10⁹ bytes; 1 TB/s = 10¹² bytes/s); one multiply–add is 2 FLOPs (§58.12). The reference GPU is an NVIDIA H100 SXM: 80 GB HBM at 3.35 TB/s, 989 TFLOP/s dense BF16, 1,979 TFLOP/s dense FP8 and INT8 (Table 64.4, as of 2026). QuickBite numbers reuse earlier chapters: the deep ETA model is the 512–1,024–1,024–1 MLP of §58.12.2 ($N \approx 1.58$ million), served at 40,000 predictions/s peak and costing 2 ms of CPU per prediction on 16-vCPU nodes at \$0.77/hour (§60.11); the support chatbot is a 7B model with $h = 4{,}096$ and $L = 32$ (§58.11); the 70B shape has $h = 8{,}192$, $L = 80$ and 8 key–value heads (Llama-2-like, §65). New numbers are labeled as assumptions. Code timings are machine-dependent; sizes and accuracy figures are deterministic.
 :::
 
 ## 67.1 Learning objectives
@@ -49,14 +49,14 @@ Think of moving house. You can pack fewer things (pruning), pack them more tight
 
 #### Why does this exist?
 
-Six pressures push teams to optimize a model after training:
+Six pressures push teams to optimize after training:
 
-1. **Latency.** A request has a budget (QuickBite's ETA model gets 20 ms of a 100 ms page budget, §60.11). A model that is accurate but slow is unusable on the synchronous path.
-2. **Throughput.** Predictions per second per server set fleet size: halving per-prediction cost halves the fleet once redundancy floors are met.
-3. **Memory.** A 70B model in BF16 needs 140 GB for weights alone, more than one 80 GB GPU (§64.10.4). Fitting on fewer devices removes communication and cost.
-4. **Cost.** Serving dominates the lifetime cost of a popular model: training happens once, inference runs on every request for years.
-5. **Energy.** Moving a byte from DRAM costs far more energy than an arithmetic operation on it [Han et al. 2016], so fewer bytes per prediction means less power per prediction.
-6. **Edge deployment.** Phones, cars and point-of-sale devices have a few gigabytes of RAM, no data-center GPU and a battery. Models deployed there must be small by construction.
+1. **Latency.** QuickBite's ETA model gets 20 ms of the page budget (§60.11); an accurate but slow model is unusable on the synchronous path.
+2. **Throughput.** Predictions per second per server set fleet size.
+3. **Memory.** A 70B model in BF16 needs 140 GB for weights alone, more than one 80 GB GPU (§64.10.4).
+4. **Cost.** Training happens once; inference runs on every request for years.
+5. **Energy.** Moving a byte from DRAM costs far more energy than an arithmetic operation on it [Han et al. 2016].
+6. **Edge deployment.** Phones and point-of-sale devices have a few gigabytes of RAM, no data-center GPU and a battery.
 
 #### How it works internally: profile first
 
@@ -83,7 +83,7 @@ flowchart TB
   OV --> V
 ```
 
-**Reading the diagram.** The flow starts from a measured profile of a representative request or batch. If the forward pass is not the dominant cost, model optimization cannot pay off and the fix belongs in the serving system (Chapter 66) or feature path (Chapter 62). Otherwise, the limiting resource of the most expensive operators chooses the technique family: capacity problems need fewer bytes stored, bandwidth problems need fewer bytes moved, compute problems need cheaper arithmetic or less of it, and overhead problems need fewer, larger launches. Every branch converges on the same gate: accuracy validation on data slices and a canary release (§67.16). All steps are offline engineering work; nothing here is on the request path. The failure point is skipping the profile and applying a technique to a resource that was not the bottleneck.
+**Reading the diagram.** The flow starts from a measured profile. If the forward pass is not the dominant cost, the fix belongs in the serving system (Chapter 66) or feature path (Chapter 62). Otherwise the limiting resource chooses the family: capacity needs fewer bytes stored, bandwidth fewer bytes moved, compute cheaper arithmetic, overhead fewer and larger launches. Every branch converges on one gate: accuracy validation on slices and a canary (§67.16). All steps are offline engineering work. The failure point is skipping the profile and optimizing a resource that was not the bottleneck.
 
 **Table 67.1 — Optimization techniques at a glance.**
 
@@ -96,7 +96,7 @@ flowchart TB
 | Distillation | New, smaller model | Proportional to size reduction | Medium; needs training | §67.8 |
 | Compilation and fusion | Graph and kernels, not parameters | 1.2–3× on memory- or overhead-bound models | Very low (numerics only) | §67.10–§67.12 |
 
-Gains are indicative ranges from the cited sources and common experience, not guarantees; measure on your model and hardware.
+Gains are indicative ranges, not guarantees; measure on your model and hardware.
 
 #### Mathematical foundations
 
@@ -186,7 +186,7 @@ flowchart LR
   OUT["Values beyond the range<br/>clamp to 0 or 255"] -.-> INT
 ```
 
-**Reading the diagram.** The left box is the floating-point range observed for one tensor; the right box is the 256-level unsigned grid. Solid arrows are the quantization step $q = \text{round}(x/s) + z$, which sends the range minimum to 0, real zero to the zero-point 104 and the maximum to 255; the dotted arrow is dequantization, which turns an integer back into an approximate real value. The scale $s = 4.4/255$ is the spacing between levels. The failure point is the clamp: any value outside $[\alpha, \beta]$ is saturated to the nearest end, an error that can be far larger than the rounding error. The numbers are those of the worked example below.
+**Reading the diagram.** The left box is one tensor's floating-point range; the right box is the 256-level unsigned grid. Solid arrows are quantization, $q = \text{round}(x/s) + z$, sending the minimum to 0, real zero to the zero-point 104 and the maximum to 255; the dotted arrow is dequantization back to an approximate real value. The scale $s = 4.4/255$ is the spacing between levels. The failure point is the clamp: a value outside $[\alpha, \beta]$ saturates, an error far larger than rounding. Numbers come from the worked example below.
 
 #### Mathematical foundations
 
@@ -254,9 +254,9 @@ $$|x - \hat{x}| \le \frac{s}{2} \ \ (\alpha \le x \le \beta) \qquad \text{MSE} \
 1. INT8, per-row range $A = 4\sigma$: $\text{SQNR} \approx 6.02 \times 8 + 4.77 - 20\log_{10} 4 = 48.2 + 4.8 - 12.0 = 40.9$ dB (noise power 1/12,000 of signal).
 2. One outlier weight of 2.5 sets a *per-tensor* range: $A/\sigma = 2.5/0.12 = 20.8$, so $\text{SQNR} \approx 53.0 - 26.4 = 26.6$ dB, about 14 dB worse: the outlier has cost $14.3/6.02 \approx 2.4$ bits of precision for every other weight.
 3. INT4 with groups of 32 values, $A \approx 3\sigma$: $6.02 \times 4 + 4.77 - 9.5 = 19.3$ dB.
-4. Uniform data on $[-1, 1]$ in INT8: $s = 1/127$, predicted MSE $s^2/12 = 5.17 \times 10^{-6}$; the program in §67.4.5 measures $5.17 \times 10^{-6}$ on a million samples.
+4. Uniform data on $[-1, 1]$ in INT8: $s = 1/127$, predicted MSE $s^2/12 = 5.17 \times 10^{-6}$.
 
-The program in §67.4.5 measures 41.0 dB per-channel, 26.5 dB per-tensor with the outlier and 20.3 dB for INT4 groups of 32.
+The program in §67.4.5 measures 41.0 dB, 26.5 dB and 20.3 dB for steps 1–3, and an MSE of $5.17 \times 10^{-6}$ for step 4.
 
 **Interpretation.** Precision is lost not to the bit width alone but to the ratio of the range to typical values. **Engineering implication.** Shrink $A/\sigma$ before adding bits: use finer granularity (per-channel, per-group), clip outliers by calibration, or move them elsewhere (SmoothQuant, §67.6.4).
 :::
@@ -277,7 +277,7 @@ flowchart LR
   PG --> E3["Outliers isolated locally;<br/>needed for INT4"]
 ```
 
-**Reading the diagram.** One weight matrix (output channels × input features) can share scales at three levels. Moving right along each branch reduces the number of values that an outlier can damage and increases the metadata: per-tensor stores one number; per-channel stores one per row, negligible for large layers; per-group stores $\text{out} \times \text{in}/g$ scales, for example 0.125 extra bits per weight with FP16 scales and $g = 128$. Per-channel scales fold neatly into integer matrix multiplication because each output element uses one row scale; per-group scales require the kernel to rescale partial sums every $g$ inputs, so they need dedicated kernels. Activations are usually per-tensor or per-token, because their ranges change every request.
+**Reading the diagram.** One weight matrix (output channels × input features) can share scales at three levels. Finer levels limit how many values an outlier damages and add metadata: one number, one per row, or $\text{out} \times \text{in}/g$ scales (0.125 extra bits per weight with FP16 scales and $g = 128$). Per-channel scales fold neatly into integer GEMMs because each output uses one row scale; per-group scales force the kernel to rescale partial sums every $g$ inputs, so they need dedicated kernels. Activations are usually per-tensor or per-token, because their ranges change with every request.
 
 ### 67.4.3 Calibration: choosing the range
 
@@ -294,7 +294,7 @@ flowchart LR
 1. Min–max: $s = 40/127 = 0.315$; rounding MSE $= s^2/12 = 0.0083$.
 2. Clip at 8: $s = 8/127 = 0.063$; rounding MSE $= 0.00033$. Clipped values are $10^{-4}$ of the data; if their mean squared excess beyond 8 is 25 (assumed), clipping adds $10^{-4} \times 25 = 0.0025$. Total $0.0028$.
 
-**Interpretation.** Clipping wins threefold here because the rare spike was costing every value precision. If the spikes carry meaning (LLM outlier features, §67.6.3), clipping them destroys accuracy instead. **Engineering implication.** Choose the calibration method by measuring task accuracy, not reconstruction error alone, and use calibration data that matches production traffic: a calibration set without night-time orders will misjudge night-time feature ranges.
+**Interpretation.** Clipping wins threefold because the rare spike was costing every value precision; if spikes carry meaning (LLM outlier features, §67.6.3), clipping destroys accuracy instead. **Engineering implication.** Choose the calibration method by task accuracy, and use calibration data that matches production: a set without night-time orders will misjudge night-time feature ranges.
 :::
 
 ### 67.4.4 Integer-only inference
@@ -482,7 +482,7 @@ flowchart TB
   D2 --> OUT2["INT8 weights, FP32<br/>activations between layers"]
 ```
 
-**Reading the diagram.** All three pipelines start from the same FP32 checkpoint and run offline. Dynamic quantization (left) needs no data; its per-call range measurement happens on the request path, which adds a small cost and keeps activations in FP32 between layers. Static quantization (middle) reads a calibration set, a storage boundary that must resemble production traffic, then freezes scales so every layer runs integer kernels. QAT (right) reads the training data and fine-tunes with fake quantization, then converts exactly as static PTQ does. Failure points: an unrepresentative calibration set (static) and a training pipeline that is no longer reproducible (QAT).
+**Reading the diagram.** All three pipelines start from one FP32 checkpoint and run offline. Dynamic quantization needs no data; its range measurement runs on the request path, adding a small cost, and activations stay FP32 between layers. Static quantization reads a calibration set (a storage boundary that must resemble production traffic) and freezes scales so every layer runs integer kernels. QAT fine-tunes with fake quantization on training data, then converts as static PTQ does. Failure points: an unrepresentative calibration set, and a training pipeline that is no longer reproducible.
 
 **Table 67.2 — Choosing a quantization method.**
 
@@ -601,7 +601,7 @@ sequenceDiagram
   W->>W: optimizer updates FP32 weights
 ```
 
-**Reading the diagram.** The model keeps full-precision **shadow weights**. In the forward pass, the fake-quant node rounds them to the INT8 grid and dequantizes, so the loss reflects real quantization error. In the backward pass (dotted arrows), the STE passes the gradient straight through inside the clipping range and zeroes it outside. The optimizer updates the FP32 weights, which may cross rounding boundaries over many steps. After training, the shadow weights are quantized once and discarded. Scales may be fixed from calibration or learned as parameters.
+**Reading the diagram.** The model keeps full-precision **shadow weights**. Forward, the fake-quant node rounds them to the INT8 grid and dequantizes, so the loss sees real quantization error. Backward (dotted arrows), the STE passes the gradient through inside the clipping range and zeroes it outside. The optimizer updates the FP32 weights, which cross rounding boundaries over many steps; after training they are quantized once. Scales may be fixed by calibration or learned.
 
 ```python
 """Fake quantization with a straight-through estimator (STE)."""
@@ -782,7 +782,7 @@ flowchart LR
   BEFORE -->|"same output Y"| AFTER
 ```
 
-**Reading the diagram.** The left group is a linear layer whose activations have an outlier channel; the right group is the same layer after smoothing. The scale vector is computed offline from calibration statistics (dotted arrow, a storage boundary read once) and folded into the previous layer's normalization weights and this layer's weights, so no extra operation runs at inference. The output is identical in exact arithmetic; what changes is that both operands now have modest ranges, so per-tensor or per-token INT8 activations and per-channel INT8 weights lose little accuracy. Failure point: an outlier channel missing from calibration data reappears in production.
+**Reading the diagram.** The left group is a linear layer with an outlier activation channel; the right group is the same layer after smoothing. The scale vector is computed offline from calibration statistics (dotted arrow) and folded into the previous normalization layer and this layer's weights, so inference runs no extra operation. The output is unchanged in exact arithmetic, but both operands now have modest ranges suited to INT8. Failure point: an outlier channel absent from calibration data reappears in production.
 
 **FP8 inference.** On Hopper-class and newer GPUs, FP8 (E4M3) weights and activations with per-tensor or per-block scales give W8A8-like speed with less tuning than INT8, because the floating-point format tolerates a wider range within a tensor (§64.10) [Micikevicius et al. 2022]. As of 2026, FP8 is a common default for data-center LLM serving on such GPUs, with INT4 weight-only formats used where memory is the constraint.
 
@@ -1023,16 +1023,397 @@ $$\frac{D_K^2\, M\, D_F^2 + M\, N\, D_F^2}{D_K^2\, M\, N\, D_F^2} = \frac{1}{N} 
 
 **Low-rank factorization** replaces an $m \times n$ weight with $U_{m \times r} V_{r \times n}$, cutting parameters and FLOPs from $mn$ to $r(m + n)$ [Denton et al. 2014]. For $1{,}024 \times 1{,}024$ at $r = 128$: 262,144 versus 1,048,576, a 4× reduction; it saves anything only when $r < mn/(m + n) = 512$. Accuracy depends on how quickly the weight's singular values decay, so factorize, fine-tune and measure. The same idea underlies LoRA adapters (Chapter 76).
 
-**Figure 67.10 — Standard versus depthwise separable convolution.**
+## 67.10 ONNX and ONNX Runtime
+
+### 67.10.1 A portable graph and a pluggable runtime
+
+::: definition
+**Definition — ONNX and ONNX Runtime.** **ONNX** (Open Neural Network Exchange) is an open file format for ML models: a protocol-buffer graph of **nodes** (operators such as `MatMul`, `Conv`, `Softmax`), **initializers** (weights) and typed inputs and outputs. Operator semantics are versioned by **opset**: a model declares the opset it uses, and a runtime must support it [ONNX docs]. **ONNX Runtime (ORT)** is an inference engine that loads an ONNX graph, rewrites it (constant folding, redundant-node removal, operator fusions) and partitions it across **execution providers (EPs)**, back-ends for specific hardware such as CPU, CUDA, TensorRT, OpenVINO, DirectML and Core ML [ONNX Runtime docs].
+:::
+
+ONNX solves a coupling problem: research trains in PyTorch, but production may run in C#, Java or C++, on CPUs, GPUs or phones. Exporting once to a standard graph decouples the training framework from the serving stack.
+
+**Figure 67.10 — Export, optimize and partition with ONNX Runtime.**
 
 ```mermaid
 flowchart LR
-  IN["Input<br/>56 x 56 x 256"] --> STD["Standard 3 x 3 conv:<br/>each of 256 filters spans all 256 channels"]
-  STD --> O1["Output<br/>56 x 56 x 256"]
-  IN --> DW["Depthwise 3 x 3:<br/>one filter per channel"]
-  DW --> PW["Pointwise 1 x 1:<br/>mixes channels, a GEMM"]
-  PW --> O2["Output<br/>56 x 56 x 256"]
+  PT["PyTorch model"] -->|"torch.onnx.export"| ONNX[("model.onnx<br/>graph + opset + weights")]
+  ONNX --> GO["ORT graph optimizer:<br/>folding, fusion, layout"]
+  GO --> PART{"Partition by<br/>EP priority list"}
+  PART -->|"supported subgraphs"| TRT["TensorRT EP"]
+  PART -->|"remaining GPU ops"| CUDA["CUDA EP"]
+  PART -->|"unsupported ops"| CPU["CPU EP fallback"]
+  TRT --> RUN["Session.run"]
+  CUDA --> RUN
+  CPU --> RUN
 ```
 
-**Reading the diagram.** Both paths turn the same input into the same output shape. The upper path does spatial filtering and channel mixing in one step, costing $1.85 \times 10^9$ multiply–adds. The lower path filters each channel spatially on its own (cheap, memory-bound) and then mixes channels with a 1×1 convolution (a dense GEMM), costing 8.7× less in total. Everything is synchronous within one forward pass; the representational cost is that spatial and channel interactions are no longer learned jointly, which architectures such as MobileNetV2 offset with more layers.
+**Reading the diagram.** Export writes a self-contained file (the storage boundary between training and serving). At session creation, ORT optimizes the graph and assigns each node to the first execution provider in the application's priority list that supports it; consecutive nodes on one EP form a subgraph. At run time, data crossing from a GPU subgraph to a CPU subgraph is copied over PCIe, so a single unsupported operator in the middle of a GPU model can dominate latency. Scaling is by more sessions or processes; ORT sessions are thread-safe for concurrent `run` calls.
 
+**Export pitfalls.** Most ONNX incidents happen at export, not at run time:
+
+- **Frozen shapes.** Tracing records the shapes it saw; undeclared dynamic axes bake in batch size 1 or one sequence length.
+- **Data-dependent control flow.** Tracing records only the branch taken by the example input; other branches silently disappear.
+- **Unsupported or custom operators** fail to export or fall back to slow CPU kernels; opset too new for the deployed runtime fails to load.
+- **Preprocessing outside the graph.** Tokenizers and feature scaling are not in the model, so serving code must replicate them exactly (training–serving skew, §59.8.3).
+- **Size limits.** Protocol buffers cap a single file at 2 GB, so larger models store weights as external data files beside the graph.
+
+::: recommendation
+**Gate every export with a parity test.** Run the original and exported models on a few thousand real inputs, including edge cases (empty lists, maximum lengths, batch sizes 1 and maximum), and assert that outputs match within a tolerance (for FP32, a maximum absolute difference around $10^{-4}$ relative to output scale). Keep the test in CI next to the export script.
+:::
+
+## 67.11 TensorRT
+
+::: definition
+**Definition — TensorRT engine.** NVIDIA's **TensorRT** compiles a network (usually imported from ONNX) into an **engine**: a serialized plan of fused layers, chosen kernels and memory layout for one GPU model and TensorRT version. Building performs **layer and tensor fusion**, **precision selection** (FP32, FP16, BF16, INT8, FP8 and, on recent versions, INT4 weights, as of 2026), **kernel auto-tuning** (timing candidate implementations, called tactics, on the actual GPU) and memory planning [NVIDIA TensorRT docs].
+:::
+
+**Figure 67.11 — Building and deploying a TensorRT engine.**
+
+```mermaid
+flowchart LR
+  ONNX[("model.onnx")] --> PARSE["ONNX parser:<br/>network definition"]
+  CFG["Builder config:<br/>precision flags, workspace,<br/>shape profiles min-opt-max"] --> BUILD
+  CAL[("Calibration data<br/>or Q/DQ scales")] --> BUILD
+  PARSE --> BUILD["Builder: fuse layers,<br/>pick precisions,<br/>time tactics on this GPU"]
+  BUILD --> PLAN[("Engine plan file<br/>per GPU and TRT version")]
+  PLAN --> RT["Runtime: deserialize,<br/>execution contexts"]
+  RT --> SRV["Model server<br/>Chapter 66"]
+```
+
+**Reading the diagram.** The left half runs at build time on a GPU of the same model as production, because auto-tuning measures real kernel timings there; it can take minutes, or much longer for large models. Inputs are the ONNX graph, a configuration with allowed precisions and dynamic-shape **optimization profiles** (minimum, optimal and maximum input shapes), and either a calibration set or explicit quantize/dequantize (Q/DQ) nodes from PTQ or QAT tooling. The plan file is a storage boundary: an engine is tied to the GPU architecture and TensorRT version it was built with, so a driver or GPU change requires a rebuild. At run time, the server deserializes the engine in milliseconds and creates one execution context per concurrent stream.
+
+The three biggest wins come from fusion (a convolution, bias, batch-norm and ReLU become one kernel; batch-norm folds into the convolution's weights), lower precision where accuracy allows, and choosing the fastest kernel for the exact shapes. For LLMs, NVIDIA's TensorRT-LLM adds the generation-specific machinery of Chapter 73.
+
+::: warning
+**Engines are build artifacts, not models.** Treat the ONNX file and build configuration as the source of truth, and build engines in CI for every (GPU type, TensorRT version, profile) combination you deploy, keyed by those values in the model registry. Teams that copy an engine built on one GPU type to another, or upgrade the container without rebuilding, get load failures or, worse, silently slower kernels.
+:::
+
+## 67.12 ML compilers and operator fusion
+
+### 67.12.1 What an ML compiler does
+
+::: definition
+**Definition — ML compiler.** A compiler that takes a model's computation graph, rewrites it at a high level (operator fusion, constant folding, layout changes, algebraic simplification), lowers it through progressively hardware-specific intermediate representations (IRs), and generates or selects kernels for a target device, often searching over tile sizes and schedules (**autotuning**).
+:::
+
+**Figure 67.12 — The common structure of ML compilers.**
+
+```mermaid
+flowchart TB
+  FE["Frontend capture:<br/>TorchDynamo, jax.jit, ONNX import"] --> GIR["Graph IR:<br/>FX graph, HLO or StableHLO, Relax"]
+  GIR --> HL["Graph passes: fusion,<br/>layout, constant folding"]
+  HL --> LIR["Loop or tile IR:<br/>Inductor IR, TensorIR, MLIR dialects"]
+  LIR --> CG["Code generation:<br/>Triton, C++ and OpenMP, LLVM, CUDA"]
+  CG --> AT["Autotune tile sizes<br/>on the target device"]
+  AT --> BIN[("Compiled kernels<br/>and cache")]
+```
+
+**Reading the diagram.** Every compiler here follows the same funnel, synchronously at compile time. The frontend captures a graph from the framework; graph passes rewrite operators; lowering turns operators into loops or tiles; code generation emits kernels; autotuning picks parameters by timing them on the device. Compiled kernels are cached on disk, a storage boundary that should be warmed before a replica takes traffic, because the first compilation can take seconds to minutes. Failure points: a graph that cannot be captured whole (graph breaks), and recompilation when input shapes change.
+
+- **XLA** compiles graphs expressed in its HLO IR (now via StableHLO in OpenXLA) for CPUs, GPUs and TPUs; it is the compiler under JAX and TensorFlow and, through PyTorch/XLA, PyTorch on TPUs [OpenXLA docs].
+- **TorchInductor** is the default back-end of `torch.compile`. TorchDynamo captures FX graphs by analyzing Python bytecode, inserting **guards** that trigger recompilation when assumptions (shapes, types) change and **graph breaks** where it cannot trace; Inductor generates Triton kernels for GPUs and C++/OpenMP for CPUs [Ansel et al. 2024].
+- **TVM** imports models from many frameworks and searches over loop schedules with a learned cost model to generate kernels for CPUs, GPUs and accelerators without hand-written libraries [Chen et al. 2018].
+- **MLIR** is not a compiler for one framework but infrastructure for building compilers from reusable **dialects** (IR layers) [Lattner et al. 2021]; StableHLO, the Triton compiler and several accelerator toolchains are built on it.
+
+### 67.12.2 Operator fusion: the memory-traffic arithmetic
+
+Fusion's benefit comes from the roofline: chains of elementwise and reduction operators are memory-bound (§64.9), so their time is bytes over bandwidth, and fusion removes the intermediate bytes. Chapter 64 derived the per-kernel traffic (§64.6.4); here is the saving for a whole chain.
+
+::: formula
+**Memory-traffic bound on fusion speed-up**
+
+$$S_\text{fuse} \le \frac{\sum_{k=1}^{K} (i_k + o_k)\, b\, n / B + K\, t_\text{launch}}{(i_\text{ext} + o_\text{ext})\, b\, n / B + t_\text{launch}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $K$ | Kernels in the unfused chain | kernels |
+| $i_k, o_k$ | Full-size tensors read and written by kernel $k$ | tensors |
+| $i_\text{ext}, o_\text{ext}$ | Tensors the fused kernel must read from and write to HBM | tensors |
+| $b, n$ | Bytes per element; elements per tensor | bytes; elements |
+| $B$ | Achieved HBM bandwidth | bytes/s |
+| $t_\text{launch}$ | Launch overhead per kernel, about 5 µs (§64.6.4) | s |
+:::
+
+::: example
+**Worked example — Residual add + RMSNorm in QuickBite's 7B chatbot.** Eager PyTorch runs seven kernels: add the residual (reads 2 tensors, writes 1), square (1, 1), mean over the hidden dimension (reads 1, writes a small vector), add epsilon and reciprocal square root (small), multiply by the normalizer (1, 1), multiply by the learned weight (1, 1): 10 full-tensor passes. A fused kernel reads $x$ and the residual and writes the new residual and the normalized output: 4 passes. $B = 3.35$ TB/s, BF16.
+
+*Prefill*, 16,384 tokens per batch: one tensor is $16{,}384 \times 4{,}096 \times 2 = 134$ MB.
+
+1. Unfused: $10 \times 134 \text{ MB} / 3.35 \text{ TB/s} = 0.40$ ms; fused: $4 \times 134 / 3{,}350 = 0.16$ ms; launch overhead is negligible. $S_\text{fuse} = 2.5$.
+2. Two norms per layer × 32 layers = 64 sites: 25.6 ms versus 10.3 ms per forward pass. The GEMMs take at least $2 \times 7 \times 10^9 \times 16{,}384 / 989 \times 10^{12} = 232$ ms, so fusion saves roughly 6% of prefill.
+
+*Decode*, batch 64: one tensor is $64 \times 4{,}096 \times 2 = 524$ KB, about 0.16 µs per pass.
+
+3. Unfused: $10 \times 0.16 + 7 \times 5 = 36.6$ µs; fused: $0.6 + 5 = 5.6$ µs; $S_\text{fuse} = 6.5$, almost all from launches.
+4. Over 64 sites: 2.3 ms versus 0.36 ms per decode step, against 4.2 ms to read the BF16 weights (§64.9.2): fusion removes about 30% of the step.
+
+**Interpretation.** The same fusion is a 6% gain for large tensors and a 30% gain for small ones, because small tensors are launch-bound, not bandwidth-bound. **Engineering implication.** Compile (or use fused kernels) everywhere, but expect the largest returns in small-batch, latency-sensitive paths, and pair them with CUDA Graphs (§67.14) to remove the remaining launches.
+:::
+
+::: industry
+**PyTorch 2 and TorchInductor.** Ansel et al. describe TorchDynamo's bytecode-level graph capture with guards and TorchInductor's Triton code generation, and report geometric-mean speed-ups of 2.27× for inference and 1.41× for training on an NVIDIA A100 across more than 180 real-world models, largely from fusion and reduced overhead.
+*Evidence: Primary* — [Ansel et al. 2024]
+:::
+
+## 67.13 Memory optimization at inference
+
+Inference needs no gradients or optimizer state, so memory is weights, activations of the layers currently running, runtime workspace and, for generative models, the KV cache. Four levers apply:
+
+- **Weight sharing.** Tie the input embedding and output projection (one matrix, used twice); serve many fine-tuned variants as one shared base model plus small adapters (Chapters 73 and 76); load several small models into one process instead of one GPU each (§64.15).
+- **Activation memory planning.** Runtimes (ORT, TensorRT, Inductor) compute tensor lifetimes and reuse buffers, so peak activation memory is the largest set of simultaneously live tensors, not their sum.
+- **Lower-precision storage of large tables.** QuickBite's user-embedding table of 10 million rows × 64 dimensions is 2.56 GB in FP32 (§58.6). Row-wise INT8 with an FP16 scale and offset per row needs $10^7 \times (64 + 4) = 0.68$ GB, 3.8× less, so it fits beside the model on every replica instead of in a remote store.
+- **KV-cache memory** grows with batch × context length and often exceeds the weights in LLM serving; Chapter 73 owns its paging, sharing and quantization.
+
+When a model still does not fit, **offloading** keeps some weights in CPU memory or NVMe and streams them to the GPU when needed.
+
+::: formula
+**Lower bound on step time with offloaded weights**
+
+$$t_\text{step} \ge \frac{M_\text{off}}{B_\text{link}} \qquad t_\text{token} \ge \frac{M_\text{off}}{B_\text{link} \cdot \text{batch}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M_\text{off}$ | Weight bytes that must cross the link every forward pass | bytes |
+| $B_\text{link}$ | Achieved host-to-GPU bandwidth (PCIe Gen5 x16 is about 64 GB/s per direction) | bytes/s |
+| batch | Sequences sharing each streamed weight | sequences |
+:::
+
+::: example
+**Worked example — Offloading a 70B INT4 model.** All 36.1 GB of weights stream over PCIe Gen5 at 64 GB/s each forward pass.
+
+1. $t_\text{step} \ge 36.1/64 = 0.56$ s: at batch 1, under two tokens per second.
+2. At batch 256 for an overnight summarization job: $0.56/256 = 2.2$ ms per token-equivalent.
+
+**Interpretation.** PCIe is about 50 times slower than HBM, so offloading turns a memory-capacity problem into a bandwidth problem. **Engineering implication.** Offload for large-batch offline jobs or single-user local inference; never for an interactive service with a latency objective.
+:::
+
+## 67.14 Latency versus throughput optimization
+
+### 67.14.1 Batch size, concurrency and graph capture
+
+A model server can optimize for the time of one request or for requests per second per dollar, and the knobs pull in opposite directions (§4.18.6):
+
+- **Batch size.** With $T(B) = t_0 + B\,t_1$, throughput $B/T(B)$ rises toward $1/t_1$ as $B$ grows while each request waits for the whole batch. Below the ridge point, larger batches are almost free (§64.9.3); QuickBite's GPU-served ETA model runs batch 64 in about 2.6 ms (25,000 predictions/s, §60.11). Dynamic batching, which forms batches from arriving requests under a delay limit, belongs to Chapter 66.
+- **Concurrency.** Running two or more model instances or CUDA streams per GPU overlaps one batch's data transfer and CPU work with another's compute. It raises throughput when a single instance leaves gaps, at some cost to tail latency.
+- **Graph capture.** At small batch, each step is hundreds of tiny kernels and the CPU cannot launch them fast enough. **CUDA Graphs** record the sequence of kernels once and replay it with one launch [NVIDIA CUDA C++ Programming Guide]; `torch.compile(mode="reduce-overhead")` and TensorRT use them.
+
+**Figure 67.13 — Eager launches versus CUDA Graph replay for one decode step.**
+
+```mermaid
+sequenceDiagram
+  participant CPU as Host CPU
+  participant GPU as GPU
+  Note over CPU,GPU: Eager: one launch per kernel
+  CPU->>GPU: launch kernel 1
+  CPU->>GPU: launch kernel 2
+  CPU->>GPU: ... about 640 launches
+  GPU-->>CPU: step done after launch-bound gaps
+  Note over CPU,GPU: Captured once, replayed every step
+  CPU->>GPU: graph launch, static buffers
+  GPU->>GPU: run 640 kernels back to back
+  GPU-->>CPU: step done
+```
+
+**Reading the diagram.** In eager mode the host issues every kernel; if launching takes longer than the kernel runs, the GPU idles between kernels and the step is overhead-bound (§64.12). With CUDA Graphs, a warm-up step is captured into a graph whose kernels, arguments and memory addresses are fixed; later steps copy new inputs into the same static buffers and replay the graph with one call. The dotted arrows are asynchronous completion notifications. Failure points: shapes must match the captured graph (servers capture one graph per batch-size bucket), and any host-side logic inside the step is frozen at capture time.
+
+::: example
+**Worked example — Is a 7B INT4 decode step launch-bound?** Assume 32 layers × 20 kernels = 640 launches per step at 5 µs of host time each (§64.6.4).
+
+1. Launch time: $640 \times 5 = 3.2$ ms. GPU work at batch 1 with INT4 weights: at least 1.08 ms of weight reads (§67.3).
+2. Eager: step ≈ 3.2 ms, about 310 tokens/s: the GPU is idle two-thirds of the time, and the INT4 work bought almost nothing.
+3. Graph replay: one launch of a few µs, step ≈ 1.1–1.3 ms, about 800 tokens/s.
+
+**Interpretation.** Quantization moved the bottleneck from HBM to the CPU. **Engineering implication.** Pair every bandwidth optimization with an overhead check; in production LLM engines graph capture is standard (Chapter 73).
+:::
+
+## 67.15 TensorRT versus ONNX Runtime versus torch.compile
+
+**Table 67.6 — Comparing three optimization stacks (as of 2026).**
+
+| | TensorRT | ONNX Runtime | torch.compile (TorchInductor) |
+|---|---|---|---|
+| What it is | NVIDIA's inference compiler and runtime | Cross-platform inference engine for ONNX graphs | PyTorch's just-in-time graph compiler |
+| How it works | Builds a per-GPU engine: fusion, precision selection, tactic auto-tuning | Graph rewrites, then partitions nodes across execution providers | Captures graphs from Python bytecode; generates Triton or C++ kernels |
+| Advantages | Usually fastest on NVIDIA GPUs; mature INT8/FP8 | Runs on CPUs, GPUs, NPUs and phones from one file; many languages | Stays in PyTorch; one line to try; handles dynamic Python |
+| Disadvantages | NVIDIA only; engines tied to GPU and version; long builds | Export pitfalls; speed depends on the EP | Graph breaks and recompiles; warm-up compile time; needs Python at serving time unless exported |
+| Performance | Highest ceiling on NVIDIA hardware | Good on CPU; near TensorRT when using its TensorRT EP | Good; strongest on memory- or overhead-bound models |
+| Operational complexity | High: build matrix per GPU, version and shape profile | Medium: export and parity tests | Low to medium: compile caches, warm-up |
+| Cost | Free; vendor lock-in | Free, open source | Free, open source |
+| Use cases | High-volume GPU serving, vision, LLMs via TensorRT-LLM | Heterogeneous fleets, CPU serving, edge and desktop apps | PyTorch-native services, fast iteration, training too |
+| Choose when | GPU cost dominates and the model is stable | You need portability or CPU and edge targets | You want speed without leaving PyTorch |
+
+These are not exclusive: ORT can delegate subgraphs to TensorRT, and torch.compile can lower to TensorRT through the Torch-TensorRT back-end. A common path is torch.compile during development, then ORT or TensorRT for a stable, high-volume model once its gains justify a separate build pipeline.
+
+## 67.16 An optimization workflow
+
+### 67.16.1 Measure, choose, validate, canary
+
+**Figure 67.14 — From baseline to production for an optimized model.**
+
+```mermaid
+flowchart TB
+  BASE["Baseline: latency p50 and p99,<br/>throughput, memory, cost, accuracy"] --> PROF["Profile: find the<br/>bottleneck, Figure 67.1"]
+  PROF --> PICK["Pick the cheapest technique<br/>for that bottleneck"]
+  PICK --> PAR["Parity and accuracy tests:<br/>aggregate and per slice"]
+  EVAL[("Golden eval set<br/>with slice labels")] --> PAR
+  PAR --> G{"Within tolerance on<br/>every critical slice?"}
+  G -->|no| PICK
+  G -->|yes| BENCH["Load test on production<br/>hardware and traffic mix"]
+  BENCH --> SH["Shadow, then canary<br/>at 1-5% of traffic"]
+  SH -->|"guardrails hold"| RO["Progressive rollout,<br/>keep FP model for rollback"]
+  SH -.->|"regression"| RB["Roll back"]
+```
+
+**Reading the diagram.** The workflow is the release process for a model change (Chapter 66, §66.12; §43.6), with two optimization-specific gates. First, accuracy is compared per slice against a golden evaluation set, a storage boundary that must be versioned with the model. Second, speed is measured on production hardware with production traffic shapes, because laptop speed-ups do not transfer. The shadow and canary stages run online; the dotted arrow is an automated rollback triggered by quality or latency guardrails. Keep the unoptimized model deployable until the optimized one has run through a full traffic cycle.
+
+::: example
+**Worked example — Releasing the INT8 ETA model.** Tolerances agreed with the product team (assumed): mean absolute error (MAE) may rise by at most 1% overall and 3% in any city or distance bucket; p99 latency must not rise.
+
+1. Overall: MAE 1.620 → 1.626 minutes, +0.4% (§67.5.2). Passes.
+2. Slices: suppose long-distance orders (over 8 km, 6% of orders) rise 4.1% because their features sit at the edge of calibration ranges. Fails; per-slice testing caught what the aggregate hid.
+3. Fix: keep the first linear layer, which sees the raw distance features, in FP32 (**mixed-precision quantization**); two-thirds of the weights stay INT8, so much of the speed-up remains (measure it). The slice now rises 1.2%. Passes.
+4. Canary at 5% of traffic for 24 hours, comparing on-time-within-5-minutes rates once deliveries complete (35-minute label delay, §60.12), then roll out.
+
+**Interpretation.** The model that ships is partly quantized, and that is normal. **Engineering implication.** Make slice tolerances part of the model's release contract and automate them in the pipeline (Chapter 69).
+:::
+
+**Table 67.7 — Failure scenarios in model optimization.**
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Accuracy drops on one segment after INT8 | Calibration data missed that segment's ranges | Per-slice evaluation; canary slice metrics | Roll back; recalibrate or keep layer in FP | Stratified calibration set; slice gates |
+| Optimized model slower in production | Unsupported operator falls back to CPU; no low-precision kernels on that hardware | Profiler shows host copies; latency regression in load test | Pin the provider; replace the operator | Benchmark on production hardware |
+| Engine fails to load after upgrade | TensorRT engine tied to GPU and version | Startup errors; readiness probe failures | Rebuild engine; redeploy old image | Build engines in CI per GPU and version |
+| Latency spikes after deploy | Compilation or autotuning on first requests | p99 spike on new replicas only | Drain replica; warm up | Warm-up requests before readiness; persistent compile cache |
+| Exported model gives wrong answers for long inputs | Tracing froze a shape or a control-flow branch | Parity tests at edge-case shapes | Re-export with dynamic axes | Parity test suite in CI |
+
+::: mistake
+**"Offline accuracy matched, so the optimized model is equivalent."** Aggregate metrics average away slice regressions, and small numeric changes can flip decisions near thresholds (a fraud score crossing 0.9, a ranking swapping two items). Compare decisions, not just scores, and run a canary.
+:::
+
+## 67.17 Summary and revision notes
+
+::: summary
+- Profile first. Optimize the resource that limits the top operators: capacity (quantize, prune, distill, offload), bandwidth (lower-bit storage, fusion, batching), compute (INT8/FP8, 2:4 sparsity, smaller models) or overhead (compilation, CUDA Graphs). Speed-up is bounded by $1/((1 - f) + f\,b_\text{new}/b_\text{old})$.
+- Affine quantization: $s = (\beta - \alpha)/(q_\text{max} - q_\text{min})$, $z = \text{round}(q_\text{min} - \alpha/s)$; error $\le s/2$ in range, MSE $\approx s^2/12$, SQNR $\approx 6.02b + 4.77 - 20\log_{10}(A/\sigma)$. Outliers cost bits; finer granularity (per-channel, per-group) wins them back.
+- Symmetric weights ($z = 0$) keep integer GEMMs simple; INT32 accumulation and one requantization multiplier make integer-only inference possible.
+- Dynamic PTQ needs no data and suits linear-heavy CPU models; static PTQ needs representative calibration data; QAT fine-tunes with fake quantization and the straight-through estimator when PTQ fails.
+- LLM weights: INT4 with $g = 128$ is 4.125 bits per weight; a 70B model drops from 140 GB to 36 GB. GPTQ compensates rounding error using the Hessian, AWQ protects salient channels by scaling, SmoothQuant moves activation outliers into weights for W8A8, LLM.int8() keeps outlier columns in FP16, and FP8 is the simple W8A8 option on new GPUs.
+- Unstructured sparsity rarely speeds dense hardware and needs about 50% sparsity just to break even on storage; 2:4 sparsity and structured pruning are what GPUs exploit. Always fine-tune after pruning.
+- Distillation: $\alpha T^2\,\text{KL}$ on softened teacher outputs plus $(1 - \alpha)$ cross-entropy; choose the student at the knee of the quality–cost curve.
+- ONNX decouples training from serving; ORT partitions graphs across execution providers; TensorRT builds per-GPU engines; torch.compile, XLA and TVM fuse and generate kernels. Fusion saves bytes for large tensors and launches for small ones.
+- Release optimized models like any model change: per-slice accuracy gates, production-hardware load tests, shadow and canary, rollback to the unoptimized model.
+:::
+
+## 67.18 Knowledge checkpoint
+
+1. Compute the scale and zero-point for UINT8 asymmetric quantization of the range $[-0.6, 3.4]$.
+2. Why is symmetric quantization preferred for weights in integer GEMMs?
+3. INT8 per-tensor SQNR is 40 dB. Estimate it if one outlier quadruples the range.
+4. A 13B model is served with INT4 weights, $g = 64$, FP16 scales. How much weight memory?
+5. Decode spends 70% of step time reading weights. What end-to-end speed-up does BF16 → INT8 weight-only give at best?
+6. What does the straight-through estimator do?
+7. When does dynamic quantization fit better than static quantization?
+8. Why can GPTQ move a weight away from its nearest grid point and still reduce error?
+9. With $\alpha = 0.5$, activation max 32 and weight max 0.5, what SmoothQuant factor results?
+10. At what sparsity does CSR with INT8 values and 16-bit indices break even with dense INT8?
+11. Teacher logits $(2, 0)$. What are the soft targets at $T = 1$ and $T = 2$?
+12. Why must a TensorRT engine be rebuilt after a GPU change?
+13. Unfused, a chain makes 8 tensor passes; fused, 2. What is the memory-bound speed-up bound?
+14. Why can quantizing weights leave a decode step no faster?
+
+<details><summary>Answers</summary>
+
+1. $s = 4.0/255 = 0.01569$; $z = \text{round}(0.6/0.01569) = \text{round}(38.25) = 38$.
+2. With $z_w = 0$, the integer dot product needs no correction term that depends on the inputs, so kernels stay simple and fast.
+3. Quadrupling $A$ costs $20\log_{10} 4 = 12$ dB: about 28 dB.
+4. $13 \times 10^9 \times (4 + 16/64)/8 = 13 \times 10^9 \times 4.25/8 = 6.9$ GB.
+5. $1/(0.3 + 0.7 \times 0.5) = 1/0.65 = 1.54\times$.
+6. Uses the quantized value in the forward pass and treats rounding as the identity (zero outside the clipping range) in the backward pass, so gradients reach the full-precision weights.
+7. When no representative calibration data exists, activation ranges vary widely between requests, or the model is dominated by linear layers on CPU where computing ranges per call is cheap.
+8. It minimizes the layer's output error; with correlated inputs, moving one weight can cancel errors already made in others.
+9. $s = \sqrt{32}/\sqrt{0.5} = 5.66/0.707 = 8$; both maxima become 4.
+10. $(1 - \text{sp}) \times 24/8 = 1$, so sp $= 2/3$.
+11. $T = 1$: $e^2/(e^2 + 1) = 0.881$, so $(0.881, 0.119)$. $T = 2$: $e/(e + 1) = 0.731$, so $(0.731, 0.269)$.
+12. Kernel choices are auto-tuned for, and compiled to, one GPU architecture and TensorRT version.
+13. $8/2 = 4\times$, before launch overhead.
+14. If the step is overhead-bound (launches, Python) or dominated by KV-cache reads, fewer weight bytes do not shorten it.
+
+</details>
+
+## 67.19 Interview questions
+
+### Basic
+
+**Q1. What is the difference between post-training quantization and quantization-aware training?**
+**Answer.** PTQ quantizes a trained model using weights and optionally calibration data, in minutes to hours. QAT simulates quantization during a fine-tune so weights adapt to rounding, using the straight-through estimator; it costs a training run and recovers accuracy when PTQ loses too much, especially at 4 bits or for small models.
+
+**Q2. Why doesn't 50% unstructured sparsity make a model twice as fast on a GPU?**
+**Answer.** Dense kernels multiply zeros like any other value, sparse formats need indices that cancel the storage saving at 50%, and irregular access defeats coalescing and tiling. Speed needs hardware-supported patterns (2:4) or structured pruning that produces a smaller dense model.
+
+### Intermediate
+
+**Q3. Your CPU-served model is 40% slower than its latency objective. How do you approach it?**
+**Answer.** Profile end to end; if the forward pass dominates, try torch.compile or ORT graph optimizations, then dynamic INT8 for linear layers. Validate accuracy per slice, load-test on production hardware and canary. If still too slow, distill a smaller model or remove features with high fetch cost.
+
+**Q4. You quantized an LLM to INT4 with AWQ, and decoding got only 20% faster. Why?**
+**Answer.** Weight reads may not dominate: KV-cache reads at long context, launch overhead at small batch, or dequantization cost in compute-bound large batches. Check the profile; add CUDA Graphs, quantize the KV cache (Chapter 73) or use FP8 W8A8 for large-batch regimes.
+
+### Advanced
+
+**Q5. Design the optimization plan for serving a 70B chat model on H100s at the lowest cost per token.**
+**Answer.** Start from memory: BF16 weights need two GPUs and leave 20 GB for KV cache; FP8 fits one GPU with 10 GB; INT4 with $g = 128$ leaves 44 GB. Pick FP8 if quality holds and requests need compute-bound prefill; INT4 AWQ/GPTQ if memory and decode dominate. Validate on task evaluations and safety sets, then add continuous batching, KV-cache management and CUDA Graphs (Chapter 73). Compare cost per million tokens at the target latency, not raw throughput.
+
+**Q6. How would you build a platform service that optimizes models automatically for many teams?**
+**Answer.** Accept a model plus evaluation contract (metrics, slices, tolerances, latency target). Run a search over techniques (compile, dynamic and static INT8, FP8, engine builds per GPU type) in a job queue; gate each candidate on parity and slice tolerances; benchmark on production hardware; register the winner with lineage to the original; hand off to canary deployment. Keep the original deployable and record every build key.
+
+## 67.20 Practical exercises
+
+1. Extend the NumPy program to search clipping thresholds by MSE for a heavy-tailed activation sample and compare with min–max and 99.99th-percentile clipping.
+2. Apply dynamic quantization to only the second layer of the ETA MLP and measure size, latency and the maximum prediction change.
+3. Train a 64-unit student MLP on the ETA teacher's predictions and compare its MAE to the same student trained on labels alone.
+4. Use `torch.compile` on the ETA MLP, measure first-call compile time and steady-state latency on your machine, and explain both.
+
+## 67.21 Design challenges
+
+1. **QuickBite courier app on-device model.** A photo check that confirms a delivery runs on couriers' phones with 3 GB of RAM and a 100 ms budget. Choose architecture, quantization, runtime (ORT Mobile, Core ML or TFLite-class) and an update and validation strategy.
+2. **Chatbot cost halving.** The 7B chatbot runs in BF16 on H100s. Halve cost per conversation without reducing a human-rated quality score by more than 2%: compare FP8, INT4 weight-only and a distilled 3B model, with the measurements and gates you would use.
+
+## 67.22 References
+
+1. Ansel, J., et al. *PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation*. ASPLOS, 2024.
+2. Bengio, Y., Léonard, N., Courville, A. *Estimating or Propagating Gradients Through Stochastic Neurons for Conditional Computation*. arXiv:1308.3432, 2013.
+3. Chen, T., Moreau, T., Jiang, Z., Zheng, L., Yan, E., Cowan, M., Shen, H., Wang, L., Hu, Y., Ceze, L., Guestrin, C., Krishnamurthy, A. *TVM: An Automated End-to-End Optimizing Compiler for Deep Learning*. USENIX OSDI, 2018.
+4. Denton, E., Zaremba, W., Bruna, J., LeCun, Y., Fergus, R. *Exploiting Linear Structure Within Convolutional Networks for Efficient Evaluation*. NeurIPS, 2014.
+5. Dettmers, T., Lewis, M., Belkada, Y., Zettlemoyer, L. *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale*. NeurIPS, 2022.
+6. Frankle, J., Carbin, M. *The Lottery Ticket Hypothesis: Finding Sparse, Trainable Neural Networks*. ICLR, 2019.
+7. Frantar, E., Ashkboos, S., Hoefler, T., Alistarh, D. *GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers*. ICLR, 2023.
+8. Han, S., Mao, H., Dally, W. J. *Deep Compression: Compressing Deep Neural Networks with Pruning, Trained Quantization and Huffman Coding*. ICLR, 2016.
+9. Hassibi, B., Stork, D. G. *Second Order Derivatives for Network Pruning: Optimal Brain Surgeon*. NeurIPS (NIPS 5), 1993.
+10. Hinton, G., Vinyals, O., Dean, J. *Distilling the Knowledge in a Neural Network*. arXiv:1503.02531, 2015.
+11. Howard, A. G., Zhu, M., Chen, B., Kalenichenko, D., Wang, W., Weyand, T., Andreetto, M., Adam, H. *MobileNets: Efficient Convolutional Neural Networks for Mobile Vision Applications*. arXiv:1704.04861, 2017.
+12. Jacob, B., Kligys, S., Chen, B., Zhu, M., Tang, M., Howard, A., Adam, H., Kalenichenko, D. *Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference*. IEEE/CVF CVPR, 2018.
+13. Krishnamoorthi, R. *Quantizing Deep Convolutional Networks for Efficient Inference: A Whitepaper*. arXiv:1806.08342, 2018.
+14. Lattner, C., Amini, M., Bondhugula, U., Cohen, A., Davis, A., Pienaar, J., Riddle, R., Shpeisman, T., Vasilache, N., Zinenko, O. *MLIR: Scaling Compiler Infrastructure for Domain Specific Computation*. IEEE/ACM CGO, 2021.
+15. Lin, J., Tang, J., Tang, H., Yang, S., Chen, W.-M., Wang, W.-C., Xiao, G., Dang, X., Gan, C., Han, S. *AWQ: Activation-aware Weight Quantization for On-Device LLM Compression and Acceleration*. MLSys, 2024.
+16. Micikevicius, P., et al. *FP8 Formats for Deep Learning*. arXiv:2209.05433, 2022.
+17. Mishra, A., Latorre, J. A., Pool, J., Stosic, D., Stosic, D., Venkatesh, G., Yu, C., Micikevicius, P. *Accelerating Sparse Deep Neural Networks*. arXiv:2104.08378, 2021.
+18. Nagel, M., Fournarakis, M., Amjad, R. A., Bondarenko, Y., van Baalen, M., Blankevoort, T. *A White Paper on Neural Network Quantization*. arXiv:2106.08295, 2021.
+19. NVIDIA. *CUDA C++ Programming Guide* (CUDA Graphs). https://docs.nvidia.com/cuda/cuda-c-programming-guide/
+20. NVIDIA. *TensorRT Documentation* (Developer Guide). https://docs.nvidia.com/deeplearning/tensorrt/
+21. ONNX. *ONNX Documentation* (IR specification and operator schemas). https://onnx.ai/onnx/
+22. ONNX Runtime. *ONNX Runtime Documentation* (graph optimizations, execution providers, quantization). https://onnxruntime.ai/docs/
+23. OpenXLA. *XLA Documentation*. https://openxla.org/xla
+24. PyTorch. *PyTorch Documentation: torch.compile and Quantization*. https://pytorch.org/docs/stable/
+25. Sanh, V., Debut, L., Chaumond, J., Wolf, T. *DistilBERT, a Distilled Version of BERT: Smaller, Faster, Cheaper and Lighter*. arXiv:1910.01108, 2019.
+26. Xiao, G., Lin, J., Seznec, M., Wu, H., Demouth, J., Han, S. *SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models*. ICML, 2023.
+27. Zhu, M., Gupta, S. *To Prune, or Not to Prune: Exploring the Efficacy of Pruning for Model Compression*. arXiv:1710.01878, 2017.
+
+## 67.23 Open verification items
+
+- PyTorch 2 paper headline figures (2.27× inference, 1.41× training geometric mean on A100, 180+ models): confirm against the ASPLOS 2024 text.
+- GPTQ speed-ups (about 3.25× A100, 4.5× A6000) and "about four GPU-hours" for 175B: confirm against the ICLR 2023 version.
+- `torch.ao.quantization` deprecation and migration to torchao: confirm the release in which eager-mode APIs are removed.
+- TensorRT INT4 weight support and cross-GPU "hardware compatibility" options vary by version; check current release notes.
+- Typical eager launch overhead (~5 µs per kernel) and 20 kernels per decoder layer are assumptions; measure on the target stack.

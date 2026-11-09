@@ -509,3 +509,625 @@ What to notice:
 ::: mistake
 **"Re-use the champion's score from when it was promoted."** The champion's MAE on last month's held-out window says nothing about this week. Always re-score the champion on the same new window as the candidate, which also makes the paired test possible.
 :::
+
+## 69.6 CD for ML
+
+### 69.6.1 Model packaging
+
+::: definition
+**Definition — Model package.** A self-describing, immutable bundle containing the trained weights, the preprocessing the model expects, an input/output **signature** (names, types and shapes), the runtime environment (library versions or a container image digest), and metadata linking it to the run that produced it.
+:::
+
+A model file alone is like a spare part without a part number: you cannot be sure what it fits. Packaging makes the model a deployable unit that any compliant server can load. Common formats (as of 2026) are a framework's native export (TensorFlow SavedModel, PyTorch's `torch.export` programs or TorchScript), the framework-neutral **ONNX** graph format (Chapter 67), and wrapper formats such as MLflow's **model flavors**, where an `MLmodel` file describes how to load the same artifact as a native object or as a generic Python function, alongside a signature and an environment specification [MLflow Docs]. Serving systems such as Triton, KServe and TorchServe each read one or more of these formats (Chapter 66).
+
+Two rules make packages safe to promote. **Build once, promote the same bytes**: the artifact that passed the gate is the artifact that serves, identified by a content hash, never rebuilt per environment. And **embed or pin preprocessing**: either export transforms with the model (TFX's approach, §69.14) or pin the version of the shared feature library, so a model cannot be served with transforms it was not trained on.
+
+### 69.6.2 Promotion through the registry
+
+The registry records which version plays which role (§69.8). For the ETA model, QuickBite uses three aliases: `challenger` (passed the gate, not yet serving), `champion` (serving 100%), and `previous` (the last champion, kept warm for rollback). CD reacts to alias changes, not to training runs.
+
+### 69.6.3 Deployment via GitOps
+
+GitOps (§43.10) deploys a model exactly as it deploys a service: a commit to a configuration repository changes the desired state, and an in-cluster controller reconciles it. The model-specific part is the bot that turns a registry event into that commit.
+
+**Figure 69.5 — Model deployment through GitOps.**
+
+```mermaid
+flowchart LR
+  REG[(Model registry)] -.->|alias event| BOT[Promotion bot]
+  BOT -->|PR: storageUri v58,<br/>canary 5 percent| CFG[(Config repo)]
+  OWN([Model owner]) -->|approve PR| CFG
+  subgraph K8S[Serving cluster]
+    CTRL[GitOps controller]
+    ISVC[InferenceService<br/>ETA model]
+  end
+  CTRL -->|poll HTTPS| CFG
+  CTRL -->|apply| ISVC
+  ISVC -->|load artifact| OBJ[(Object storage<br/>model bytes)]
+  ISVC -.->|metrics| AN[Canary analysis]
+  AN -.->|promote or revert PR| CFG
+```
+
+**Reading the diagram.** The registry emits an event asynchronously when `challenger` moves. A promotion bot opens a pull request that changes two fields in the serving manifest: the artifact URI (version 58) and the canary traffic share. A model owner approves it; for low-risk models the gate's report can auto-approve (§69.11). The controller inside the cluster pulls the repository over HTTPS and applies the change; the model server downloads the artifact from object storage by immutable path. Canary analysis reads metrics asynchronously and writes back to Git, either a commit that raises traffic to 100% or a revert. Storage boundaries: registry, config repository and object storage. Failure points: an artifact URI that points at a mutable path (always use versioned paths or digests), a controller that cannot reach Git (the cluster keeps the last state), and canary analysis with too little traffic to decide (§43.6.4). Scaling: one controller per cluster; many models per repository, one manifest each.
+
+The manifest below is illustrative, in KServe's `InferenceService` format, where `canaryTrafficPercent` sends a share of traffic to the newly applied revision while the previous revision keeps the rest [KServe Docs]:
+
+```yaml
+# illustrative: KServe InferenceService for the ETA model
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: eta-model
+  namespace: ml-serving
+  labels:
+    model-version: "58"          # written by the promotion bot
+spec:
+  predictor:
+    canaryTrafficPercent: 5      # raise to 100 after analysis passes
+    model:
+      modelFormat:
+        name: sklearn
+      storageUri: s3://quickbite-models/eta/58/   # immutable, versioned path
+```
+
+### 69.6.4 Shadow and canary for models
+
+§66.12 owns the mechanics of shadow, canary and A/B deployment for models, and §43.6 the statistics of canary judgment. The platform's job is to make the sequence the default: **shadow** (the candidate scores a copy of live traffic; nothing is shown) to verify latency, errors and prediction distributions at zero user risk; **canary** at 1–5% to verify operational health under real load; and, for models whose outcome depends on what users see, an **A/B test** to measure the business metric (§57.14). For ETA, shadow mode also measures accuracy, because delivery time barely depends on the displayed promise (§59.11.2).
+
+### 69.6.5 Automated rollback
+
+**Figure 69.6 — Automated rollback during a model canary.**
+
+```mermaid
+sequenceDiagram
+  participant AN as Canary analysis
+  participant MON as Monitoring
+  participant GIT as Config repo
+  participant CTRL as GitOps controller
+  participant SRV as Model server
+  MON->>AN: p99 latency, errors, prediction mean
+  AN->>AN: compare canary v58 vs baseline v57
+  AN->>GIT: revert commit, canary 0 percent
+  GIT-->>CTRL: change detected
+  CTRL->>SRV: route 100 percent to v57
+  SRV-->>MON: v57 healthy
+  AN--)GIT: open incident note on PR
+```
+
+**Reading the diagram.** Monitoring feeds per-revision metrics to the analysis job. ML adds **prediction-level guardrails** to the usual latency and error checks: the mean and quantiles of the predicted ETA, the share of predictions hitting a clamp, and the null rate of input features, compared between canary and baseline. A breach produces a revert commit, not an imperative API call, so Git remains the record of what happened; the controller converges within its sync interval (or immediately on a webhook). The previous revision was never scaled down, so rollback is a routing change taking seconds, not a model load taking minutes. The final asynchronous message records the decision for the post-incident review. Failure point: rollback restores the *model*, but if the incident was caused by a feature change, the old model may be just as broken (§69.13).
+
+::: recommendation
+**Recommendation — Make "keep the champion" the default outcome.** Every failure path in CT and CD, whether a validation failure, a gate rejection, a canary breach or a timeout, should end with the current champion serving and a ticket filed. A platform in which failure means "no model" will be bypassed by teams under pressure.
+:::
+
+## 69.7 Experiment tracking
+
+### 69.7.1 What to log
+
+::: definition
+**Definition — Experiment tracking.** Recording, for every training run, its **parameters** (inputs chosen before training: hyperparameters, feature list, seeds), **metrics** (numbers measured during or after training, possibly per step), **artifacts** (files produced: the model, plots, evaluation reports), and **lineage** (the data snapshot, code commit and environment that produced it), in a queryable store shared by the team.
+:::
+
+#### First-principles explanation
+
+A chemist keeps a lab notebook so that a promising result can be repeated and a failed one is not tried twice. Without a tracker, ML teams keep that notebook in spreadsheet cells, file names (`model_final_v3_really_final.pkl`) and memory. The tracker makes the notebook automatic and searchable: "show me every ETA run in March with a validation MAE below 3.3, trained on the snapshot after the city-2 schema fix."
+
+#### Why does this exist?
+
+Zaharia et al. introduced MLflow in 2018 to address three problems they saw across organizations: experiments were hard to track and reproduce, there was no standard way to package code for re-running, and there was no standard way to package models for deployment. MLflow's original three components, **Tracking**, **Projects** and **Models**, map onto those problems [Zaharia et al. 2018]; a **Model Registry** was added later (§69.8).
+
+### 69.7.2 MLflow tracking architecture
+
+**Figure 69.7 — Tracking architecture in the MLflow style.**
+
+```mermaid
+flowchart LR
+  NB([Notebook or<br/>pipeline step]) -->|REST: log params,<br/>metrics, tags| TS[Tracking server]
+  NB -->|upload artifacts| TS
+  TS -->|SQL| BS[(Backend store<br/>PostgreSQL)]
+  TS -->|object API| AS[(Artifact store<br/>object storage)]
+  UI([Web UI and<br/>search API]) --> TS
+  REGS[Model registry] -->|run ID reference| BS
+```
+
+**Reading the diagram.** Training code calls a client library that sends parameters, metrics and tags to a **tracking server** over REST; these small records land in a **backend store**, a relational database in team deployments (a local file or SQLite store suffices for one person). Artifacts, which can be gigabytes, go to an **artifact store** in object storage, either uploaded directly by the client or proxied through the server [MLflow Docs]. The UI and search API read both. The registry references runs by ID, which is how a model version links back to its experiment. Calls are synchronous; logging inside a training loop should be batched or asynchronous so the tracker never slows training. Failure points: the tracking server as a single dependency of every training job (clients should buffer and retry, and training should not fail because logging failed); an artifact store without lifecycle rules, which grows forever. Scaling: the server is stateless and scales horizontally; the database holds metadata only.
+
+### 69.7.3 Comparing runs without fooling yourself
+
+The tracker makes it easy to sort runs by validation metric and pick the top one. That is exactly where a statistical trap hides: if many configurations are about equally good, the one with the best *measured* validation score is partly the luckiest.
+
+::: formula
+**Optimism of the best of $k$ runs (winner's curse)**
+
+$$\mathbb{E}\!\left[\text{best measured}\right] \approx \mu - c_k\,\sigma_v, \qquad c_k \le \sqrt{2\ln k}, \qquad \sigma_v \approx \frac{s_{|e|}}{\sqrt{n_v}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\mu$ | True error shared by $k$ equally good configurations | minutes of MAE |
+| $\sigma_v$ | Standard error of each validation MAE | minutes |
+| $s_{\lvert e \rvert}$ | Standard deviation of per-example absolute error | minutes |
+| $n_v$ | Validation examples | examples |
+| $k$ | Configurations compared | runs |
+| $c_k$ | Expected maximum of $k$ standard normal draws (1.42 for $k = 8$) | dimensionless |
+:::
+
+::: example
+**Worked example — How much of the "best" run is luck?** The tracker program below compares $k = 8$ configurations on $n_v = 5{,}000$ validation orders; absolute errors have $s_{|e|} \approx 2.6$ min.
+
+1. $\sigma_v = 2.6 / \sqrt{5{,}000} = 2.6 / 70.7 = 0.037$ min.
+2. With $k = 8$, $c_8 = 1.42$ (the bound $\sqrt{2 \ln 8} = 2.04$). If several configurations were truly equal, the best one would look better than its true MAE by about $1.42 \times 0.037 = 0.052$ min.
+3. The top four runs in the output span 3.243–3.256 min, a range of 0.013 min, well inside that noise.
+
+*Interpretation:* the formula assumes independent errors across runs; because all runs share one validation set, part of the noise is common to every run and the true optimism is somewhat smaller, but the ranking among the top runs is still not meaningful; any of them is a reasonable choice, and the simplest or cheapest may be the better pick. *Engineering implication:* report the chosen run's error on a **separate test set** used once (the program reports 3.216 min), compare finalists with a paired test (§69.5.3) rather than by sorting, and log the number of runs compared so reviewers can judge the optimism.
+:::
+
+### 69.7.4 Code example: a mini experiment tracker
+
+The program below implements the core of a tracker in about 50 lines of standard-library Python plus scikit-learn: runs, parameters, metrics, content-addressed artifacts and lineage tags in a local SQLite file, a grid of eight ETA runs, selection of the best run by SQL, and a reload of the winning model from the artifact store. It needs no external service and runs in about 8 seconds.
+
+```python
+"""A mini experiment tracker: runs, params, metrics, artifacts and lineage in SQLite."""
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+import hashlib, itertools, json, pickle, sqlite3
+import numpy as np
+from sklearn.ensemble import HistGradientBoostingRegressor
+
+class Tracker:
+    def __init__(self, path):
+        self.db = sqlite3.connect(path)
+        self.db.executescript("""
+          CREATE TABLE IF NOT EXISTS runs(run_id INTEGER PRIMARY KEY, experiment TEXT,
+              status TEXT, params TEXT, tags TEXT);
+          CREATE TABLE IF NOT EXISTS metrics(run_id INT, key TEXT, step INT, value REAL);
+          CREATE TABLE IF NOT EXISTS artifacts(run_id INT, name TEXT, sha256 TEXT, bytes INT);""")
+
+    def start_run(self, experiment, params, tags):
+        cur = self.db.execute("INSERT INTO runs(experiment, status, params, tags) VALUES (?,?,?,?)",
+                              (experiment, "RUNNING", json.dumps(params, sort_keys=True),
+                               json.dumps(tags, sort_keys=True)))
+        return cur.lastrowid
+
+    def log_metric(self, run_id, key, value, step=0):
+        self.db.execute("INSERT INTO metrics VALUES (?,?,?,?)", (run_id, key, step, float(value)))
+
+    def log_artifact(self, run_id, name, payload, store="artifacts"):
+        digest = hashlib.sha256(payload).hexdigest()            # content address
+        os.makedirs(store, exist_ok=True)
+        with open(os.path.join(store, digest), "wb") as f:
+            f.write(payload)
+        self.db.execute("INSERT INTO artifacts VALUES (?,?,?,?)", (run_id, name, digest, len(payload)))
+
+    def end_run(self, run_id, status="FINISHED"):
+        self.db.execute("UPDATE runs SET status=? WHERE run_id=?", (status, run_id))
+        self.db.commit()
+
+    def best_run(self, experiment, metric):
+        return self.db.execute("""
+          SELECT r.run_id, r.params, m.value FROM runs r JOIN metrics m USING(run_id)
+          WHERE r.experiment=? AND r.status='FINISHED' AND m.key=?
+          ORDER BY m.value ASC, r.run_id ASC LIMIT 1""", (experiment, metric)).fetchone()
+
+def make_data(n, seed):
+    rng = np.random.default_rng(seed)
+    d, prep = rng.gamma(2.0, 1.6, n), np.clip(rng.normal(12, 4, n), 3, 40)
+    load, peak = rng.uniform(0.3, 1.3, n), (rng.random(n) < 0.35).astype(float)
+    y = 13 + 3.0 * d + 0.9 * prep + 10 * np.maximum(0, load - 0.8) + 3 * peak + rng.normal(0, 4, n)
+    return np.column_stack([d, prep, load, peak]), y
+
+X, y = make_data(30000, seed=69)
+Xtr, ytr, Xva, yva, Xte, yte = X[:20000], y[:20000], X[20000:25000], y[20000:25000], X[25000:], y[25000:]
+data_hash = hashlib.sha256(Xtr.tobytes() + ytr.tobytes()).hexdigest()[:12]
+
+if os.path.exists("mini_tracker.db"):
+    os.remove("mini_tracker.db")                                # clean demo
+tr = Tracker("mini_tracker.db")
+grid = {"learning_rate": [0.05, 0.2], "max_iter": [100, 300], "max_leaf_nodes": [7, 63]}
+for values in itertools.product(*grid.values()):
+    params = dict(zip(grid, values), random_state=0)
+    run = tr.start_run("eta-gbdt", params,
+                       {"git_commit": "a91f3c2", "data_sha256": data_hash, "seed": 0})
+    model = HistGradientBoostingRegressor(early_stopping=False, **params).fit(Xtr, ytr)
+    tr.log_metric(run, "train_mae", np.mean(np.abs(model.predict(Xtr) - ytr)))
+    tr.log_metric(run, "val_mae", np.mean(np.abs(model.predict(Xva) - yva)))
+    tr.log_artifact(run, "model.pkl", pickle.dumps(model))
+    tr.end_run(run)
+
+print("run  lr    iters leaves  train_mae  val_mae")
+for run_id, p, tmae, vmae in tr.db.execute("""
+      SELECT r.run_id, r.params,
+             MAX(CASE WHEN m.key='train_mae' THEN m.value END),
+             MAX(CASE WHEN m.key='val_mae' THEN m.value END)
+      FROM runs r JOIN metrics m USING(run_id) GROUP BY r.run_id"""):
+    p = json.loads(p)
+    print(f"{run_id:>3}  {p['learning_rate']:<5} {p['max_iter']:>5} {p['max_leaf_nodes']:>6}"
+          f"  {tmae:9.3f}  {vmae:7.3f}")
+
+best_id, best_params, best_val = tr.best_run("eta-gbdt", "val_mae")
+sha = tr.db.execute("SELECT sha256 FROM artifacts WHERE run_id=?", (best_id,)).fetchone()[0]
+with open(os.path.join("artifacts", sha), "rb") as f:
+    best = pickle.loads(f.read())                               # reload from the store
+test_mae = np.mean(np.abs(best.predict(Xte) - yte))
+print(f"best run {best_id}: {best_params}")
+print(f"val MAE {best_val:.3f}, test MAE {test_mae:.3f}, data {data_hash}")
+```
+
+Output:
+
+```text
+run  lr    iters leaves  train_mae  val_mae
+  1  0.05    100      7      3.219    3.286
+  2  0.05    100     63      3.031    3.256
+  3  0.05    300      7      3.150    3.243
+  4  0.05    300     63      2.808    3.289
+  5  0.2     100      7      3.147    3.247
+  6  0.2     100     63      2.722    3.326
+  7  0.2     300      7      3.062    3.253
+  8  0.2     300     63      2.207    3.449
+best run 3: {"learning_rate": 0.05, "max_iter": 300, "max_leaf_nodes": 7, "random_state": 0}
+val MAE 3.243, test MAE 3.216, data cc910558eff2
+```
+
+What to notice:
+
+- **Lineage is just tags, if you are disciplined.** Every run carries the Git commit, a hash of the exact training data and the seed. Real trackers record the commit automatically and take the data reference from the pipeline's pinned snapshot (§69.10).
+- **Artifacts are content-addressed**: the file name is the SHA-256 of its bytes, so identical models are stored once and a reference can never silently point at different bytes.
+- **Overfitting is visible in the table.** Run 8 has the lowest training MAE (2.207) and the worst validation MAE (3.449); logging both metrics makes the gap obvious.
+- **The ranking at the top is noise** (§69.7.3): runs 3, 5 and 7 differ by 0.010 min. The test MAE, measured once on untouched data, is the honest estimate.
+- Production trackers add what this sketch omits: concurrency control, authentication, step-wise metrics streamed during training, a UI, and retention policies for artifacts.
+
+::: tip
+**Interview tip — "How do you know which model is in production and how it was trained?"** Answer with the chain: the serving manifest names a registry version; the version references a tracking run; the run records parameters, metrics, the data snapshot ID, the code commit and the image digest. If any link is missing, say which tool or convention you would add to close it.
+:::
+
+## 69.8 Model registry
+
+### 69.8.1 Versions, aliases, signatures and model cards
+
+::: definition
+**Definition — Model registry.** A versioned catalog of model artifacts in which each **registered model** (for example `eta-gbdt`) has numbered, immutable **versions**, each linked to the run that produced it, its signature, evaluation results and documentation, plus mutable **aliases** or **stages** that name the role a version plays (champion, challenger) and an audit log of every change.
+:::
+
+If the experiment tracker is the lab notebook, the registry is the parts warehouse with a release desk: only parts with a serial number, a specification sheet and an inspector's stamp go out, and the desk records who took what, when. Four elements make a registry entry useful:
+
+1. **Immutable versions.** Version 58 always means the same bytes. Retraining creates version 59; nothing is overwritten.
+2. **Aliases.** A named, movable pointer to a version. Serving asks for `eta-gbdt@champion`, not for "the latest". Moving an alias is the promotion; moving it back is the rollback.
+3. **Signature.** The input and output schema (feature names, types, shapes). CD refuses to deploy a version whose signature the serving path cannot satisfy.
+4. **Model card.** A short document of intended use, training data, evaluation by slice, limitations and ethical considerations [Mitchell et al. 2019]. Chapter 71 covers its content; the registry makes it a required field.
+
+**Figure 69.8 — Lifecycle of one model version in the registry.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Registered: CT run passes gate
+  Registered --> Challenger: alias challenger
+  Challenger --> Rejected: shadow or canary fails
+  Challenger --> Champion: approval and rollout
+  Champion --> Previous: newer champion promoted
+  Previous --> Champion: rollback
+  Previous --> Archived: after retention window
+  Rejected --> Archived
+  Archived --> [*]
+```
+
+**Reading the diagram.** States are the roles a version holds; transitions are registry operations, each recorded with actor, time and reason. A version enters only through a passing CT run (never by manual upload, in a governed registry). It becomes `challenger` while shadow and canary run, `champion` after approval, and `previous` when replaced; `previous` is the rollback target and must stay loadable and its features available. Archiving removes it from serving paths but keeps metadata and, for audited models, the artifact itself. Failure points: two versions both labeled champion (aliases must be unique pointers, enforced by the registry) and an archived version still referenced by a manifest (CD must check before archiving).
+
+### 69.8.2 The MLflow registry
+
+The MLflow Model Registry attaches registered models and versions to tracking runs and offers tags, descriptions and aliases. Early versions used four fixed **stages** (None, Staging, Production, Archived); MLflow 2.9 deprecated stages in favor of **aliases** and tags [MLflow Docs]. Aliases are more flexible: a fixed set of four stages cannot name several production variants, or a champion and a challenger at once. Aliases are referenced in model URIs (`models:/eta-gbdt@champion`), so serving code does not change when the alias moves. Managed platforms (Databricks Unity Catalog, Vertex AI Model Registry, SageMaker Model Registry, as of 2026) offer similar concepts with access control integrated into the cloud's identity system.
+
+### 69.8.3 The registry as the contract between training and serving
+
+Training and serving are owned by different people and run on different schedules. The registry is the **interface** between them, like an API between two services: training promises to publish versions with a signature, lineage and passing evaluations; serving promises to load any version that meets the contract.
+
+**Figure 69.9 — Registry data model.**
+
+```mermaid
+erDiagram
+  REGISTERED_MODEL ||--o{ MODEL_VERSION : has
+  REGISTERED_MODEL ||--o{ ALIAS : names
+  ALIAS }o--|| MODEL_VERSION : points_to
+  MODEL_VERSION }o--|| RUN : produced_by
+  RUN }o--|| DATA_SNAPSHOT : trained_on
+  MODEL_VERSION ||--|| SIGNATURE : declares
+  MODEL_VERSION ||--o{ EVALUATION : scored_in
+  MODEL_VERSION ||--o| MODEL_CARD : documented_by
+  MODEL_VERSION ||--o{ AUDIT_EVENT : changed_by
+```
+
+**Reading the diagram.** Each registered model has many immutable versions and a small set of aliases, each pointing to exactly one version. A version links to the tracking run that produced it, and the run to the data snapshot, so lineage is a join. Each version declares one signature, may have several evaluations (gate, shadow, canary, A/B) and one model card, and accumulates audit events. This is a relational schema; registries store it in a database and the artifacts themselves in object storage. Failure point: a version whose run or snapshot was deleted by a retention job, which breaks lineage; retention rules must follow the registry's references (§61.13).
+
+::: warning
+**Warning — "Latest" is not a deployment target.** Serving "the latest version" means that a CT run, rather than a review, decides what users see, and a rollback has no name. Always deploy an explicit alias or version number.
+:::
+
+## 69.9 Pipeline orchestration for ML
+
+### 69.9.1 What ML adds to orchestration
+
+§61.15 introduced orchestrators for data pipelines: DAGs of idempotent tasks on schedules, with retries and SLAs. ML pipelines need four more things:
+
+1. **Typed artifact passing.** Steps exchange datasets and models measured in gigabytes, which must flow through object storage with recorded URIs, not through the orchestrator's database.
+2. **Heterogeneous compute.** One pipeline mixes a Spark step, a CPU step and an 8-GPU training step; each step needs its own container image and resource request.
+3. **Step caching.** Data scientists re-run a pipeline dozens of times while changing only the last steps; recomputing unchanged upstream steps wastes hours.
+4. **Metadata and lineage.** Every execution records its inputs, outputs and parameters, which is what makes §69.10 and §69.13 possible.
+
+### 69.9.2 The tools
+
+**Table 69.4 — ML pipeline orchestrators compared (as of 2026).**
+
+| Row | Kubeflow Pipelines | Apache Airflow | Metaflow | Flyte | Vertex AI / SageMaker Pipelines |
+|---|---|---|---|---|---|
+| What it is | Kubernetes-native ML pipeline platform | General workflow scheduler | Data-scientist-friendly framework from Netflix | Typed, Kubernetes-native workflow engine from Lyft | Managed cloud pipeline services |
+| How it works | Python DSL compiled to a pipeline spec; each step a container | Python DAGs of tasks; scheduler and executors | Python class with `@step` methods; artifacts saved automatically | Typed Python tasks and workflows; each task a container | Python SDK; provider runs steps serverlessly |
+| Advantages | Artifact lineage, caching, Kubernetes resources per step | Mature, huge operator library, backfills | Local-to-cloud with one code base; `resume` | Strong typing, versioned workflows, caching | No cluster to run; integrated registry and IAM |
+| Disadvantages | Needs a Kubernetes team | No artifact model or step caching built in | Opinionated; production scheduling via another engine | Smaller ecosystem; Kubernetes required | Lock-in; less control; per-step overhead |
+| Performance | Pod start-up per step (seconds) | Scheduler latency; not for sub-minute steps | Fast local iteration; cloud steps on batch or Kubernetes | Pod per task; parallel map tasks | Step provisioning overhead (minutes) |
+| Operational complexity | High | Medium | Low to medium | Medium to high | Low |
+| Cost | Cluster you run | Scheduler plus workers | Compute plus storage | Cluster you run | Managed premium on compute |
+| Use cases | Kubernetes-centric ML teams | Data platforms adding ML steps | Many data scientists, many small projects | Large ML platforms needing reproducibility | Teams all-in on one cloud |
+| Choose when | You already run Kubernetes well | Airflow already runs your data DAGs | Researcher velocity matters most | Typed, cached, versioned pipelines at scale | Small platform team, one cloud |
+
+Sources for the table: [Kubeflow Docs; Apache Airflow Docs; Metaflow Docs; Flyte Docs; Google Cloud Docs: Vertex AI Pipelines; AWS Docs: SageMaker Pipelines].
+
+A few details matter when choosing. **Kubeflow Pipelines** compiles a Python definition into a portable pipeline specification and runs each component as a container; it caches step results and records artifacts and executions in a metadata store [Kubeflow Docs]. **Airflow** schedules tasks rather than artifacts; large data passes through external storage, small values through XComs, and data-aware scheduling (datasets, renamed assets in Airflow 3) can trigger a DAG when an upstream table updates [Apache Airflow Docs]. **Metaflow** persists every attribute assigned in a step (`self.model = ...`) as a versioned artifact, can `resume` a failed run from the failed step, runs steps on cloud compute with decorators, and deploys flows to production schedulers such as AWS Step Functions or Argo Workflows [Metaflow Docs]. **Flyte** type-checks the interfaces between tasks, registers immutable versions of workflows, and caches a task's outputs when it is declared cacheable with a cache version [Flyte Docs]. **Vertex AI Pipelines** runs Kubeflow Pipelines or TFX definitions as a managed service, and **SageMaker Pipelines** offers a managed equivalent with configurable step caching.
+
+### 69.9.3 Caching of pipeline steps
+
+::: definition
+**Definition — Step cache.** A map from a step's **cache key**, a hash of everything that determines its output (step code version, container image digest, parameters, and the identities of its input artifacts), to the step's recorded outputs. On a hit, the orchestrator reuses the outputs instead of running the step.
+:::
+
+**Figure 69.10 — How a cached step decides whether to run.**
+
+```mermaid
+flowchart LR
+  IN["Inputs: image digest,<br/>code version, params,<br/>input artifact IDs"] --> H[Hash to cache key]
+  H --> L{Key in<br/>metadata store?}
+  L -->|hit| R[Reuse output URIs]
+  L -->|miss| X[Run step]
+  X --> W[(Write outputs to<br/>object storage)]
+  W --> M[(Record key and<br/>outputs in metadata)]
+  R --> NEXT[Next step]
+  M --> NEXT
+```
+
+**Reading the diagram.** Before running a step, the orchestrator hashes its inputs into a key and looks it up synchronously in the metadata store. A hit returns the URIs of earlier outputs, which downstream steps read from object storage as usual; a miss runs the step, writes outputs, then records the key. Correctness depends entirely on the key including *everything* that affects the output. Failure points: a step that reads "the latest partition" or calls `now()` hides an input from the key and returns a stale cached result; outputs deleted by an object-store lifecycle rule while the cache entry survives. Scaling: lookups are cheap; the cost is storage of retained outputs.
+
+::: formula
+**Expected cost of a pipeline run with step caching**
+
+$$C_{\text{run}} = \sum_{i=1}^{S} c_i\,(1 - h_i) \qquad \text{Savings} = 1 - \frac{C_{\text{run}}}{\sum_i c_i}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $S$ | Steps in the pipeline | steps |
+| $c_i$ | Cost (or duration) of running step $i$ | \$ or minutes |
+| $h_i$ | Probability that step $i$ is a cache hit on a given run | fraction |
+| $C_{\text{run}}$ | Expected cost (or duration) of one run | \$ or minutes |
+:::
+
+::: example
+**Worked example — ETA experimentation with and without caching.** The ETA pipeline has five steps: extract (40 min, \$12), validate (5 min, \$2), build features (30 min, \$15), train (15 min, \$8), evaluate (5 min, \$3); a full run takes 95 min and costs \$40. A data scientist tuning hyperparameters launches 30 runs a day, each changing only training parameters.
+
+1. Without caching: $30 \times 40 = \$1{,}200$ a day, and each experiment waits 95 min.
+2. With caching, the first run of the day misses everywhere (\$40). The other 29 hit on extract, validate and features ($h = 1$) and miss on train and evaluate: $8 + 3 = \$11$ and 20 min each.
+3. Daily cost: $40 + 29 \times 11 = \$359$. Savings $= 1 - 359/1{,}200 = 70\%$, and turnaround falls from 95 to 20 minutes, 4.75 times faster.
+4. Storage of cached outputs: one training set of about 10.8 GB a day (§61.13) at \$20 per TB-month is about \$0.22 per month for each day retained, negligible against \$841 a day saved.
+
+*Interpretation:* the money matters less than the turnaround: 20-minute iterations allow several ideas per hour instead of four a day. *Engineering implication:* order pipelines so that the steps people change most often come last, keep upstream steps deterministic so they can be cached, and expire cache entries together with their outputs.
+:::
+
+### 69.9.4 Idempotent steps
+
+Caching, retries and backfills all assume that running a step twice with the same inputs is harmless and gives the same result. Make every step **idempotent** (§22.15): write outputs to a path derived from the run or cache key, publish atomically (write to a temporary location, then commit, as table formats do, §61.8.2), never append to a shared location, and read inputs by pinned version rather than by "latest". A training step that registers a model should use the run ID as an idempotency key, so a retried step does not create two registry versions.
+
+::: mistake
+**"The orchestrator retries, so the pipeline is reliable."** Retries make a non-idempotent step *less* reliable: a step that appends rows or increments a counter doubles its effect on every retry. Reliability comes from idempotent steps; retries only exploit it.
+:::
+
+## 69.10 Reproducibility in practice
+
+§59.14 defined three levels of reproducibility (re-runnable, statistically reproducible, bitwise reproducible) and listed what to version. A platform turns that list into a **reproducibility manifest** written automatically by every CT run and stored with the registry version.
+
+**Figure 69.11 — The reproducibility manifest of one training run.**
+
+```mermaid
+flowchart LR
+  SNAP[("Data: Iceberg tag<br/>eta_train_2026_11_08")] --> MAN[Run manifest<br/>run 9312]
+  GIT["Code: commit a91f3c2"] --> MAN
+  CFG["Config: params.yaml<br/>hash 5d1e"] --> MAN
+  IMG["Image: sha256 digest<br/>CUDA 12.x, lockfile"] --> MAN
+  SEED["Seeds: 69 for split,<br/>init, shuffling"] --> MAN
+  HW["Hardware: 1 node,<br/>64 vCPU, threads=1"] --> MAN
+  MAN --> VER[(Registry: eta-gbdt v58)]
+```
+
+**Reading the diagram.** Six inputs determine a run, and the manifest records an immutable identifier for each: a **tagged** table snapshot rather than a time-travel timestamp that will expire (§61.13), a Git commit, a hash of the resolved configuration, a container image digest (which pins library versions through the lock file), the seeds, and the hardware and parallelism used. The manifest is attached to registry version 58. To reproduce, the platform launches the same image with the same configuration on the same snapshot. Failure points: any input read without an identifier (a "latest" partition, an unpinned base image, an environment variable that changes thread count).
+
+Seeds are necessary but not sufficient. On GPUs, several sources of nondeterminism remain even with fixed seeds [PyTorch Docs: Reproducibility]:
+
+**Table 69.5 — Sources of nondeterminism in GPU training.**
+
+| Source | Why results differ | Mitigation | Cost |
+|---|---|---|---|
+| Atomic floating-point adds | Parallel threads add in different orders; floating-point addition is not associative | Deterministic kernels (`torch.use_deterministic_algorithms(True)`) | Slower kernels; some operations unsupported |
+| Convolution algorithm selection | Benchmark mode picks the fastest algorithm per run | Disable benchmark mode; select deterministic algorithms | Some speed loss |
+| cuBLAS workspace behavior | Some operations nondeterministic unless a workspace setting is fixed | Set `CUBLAS_WORKSPACE_CONFIG` as documented | Minor |
+| Data-loader workers | Each worker's random state and arrival order | Seed workers; deterministic sampler | Minor |
+| Distributed reductions | All-reduce order and bucketing vary (§65.7) | Fixed world size and bucketing; accept statistical reproducibility | Often impractical |
+| Library and driver versions | Different kernels and numerics | Pin image, CUDA, cuDNN and driver | Upgrade discipline |
+
+The practical target for most deep learning is **statistical reproducibility**: re-runs land within a known band. Measure that band once per model family by training with three to five seeds; the spread of the validation metric across seeds is the noise floor below which promotion gates and experiment comparisons cannot distinguish models. For the tree models in this chapter, which run on CPU with a fixed thread count, bitwise reproduction is realistic, and the programs above print identical outputs on every run.
+
+::: recommendation
+**Recommendation — Test reproducibility, do not assume it.** Once a month, have the platform re-run a recent production training run from its manifest and compare metrics with the original. A failure means an unpinned input exists, and you want to find it before an auditor or an incident does.
+:::
+
+## 69.11 Governance
+
+### 69.11.1 Approvals, audit trails and access control
+
+::: definition
+**Definition — Model governance.** The policies and controls that determine who may train, approve, deploy and change a model, require documentation and independent review in proportion to risk, and keep an auditable record of every decision.
+:::
+
+Governance is the part of MLOps that answers questions after the fact: who approved the model that denied this customer's order, on what evidence, and what data trained it? Four mechanisms answer them:
+
+1. **Approvals.** Promotion to `champion` requires sign-off proportional to risk: automatic for a low-risk model whose gate passed, a model owner for medium risk, an independent validator for high risk.
+2. **Audit trails.** The registry, the config repository and the pipeline metadata store record every alias move, deployment and approval with actor, timestamp and reason. Git history already does this for GitOps deployments (§43.10).
+3. **Access control.** Separate permissions to train, to register, to approve and to deploy, granted to roles and to pipeline service identities (§43.11). The person who trained a high-risk model should not be the one who approves it.
+4. **Documentation.** Model cards (§69.8.1) and data documentation as required registry fields, versioned with the model.
+
+### 69.11.2 Model risk management
+
+Banking regulators formalized **model risk management** long before MLOps: the US Federal Reserve and OCC's supervisory guidance SR 11-7 (2011) defines model risk as the potential for adverse consequences from decisions based on incorrect or misused models, and asks for sound development, **independent validation** ("effective challenge") and governance including a model inventory [Federal Reserve and OCC 2011]. Its ideas transfer well: tier models by risk, keep an inventory (the registry), validate independently in proportion to the tier, and monitor continuously.
+
+**Figure 69.12 — Controls by model risk tier.**
+
+```mermaid
+flowchart TB
+  NEW([New model or<br/>material change]) --> TIER{Risk tier}
+  TIER -->|low: ranking tweaks| T1[Automated gate<br/>auto-approve]
+  TIER -->|medium: ETA| T2[Gate plus<br/>owner approval]
+  TIER -->|high: fraud blocking| T3[Gate plus independent<br/>validation and sign-off]
+  T1 --> REG[(Registry with<br/>audit log)]
+  T2 --> REG
+  T3 --> REG
+  REG --> MON[Monitoring and<br/>periodic review]
+```
+
+**Reading the diagram.** A new model or a *material* change (new features, new architecture, new use) is tiered by the harm its errors can cause. Low-risk models ship on an automated gate; medium-risk ones add the owner's approval; high-risk models, such as QuickBite's fraud model that blocks payments, need an independent validator who did not build the model. All paths end in the registry, whose audit log is the evidence, and in monitoring with a periodic review whose frequency also follows the tier. Routine retrains with unchanged features can use a lighter path than material changes, which is what makes continuous training compatible with governance. Failure point: treating every nightly retrain as a material change, which pushes teams to retrain less often or to bypass the process.
+
+Regulation is moving in the same direction. The EU AI Act imposes documentation, logging, human-oversight and risk-management obligations on high-risk AI systems; Chapter 71 covers it with fairness, privacy and explainability. A platform that already records lineage, approvals and model cards meets much of the record-keeping burden by construction.
+
+## 69.12 Monitoring hooks and the retraining loop
+
+Chapter 70 owns *what* to monitor and the statistics of drift. The platform owns the **hooks**: the data every model emits by default, so that monitoring works on day one without per-team plumbing.
+
+**Table 69.6 — What the platform logs for every prediction and every run.**
+
+| Hook | Contents | Consumer |
+|---|---|---|
+| Prediction log | Request ID, timestamp, model name and version, feature vector (or hash plus sampled values), prediction, latency | Drift monitors, label joins, debugging (§60.6.2) |
+| Label join | Request ID, label, label timestamp | Delayed performance metrics (§59.12.2) |
+| Serving metrics | Per-version latency, errors, throughput, resource use | Canary analysis, SLOs (§40.4) |
+| Run metadata | Manifest, gate report, slice metrics | Audits, rollback decisions |
+| Feature freshness | Age of each feature at read time | Skew and staleness alerts (§62.10) |
+
+**Figure 69.13 — Closing the retraining loop safely.**
+
+```mermaid
+flowchart LR
+  SRV[Model server<br/>version tagged] -.->|prediction log| K[[Kafka]]
+  K -.-> LAKE[(Lakehouse<br/>predictions plus labels)]
+  LAKE --> MON[Monitors<br/>Chapter 70]
+  MON -->|drift or decay| POL{Trigger policy}
+  POL -->|rate limit OK| TQ[[CT trigger queue]]
+  POL -->|severe, labels suspect| HUM([Page owner,<br/>no auto retrain])
+  TQ --> CT[CT pipeline<br/>and promotion gate]
+  CT --> REG[(Registry)]
+  REG --> SRV
+```
+
+**Reading the diagram.** Prediction logs flow asynchronously through Kafka into the lakehouse, where they are joined with labels as they arrive. Monitors read those tables and raise signals. The **trigger policy** is the safety valve: ordinary decay or drift enqueues a CT run, subject to the rate limit of §69.5.1; a severe or suspicious signal (labels that look corrupted, a sudden collapse after an upstream change, a suspected attack) pages a human instead, because retraining on broken data would teach the model the breakage. The CT pipeline's gate still decides promotion. Failure points: the loop amplifying itself (the model influences its own labels, §59.13.2), so keep a randomized holdout; and the monitor and training reading the same corrupted table, so validate data before both.
+
+::: warning
+**Warning — Automated retraining can learn an outage.** If a courier-app bug delays "delivered" events by 20 minutes for a day, delivery-time labels inflate, drift monitors fire, and an eager loop retrains a model that predicts 20 minutes too long. Guard the loop with label-quality checks, a training window long enough to dilute one bad day, and the slice guardrails of §69.5.3.
+:::
+
+## 69.13 Rollback
+
+### 69.13.1 Model, feature and data rollback
+
+A model in production depends on three versioned things, so "roll back" has three meanings:
+
+- **Model rollback** moves the `champion` alias back to the previous version (§69.6.5). Fast (seconds to minutes) and safe *only if* the features the old model expects are still served with the semantics it was trained on.
+- **Feature rollback** restores a previous feature definition or pipeline version in the feature store (Chapter 62), including re-materializing online values. Slower (minutes to hours) and it affects every model that reads the feature.
+- **Data rollback** restores a table to an earlier snapshot (table-format time travel or a tagged snapshot, §61.13) after bad data landed, then re-runs downstream steps. It fixes the *next* training run, not the serving model.
+
+**Table 69.7 — Compatibility between model and feature versions.**
+
+| Serving features | Model trained on old features | Model trained on new features |
+|---|---|---|
+| Old definition | Correct (pre-change state) | Skew: wrong inputs for the new model |
+| New definition | Skew: wrong inputs for the old model | Correct (post-change state) |
+| Both, side by side | Correct | Correct: rollback is safe |
+
+The last row is the expand-and-contract pattern of database migrations (§43.13.2) applied to features: add the new definition alongside the old one under a new name or version, migrate models one by one, and remove the old definition only after no model in the registry's `champion` or `previous` aliases reads it. The registry's signatures make that check automatic.
+
+### 69.13.2 Worked incident: a rollback that did not roll back
+
+::: example
+**Worked example — The kitchen-backlog incident (illustrative).** QuickBite redefines the feature `kitchen_backlog` from "number of open orders" (v12) to "minutes of queued preparation work" (v13). The feature team switches online materialization to v13 on Tuesday at 10:00; ETA model v58, trained on v13, becomes champion at 11:00, replacing v57 (trained on v12).
+
+1. At 18:00, monitors show v58's predictions in city 3 running 4 minutes high. On-call rolls the model back to v57 at 18:10.
+2. Predictions get *worse*: v57 now receives backlog values measured in minutes (typically 20–60) where it learned counts (typically 2–8), and reads every kitchen as overloaded. Late-ETA complaints rise.
+3. Diagnosis at 18:40: the registry shows v57 was trained on `kitchen_backlog` v12; the feature store serves only v13. The model rollback created training–serving skew.
+4. Correct recovery: restore v12 materialization alongside v13 (both computed from the same stream; 25 minutes to backfill online values), point v57 at v12, then investigate v58's city-3 bias separately. Full recovery at 19:15.
+5. Impact estimate: city 3 alone was degraded from 11:00 to 18:10 by v58's bias; every city was degraded from 18:10 to 19:15 by the skew. Assuming 10% of daily orders fall in that 65-minute dinner window, the botched rollback alone distorted ETAs for about $0.10 \times 500{,}000 = 50{,}000$ orders. If city 3 handles 5% of orders and 40% of daily orders fall between 11:00 and 18:10, v58's bias affected about $0.05 \times 0.40 \times 500{,}000 = 10{,}000$ orders: the botched rollback did five times more damage than the defect it was meant to undo.
+
+*Interpretation:* the fast, familiar lever (model rollback) was the wrong one because model and feature changed together. *Engineering implication:* never retire a feature version while any rollback target reads it; make the rollback runbook check signature compatibility before moving an alias; and roll out feature and model changes in separate steps so each can be reverted alone.
+:::
+
+**Figure 69.14 — Timeline of the kitchen-backlog incident.**
+
+```mermaid
+sequenceDiagram
+  participant FS as Feature store
+  participant REG as Registry
+  participant SRV as ETA service
+  participant OC as On-call
+  FS->>SRV: 10:00 serve backlog v13 only
+  REG->>SRV: 11:00 champion v58, trained on v13
+  SRV-->>OC: 18:00 alert, city 3 ETAs high
+  OC->>REG: 18:10 roll back to v57
+  REG->>SRV: v57 reads v13 values, skew
+  SRV-->>OC: complaints rise
+  OC->>FS: 18:40 restore v12 alongside v13
+  FS->>SRV: 19:05 v12 values backfilled
+  OC->>SRV: 19:15 v57 reads v12, recovered
+```
+
+**Reading the diagram.** Solid arrows are actions; dashed arrows are signals reaching the on-call engineer. The defect lies in the first message: the feature store replaced v12 instead of adding v13 next to it, removing the rollback target's inputs. Every later step either suffered from or repaired that choice. With expand-and-contract, the 18:10 rollback would have ended the incident.
+
+## 69.14 Platform case studies as published
+
+Each platform below is described only from its builders' publications; details may have changed since.
+
+::: industry
+**Uber — Michelangelo (2017).** Built to give teams a standard workflow: manage data, train, evaluate, deploy, predict and monitor. It provides a shared feature store with batch and near-real-time paths (§62.13), distributed training, and a model repository: every trained model is stored as a versioned object recording who trained it, the configuration, references to training and evaluation data, accuracy metrics and learned parameters. Models are deployed for offline batch prediction or to an online prediction service; several models can be deployed to the same serving container, addressed by a unique identifier or a tag, which supports A/B testing and safe transitions. For monitoring, the platform logs a share of predictions and later joins them with observed outcomes to compute ongoing accuracy.
+*Evidence: Primary* — [Hermann and Del Balso 2017]
+:::
+
+::: industry
+**Google — TFX (2017).** A platform that integrates data analysis, transformation, validation, training, evaluation and validation of models, and serving into one configurable pipeline. Transformations are exported with the model to avoid training–serving skew; a model is pushed to serving only after validation against the current model; the authors emphasize continuous training with warm-starting on fresh data. The paper reports its deployment for Google Play app recommendations.
+*Evidence: Primary* — [Baylor et al. 2017]
+:::
+
+::: industry
+**Facebook — FBLearner Flow (2016).** Facebook's workflow platform for ML: engineers write **workflows** in Python composed of **operators**, with typed **channels** describing inputs and outputs, so the system can build the execution graph, schedule steps across a cluster and track artifacts. An experiment-management UI lets engineers launch, compare and reuse workflows. The 2016 post reported that more than 25% of Facebook's engineering team had used it, that it had trained over a million models, and that its prediction service made more than 6 million predictions per second (as reported in 2016).
+*Evidence: Primary* — [Dunn 2016]
+:::
+
+::: industry
+**Netflix — Metaflow (open-sourced 2019).** Designed around data scientists' productivity: a flow is a Python class whose steps run locally or on cloud compute through decorators, every step's state is persisted as versioned artifacts, failed runs can be resumed, and finished flows deploy to production schedulers. Netflix describes it as "human-centric": the platform handles infrastructure so scientists keep working in plain Python.
+*Evidence: Primary* — [Netflix Technology Blog 2019; Metaflow Docs]
+:::
+
+::: industry
+**Airbnb — Bighead (2018).** An end-to-end platform presented in conference talks: Zipline for features (§62.13), Redspot as a hosted multi-tenant notebook service, a model library and service for versioned model management, ML Automator generating Airflow pipelines for training and batch scoring, and Deep Thought for online serving with standardized logging and alerting.
+*Evidence: Secondary* — conference talk and interview [Puttaswamy and Hoh 2018; Kale 2018]
+:::
+
+**Table 69.8 — What the published platforms have in common.**
+
+| Platform | Feature management | Pipeline definition | Model store | Serving | Monitoring hook |
+|---|---|---|---|---|---|
+| Michelangelo | Shared feature store, DSL | Platform workflow | Versioned model repository | Batch and online | Logged predictions joined to outcomes |
+| TFX | Transform exported with model | Component pipeline | Pushed after validation | TF Serving | Validation against current model |
+| FBLearner Flow | Upstream systems | Python workflows, operators | Tracked artifacts | Prediction service | Experiment UI |
+| Metaflow | Upstream systems | Python flow class | Versioned artifacts | Via other systems | Via other systems |
+| Bighead | Zipline | ML Automator on Airflow | Model service | Deep Thought | Standard logging, alerting |
+
+The lesson is convergence: each company found that teams kept rebuilding the same glue, and centralized it behind a standard workflow, a model store with lineage and a standard serving path. They differ in scope: Michelangelo and Bighead span the whole lifecycle, while Metaflow deliberately focuses on the authoring and orchestration experience and integrates with other systems for the rest.
