@@ -60,8 +60,8 @@
 58: {research: done, draft: done, diagrams: done, review: done, final: todo}
 59: {research: done, draft: done, diagrams: done, review: done, final: todo}
 60: {research: done, draft: done, diagrams: done, review: done, final: todo}
-61: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-62: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-63: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-64: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-65: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+61: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+62: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+63: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+64: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+65: {research: done, draft: done, diagrams: done, review: wip, final: todo}

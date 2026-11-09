@@ -317,3 +317,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-310 | 63 | Sambasivan et al. CHI 2021: 53 participants and prevalence wording; Bach et al. 2019 (Snorkel DryBell) comparison wording | Open | |
 | UQ-311 | 63 | Gilardi et al. 2023 (LLM vs crowd workers) task count and cost ratio; Northcutt et al. 2021b average test-set error rate; He et al. 2014 downsampling rates | Open | |
 | UQ-312 | 63 | Data cards framework name; Steiger et al. 2021 full title; Label Studio/CVAT adoption (as of 2026) | Open | |
+| UQ-313 | 65 | Llama 3 (Dubey et al. 2024) reliability stats (466/47/419 interruptions; 78% hardware; 58.7% GPU incl. 30.1% faulty GPU, 17.2% HBM3; 3 manual interventions; >90% effective time; 1–2% diurnal variation); 3.8×10^25 FLOPs; 38–43% MFU; 4D layouts | Open | |
+| UQ-314 | 65 | Megatron throughput (15.1 PFLOP/s @ 76% in 2019; 502 PFLOP/s @ 52% in 2021); ZeRO >100B params on 400 GPUs, super-linear speedup, Turing-NLG | Open | |
+| UQ-315 | 65 | Switch Transformer "up to 7×" speedup; GShard 2,048 TPU v3 cores ~4 days; PaLM 46.2% MFU and venue; DDP near-linear to 256 GPUs | Open | Merge with UQ-308 |
+| UQ-316 | 65 | Jeaugey 2019 NCCL blog title; FSDP PVLDB volume; torchrun URL; achieved bandwidth figures (360/40/320 GB/s) are teaching approximations | Open | |
