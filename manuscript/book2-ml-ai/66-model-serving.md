@@ -2,14 +2,14 @@
 
 > **Level:** 3 · **Track:** B (ML/AI) · **Estimated reading time:** 5 h
 
-A trained model is a file. On QuickBite's laptop-sized test bench the ETA model answers in a tenth of a millisecond, the dish-photo classifier in 40 milliseconds, and both look finished. In production the same files must answer 40,000 times a second at dinner and 4,000 times a second at 3 a.m.; survive a node failure, a bad release and a feature store that slows down; change version every night without a single failed request; and cost a fraction of a cent per order. **Model serving** is the engineering that turns the file into that service.
+A trained model is a file. On QuickBite's laptop-sized test bench the ETA model answers in a tenth of a millisecond, the dish-photo classifier in 50 milliseconds, and both look finished. In production the same files must answer 40,000 times a second at dinner and 4,000 times a second at 3 a.m.; survive a node failure, a bad release and a feature store that slows down; change version every night without a single failed request; and cost a fraction of a cent per order. **Model serving** is the engineering that turns the file into that service.
 
 This chapter owns general model serving: everything between "the model is in the registry" and "a prediction reached the client", for models that are not large language models. You will learn the four inference modes (online, asynchronous, streaming and batch), the anatomy of a model server, and what each widely used server (NVIDIA Triton, TorchServe, TensorFlow Serving, KServe, Ray Serve and BentoML) is for. The quantitative core is **dynamic batching**: you will derive its latency and throughput, simulate it, and measure a real batch curve with PyTorch. You will then decide between CPUs and GPUs by cost per 1,000 predictions, share GPUs among models, autoscale with headroom, load and warm models quickly, route traffic between versions, and roll out safely with shadow traffic, canaries, A/B tests and interleaving. The chapter ends with batch inference at scale, reliability and observability for serving, and a reference architecture for QuickBite's ETA service at 40,000 predictions per second.
 
 Chapter 60 placed the model runtime inside the inference pipeline (§60.6), set its latency budget (§60.10) and fleet-sizing formula (§60.11). Chapter 64 explained why GPUs need batches. Chapter 67 makes each model cheaper (quantization, distillation, compilation), Chapter 68 serves recommenders, and Chapter 73 owns large language model (LLM) serving: key–value (KV) cache management and continuous batching are previewed here only.
 
 ::: note
-**QuickBite assumptions used in this chapter.** These reuse the Book II design point; they are teaching assumptions, not measurements of a real company. Search peaks at 2,000 requests per second (RPS), each scoring 20 restaurants: **40,000 ETA predictions/s at peak**, about 360 million a day, an average of 4,167/s (peak-to-average ratio 9.6, §18.11), about 720 ETA predictions per order (§60.6.2). The primary ETA model is gradient-boosted trees costing 0.1 ms of CPU per prediction; a deep challenger costs 2 ms per prediction on CPU or runs at 25,000 predictions/s per GPU at batch 64 (§60.11). The ETA service's p99 budget is 100 ms, of which the model stage gets 20 ms (Table 60.12). Prices: \$0.77 per hour for a 16-vCPU node (\$0.048 per vCPU-hour) and \$2.50 per GPU-hour (§60.11, §64.1). QuickBite receives 200,000 new dish photos per day (§58.19). Sizes use SI units (1 GB = 10⁹ bytes).
+**QuickBite assumptions used in this chapter.** These reuse the Book II design point; they are teaching assumptions, not measurements of a real company. Search peaks at 2,000 requests per second (RPS), each scoring 20 restaurants: **40,000 ETA predictions/s at peak**, about 360 million a day, an average of 4,167/s (peak-to-average ratio 9.6, §18.11), about 720 ETA predictions per order (§60.6.2). The primary ETA model is gradient-boosted trees costing 0.1 ms of CPU per prediction; a deep challenger costs 2 ms per prediction on CPU or runs at 25,000 predictions/s per GPU at batch 64 (§60.11). The ETA service's p99 budget is 100 ms, of which the model stage gets 20 ms (Table 60.12). Prices: \$0.77 per hour for a 16-vCPU node (\$0.048 per vCPU-hour) and \$2.50 per GPU-hour (§60.11, Chapter 64). QuickBite receives 200,000 new dish photos per day (§58.19). Sizes use SI units (1 GB = 10⁹ bytes).
 :::
 
 ## 66.1 Learning objectives
@@ -50,20 +50,20 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a bakery. A customer at the counter who wants a coffee waits while it is made: that is online inference, and the barista must be quick because a person is standing there. A wedding cake ordered today for Saturday is asynchronous: the order goes into a queue, the work takes hours, and the customer is called when it is ready. The baker who takes a fresh tray out whenever the oven timer rings, without anyone asking, is streaming: an event (the timer) triggers work whose result goes onto a shelf. And the bread baked at 4 a.m. for the whole day is batch: compute everything ahead, then serve from the shelf instantly.
+Think of a bakery. A coffee is made while the customer waits (online). A wedding cake ordered for Saturday goes into a queue and the customer is called when it is ready (asynchronous). A fresh tray comes out whenever the oven timer rings, with nobody asking (streaming). The day's bread is baked at 4 a.m. and served from the shelf (batch).
 
-The choice is driven by two questions: **does someone wait for the answer?** and **can the answer be computed before the question is asked?** If the input space is small and known in advance (every restaurant's prep time tomorrow), precompute it in batch. If the input is only known at request time (this customer, this basket, this traffic, now), compute it online. If the input arrives as events and the consumer can tolerate seconds of delay, stream it. If the computation is too slow for a request but someone needs the answer (an image-moderation verdict, a document summary), make it asynchronous.
+Two questions decide: **does someone wait for the answer?** and **can it be computed before the question is asked?** Enumerable inputs known in advance (every restaurant's prep time tomorrow) go to batch; inputs known only at request time (this customer, this basket, now) go online; event-triggered work that tolerates seconds of delay streams; work too slow for a request that someone still needs (an image-moderation verdict) is asynchronous.
 
 #### Why does this exist?
 
-Latency, freshness and cost pull in different directions. Online inference gives the freshest answer but pays for peak capacity and every millisecond of the budget. Batch inference is the cheapest per prediction, because it runs at full utilization on cheap capacity, but its answers are hours old and it must compute predictions for inputs nobody asks about. Asynchronous and streaming modes sit between: they absorb bursts in a queue (§30.3), so capacity can be sized for the average rather than the peak. Section 60.8 introduced the batch-versus-online decision; this section adds the two queue-based modes and their mechanics.
+Latency, freshness and cost pull in different directions. Online inference is freshest but pays for peak capacity; batch is cheapest per prediction but stale and scores inputs nobody asks about; asynchronous and streaming modes absorb bursts in a queue (§30.3), so capacity can be sized nearer the average. Section 60.8 introduced batch versus online; this section adds the queue-based modes.
 
 #### How it works internally
 
-1. **Online.** The client opens an RPC (HTTP/JSON or gRPC) to a load balancer, which routes to a replica of the model server. The server fetches or receives features, runs the model, and responds. Every stage spends part of a deadline propagated from the client (§22.11).
-2. **Asynchronous.** The client posts a job to an API, which writes it to a queue (SQS, Kafka, Redis streams) and returns a job ID immediately (HTTP 202 Accepted). Workers pull jobs at their own pace, run the model and write the result to a store keyed by job ID; the client polls or receives a webhook. Queue depth is the natural autoscaling signal.
-3. **Streaming.** A stream processor (Kafka consumer, Flink job) reads events from partitions, gathers features, calls the model in-process or through a model server, and produces predictions to an output topic or writes them to a key-value store. Ordering and parallelism follow the topic's partitions (§31.5); consumer lag is the health signal.
-4. **Batch.** A scheduler (Airflow, §61.15) launches a Spark or Ray job that reads a partition of input rows, scores them in large batches on many workers, and writes an output partition atomically. Online services read the results from a key-value store or warehouse.
+1. **Online.** An RPC (HTTP or gRPC) reaches a model-server replica through a load balancer; every stage spends part of the client's deadline (§22.11).
+2. **Asynchronous.** The API enqueues the job and returns a job ID (HTTP 202); workers pull jobs, write results to a store keyed by job ID, and the client polls or gets a webhook. Queue depth drives autoscaling.
+3. **Streaming.** A Kafka consumer or Flink job scores events per partition (§31.5) and writes predictions to a topic or key-value store; consumer lag is the health signal.
+4. **Batch.** A scheduler (§61.15) launches a Spark or Ray job that scores an input partition in large batches and writes an output partition atomically.
 
 **Figure 66.1 — The four inference modes.**
 
@@ -92,7 +92,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** *Online* (solid arrows, synchronous): the client's RPC passes a load balancer to a model-server replica and waits for the answer; the only storage on the path is whatever the server reads for features. Failure point: any slow stage breaks the client's deadline; scale by adding replicas. *Asynchronous*: the job API returns immediately and the queue (dotted, asynchronous) decouples arrival from processing; workers write to a result store, the storage boundary the client polls. Failure point: a growing queue; scale workers on queue depth. *Streaming*: a stream job consumes events from Kafka, scores them and produces predictions to another topic or a key-value store; no client waits. Failure point: consumer lag; scale by partitions and consumers. *Batch*: a scheduled job reads a bounded lake partition and writes a prediction table, which is bulk-loaded into a serving store. Failure point: a failed or late run leaves stale predictions; scale with more workers.
+**Reading the diagram.** *Online* (solid, synchronous): the client waits while its RPC passes a load balancer to a replica; failure point: any slow stage breaks the deadline; scale with replicas. *Asynchronous*: the queue (dotted) decouples arrival from processing; workers write to a result store, the storage boundary the client polls; failure point: a growing queue; scale workers on its depth. *Streaming*: a stream job consumes Kafka events and writes predictions to a topic or key-value store; failure point: consumer lag; scale with partitions. *Batch*: a scheduled job turns a lake partition into a prediction table bulk-loaded into a serving store; failure point: a late run leaves stale predictions; scale with workers.
 
 #### QuickBite's inference modes
 
@@ -132,8 +132,8 @@ The prep-time baseline shows why batch wins when the input space is enumerable: 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Online p99 breach at peak | Replicas saturated; queues grow | Latency SLI, queue time metric | Shed load to fallback; scale out | Headroom (§66.9), load shedding |
-| Async queue grows for hours | Workers fewer than arrivals; poison job retried forever | Queue age, oldest-message metric | Scale workers; dead-letter the poison job | Queue-depth autoscaling; retry limits |
-| Streaming lag after a rebalance | Consumers restart and reload the model | Consumer lag per partition | Wait, or add consumers | Keep model loaded across rebalances; cooperative rebalancing (§31.12) |
+| Async queue grows for hours | Poison job retried forever | Oldest-message age | Dead-letter it | Retry limits |
+| Streaming lag after a rebalance | Consumers reload the model | Consumer lag | Add consumers | Cooperative rebalancing (§31.12) |
 | Batch run fails at 05:00 | Bad input partition, spot preemption | Job status, freshness of output table | Re-run the idempotent job; serve yesterday's table | Data validation gates; checkpointed jobs |
 | Online and batch disagree | Different feature code in each path | Skew monitor (§62.9) | Fix the path that diverged | One feature definition for both paths |
 
@@ -151,7 +151,7 @@ The prep-time baseline shows why batch wins when the input space is enumerable: 
 
 #### First-principles explanation
 
-A model server is a restaurant kitchen. The front-of-house (the request handler) takes orders in several languages and checks them. Prep cooks (pre-processing) chop the inputs into the shape the chef needs. The pass (the batching queue) holds tickets for a moment so that the chef can cook four steaks in one pan. The chef (the runtime) does the heavy work, the plating station (post-processing) makes the output presentable, and the pantry (the model repository) holds the recipes, of which the kitchen keeps one or a few in active use. A manager walks around with a clipboard: the health checks and metrics.
+A model server is a restaurant kitchen. The front of house (request handler) takes and checks orders; prep cooks (pre-processing) cut inputs to shape; the pass (batching queue) holds tickets so the chef can cook four steaks in one pan; the chef (runtime) does the heavy work; plating (post-processing) finishes it; the pantry (model repository) holds the recipes; a manager with a clipboard is health checks and metrics.
 
 #### Why does this exist?
 
@@ -190,7 +190,7 @@ flowchart LR
 
 #### Where pre-processing runs
 
-Pre-processing placement is a design decision with real cost. Decoding and resizing a JPEG costs a few milliseconds of CPU, which can exceed the GPU time of the classification itself. Three placements exist: in the client service (simple, but every client reimplements it), in the server's CPU workers (one implementation, but the server's CPU-to-GPU ratio must cover it), or as a separate **transformer** stage in a pipeline (KServe's transformer component, Triton's ensembles). For QuickBite's dish classifier, decoding on CPU workers in the same pod keeps one implementation and avoids sending raw images over the network twice.
+Decoding and resizing a JPEG costs a few milliseconds of CPU, which can exceed the GPU time of the classification. Pre-processing can run in each client (every client reimplements it), in the server's CPU workers (one implementation; size the CPU-to-GPU ratio for it), or in a separate **transformer** stage (KServe's transformer, Triton's ensembles). QuickBite decodes dish photos on CPU workers in the same pod.
 
 ::: recommendation
 **Recommendation — Make the model signature a contract.** Store the input and output names, shapes, types and the pre-processing version with each model in the registry, validate requests against it in the request handler, and fail loudly on mismatch. A silently reordered feature vector is the most expensive bug in serving because nothing crashes.
@@ -241,17 +241,17 @@ flowchart TB
 
 ### 66.5.2 The six servers
 
-**NVIDIA Triton Inference Server.** An open-source C++ server that runs many frameworks through **backends**: TensorRT, ONNX Runtime, PyTorch (LibTorch), TensorFlow, OpenVINO, a Python backend for custom code and a forest-inference backend for tree models [NVIDIA Triton Docs]. Each model has a directory in the model repository with numbered version subdirectories and a `config.pbtxt` declaring inputs, outputs, `max_batch_size`, an **instance group** (how many copies on which devices) and a **dynamic batcher** (preferred batch sizes and `max_queue_delay_microseconds`). Triton runs several models and several instances concurrently on one GPU, supports **ensembles** (a pipeline of models and pre-processing steps executed inside the server), a sequence batcher for stateful models, and serves HTTP and gRPC with the Open Inference Protocol and Prometheus metrics. Companion tools (Perf Analyzer, Model Analyzer) sweep batch and concurrency settings. *As of 2026*: in March 2025 NVIDIA renamed it **NVIDIA Dynamo-Triton** as part of its Dynamo inference platform, whose separate Dynamo framework targets distributed LLM serving (Chapter 73); NVIDIA states that Triton continues to be supported under the new name [NVIDIA Dynamo-Triton].
+**NVIDIA Triton Inference Server.** An open-source C++ server that runs many frameworks through **backends**: TensorRT, ONNX Runtime, PyTorch, TensorFlow, OpenVINO, Python for custom code, and a forest-inference backend for trees [NVIDIA Triton Docs]. Each model directory holds numbered versions and a `config.pbtxt` declaring inputs, outputs, `max_batch_size`, an **instance group** (copies per device) and a **dynamic batcher** (`max_queue_delay_microseconds`, preferred sizes). Triton runs several models and instances concurrently per GPU, chains steps as **ensembles**, and ships load-testing tools (Perf Analyzer, Model Analyzer). *As of 2026*: in March 2025 NVIDIA renamed it **NVIDIA Dynamo-Triton** as part of its Dynamo inference platform, whose separate Dynamo framework targets distributed LLM serving (Chapter 73); NVIDIA states that Triton continues to be supported under the new name [NVIDIA Dynamo-Triton].
 
-**TorchServe.** A PyTorch server developed by AWS and Meta: models are packaged as model archives (`.mar`) with a Python **handler** for pre- and post-processing, served with separate inference, management and metrics APIs, and batched with `batchSize` and `maxBatchDelay` settings. *As of 2026*: the project's README carries a "Limited Maintenance" notice stating that it is no longer actively maintained, and the GitHub repository was archived (read-only) on 7 August 2025 [TorchServe GitHub]. Do not start new deployments on it; existing ones should plan a migration (Triton's PyTorch backend, Ray Serve or a KServe runtime are the usual targets).
+**TorchServe.** A PyTorch server from AWS and Meta: model archives (`.mar`) with Python **handlers**, and batching via `batchSize` and `maxBatchDelay`. *As of 2026*: the project's README carries a "Limited Maintenance" notice stating that it is no longer actively maintained, and the GitHub repository was archived (read-only) on 7 August 2025 [TorchServe GitHub]. Plan migrations off it (to Triton, Ray Serve or a KServe runtime).
 
-**TensorFlow Serving.** Google's C++ server for TensorFlow SavedModels, described by Olston et al. [Olston et al. 2017]. Its abstractions are worth learning even if you never use it: a **servable** is any object clients query (a model version, a lookup table); **loaders** know how to load and unload one; **sources** discover new versions on storage and emit *aspired versions*; and a **manager** loads and unloads them under a **version policy**, either availability-preserving (load the new version before unloading the old) or resource-preserving (unload first to save memory). It includes a request batcher (`max_batch_size`, `batch_timeout_micros`). *As of 2026* it remains maintained for TensorFlow users, with a smaller share of new projects as PyTorch dominates.
+**TensorFlow Serving.** Google's C++ server for SavedModels [Olston et al. 2017]. Its abstractions are worth learning: a **servable** is anything clients query (a model version, a lookup table); **loaders** load and unload one; **sources** discover *aspired versions* on storage; a **manager** applies a **version policy**, availability-preserving (load new before unloading old) or resource-preserving (unload first). It has a batcher (`max_batch_size`, `batch_timeout_micros`) and remains maintained for TensorFlow users as of 2026.
 
-**KServe.** A Kubernetes-native serving platform. You declare an `InferenceService` custom resource with a `predictor` (and optionally a `transformer` for pre/post-processing and an `explainer`); a controller creates the deployment using a **ServingRuntime** (Triton, TensorFlow Serving, an MLServer runtime for scikit-learn and XGBoost, a Hugging Face runtime, or your own image). An init container (the storage initializer) downloads the model from `storageUri`. Deployment modes include a serverless mode on Knative (request-based autoscaling, scale to zero), a raw Kubernetes Deployment mode (HPA or KEDA), and ModelMesh for dense multi-model serving. Canary rollout is a field (`canaryTrafficPercent`) [KServe Docs]. *As of 2026*: KServe was accepted as a Cloud Native Computing Foundation (CNCF) incubating project in 2025, after starting as KFServing in Kubeflow, and recent releases add LLM-oriented features [CNCF 2025].
+**KServe.** A Kubernetes platform: you declare an `InferenceService` with a `predictor` (optionally a `transformer` and an `explainer`), and a controller deploys it with a **ServingRuntime** (Triton, TensorFlow Serving, MLServer for scikit-learn and XGBoost, Hugging Face, or your own image); a storage initializer downloads the model from `storageUri`. Modes include serverless on Knative (scale to zero), raw Deployments (HPA or KEDA) and ModelMesh for dense multi-model serving; canaries are a field, `canaryTrafficPercent` [KServe Docs]. *As of 2026*: KServe was accepted as a Cloud Native Computing Foundation (CNCF) incubating project in 2025, after starting as KFServing in Kubeflow, and recent releases add LLM-oriented features [CNCF 2025].
 
-**Ray Serve.** A Python serving library on the Ray distributed runtime. A **deployment** is a Python class whose replicas are Ray actors; deployments call each other through handles, which makes **model composition** (pipelines, ensembles, business logic between models) ordinary Python. It provides request batching through a `@serve.batch` decorator (maximum batch size and a wait timeout), autoscaling on ongoing requests per replica, fractional GPU allocation, and **model multiplexing**: routing requests for one of many models to replicas that already have it loaded [Ray Serve Docs]. On Kubernetes it runs through KubeRay. Choose it when serving logic is Python-heavy or spans many models.
+**Ray Serve.** A Python library on Ray: a **deployment** is a class whose replicas are Ray actors, and deployments call each other through handles, so **model composition** is ordinary Python. It offers `@serve.batch` (maximum batch size, wait timeout), autoscaling on ongoing requests per replica, fractional GPUs and **model multiplexing** [Ray Serve Docs]; on Kubernetes it runs via KubeRay.
 
-**BentoML.** A Python framework for packaging and serving models. You define a service class with API methods; marking an API `batchable` enables **adaptive batching** with a maximum batch size and maximum latency; `bentoml build` produces a **Bento**, a versioned bundle of code, model references and dependencies that becomes a container image [BentoML Docs]. A managed platform (BentoCloud) deploys Bentos. *As of 2026*: the open-source project remains Apache-2.0 licensed; Modular was reported in February 2026 to have acquired BentoML (see Open verification items).
+**BentoML.** A Python packaging and serving framework: a service class whose `batchable` APIs get **adaptive batching** (maximum batch size and latency), built into a **Bento**, a versioned bundle of code, model references and dependencies that becomes a container image [BentoML Docs]. *As of 2026*: the open-source project remains Apache-2.0 licensed; Modular was reported in February 2026 to have acquired BentoML (see Open verification items).
 
 #### Alternatives and trade-offs
 
@@ -260,17 +260,16 @@ flowchart TB
 | Aspect | Triton (Dynamo-Triton) | TorchServe | TF Serving | KServe | Ray Serve | BentoML |
 |---|---|---|---|---|---|---|
 | What it is | Multi-framework inference server | PyTorch server | TensorFlow server | Kubernetes serving platform | Python serving library on Ray | Python packaging and serving framework |
-| How it works | C++ core, backends, model repo, dynamic batcher | Java front end, Python handlers, `.mar` | Servables, loaders, managers | CRD → controller → runtime pods | Deployments as Ray actors, handles | Service classes → Bento → image |
+| How it works | C++ core, backends, batcher | Python handlers, `.mar` | Servables, managers | CRD → runtime pods | Ray actors, handles | Service → Bento → image |
 | Advantages | Throughput, GPU features, many formats | Simple for PyTorch | Mature version management | Declarative, canary, scale to zero | Composition, multiplexing, Python | Fast path from notebook to image |
 | Disadvantages | Config-heavy; custom logic in Python backend is slower | Archived, no fixes | TensorFlow only | Needs Kubernetes expertise; layers to debug | Ray cluster to operate | Less control of low-level GPU scheduling |
 | Performance | Highest for GPU models | Moderate | High for TF | Inherits from runtime | Good; Python overhead per call | Good; inherits from runtime |
 | Operational complexity | Medium | Low (but unmaintained) | Medium | High | Medium–high | Low–medium |
 | Cost | Free; GPU efficiency lowers cost | Free | Free | Free; cluster overhead | Free; Ray overhead | Free; managed option paid |
-| Use cases | GPU vision, ranking, ensembles | Legacy PyTorch | Legacy TF | Platform for many teams | Multi-model pipelines | Small teams, many services |
 | Choose when | You need maximum GPU throughput | Only to keep an existing system running | Your models are TensorFlow | You run Kubernetes and want one API for all models | Logic between models is complex | You want packaging conventions fast |
 
 ::: industry
-**Uber — Michelangelo's online prediction service.** Uber's ML platform deploys trained models into prediction-service containers that load models from storage and serve them over RPC; several models can be deployed to the same container at once, which supports safe transitions and side-by-side A/B tests, and clients address a model by an identifier or tag. The platform also offered batch scoring through Spark jobs. The design matches this chapter's split between a model-agnostic serving layer and model artifacts managed by a registry.
+**Uber — Michelangelo's online prediction service.** Uber's ML platform deploys models into prediction-service containers that load them from storage; several models can run in one container, which supports safe transitions and side-by-side A/B tests, and clients address a model by identifier or tag. Batch scoring ran as Spark jobs.
 *Evidence: Primary* — [Hermann and Del Balso 2017]
 :::
 
@@ -435,10 +434,10 @@ Output (about 3 seconds on one CPU core; deterministic for the fixed seed):
 What to notice:
 
 - **No batching collapses at 2,000 rows/s.** With $B_{\max} = 1$ the instance serves 976 rows/s, so the queue grows for the whole run and latencies reach tens of seconds. Any batching at all fixes this.
-- **The queue batches for you.** With $D_{\max} = 0$ (dispatch whenever the instance is free) the mean batch grows from 2.2 at 2,000/s to 24 at 15,000/s automatically, because requests accumulate while the GPU is busy. With one instance, a zero delay gives the lowest latency at every load below saturation.
+- **The queue batches for you.** With $D_{\max} = 0$ the mean batch grows from 2.2 at 2,000/s to 24 at 15,000/s because requests accumulate while the GPU is busy; with one instance, zero delay gives the lowest latency below saturation.
 - **Delay buys GPU time, not latency.** At 2,000 rows/s a 2 ms delay raises p50 by 0.8 ms but cuts busy time from 95% to 45%. That freed time is what a second model on the same GPU (§66.8) or fewer GPUs can use. The 95% "busy" GPU at batch 2.2 is the nvidia-smi trap of §64.11: always running, mostly wasted.
 - **$B_{\max}$ sets the ceiling.** At 30,000 rows/s, $B_{\max} = 64$ caps throughput at 24,609 rows/s and latency explodes to seconds; $B_{\max} = 128$ serves the load at 11 ms p99. Near saturation the delay setting is irrelevant because batches are always full.
-- **Limitations.** Real servers have several instances, execution-time variance, multi-row requests (an ETA request carries 20 rows, so batches fill in coarser steps) and Python overhead; use the simulator for intuition and confirm with a load test (§23.5).
+- **Limitations.** Real servers add several instances, timing variance and multi-row requests (20 rows per ETA call); confirm with a load test (§23.5).
 
 #### Code example: measuring a real batch curve on CPU
 
@@ -499,10 +498,10 @@ fit: t0 = 0.051 ms per batch, t1 = 4.66 us per row, ceiling 1/t1 = 214,761 rows/
 
 What to notice:
 
-- **The shape, not the numbers.** Cost per row falls about tenfold from batch 1 to 64 and then flattens: fixed overhead (Python dispatch, operator launch, weight reads) is amortized, and beyond a few hundred rows the matrix multiplications are compute-bound. Expect the same shape on any machine, with the knee in a different place.
-- **CPU batching helps too.** Even with no GPU, scoring 20 restaurants as one batch of 20 rather than 20 calls of 1 is several times cheaper. This is why the ETA service scores a search page as one batch.
+- **The shape, not the numbers.** Cost per row falls about tenfold from batch 1 to 64, then flattens once fixed overhead (dispatch, operator launch, weight reads) is amortized. Expect the same shape anywhere, with the knee elsewhere.
+- **CPU batching helps too.** Scoring 20 restaurants as one batch is several times cheaper than 20 calls; the ETA service scores a search page as one batch.
 - **Warm-up and medians.** The first calls are slower (memory allocation, kernel selection), so the program discards them and reports the median; benchmarking without warm-up overstates $t_0$ (§23.5.4, §66.10).
-- **A straight line is an approximation.** Small batches sit above the fitted line and some sizes (16 here) show steps from how the library tiles the matrix; GPUs show stronger steps (wave quantization, §64.4). Always use measured points for decisions.
+- **A line is an approximation.** Some sizes (16 here) show steps from matrix tiling; GPUs show stronger steps (§64.4). Decide from measured points.
 
 #### Failure scenarios
 
@@ -532,7 +531,7 @@ What to notice:
 **Definition — Cost per 1,000 predictions.** The fully loaded hourly price of the serving hardware divided by the predictions it serves per hour, times 1,000. It depends on the device's throughput at a batch size that meets the latency objective *and* on the utilization the fleet actually achieves, including idle redundancy.
 :::
 
-A GPU is a bus and a CPU core is a taxi. The bus costs far more per hour, but if it is full, each passenger pays less. If it carries three people, the taxi was cheaper. Whether GPUs pay off depends on three things: how much arithmetic each prediction needs (a tree walk barely uses a GPU; a convolutional network fills it), whether enough traffic arrives to fill batches within the latency budget (§66.6), and whether the fleet's minimum size, set by redundancy rather than load, leaves GPUs idle.
+A GPU is a bus and a CPU core a taxi: the full bus is cheaper per passenger, the bus with three riders is not. GPUs pay off when each prediction needs much arithmetic (a CNN, not a tree walk), when traffic fills batches within the budget (§66.6), and when the redundancy floor does not leave them idle.
 
 ::: formula
 **Cost per 1,000 predictions and the GPU break-even speedup**
@@ -581,7 +580,7 @@ flowchart TB
   D -->|no| CPU
 ```
 
-**Reading the diagram.** Decisions flow top to bottom; there is no runtime traffic in this figure. The first test removes models whose arithmetic is too small to use a GPU. The second sends models that cannot meet the budget on CPU straight to GPUs, whatever the price. The third asks whether traffic can fill GPUs; if not, sharing a GPU with other models (§66.8) can recover utilization. The last compares $C_{1k}$ with the formula above. Failure point: answering with benchmark throughput at a batch size the latency budget does not allow. Scaling: re-run the decision when traffic grows, because a model that is cheaper on CPU at 1,000/s may be cheaper on GPU at 100,000/s.
+**Reading the diagram.** Decisions flow top to bottom (no runtime traffic). Small-arithmetic models stay on CPU; models that miss the budget on CPU go to GPUs at any price; models whose traffic cannot fill GPUs share one (§66.8); the rest compare $C_{1k}$. Failure point: using benchmark throughput at a batch size the budget does not allow. Scaling: re-run the decision as traffic grows.
 
 ::: mistake
 **Mistake — Comparing a GPU at batch 256 with a CPU at batch 1.** Benchmarks quote GPU throughput at the batch size that maximizes it. Use the throughput at the batch size your latency budget and traffic actually produce (§66.6), and compare the CPU at its best batch size too; the CPU also gains several times from batching (§66.6.1).
@@ -595,13 +594,13 @@ flowchart TB
 **Definition — Model-parallel serving, multi-model serving and multiplexing.** **Model-parallel serving** splits one model's weights across several devices because they do not fit on one: **tensor parallelism** splits each layer's matrices, **pipeline parallelism** places consecutive layers on different devices, and **embedding sharding** places rows of large embedding tables on different hosts. **Multi-model serving** hosts many models in one server process or GPU. **Model multiplexing** routes each request for one of many models to a replica that already has that model loaded, loading it on demand and evicting the least recently used model when memory is full.
 :::
 
-Two opposite problems share a solution space. A recommendation model with a billion-user embedding table (10⁹ × 128 dimensions × 4 bytes = 512 GB, §58.6) cannot fit on an 80 GB GPU, so it must be split. QuickBite's 20 per-city ETA models or 300 per-restaurant-chain demand models are each small and mostly idle, so giving each its own replica wastes the floor of §66.7 twenty or three hundred times. Model parallelism serves the first; packing serves the second.
+A billion-user embedding table (10⁹ × 128 × 4 bytes = 512 GB, §58.6) cannot fit on an 80 GB GPU and must be split; QuickBite's 300 per-chain demand models are each small and mostly idle, and a replica each would pay the floor of §66.7 three hundred times.
 
-**How the large-model case works.** Tensor parallelism inside one server keeps the per-layer exchange on NVLink (§64.14) and cuts per-request latency; pipeline parallelism across servers sends activations only between stages but adds a hop per stage and needs several requests in flight to keep every stage busy. For recommenders, the dense layers are replicated and embedding lookups go to sharded embedding servers or to host memory; Chapter 68 owns that design, and Chapter 73 owns tensor and pipeline parallelism for LLMs.
+**Large models.** Tensor parallelism inside one server keeps per-layer exchanges on NVLink (§64.14); pipeline parallelism adds a hop per stage and needs several requests in flight. Recommenders replicate dense layers and shard embeddings (Chapter 68); Chapter 73 owns LLM parallelism.
 
-**How the many-models case works.** A memory budget decides how many models fit: an 80 GB GPU with 10 GB reserved for activations and runtime workspace holds $\lfloor 70 / 1.5 \rfloor = 46$ models of 1.5 GB each. Compute must also fit: the sum of the models' busy fractions must stay below the target utilization. When the working set exceeds memory, the server loads models on demand from a node-local cache and evicts the least recently used; a request for an evicted model pays the load time of §66.10, so the router should send requests for a model to the replicas that already hold it (Ray Serve multiplexing, KServe ModelMesh) [Ray Serve Docs; KServe Docs]. INFaaS went further: clients state a latency and accuracy requirement, and the system picks among *variants* of a model (different hardware, batch size, precision) and scales them, so users need not choose [Romero et al. 2021].
+**Many models.** Memory decides how many fit: an 80 GB GPU with 10 GB reserved holds $\lfloor 70 / 1.5 \rfloor = 46$ models of 1.5 GB, and their summed busy fractions must stay below the target utilization. Beyond that, models load on demand and the least recently used is evicted; a miss pays the load time of §66.10, so the router sends a model's requests to replicas already holding it (Ray Serve multiplexing, KServe ModelMesh) [Ray Serve Docs; KServe Docs]. INFaaS went further: clients state a latency and accuracy requirement, and the system picks among *variants* of a model (different hardware, batch size, precision) and scales them, so users need not choose [Romero et al. 2021].
 
-**GPU sharing** gives each model a slice of one GPU (§64.15). **MIG** partitions an A100/H100-class GPU into up to seven isolated instances with dedicated memory and compute, which gives predictable latency for tenants that must not disturb each other. **MPS** lets processes run kernels concurrently on one GPU without hardware isolation, which suits cooperating models of one team. Nexus showed how a cluster scheduler can pack DNN models onto shared GPUs with batch-aware "squishy" bin packing that accounts for how each model's latency grows with batch size [Shen et al. 2019].
+**GPU sharing** (§64.15): **MIG** splits an A100/H100-class GPU into up to seven isolated instances (predictable latency); **MPS** runs kernels from several processes concurrently without isolation (cooperating models). Nexus showed how a cluster scheduler can pack DNN models onto shared GPUs with batch-aware "squishy" bin packing that accounts for how each model's latency grows with batch size [Shen et al. 2019].
 
 **Figure 66.6 — Three ways to map models to GPUs.**
 
@@ -623,7 +622,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** *Sharded*: a request enters GPU 0, which computes the first layers and sends activations synchronously over NVLink to GPU 1; a failure of either GPU fails the model, so replicate whole shard groups to scale. *Multiplexed*: a router reads the model ID and sends the request to a replica that already holds the model; on a miss, the replica loads it from the node cache (dotted, asynchronous with respect to other requests), the storage boundary, which is the latency failure point. Scale by adding replicas and letting popular models occupy several. *Partitioned*: one H100 split by MIG into isolated slices, each serving one model with its own memory and compute; a fault or overload in one slice does not affect the others, but slice sizes are fixed until the GPU is reconfigured.
+**Reading the diagram.** *Sharded*: GPU 0 computes the first layers and sends activations synchronously over NVLink to GPU 1; either failing fails the model, so scale by replicating shard groups. *Multiplexed*: the router sends each request to a replica holding its model; a miss loads from the node cache (dotted), the storage boundary and latency failure point; popular models occupy several replicas. *Partitioned*: MIG slices isolate memory and compute, so one model's overload does not touch the others, but slice sizes are fixed until reconfiguration.
 
 ::: warning
 **Warning — Co-location trades isolation for cost.** Packing models onto one GPU with MPS or time-slicing means a burst for one model raises the others' latency, and one process crash can affect all MPS clients (§64.15). Use MIG or separate GPUs for models with strict latency objectives; pack the rest.
@@ -637,7 +636,7 @@ flowchart LR
 **Definition — Inference autoscaling.** Automatically changing the number of model-server replicas (and the nodes or GPUs beneath them) to track load, using a signal proportional to load, a target value for it, and limits on how fast and how far to scale. **Scale to zero** removes all replicas when there is no traffic and starts one on the next request, paying a **cold start**.
 :::
 
-A web service's autoscaler (§18.8, §42.12) usually tracks CPU utilization. For inference, choose the signal carefully:
+Choose the signal carefully (§18.8, §42.12):
 
 **Table 66.7 — Autoscaling signals for model serving.**
 
@@ -649,9 +648,7 @@ A web service's autoscaler (§18.8, §42.12) usually tracks CPU utilization. For
 | Queue depth or ongoing requests per replica | GPU servers with batching; async workers | Needs a server metric; target from load test |
 | Latency (p95, p99) | Alerting, a guardrail | Lags; rises only after saturation, so scaling starts late |
 
-For a batching GPU server the best signal is **in-flight requests (or queued rows) per replica**, with its target taken from the load test as the concurrency at which latency still meets the objective. Ray Serve scales on ongoing requests per replica for this reason [Ray Serve Docs], and KEDA can scale on any Prometheus query such as queue depth, including to and from zero [KEDA Docs].
-
-**Reaction time** is the sum of metric collection, the autoscaler's decision, scheduling, node provisioning if no spare node exists (one to several minutes for GPU nodes), image pull, model download and load, and warm-up (§66.10). Load that arrives during that time must be absorbed by replicas that already exist, so the target utilization must leave room for it.
+For a batching GPU server, scale on **in-flight requests (or queued rows) per replica**, targeting the concurrency at which the load test still meets the objective; Ray Serve does this [Ray Serve Docs], and KEDA scales on any Prometheus query, including to and from zero [KEDA Docs]. **Reaction time** (metrics, decision, node provisioning, image pull, model load, warm-up) must be absorbed by existing replicas.
 
 ::: formula
 **Target utilization and replicas with headroom for reaction time**
@@ -699,9 +696,9 @@ flowchart LR
   LB --> MS
 ```
 
-**Reading the diagram.** Replicas export queue depth and in-flight requests (dotted, asynchronous) to Prometheus; KEDA or the HPA queries it and sets the replica count. New pods go to the scheduler; if no GPU is free, the node autoscaler launches a node through the cloud API, the slowest step. A placed pod pulls its model from the model store (the storage boundary) and joins the load balancer only after warm-up, when its readiness probe passes. Failure points: a stale metrics pipeline freezes scaling; GPU capacity shortages leave pods Pending; a readiness probe that passes before warm-up sends traffic to a cold replica. Scaling limits: cloud GPU quota and the model-store bandwidth when many replicas start at once.
+**Reading the diagram.** Replicas export queue depth (dotted, asynchronous) to Prometheus; KEDA or the HPA sets the replica count. A pod with no free GPU waits for the node autoscaler, the slowest step; a placed pod pulls its model from the model store (storage boundary) and joins the load balancer after warm-up. Failure points: stale metrics freeze scaling; GPU shortages leave pods Pending; early readiness sends traffic to cold replicas. Limits: GPU quota and model-store bandwidth.
 
-**Scale to zero.** Removing all replicas saves money for models that are idle most of the day: development endpoints, per-tenant models, asynchronous workers. The first request then waits for the full cold start, tens of seconds to minutes for a GPU model (§66.10), so scale to zero only where a client can wait or where an asynchronous queue absorbs the delay. QuickBite's dish-photo workers scale to zero on queue depth overnight; the ETA service never does. MArk combined predictive autoscaling of instances with serverless functions to absorb bursts while new instances started [Zhang et al. 2019].
+**Scale to zero.** It saves money for mostly idle models (development, per-tenant, asynchronous workers), but the first request waits a full cold start (§66.10). QuickBite's dish-photo workers scale to zero overnight on queue depth; the ETA service never does. MArk combined predictive autoscaling of instances with serverless functions to absorb bursts while new instances started [Zhang et al. 2019].
 
 ::: mistake
 **Mistake — Scaling a GPU server on GPU utilization.** At low load a work-conserving batcher keeps the GPU "busy" with tiny batches (95% busy in the §66.6 simulation at 8% of capacity), so the autoscaler sees a hot GPU and adds replicas that are not needed; at high load the signal saturates at 100% and cannot show how far over capacity you are. Scale on queue depth or in-flight requests per replica.
@@ -715,7 +712,7 @@ flowchart LR
 **Definition — Model cold start and warm-up.** A **cold start** is the time from deciding to start a replica until it serves traffic within its latency objective: node provisioning, container image pull, model download, deserialization and transfer to device memory, runtime initialization, and **warm-up**, the deliberate execution of representative requests so that one-time costs (memory allocation, kernel selection, lazy compilation, cache population) are paid before real traffic arrives.
 :::
 
-A model is not a program you start; it is gigabytes you must move. A web service starts in seconds because its binary is small. A 4 GB ranking model must travel from object storage over the network, be parsed, and be copied over PCIe into GPU memory before the first prediction, and its first predictions are slow until allocators and kernels are warm. This time is the dominant term of $T_{\text{react}}$ in §66.9, so it sets how much headroom you must pay for.
+A model is not a program you start; it is gigabytes you must move over the network and PCIe, and its first predictions are slow until allocators and kernels are warm. This dominates $T_{\text{react}}$ in §66.9.
 
 ::: formula
 **Cold-start time of a model replica**
@@ -763,7 +760,7 @@ gantt
   Warm-up               :b3, after b2, 10000
 ```
 
-**Reading the diagram.** Time runs left to right from the autoscaler's decision; each bar is a sequential, synchronous step inside one replica's start-up. The cold-node row crosses two storage boundaries (the image registry and the object store) and is dominated by provisioning; the warm-node row reads the model from a node-local cache and is dominated by warm-up. Failure points: a capacity shortage stalls the first bar indefinitely; many replicas downloading at once can saturate the object store or a network gateway. Scaling: shorter bars come from keeping capacity warm and moving bytes closer to the GPU, not from faster models.
+**Reading the diagram.** Time runs left to right; bars are sequential, synchronous start-up steps. The cold row crosses two storage boundaries (image registry, object store) and is dominated by provisioning; the warm row reads a node-local cache and is dominated by warm-up. Failure points: capacity shortages stall the first bar; simultaneous downloads saturate the store. Scaling: keep capacity warm and bytes near the GPU.
 
 #### Techniques
 
@@ -784,7 +781,7 @@ gantt
 **Definition — Model version, alias and version pinning.** A **model version** is an immutable, numbered artifact in the model registry with its training data, code, metrics and signature. An **alias** (or stage) such as `production` or `challenger` is a movable pointer to one version. **Version pinning** means a deployment or client names an exact version (`eta:42`) rather than an alias, so what runs changes only through a reviewed deployment. **Traffic splitting** routes fractions of requests to different versions by weight, by user hash or by request header.
 :::
 
-The registry (Chapter 69) records *what exists*; the deployment records *what runs*; the router decides *who gets which*. Keep the three separate. A GitOps repository (§43.10) holds a deployment manifest that pins versions and weights, for example `eta:42` at 95% and `eta:43` at 5%; a pull request changes it, and the platform reconciles the cluster to match. Promotion in the registry (moving the `production` alias) then triggers that pull request rather than changing traffic directly, so every change is reviewed, auditable and revertible.
+The registry (Chapter 69) records *what exists*, the deployment *what runs*, the router *who gets which*. A GitOps manifest (§43.10) pins versions and weights (`eta:42` at 95%, `eta:43` at 5%); promotion in the registry opens a pull request rather than changing traffic directly, so every change is reviewed and revertible.
 
 **Figure 66.9 — From registry to version-aware routing.**
 
@@ -801,9 +798,9 @@ flowchart LR
   RT -->|5%| V43
 ```
 
-**Reading the diagram.** The control path (top) is asynchronous: the training pipeline registers version 43 in the registry, a storage boundary; a promotion event starts the deployment pipeline, which opens a pull request pinning v43 at 5% in the GitOps repository; the controller reconciles the cluster, creating v43 replicas beside v42. The request path (bottom) is synchronous: the ETA service calls the router over gRPC, which splits traffic by weight or by a hash of the user ID. Failure points: a registry alias moved by hand bypasses review; routing by random weight rather than user hash shows one customer two models' answers on successive searches. Scaling: each version scales independently; the router is stateless.
+**Reading the diagram.** The control path is asynchronous: v43 is registered (storage boundary), a promotion event opens a pull request pinning it at 5%, and the controller creates v43 replicas beside v42. The request path is synchronous: the router splits gRPC traffic by weight or user hash. Failure points: a hand-moved alias bypasses review; random per-request routing shows one customer two models' answers. Scaling: versions scale independently; the router is stateless.
 
-Three rules keep routing safe. **Route by a stable key** (user or session hash) when the user can see the prediction, so one customer sees consistent ETAs; route per request only for invisible predictions. **Return the model version in every response and log it** with the prediction (§66.15), or you cannot attribute outcomes to versions. **Keep model and features compatible**: a new version that needs a new feature must wait until the feature is served everywhere (expand then contract, §43.13.2).
+Three rules: **route by a stable key** (user hash) when users see the prediction; **return and log the model version** with every prediction (§66.15); **keep model and features compatible**, shipping a new feature everywhere before the version that needs it (expand then contract, §43.13.2).
 
 ## 66.12 Safe deployment
 
@@ -831,9 +828,9 @@ stateDiagram-v2
   Full --> [*]
 ```
 
-**Reading the diagram.** Each state is a deployment stage; transitions are gated by automated checks. Shadow traffic tests the system (latency, errors, memory) and compares the new predictions with the old on identical inputs, with no user impact. The canary exposes a small slice of real users and is judged on guardrails. The A/B test measures business impact at a larger split. Every stage can roll back, and rollback is fast only if the previous version is still loaded. Failure points: a shadow that triggers side effects (writes, emails), and a canary judged before enough labels have arrived. Scaling: shadow doubles inference cost for the mirrored fraction, so mirror a sample.
+**Reading the diagram.** States are stages; automated checks gate transitions. Shadow tests the system and compares predictions on identical inputs with no user impact; the canary judges guardrails on a small slice of users; the A/B test measures business impact. Every stage can roll back, quickly only if the old version is still loaded. Failure points: shadows that trigger side effects; canaries judged before labels arrive. Scaling: shadow doubles inference for the mirrored fraction, so mirror a sample.
 
-**Shadow traffic.** Mirror requests asynchronously (a service mesh can do it) so the shadow cannot slow or fail the primary path, and disable side effects. Because both models score the *same* requests, you can compare them **paired**, which is far more sensitive than comparing two groups of users, as the next example shows.
+**Shadow traffic.** Mirror requests asynchronously so the shadow cannot slow the primary path, and disable side effects. Both models score the *same* requests, so you can compare them **paired**, which is far more sensitive than comparing two user groups.
 
 ::: formula
 **Sample size to detect a regression in a continuous ML metric**
@@ -859,7 +856,7 @@ $$n_{\text{two-group}} = \frac{2\,(z_{1-\alpha} + z_{1-\beta})^2\,\sigma^2}{\del
 **Interpretation.** Comparing two models on the same orders removes the order-to-order variation that dominates $\sigma$, cutting the sample 32-fold. **Engineering implication.** Judge accuracy in shadow (paired), judge the system and guardrails in the canary within minutes using latency, error rate and prediction-distribution metrics (two-proportion tests, §43.6.4), and keep the slow two-group comparison for effects shadow cannot see, such as customers reacting to different ETAs.
 :::
 
-**Canary guardrails for ML.** Beyond latency and error rate, compare the canary's **prediction distribution** with the baseline's (mean, quantiles, a population stability index, Chapter 70), the **fallback rate** (§60.12.2) and the **feature-default rate**; these move within minutes when a model is broken, long before labels arrive. A rollout controller such as Argo Rollouts or Flagger, or KServe's canary field, can run these checks automatically and shift weights in steps (1%, 5%, 25%, 50%, 100%).
+**Canary guardrails for ML.** Beyond latency and errors, compare the **prediction distribution** (quantiles, population stability index, Chapter 70), **fallback rate** and **feature-default rate**; they move within minutes, long before labels. A rollout controller (Argo Rollouts, Flagger, KServe's canary field) can shift weights in steps (1%, 5%, 25%, 50%, 100%) on these checks.
 
 **Interleaving for rankers.** For a restaurant ranker, team-draft interleaving alternately lets each model pick its next-best restaurant not yet shown, builds one list, and records which model contributed each clicked item [Chapelle et al. 2012]. Because each user compares both rankers directly, user-to-user variance cancels and decisions need far fewer users than an A/B test; interleaving measures preference, though, not revenue, so it is a fast first filter before an A/B test.
 
@@ -878,7 +875,7 @@ $$n_{\text{two-group}} = \frac{2\,(z_{1-\alpha} + z_{1-\beta})^2\,\sigma^2}{\del
 **Definition — Batch inference job.** A scheduled distributed job that reads a bounded input dataset, loads the model once per worker, scores rows in large batches, and writes predictions to an output table or key-value store, so that a re-run produces the same result.
 :::
 
-Batch inference trades freshness for cost: no latency objective, so batches are as large as memory allows, utilization is high, and spot capacity is acceptable because tasks can be retried (§51.6.2). In Spark, the model is loaded once per executor and applied with a vectorized function over Arrow batches (`mapInPandas` or a pandas UDF), never once per row (§29.5). In Ray Data, `map_batches` with a pool of actors keeps one model per actor and can assign GPUs to actors while CPU tasks read and decode data, keeping the GPUs fed.
+With no latency objective, batches are as large as memory allows and spot capacity is fine because tasks retry (§51.6.2). In Spark, load the model once per executor and apply it over Arrow batches (`mapInPandas`), never per row (§29.5); in Ray Data, `map_batches` with an actor pool keeps one model per GPU actor while CPU tasks read and decode.
 
 ::: formula
 **Batch scoring job duration**
@@ -920,7 +917,7 @@ flowchart LR
   VAL -->|fail| KEEP[Keep yesterday's table]
 ```
 
-**Reading the diagram.** The scheduler starts a job for run date D (synchronous control); the job reads one input partition and a pinned model version (dotted: read once at start), and writes its output by **overwriting partition D** with an atomic commit in a table format (§61.8), so a retried or duplicated run replaces rather than appends. A validation gate checks row counts, null rates and prediction distribution before a bulk load into a new key-value table, and an atomic pointer swap makes it live. Storage boundaries: the feature partition, the prediction table and the serving store. Failure points: a partial write (prevented by atomic commit) and a bad model (caught by the gate, which keeps yesterday's table live). Scaling: add workers; the job is embarrassingly parallel across input files.
+**Reading the diagram.** The job for run date D reads one input partition and a pinned model version (dotted, read once) and **overwrites partition D** with an atomic commit (§61.8), so a retry replaces rather than appends. A validation gate checks counts, nulls and prediction distribution before a bulk load and an atomic pointer swap. Storage boundaries: features, prediction table, serving store. Failure points: partial writes (atomic commit) and bad models (the gate keeps yesterday's table). Scaling: add workers.
 
 ::: mistake
 **Mistake — Appending batch predictions.** A job that appends rows and is retried after a spot preemption writes some users' predictions twice, and a downstream "latest prediction" query may pick either. Key outputs by (run date, entity, model version), overwrite whole partitions, and record the run's model version and input snapshot (§61.5.1, §22.15).
@@ -975,7 +972,7 @@ flowchart LR
   FB --> OK
 ```
 
-**Reading the diagram.** The caller checks its circuit breaker first; an open breaker goes straight to the fallback. Otherwise it calls the model server synchronously with a deadline, hedging to a second replica if the first is slow. The server admits the request only if its queue is below $Q_{\max}$, otherwise it rejects at once. Timeouts and errors also drop to the fallback, so every path ends in a response. Failure points: a fallback that depends on the same feature store as the model; hedges that double load during overload. Scaling: rejections and breaker openings feed the autoscaler and alerts.
+**Reading the diagram.** An open breaker goes straight to the fallback; otherwise the caller calls synchronously with a deadline, hedging if slow. The server admits only below $Q_{\max}$, else rejects at once; timeouts and errors also fall back, so every path ends in a response. Failure points: a fallback sharing the model's feature store; hedges during overload. Scaling: rejections and breaker openings feed autoscaling and alerts.
 
 ## 66.15 Observability for serving
 
@@ -1035,3 +1032,124 @@ flowchart LR
 | Cost | About \$0.0001 of inference per order (§60.11) |
 
 If the deep challenger wins its A/B test, it moves to Triton on GPUs: 3 GPUs plus 1 spare at $B_{\max} = 64$, $D_{\max} = 2$ ms (§66.6), with queue limits from §66.14 and the in-process trees retained as the first fallback rung.
+
+## 66.17 Summary and revision notes
+
+::: summary
+- Choose the inference mode from two questions: who waits, and can the answer be computed before the question? Online for request-time inputs with a waiting user; asynchronous for slow work someone needs; streaming for event-triggered predictions; batch for enumerable inputs where staleness is acceptable.
+- A model server = request handler, pre-processing, per-model batching queue, model instances on a runtime, post-processing, a lifecycle manager over a model repository, and health and metrics endpoints.
+- As of 2026: Triton (renamed Dynamo-Triton) for maximum GPU throughput across formats; TorchServe archived (August 2025); TensorFlow Serving for TensorFlow; KServe (CNCF incubating) as a Kubernetes platform; Ray Serve for Python composition and multiplexing; BentoML for packaging.
+- Dynamic batching: $L = W_{\text{busy}} + W_{\text{fill}} + T(B)$, $X(B) = B/(t_0 + B t_1)$, $L_{\text{worst}} \approx D_{\max} + 2T(B_{\max})$. $B_{\max}$ sets the throughput ceiling; $D_{\max}$ trades latency for GPU time; under load the queue batches by itself.
+- $C_{1k} = 1{,}000\,p/(3{,}600\,X\,u)$; a GPU must beat a vCPU by $S^{*} \approx 43$ at QuickBite's prices. Trees and small MLPs belong on CPU; CNNs and transformers on GPU once traffic fills them.
+- Shard models that do not fit; pack, multiplex or MIG-partition models that are too small.
+- Autoscale on queue depth or in-flight requests, not GPU utilization; $u_{\text{target}} = u_{\max}/(1+g)$ covers growth during the reaction time, which cold start dominates.
+- $T_{\text{cold}}$ is mostly node provisioning; cache images and models on warm nodes and mark ready only after warm-up.
+- Pin versions in GitOps, route by user hash, log the version with every prediction.
+- Roll out shadow → canary → A/B; judge accuracy paired in shadow (32× fewer orders in the example), guardrails in the canary, business impact in A/B; interleave for rankers; keep the old version loaded for instant rollback.
+- Batch jobs: $T_{\text{job}} = T_{\text{start}} + N/(WXu)$; overwrite partitions atomically.
+- Reliability: deadlines, fallback ladder, circuit breakers, $Q_{\max} = X(T_{\text{budget}} - T(B_{\max}))$ admission limits, budgeted hedging.
+:::
+
+## 66.18 Knowledge checkpoint
+
+1. QuickBite wants an ETA for every in-flight order refreshed when the courier's status changes. Which inference mode, and why?
+2. Name the seven components of a model server.
+3. Which of the six servers in §66.5 should a new project avoid, and why?
+4. With $t_0 = 1$ ms and $t_1 = 0.025$ ms, what is $X(128)$?
+5. Why does $D_{\max} > 0$ not raise throughput for a single-instance server below saturation?
+6. A batch of 64 takes 2.6 ms and $D_{\max} = 2$ ms. Estimate the worst-case model latency without backlog.
+7. Compute $S^{*}$ for a GPU at \$2.00/h against vCPUs at \$0.04/h, both at utilization 0.5.
+8. Why are tree models usually served on CPU even if a GPU library is 50 times faster per device?
+9. Why is GPU utilization a poor autoscaling signal for a batching server?
+10. $u_{\max} = 0.8$, largest step 25%. What is $u_{\text{target}}$?
+11. A 6 GB model downloads at 0.3 GB/s and loads at 3 GB/s; initialization and warm-up take 12 s on a warm node with a cached image. What is $T_{\text{cold}}$?
+12. Why does a paired shadow comparison need far fewer orders than a two-group canary?
+13. Compute $Q_{\max}$ for $X = 10{,}000$ rows/s, budget 30 ms, $T(B_{\max}) = 5$ ms.
+
+<details><summary>Answers</summary>
+
+1. Streaming: the trigger is an event, nobody waits on the model, and seconds of delay are acceptable; the result is written to a store the app reads.
+2. Request handler, pre-processing, batching queue and scheduler, model instances on a runtime, post-processing, lifecycle manager with model repository, health and metrics endpoints.
+3. TorchServe: archived in August 2025 and no longer maintained, so no bug or security fixes.
+4. $128 / (1 + 3.2) = 128 / 4.2$ ms $= 30{,}476$ rows/s.
+5. A work-conserving batcher already sends everything queued whenever the instance frees up, and requests accumulate during execution; waiting only adds latency. It does free GPU time.
+6. $2 + 2 \times 2.6 = 7.2$ ms.
+7. $(2.00/0.04) \times (0.5/0.5) = 50$.
+8. The redundancy floor (at least one GPU per zone) leaves the GPUs mostly idle, so cost per prediction is higher, and a network hop costs more than the inference.
+9. It reads near 100% when the GPU runs many tiny batches, and saturates at 100% when overloaded, so it neither shows spare capacity nor the size of an overload.
+10. $0.8 / 1.25 = 0.64$.
+11. $6/0.3 + 6/3 + 12 = 20 + 2 + 12 = 34$ s.
+12. Both models score the same orders, so order-to-order variation cancels; the difference has far smaller variance than the metric.
+13. $10{,}000 \times 0.025 = 250$ rows.
+
+</details>
+
+## 66.19 Interview questions
+
+### Basic
+
+**Q1. What is the difference between online and batch inference, and how do you choose?**
+**Answer.** Online inference computes a prediction inside a request within milliseconds; batch inference precomputes predictions for a known set of inputs on a schedule. Choose batch when the input space is enumerable and staleness is acceptable (cheaper, simpler); online when inputs are only known at request time. Many systems combine them: batch candidates or baseline features, online re-ranking.
+
+**Q2. What is dynamic batching and what are its two knobs?**
+**Answer.** The server groups requests arriving close together into one execution to amortize fixed per-batch cost. $B_{\max}$ caps batch size and sets the throughput ceiling; $D_{\max}$ caps how long the oldest request waits. Pick $B_{\max}$ from peak load with headroom and $D_{\max}$ from the latency budget.
+
+### Intermediate
+
+**Q3. Your GPU model server's p99 doubled after a traffic increase, with no errors. How do you diagnose it?**
+**Answer.** Break latency down: if queue time rose while compute time is flat and batch sizes are pinned at $B_{\max}$, arrivals exceed $X(B_{\max})$: scale out, raise $B_{\max}$ if the budget allows, or shed to a fallback. If compute time rose, check for larger inputs, padding, a co-located model on the same GPU, or thermal throttling. If pre-processing rose, the CPU side is the bottleneck. Confirm with a load test.
+
+**Q4. How would you roll out a new ETA model safely?**
+**Answer.** Offline gates per slice; shadow on mirrored traffic to test latency, errors and paired accuracy; a canary by user hash at 1–5% with automated guardrails (latency, errors, prediction distribution, fallback rate); an A/B test for business metrics such as conversion and late-order rate; then full rollout with the previous version kept loaded for instant rollback. Pin versions in GitOps and log the version with every prediction.
+
+### Advanced
+
+**Q5. Design serving for 300 small per-chain demand models with uneven traffic.**
+**Answer.** Do not give each model a deployment. Use a multi-model server with on-demand loading and LRU eviction, a node-local model cache, and a router that sends a model's requests to replicas that already hold it (multiplexing), replicating popular models across replicas. Size memory by models per replica and compute by summed load. Monitor load-miss rate and cold-load latency; pin the few hottest models.
+
+**Q6. Size a GPU fleet for a vision model at 20,000 images/s peak with a 50 ms p99 budget.**
+**Answer.** Measure the batch curve; choose $B_{\max}$ and $D_{\max}$ so that $D_{\max} + 2T(B_{\max})$ plus pre-processing fits 50 ms with slack. With, say, 6,000 images/s per GPU at batch 64 and $u_{\text{target}} = 0.6$: $\lceil 20{,}000/3{,}600 \rceil = 6$ GPUs, plus one per zone of redundancy. Check pre-processing CPU (JPEG decode) per GPU, scale on queue depth, keep warm spare capacity because GPU nodes start slowly, and compare $C_{1k}$ with CPU.
+
+## 66.20 Practical exercises
+
+1. **Simulator extensions.** Add a second GPU instance and log-normal execution-time jitter to the §66.6 simulator. Show when a nonzero $D_{\max}$ starts to help, and plot p99 against arrival rate for three $B_{\max}$ values.
+2. **Your batch curve.** Run the §66.6 timing program with 1, 2 and 4 threads and with a larger hidden size; report where per-row cost flattens and fit $t_0$, $t_1$.
+3. **Autoscaling table.** For reaction times of 1, 2, 4 and 8 minutes and steps of 10–50%, tabulate $u_{\text{target}}$ and peak nodes for the deep ETA model.
+4. **Canary calculator.** Write a function that returns two-group and paired sample sizes for a given $\delta$, $\sigma$, $\sigma_d$, $\alpha$ and power, and the canary duration at a given traffic share.
+
+## 66.21 Design challenges
+
+1. **Dish-photo moderation.** Restaurants upload 200,000 photos a day, peaking at 30 per second, and expect a verdict within 2 minutes. Choose the mode, server, hardware and autoscaling (including scale to zero), and compute cost per 1,000 photos.
+2. **Fraud scoring at checkout.** Design serving for the fraud model at 60 orders/s with a 150 ms budget, including the fallback when the model is unavailable, a shadow evaluation plan given 60–90-day chargeback labels, and the rollback procedure.
+
+## 66.22 References
+
+1. BentoML. *BentoML Documentation*. https://docs.bentoml.com/
+2. Chapelle, O., Joachims, T., Radlinski, F., Yue, Y. *Large-Scale Validation and Analysis of Interleaved Search Evaluation*. ACM Transactions on Information Systems 30(1), 2012.
+3. CNCF. *KServe Becomes a CNCF Incubating Project*. Cloud Native Computing Foundation Blog, 2025. https://www.cncf.io/blog/2025/11/11/kserve-becomes-a-cncf-incubating-project/
+4. Crankshaw, D., Wang, X., Zhou, G., Franklin, M. J., Gonzalez, J. E., Stoica, I. *Clipper: A Low-Latency Online Prediction Serving System*. USENIX NSDI, 2017.
+5. Dean, J., Barroso, L. A. *The Tail at Scale*. Communications of the ACM 56(2), 2013.
+6. Gujarati, A., Karimi, R., Alzayat, S., Hao, W., Kaufmann, A., Vigfusson, Y., Mace, J. *Serving DNNs like Clockwork: Performance Predictability from the Bottom Up*. USENIX OSDI, 2020.
+7. Hermann, J., Del Balso, M. *Meet Michelangelo: Uber's Machine Learning Platform*. Uber Engineering Blog, 2017.
+8. Huyen, C. *Designing Machine Learning Systems*. O'Reilly, 2022.
+9. KEDA. *KEDA Documentation: Scalers*. https://keda.sh/docs/
+10. KServe. *KServe Documentation*. https://kserve.github.io/website/
+11. NVIDIA. *NVIDIA Dynamo-Triton* (formerly Triton Inference Server), product page. https://developer.nvidia.com/dynamo-triton
+12. NVIDIA. *Triton Inference Server User Guide* (model configuration, dynamic batcher, model repository). https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/
+13. Olston, C., et al. *TensorFlow-Serving: Flexible, High-Performance ML Serving*. Workshop on ML Systems at NIPS, 2017. arXiv:1712.06139
+14. Parks, J., Aurisset, J., Ramm, M. *Innovating Faster on Personalization Algorithms at Netflix Using Interleaving*. Netflix Technology Blog, 2017.
+15. Ray Project. *Ray Serve Documentation* (batching, autoscaling, model multiplexing). https://docs.ray.io/en/latest/serve/
+16. Romero, F., Li, Q., Yadwadkar, N. J., Kozyrakis, C. *INFaaS: Automated Model-less Inference Serving*. USENIX ATC, 2021.
+17. Shen, H., Chen, L., Jin, Y., Zhao, L., Kong, B., Philipose, M., Krishnamurthy, A., Sundaram, R. *Nexus: A GPU Cluster Engine for Accelerating DNN-Based Video Analysis*. ACM SOSP, 2019.
+18. TorchServe. *pytorch/serve* GitHub repository (Limited Maintenance notice; archived 7 August 2025). https://github.com/pytorch/serve
+19. Zhang, C., Yu, M., Wang, W., Yan, F. *MArk: Exploiting Cloud Services for Cost-Effective, SLO-Aware Machine Learning Inference Serving*. USENIX ATC, 2019.
+
+## 66.23 Open verification items
+
+- BentoML's reported acquisition by Modular (February 2026) comes from third-party sources only; confirm against an official announcement.
+- KServe's CNCF incubation date (CNCF pages give 29 September and 11 November 2025).
+- Triton details not re-checked against the docs (host blocked): backend list, `model_warmup`, queue-policy fields, Open Inference Protocol paths.
+- Ray Serve parameter names (`@serve.batch`, ongoing-requests autoscaling, multiplexing API) against current docs.
+- Netflix interleaving sample-size claims and the Michelangelo multi-model container wording against the original posts.
+- TensorFlow Serving's version-policy names and the full author list of Olston et al. 2017.
+- All throughput figures (Table 66.5, 500,000 tree rows/s, 6,000 images/s, 50,000 ranking rows/s) are assumptions, not benchmarks.

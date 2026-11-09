@@ -321,3 +321,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-314 | 65 | Megatron throughput (15.1 PFLOP/s @ 76% in 2019; 502 PFLOP/s @ 52% in 2021); ZeRO >100B params on 400 GPUs, super-linear speedup, Turing-NLG | Open | |
 | UQ-315 | 65 | Switch Transformer "up to 7×" speedup; GShard 2,048 TPU v3 cores ~4 days; PaLM 46.2% MFU and venue; DDP near-linear to 256 GPUs | Open | Merge with UQ-308 |
 | UQ-316 | 65 | Jeaugey 2019 NCCL blog title; FSDP PVLDB volume; torchrun URL; achieved bandwidth figures (360/40/320 GB/s) are teaching approximations | Open | |
+| UQ-317 | 66 | BentoML reported acquisition by Modular (Feb 2026, third-party sources); KServe CNCF incubation date (29 Sep vs 11 Nov 2025) | Open | Time-sensitive |
+| UQ-318 | 66 | Triton details (backend list, model_warmup, queue-policy fields, Open Inference Protocol paths); Ray Serve batching/autoscaling/multiplexing parameter names — docs unreachable | Open | Version-dependent |
+| UQ-319 | 66 | Netflix interleaving sample-size wording; Michelangelo multi-model container wording; TF Serving version-policy names; Olston et al. 2017 author list | Open | |
