@@ -450,3 +450,589 @@ What to notice:
 **"INT8 has 256 levels, so error is 1/256 of the value."** Error is half a step of the *range*, not of the value. A weight of 0.01 in a tensor whose range is ±2.5 is rounded to zero. Small values in wide-range tensors suffer most, which is why granularity and outlier handling dominate quantization quality.
 :::
 
+## 67.5 Dynamic quantization, static quantization and quantization-aware training
+
+### 67.5.1 Three ways to get a quantized model
+
+::: definition
+**Definition — Post-training quantization (PTQ) and quantization-aware training (QAT).** **PTQ** quantizes an already-trained model without further training. In **dynamic quantization**, weights are quantized ahead of time and each activation's range is computed at run time, per call; in **static quantization**, activation ranges are fixed in advance by calibration (§67.4.3). **QAT** inserts **fake quantization** (quantize-then-dequantize) into the forward pass during training or fine-tuning so the weights learn to tolerate rounding; gradients pass through the non-differentiable rounding with the **straight-through estimator (STE)**, which treats rounding as the identity in the backward pass [Bengio et al. 2013; Jacob et al. 2018].
+:::
+
+#### First-principles explanation
+
+Dynamic quantization is a tailor who measures each customer as they walk in: always a good fit, but measuring takes time. Static quantization measures a sample of customers beforehand and cuts standard sizes: fast, but a customer unlike the sample gets a poor fit. QAT has the customer wear the standard size during training, so they grow into it.
+
+#### How it works internally
+
+**Figure 67.5 — Three quantization pipelines.**
+
+```mermaid
+flowchart TB
+  M["Trained FP32 model"] --> D1["Dynamic: quantize<br/>weights offline"]
+  D1 --> D2["Per call: measure activation<br/>range, quantize, INT8 GEMM"]
+  M --> S1["Static: insert observers"]
+  S1 --> S2["Run 100-1,000<br/>calibration samples"]
+  CAL[("Calibration set")] --> S2
+  S2 --> S3["Freeze scales; fuse<br/>conv, bias, ReLU"]
+  M --> Q1["QAT: insert fake-quant<br/>on weights and activations"]
+  Q1 --> Q2["Fine-tune a few epochs<br/>with STE gradients"]
+  TR[("Training data")] --> Q2
+  Q2 --> S3
+  S3 --> OUT["INT8 model:<br/>integer kernels end to end"]
+  D2 --> OUT2["INT8 weights, FP32<br/>activations between layers"]
+```
+
+**Reading the diagram.** All three pipelines start from the same FP32 checkpoint and run offline. Dynamic quantization (left) needs no data; its per-call range measurement happens on the request path, which adds a small cost and keeps activations in FP32 between layers. Static quantization (middle) reads a calibration set, a storage boundary that must resemble production traffic, then freezes scales so every layer runs integer kernels. QAT (right) reads the training data and fine-tunes with fake quantization, then converts exactly as static PTQ does. Failure points: an unrepresentative calibration set (static) and a training pipeline that is no longer reproducible (QAT).
+
+**Table 67.2 — Choosing a quantization method.**
+
+| | Dynamic PTQ | Static PTQ | QAT |
+|---|---|---|---|
+| Data needed | None | 100–1,000 unlabeled samples | Training set and pipeline |
+| Activations | Quantized per call | Fixed scales | Fixed scales, learned tolerance |
+| Speed-up | Moderate; range computation per call | Highest for INT8 | Same as static |
+| Accuracy loss | Usually small | Small to moderate | Smallest |
+| Engineering cost | Minutes | Hours | Days |
+| Best for | Linear-heavy models on CPU: MLPs, LSTMs, transformers at small batch | CNNs, models whose activation ranges are stable | Models that lose too much accuracy with PTQ; INT4 and below |
+
+Start with the cheapest method that meets the accuracy target; move right only when measurement shows you must [Krishnamoorthi 2018; Nagel et al. 2021].
+
+### 67.5.2 Runnable example: dynamic quantization of the ETA MLP
+
+The program trains the 512–1,024–1,024–1 ETA MLP of §58.12.2 on synthetic data for a few seconds, then quantizes every linear layer to INT8 dynamically and compares size, latency and accuracy.
+
+```python
+"""Dynamic INT8 quantization of the ETA MLP (512-1024-1024-1) on CPU.
+Timings depend on your CPU; sizes and accuracy are deterministic."""
+import io, time, warnings
+import torch
+from torch import nn
+
+warnings.filterwarnings("ignore")          # torch.ao.quantization prints deprecation notices
+torch.manual_seed(0)
+torch.set_num_threads(1)                   # one core: comparable, repeatable timings
+
+# Synthetic stand-in for QuickBite ETA data: 512 features -> minutes (median ~35)
+n_train, n_test, d = 10_000, 2_000, 512
+X = torch.randn(n_train + n_test, d)
+w_true = torch.randn(d, 1) / d ** 0.5
+y = 35 + 8 * torch.tanh(X @ w_true) + 3 * torch.sin(X[:, :1] * X[:, 1:2]) \
+    + 0.5 * torch.randn(n_train + n_test, 1)
+Xtr, ytr, Xte, yte = X[:n_train], y[:n_train], X[n_train:], y[n_train:]
+
+model = nn.Sequential(nn.Linear(512, 1024), nn.ReLU(),
+                      nn.Linear(1024, 1024), nn.ReLU(), nn.Linear(1024, 1))
+with torch.no_grad():
+    model[-1].bias.fill_(35.0)             # start near the median ETA
+opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+for epoch in range(3):                     # a few seconds on one CPU core
+    perm = torch.randperm(n_train)
+    for i in range(0, n_train, 256):
+        idx = perm[i:i + 256]
+        loss = nn.functional.mse_loss(model(Xtr[idx]), ytr[idx])
+        opt.zero_grad(); loss.backward(); opt.step()
+model.eval()
+
+qmodel = torch.ao.quantization.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8)
+
+def size_mb(m):
+    buf = io.BytesIO(); torch.save(m.state_dict(), buf); return buf.tell() / 1e6
+
+def latency_ms(m, batch, reps=300):
+    x = torch.randn(batch, d)
+    with torch.inference_mode():
+        for _ in range(20): m(x)                       # warm-up
+        times = []
+        for _ in range(reps):
+            t0 = time.perf_counter(); m(x); times.append(time.perf_counter() - t0)
+    times.sort()
+    return 1e3 * times[len(times) // 2]                # median
+
+with torch.inference_mode():
+    p32, p8 = model(Xte), qmodel(Xte)
+mae32 = (p32 - yte).abs().mean().item()
+mae8 = (p8 - yte).abs().mean().item()
+drift = (p8 - p32).abs()
+
+print(f"{'':22s}{'FP32':>10s}{'INT8 dynamic':>14s}")
+print(f"{'state_dict size (MB)':22s}{size_mb(model):10.2f}{size_mb(qmodel):14.2f}")
+for b in (1, 64):
+    print(f"{'latency b=' + str(b) + ' (ms)':22s}{latency_ms(model, b):10.3f}"
+          f"{latency_ms(qmodel, b):14.3f}")
+print(f"{'test MAE (min)':22s}{mae32:10.3f}{mae8:14.3f}")
+print(f"FP32 vs INT8 prediction gap: mean {drift.mean():.4f} min, "
+      f"p99 {drift.quantile(0.99):.4f} min, max {drift.max():.4f} min")
+```
+
+Output on one x86 core (latencies vary by machine and run):
+
+```text
+                            FP32  INT8 dynamic
+state_dict size (MB)        6.31          1.59
+latency b=1 (ms)           0.301         0.106
+latency b=64 (ms)          1.983         0.892
+test MAE (min)             1.620         1.626
+FP32 vs INT8 prediction gap: mean 0.0869 min, p99 0.3183 min, max 0.4990 min
+```
+
+What to notice:
+
+- Size falls 3.97×: 1.58 million weights go from 4 bytes to 1, while biases and per-tensor scales stay in FP32.
+- Latency fell 2.2–2.8× here; across repeated runs on the same machine the ratio ranged from about 2× to 3.5×. Treat any single timing as one sample and benchmark on production hardware.
+- Mean absolute error moved from 1.620 to 1.626 minutes (0.4%), but individual predictions moved by up to half a minute. Aggregate accuracy hides per-prediction changes; §67.16 validates by slice.
+- `torch.ao.quantization` is deprecated in recent PyTorch releases in favor of the separate torchao library (as of 2026); the concepts and results carry over, the import path changes.
+
+### 67.5.3 Quantization-aware training and the straight-through estimator
+
+Rounding has zero gradient almost everywhere, so a quantized forward pass blocks learning. The STE keeps the quantized value in the forward pass but pretends rounding was the identity in the backward pass; most implementations also zero the gradient for values that were clamped, since nudging them does not change the output.
+
+**Figure 67.6 — Fake quantization in the forward and backward passes.**
+
+```mermaid
+sequenceDiagram
+  participant W as FP32 shadow weights
+  participant FQ as Fake-quant node
+  participant L as Layer and loss
+  W->>FQ: forward: w
+  FQ->>L: s times clamp of round of w over s
+  L->>L: loss sees rounding error
+  L-->>FQ: backward: dLoss by dw_hat
+  FQ-->>W: STE: pass gradient unchanged inside range, zero outside
+  W->>W: optimizer updates FP32 weights
+```
+
+**Reading the diagram.** The model keeps full-precision **shadow weights**. In the forward pass, the fake-quant node rounds them to the INT8 grid and dequantizes, so the loss reflects real quantization error. In the backward pass (dotted arrows), the STE passes the gradient straight through inside the clipping range and zeroes it outside. The optimizer updates the FP32 weights, which may cross rounding boundaries over many steps. After training, the shadow weights are quantized once and discarded. Scales may be fixed from calibration or learned as parameters.
+
+```python
+"""Fake quantization with a straight-through estimator (STE)."""
+import torch
+
+torch.manual_seed(0)
+
+def fake_quant_ste(x, scale, qmin=-127, qmax=127):
+    q = torch.clamp(torch.round(x / scale), qmin, qmax) * scale   # quantize-dequantize
+    return x + (q - x).detach()           # forward: q; backward: d/dx = 1 (identity)
+
+w = torch.tensor([0.013, -0.402, 0.951, 1.30], requires_grad=True)
+scale = 1.0 / 127                          # INT8 grid covering [-1, 1]
+
+# 1. Naive: gradient through round() is zero almost everywhere
+y_naive = (torch.clamp(torch.round(w / scale), -127, 127) * scale).sum()
+y_naive.backward()
+print("naive grad:", w.grad.tolist())
+
+# 2. STE: forward sees quantized values, backward passes gradients through
+w.grad = None
+y_ste = fake_quant_ste(w, scale)
+print("forward values:", [round(v, 4) for v in y_ste.tolist()])
+y_ste.sum().backward()
+print("STE grad:  ", w.grad.tolist())
+
+# 3. PyTorch's built-in op agrees in forward and also zeroes grads outside the range
+w.grad = None
+y_pt = torch.fake_quantize_per_tensor_affine(w, scale, 0, -127, 127)
+y_pt.sum().backward()
+print("torch op:  ", [round(v, 4) for v in y_pt.tolist()], "grad", w.grad.tolist())
+```
+
+Output:
+
+```text
+naive grad: [0.0, 0.0, 0.0, 0.0]
+forward values: [0.0157, -0.4016, 0.9528, 1.0]
+STE grad:   [1.0, 1.0, 1.0, 1.0]
+torch op:   [0.0157, -0.4016, 0.9528, 1.0] grad [1.0, 1.0, 1.0, 0.0]
+```
+
+What to notice:
+
+- `x + (q - x).detach()` equals `q` in value but has the gradient of `x`: the whole STE in one line.
+- The weight 1.30 lies outside the grid's range and is clamped to 1.0; PyTorch's op gives it zero gradient, the simple version does not.
+- QAT costs a training run, so it is reserved for cases where PTQ measurably fails: small models with little redundancy (MobileNet-class networks), 4-bit and lower, or integer-only edge targets.
+
+::: mistake
+**"Quantization-aware training means training from scratch in INT8."** QAT trains in floating point with simulated quantization, almost always as a short fine-tune of an existing model. Real low-precision *training* (FP8 GEMMs with BF16 master weights, §64.10) is a different technique aimed at training speed.
+:::
+
+## 67.6 LLM weight quantization
+
+### 67.6.1 Weight-only quantization and the memory arithmetic
+
+Large language models change the quantization problem in two ways. First, decoding at small batch is memory-bandwidth-bound (§64.9.2): time per token is set by bytes of weights read, so shrinking weights speeds generation even if arithmetic stays in BF16. Second, models beyond a few billion parameters develop **outlier features**: a few activation dimensions with magnitudes far larger than the rest, which wreck per-tensor activation quantization [Dettmers et al. 2022].
+
+::: definition
+**Definition — Weight-only quantization (W8A16, W4A16).** Weights are stored in 8 or 4 bits with per-channel or per-group scales; activations stay in 16-bit floating point. A kernel loads low-bit weights, dequantizes them in registers and multiplies in BF16 or FP16. The notation W$x$A$y$ gives weight and activation bit widths; **W8A8** quantizes both and uses integer or FP8 tensor cores.
+:::
+
+::: formula
+**Weight memory at a given precision**
+
+$$M_\text{w} = N \cdot \frac{b + b_s / g}{8}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M_\text{w}$ | Weight memory | bytes |
+| $N$ | Parameter count | parameters |
+| $b$ | Bits per stored weight | bits |
+| $b_s$ | Bits of metadata per group: 16 for an FP16 scale, 20 with a 4-bit zero-point | bits |
+| $g$ | Weights per group sharing that metadata ($g \to \infty$ for per-tensor) | weights |
+:::
+
+::: example
+**Worked example — A 70B model at FP16, INT8 and INT4.** H100s with 80 GB each.
+
+**Table 67.3 — Weight memory for a 70B-parameter model.**
+
+| Format | Bits per weight | Weight memory | H100s for weights | Left for KV cache |
+|---|---|---|---|---|
+| FP16 / BF16 | 16 | 140 GB | 2 | 20 GB on two GPUs |
+| INT8 or FP8, per-channel | ≈ 8.0 | 70 GB | 1 | 10 GB |
+| INT4, $g = 128$, FP16 scale | 4.125 | 36.1 GB | 1 | 43.9 GB |
+| INT4, $g = 128$, scale + zero | 4.156 | 36.4 GB | 1 | 43.6 GB |
+| INT3, $g = 128$ | 3.125 | 27.3 GB | 1 | 52.7 GB |
+
+1. FP16: $70 \times 10^9 \times 2 = 140$ GB; two GPUs and tensor parallelism (§65.10) before serving a single request.
+2. INT4, $g = 128$: $70 \times 10^9 \times (4 + 16/128)/8 = 36.1$ GB; one GPU.
+3. KV cache at FP16 for this shape (80 layers, 8 KV heads of 128 dimensions) is $2 \times 80 \times 8 \times 128 \times 2 = 327{,}680$ bytes per token (Chapter 73 derives it). The 43.9 GB left holds about 134,000 tokens of context across all concurrent requests; the INT8 model's 10 GB holds about 30,000.
+4. Embedding and output layers are often kept at 16 bits; for a 32,000-token vocabulary they add about 0.8 GB over INT4.
+
+**Interpretation.** INT4 does not just halve cost against INT8; it turns a GPU with no room for requests into one with room for many. **Engineering implication.** Size LLM serving from weights *plus* KV cache, and quantize weights first because they are the fixed cost; Chapter 73 quantizes the KV cache itself.
+:::
+
+### 67.6.2 GPTQ: second-order error compensation
+
+Rounding each weight to its nearest grid point (**round-to-nearest, RTN**) treats weights independently. But a layer's output is $y = Wx$, and its inputs are correlated, so an error in one weight can be offset by adjusting others that see similar inputs. **GPTQ** quantizes a layer's weights one input column at a time and, after each column, updates the not-yet-quantized columns to compensate, using the inverse of the Hessian $H = 2XX^\top$ of the layer's squared reconstruction error on a small calibration set [Frantar et al. 2023]. It builds on Optimal Brain Surgeon [Hassibi and Stork 1993], made fast by a fixed column order, lazy batched updates and a Cholesky formulation.
+
+::: formula
+**GPTQ / OBS update after quantizing weight $q$**
+
+$$\boldsymbol{\delta} = -\frac{w_q - \text{quant}(w_q)}{[H^{-1}]_{qq}} \, (H^{-1})_{:,q} \qquad H = 2XX^\top$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $w_q$ | The weight being quantized (one input position of a row) | weight units |
+| $\text{quant}(w_q)$ | Its value on the quantization grid | weight units |
+| $H$ | Hessian of the layer's squared output error; $X$ holds calibration inputs | input units² |
+| $(H^{-1})_{:,q}$ | Column $q$ of the inverse Hessian | — |
+| $\boldsymbol{\delta}$ | Update added to the remaining (unquantized) weights of the row | weight units |
+:::
+
+::: example
+**Worked example — Two correlated inputs.** One output $y = w_1 x_1 + w_2 x_2$; inputs have unit variance and correlation $\rho = 0.9$; $w = (0.537, 0.232)$; grid step 0.1. The expected squared output error for weight errors $d$ is $d^\top \Sigma d = d_1^2 + d_2^2 + 2\rho d_1 d_2$.
+
+1. RTN: $(0.5, 0.2)$, $d = (-0.037, -0.032)$: error $= 0.001369 + 0.001024 + 2(0.9)(0.001184) = 0.00452$.
+2. GPTQ: quantize $w_1 \to 0.5$. For $H \propto \begin{pmatrix} 1 & \rho \\ \rho & 1 \end{pmatrix}$, $(H^{-1})_{21}/(H^{-1})_{11} = -\rho$, so $\delta_2 = -\rho \times (0.5 - 0.537) = +0.0333$, giving $w_2' = 0.2653$, which rounds to 0.3.
+3. Now $d = (-0.037, +0.068)$: error $= 0.001369 + 0.004624 - 2(0.9)(0.002516) = 0.00146$.
+4. Ratio: $0.00452/0.00146 = 3.1\times$ less output error, although $w_2$ moved *away* from its nearest grid point.
+
+**Interpretation.** GPTQ minimizes the error of the layer's output, not of each weight. **Engineering implication.** Calibration data matters: the Hessian encodes which inputs co-occur, so calibrate on text resembling production prompts (a few hundred sequences suffice).
+:::
+
+::: industry
+**GPTQ at 175B scale.** Frantar et al. quantized OPT-175B and BLOOM-176B to 3–4 bits per weight in about four GPU-hours with negligible perplexity increase at 4 bits, fitting OPT-175B on a single 80 GB GPU, and reported end-to-end generation speed-ups of about 3.25× on A100 and 4.5× on A6000 GPUs against FP16, from reduced memory traffic.
+*Evidence: Primary* — [Frantar et al. 2023]
+:::
+
+### 67.6.3 Outliers: LLM.int8() and AWQ
+
+**LLM.int8()** observed that from about 6.7B parameters, a handful of hidden dimensions carry activation outliers in most layers, and per-tensor INT8 activation quantization collapses accuracy. Its **mixed-precision decomposition** multiplies those outlier columns in FP16 and the rest (more than 99.9% of values) in INT8 with vector-wise scales, preserving accuracy up to 175B parameters [Dettmers et al. 2022]. It saves memory, but the split GEMM is slower than plain FP16 in many settings.
+
+**AWQ** (activation-aware weight quantization) observed that about 1% of weight channels matter most: those multiplied by large activations. Instead of keeping them in FP16 (awkward for kernels), it scales each salient input channel's weights up by $s > 1$ before quantization and divides the matching activation by $s$, which leaves the product unchanged but shrinks the *relative* rounding error of the salient weights. The scales are found by a small grid search on calibration activations, with no backpropagation and no Hessian, so AWQ is fast and less prone to overfitting the calibration set [Lin et al. 2024].
+
+### 67.6.4 SmoothQuant and FP8: quantizing activations too
+
+Weight-only formats speed memory-bound decoding but not compute-bound prefill or large-batch serving, where the GEMMs still run in 16 bits. **SmoothQuant** enables W8A8 by migrating quantization difficulty from activations (outliers in a few channels) to weights (easy to quantize), using a per-channel scale that is mathematically exact [Xiao et al. 2023].
+
+::: formula
+**SmoothQuant scaling**
+
+$$Y = (X\,\text{diag}(\mathbf{s})^{-1}) \cdot (\text{diag}(\mathbf{s})\,W) \qquad s_j = \frac{\max|X_{:,j}|^{\alpha}}{\max|W_{j,:}|^{1-\alpha}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $X$ | Activations, tokens × input channels | activation units |
+| $W$ | Weights, input channels × output channels | weight units |
+| $s_j$ | Smoothing factor for input channel $j$, folded into the previous layer offline | dimensionless |
+| $\alpha$ | Migration strength, typically 0.5 (0.75 or more for models with severe outliers) | dimensionless |
+:::
+
+::: example
+**Worked example — Balancing one outlier channel.** Channel $j$ has $\max|X_{:,j}| = 60$ while other channels peak near 2; its weights peak at $\max|W_{j,:}| = 0.5$. $\alpha = 0.5$.
+
+1. $s_j = \sqrt{60}/\sqrt{0.5} = 7.746/0.7071 = 10.95$.
+2. New activation maximum: $60/10.95 = 5.48$. New weight maximum: $0.5 \times 10.95 = 5.48$.
+3. The per-tensor activation range falls from 60 to about 5.5, an 11× smaller step for every other channel: about $20\log_{10} 11 = 21$ dB of SQNR, or 3.5 bits.
+
+**Interpretation.** The product is unchanged; only where the difficulty sits has moved, from activations shared by all tokens to one weight row that per-channel weight quantization handles easily. **Engineering implication.** Smoothing factors are computed once from calibration data and folded into the preceding normalization layer, so inference pays nothing for them.
+:::
+
+**Figure 67.7 — SmoothQuant moves outliers from activations into weights.**
+
+```mermaid
+flowchart LR
+  subgraph BEFORE["Before: hard to quantize"]
+    XA["Activations X<br/>channel j peaks at 60"] --> G1["X W"]
+    WA["Weights W<br/>row j peaks at 0.5"] --> G1
+  end
+  subgraph AFTER["After: both INT8-friendly"]
+    XB["X divided by s<br/>peaks near 5.5"] --> G2["INT8 GEMM"]
+    WB["s times W<br/>row j peaks near 5.5"] --> G2
+  end
+  CALIB[("Calibration<br/>activation maxima")] -.->|"compute s offline"| AFTER
+  BEFORE -->|"same output Y"| AFTER
+```
+
+**Reading the diagram.** The left group is a linear layer whose activations have an outlier channel; the right group is the same layer after smoothing. The scale vector is computed offline from calibration statistics (dotted arrow, a storage boundary read once) and folded into the previous layer's normalization weights and this layer's weights, so no extra operation runs at inference. The output is identical in exact arithmetic; what changes is that both operands now have modest ranges, so per-tensor or per-token INT8 activations and per-channel INT8 weights lose little accuracy. Failure point: an outlier channel missing from calibration data reappears in production.
+
+**FP8 inference.** On Hopper-class and newer GPUs, FP8 (E4M3) weights and activations with per-tensor or per-block scales give W8A8-like speed with less tuning than INT8, because the floating-point format tolerates a wider range within a tensor (§64.10) [Micikevicius et al. 2022]. As of 2026, FP8 is a common default for data-center LLM serving on such GPUs, with INT4 weight-only formats used where memory is the constraint.
+
+**Table 67.4 — LLM quantization methods compared.**
+
+| Method | Weights / activations | Needs | Strength | Watch out for |
+|---|---|---|---|---|
+| RTN, per-group | W8 or W4 / A16 | Nothing | Instant baseline | Quality drops at 4 bits for smaller models |
+| GPTQ | W4 or W3 / A16 | ~100s of calibration sequences, GPU-hours | Strong at 3–4 bits | Can overfit calibration domain |
+| AWQ | W4 / A16 | Calibration activations | Fast, robust, kernel-friendly | Gains are for memory-bound decode |
+| LLM.int8() | W8 / A8 + FP16 outliers | Nothing | Accurate at 8 bits | Often slower than FP16 |
+| SmoothQuant | W8 / A8 | Calibration maxima | Speeds compute-bound phases too | Needs INT8 kernels for every GEMM |
+| FP8 (E4M3) | W8 / A8 | Scales per tensor or block | Simple, accurate, fast on new GPUs | Hardware support required |
+
+::: mistake
+**"4-bit weights mean 4× less memory for the whole server."** Weights shrink; the KV cache, activations, runtime buffers and CUDA context do not. A 70B INT4 model on one 80 GB GPU leaves 44 GB for everything else, and long-context requests can fill it. Plan memory as weights plus KV cache plus overhead (Chapter 73).
+:::
+
+## 67.7 Pruning
+
+### 67.7.1 Unstructured, structured and 2:4 sparsity
+
+::: definition
+**Definition — Pruning and sparsity.** **Pruning** sets a subset of a model's weights to zero and removes them from storage or computation; **sparsity** is the fraction of zeros. **Unstructured** pruning removes individual weights anywhere; **structured** pruning removes whole units (channels, attention heads, layers), leaving a smaller dense model; **semi-structured N:M sparsity** keeps at most N non-zeros in every group of M consecutive weights, such as **2:4** [Mishra et al. 2021]. **Magnitude pruning** removes the weights with the smallest absolute values [Han et al. 2016].
+:::
+
+#### First-principles explanation
+
+A text with every third letter deleted at random is half as long on paper but no faster to read, because you still scan every position. Deleting whole sentences makes it genuinely shorter. Dense hardware reads a matrix like the first reader: a zero costs the same as any other number unless the hardware or the format skips it.
+
+#### How it works internally
+
+Iterative magnitude pruning trains, removes the smallest weights, fine-tunes to recover, and repeats, gradually raising sparsity [Han et al. 2016; Zhu and Gupta 2017]. The **lottery ticket hypothesis** adds a scientific twist: dense networks contain sparse subnetworks (often 10–20% of the weights on small vision tasks) that, reset to their original initialization and trained alone, match the full network's accuracy [Frankle and Carbin 2019]. It explains why pruning works; it is not a cheap way to find small models, because finding the ticket requires training the big one.
+
+**Figure 67.8 — Iterative pruning and the three sparsity patterns.**
+
+```mermaid
+flowchart LR
+  T["Train dense model"] --> P["Prune smallest-magnitude<br/>weights to target pattern"]
+  P --> F["Fine-tune to<br/>recover accuracy"]
+  F --> C{"Accuracy within<br/>tolerance?"}
+  C -->|"yes: raise sparsity"| P
+  C -->|"no: stop at last good level"| OUT["Export sparse model"]
+  OUT --> U["Unstructured:<br/>needs sparse kernels"]
+  OUT --> S24["2:4 semi-structured:<br/>sparse tensor cores"]
+  OUT --> ST["Structured channels or heads:<br/>smaller dense model"]
+```
+
+**Reading the diagram.** The loop runs offline on training data: each pass prunes to a higher sparsity, fine-tunes and checks accuracy, stopping at the last level that passes. The export branches show what the hardware can exploit. Unstructured zeros help only with sparse kernels at high sparsity; 2:4 patterns map to sparse tensor cores on NVIDIA GPUs since Ampere; structured pruning yields a smaller dense model that runs faster everywhere. The failure point is pruning without fine-tuning, or measuring sparsity instead of latency.
+
+::: formula
+**Storage of sparse formats relative to dense**
+
+$$\frac{M_\text{CSR}}{M_\text{dense}} \approx (1 - \text{sp})\,\frac{b_v + b_i}{b_v} \qquad \frac{M_{2:4}}{M_\text{dense}} = \frac{2\,b_v + 2 \times 2}{4\,b_v}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| sp | Sparsity: fraction of weights that are zero | dimensionless |
+| $b_v$ | Bits per stored value | bits |
+| $b_i$ | Bits per column index in compressed sparse row (CSR) format | bits |
+| $2 \times 2$ | 2:4 metadata: a 2-bit position for each of the 2 kept values per group of 4 | bits |
+:::
+
+::: example
+**Worked example — When does sparsity save memory?**
+
+1. CSR with FP16 values and 16-bit indices: break-even when $(1 - \text{sp}) \times 2 = 1$, so sp = 50%. At 50% unstructured sparsity the model is *no smaller*; at 90% it is $0.1 \times 2 = 0.2$ of dense.
+2. INT8 values with 16-bit indices: break-even at sp $= 2/3$.
+3. 2:4 with FP16: $(32 + 4)/64 = 0.5625$, a 1.78× reduction, with regular structure the tensor cores exploit for up to 2× GEMM math throughput.
+
+**Interpretation.** Unstructured sparsity must be very high to pay for its indices, and its irregular access pattern defeats the coalesced loads and tiles of dense kernels (§64.6.3). **Engineering implication.** On GPUs, prefer 2:4 (with fine-tuning) or structured pruning; reserve unstructured sparsity for CPUs with sparse kernels at high sparsity or for compression before storage.
+:::
+
+```python
+"""Magnitude pruning: unstructured 50% versus 2:4, and why dense matmul time does not move."""
+import time
+import torch
+
+torch.manual_seed(0)
+torch.set_num_threads(1)
+W = torch.randn(1024, 1024)
+X = torch.randn(1024, 256)
+
+def unstructured_mask(w, sparsity):
+    k = int(w.numel() * sparsity)                       # number of weights to drop
+    threshold = w.abs().flatten().kthvalue(k).values
+    return (w.abs() > threshold).float()
+
+def two_four_mask(w):
+    g = w.abs().reshape(-1, 4)                          # groups of 4 along each row
+    keep = g.topk(2, dim=1).indices                     # 2 largest of every 4
+    m = torch.zeros_like(g).scatter_(1, keep, 1.0)
+    return m.reshape(w.shape)
+
+def rel_err(a, b):
+    return ((a - b).norm() / a.norm()).item()
+
+def ms(fn, reps=50):
+    fn(); t0 = time.perf_counter()
+    for _ in range(reps): fn()
+    return 1e3 * (time.perf_counter() - t0) / reps
+
+Y = W @ X
+for name, mask in [("unstructured 50%", unstructured_mask(W, 0.5)),
+                   ("2:4 structured", two_four_mask(W))]:
+    Wp = W * mask
+    print(f"{name:17s} zeros {100 * (Wp == 0).float().mean():.1f}%  "
+          f"output rel. error {rel_err(Y, Wp @ X):.3f}  "
+          f"dense matmul {ms(lambda: Wp @ X):.2f} ms (unpruned {ms(lambda: W @ X):.2f} ms)")
+m24 = two_four_mask(W).reshape(-1, 4).sum(dim=1)
+print("every group of 4 keeps exactly 2:", bool((m24 == 2).all()))
+```
+
+Output (timings machine-dependent):
+
+```text
+unstructured 50%  zeros 50.0%  output rel. error 0.267  dense matmul 4.38 ms (unpruned 3.92 ms)
+2:4 structured    zeros 50.0%  output rel. error 0.363  dense matmul 3.84 ms (unpruned 3.77 ms)
+every group of 4 keeps exactly 2: True
+```
+
+What to notice:
+
+- Half the weights are zero, and the dense matmul takes the same time: dense kernels multiply zeros like any other number.
+- Without fine-tuning, pruning random weights loses 27–36% of the output signal. Trained networks are more redundant than random matrices, but the recovery step is never optional.
+- 2:4 errs more than unstructured pruning at equal sparsity, because it may not keep two large weights that share a group. That is the price of a hardware-friendly pattern.
+
+::: industry
+**Deep Compression and 2:4 sparse tensor cores.** Han, Mao and Dally combined magnitude pruning, weight sharing via 5–8-bit clustered quantization, and Huffman coding to shrink AlexNet 35× (240 MB to 6.9 MB) and VGG-16 49× (552 MB to 11.3 MB) without accuracy loss on ImageNet, mainly to fit models in on-chip memory. Mishra et al. later showed that a train–prune 2:4–retrain recipe preserves accuracy across vision, translation and language models, with Ampere sparse tensor cores doubling peak math throughput for the pruned GEMMs.
+*Evidence: Primary* — [Han et al. 2016; Mishra et al. 2021]
+:::
+
+::: mistake
+**"90% sparse means 10× faster."** Speed comes from skipped work that the hardware can actually skip. On GPUs, unstructured sparse kernels typically beat dense ones only at very high sparsity, and the datasheet's "with sparsity" figures assume 2:4 patterns (§64.8).
+:::
+
+## 67.8 Knowledge distillation
+
+### 67.8.1 Soft targets, temperature and student sizing
+
+::: definition
+**Definition — Knowledge distillation.** Training a smaller **student** model to match the output distribution of a larger **teacher** model, usually in addition to the true labels. The teacher's probabilities, softened by a **temperature** $T > 1$, are **soft targets** that reveal how the teacher ranks wrong answers [Hinton et al. 2015].
+:::
+
+#### First-principles explanation
+
+A textbook answer key says only "B". A teacher's marked-up answer says "B, though C was tempting and A was never plausible". The second carries more information per example, so a student learns faster from it. Temperature makes the teacher spell out the "tempting" part, which an over-confident softmax would round to almost zero.
+
+::: formula
+**Distillation loss with temperature**
+
+$$p_i^{(T)} = \frac{e^{z_i/T}}{\sum_j e^{z_j/T}} \qquad \mathcal{L} = \alpha\, T^2\, \text{KL}\!\left(p^{(T)}_\text{teacher} \,\|\, p^{(T)}_\text{student}\right) + (1 - \alpha)\, \text{CE}\!\left(y,\, p^{(1)}_\text{student}\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $z_i$ | Logit for class $i$ | dimensionless |
+| $T$ | Temperature; $T = 1$ is the ordinary softmax | dimensionless |
+| KL | Kullback–Leibler divergence between teacher and student soft distributions | nats |
+| CE | Cross-entropy against the hard label $y$ | nats |
+| $\alpha$ | Weight of the distillation term | dimensionless |
+| $T^2$ | Keeps soft-target gradients comparable in size as $T$ changes [Hinton et al. 2015] | dimensionless |
+:::
+
+::: example
+**Worked example — Distilling QuickBite's support-intent classifier.** Classes: refund, late order, missing item. Teacher logits $(5.0, 2.0, 1.0)$; student logits $(3.0, 2.5, 0.5)$; true label refund; $\alpha = 0.7$, $T = 4$.
+
+1. Teacher at $T = 1$: $(0.936, 0.047, 0.017)$: almost a hard label. At $T = 4$: $(0.543, 0.257, 0.200)$: "late order" is clearly the runner-up.
+2. Student at $T = 4$: $(0.414, 0.365, 0.221)$. $\text{KL} = \sum p_t \ln(p_t/p_s) = 0.0376$; $T^2\,\text{KL} = 0.601$.
+3. Hard-label term: $\text{CE} = -\ln 0.592 = 0.524$ (student at $T = 1$ gives refund 0.592).
+4. $\mathcal{L} = 0.7 \times 0.601 + 0.3 \times 0.524 = 0.421 + 0.157 = 0.578$.
+
+**Interpretation.** The KL term pushes the student to lower "late order" relative to "refund" while keeping the teacher's ordering of the wrong classes. **Engineering implication.** Teacher logits can be computed once over a large *unlabeled* corpus and stored, so the student can train on far more data than was ever labeled; log them with the model version that produced them.
+:::
+
+**Figure 67.9 — Offline distillation pipeline.**
+
+```mermaid
+flowchart LR
+  U[("Unlabeled and<br/>labeled data")] --> TE["Teacher inference,<br/>batch, GPUs"]
+  TE --> SL[("Stored soft labels:<br/>logits or top-k probs")]
+  SL --> ST["Student training:<br/>KL at temperature T + CE"]
+  U --> ST
+  ST --> EV{"Quality gap<br/>within budget?"}
+  EV -->|yes| REG[("Model registry")]
+  EV -->|no: larger student or more data| ST
+```
+
+**Reading the diagram.** Teacher inference is a batch job over a large corpus (Chapter 66's offline inference), writing soft labels to storage; storing the top-k probabilities rather than full vocabularies keeps LLM soft labels affordable. The student trains from stored soft labels and any hard labels, so the expensive teacher runs once. The gate compares student and teacher on the same slices; failing students grow or receive more data. Failure points: soft labels from an outdated teacher, and a student evaluated only on aggregate metrics.
+
+::: example
+**Worked example — Choosing a student for a re-ranker.** QuickBite re-ranks the top 50 dishes for each browse request at 7,000 RPS: 350,000 candidates/s. A 110M-parameter cross-encoder teacher reads 64 tokens per candidate. Assumed quality, measured as NDCG@10 offline (illustrative numbers):
+
+**Table 67.5 — Student size versus quality and serving cost (illustrative).**
+
+| Model | Parameters | FLOPs per candidate ($2N \times 64$) | NDCG@10 | H100s at 40% of BF16 peak |
+|---|---|---|---|---|
+| Teacher | 110M | $1.41 \times 10^{10}$ | 0.420 | 12.4 |
+| Student, distilled | 22M | $2.82 \times 10^{9}$ | 0.414 | 2.5 |
+| Same size, labels only | 22M | $2.82 \times 10^{9}$ | 0.405 | 2.5 |
+| Student, distilled | 5.5M | $7.0 \times 10^{8}$ | 0.401 | 0.6 |
+
+1. Teacher compute: $350{,}000 \times 1.41 \times 10^{10} = 4.93 \times 10^{15}$ FLOP/s; one H100 at 40% of 989 TFLOP/s delivers $3.96 \times 10^{14}$: 12.4 GPUs.
+2. The 22M student needs $4.93/5 = 0.99 \times 10^{15}$ FLOP/s: 2.5 GPUs, keeping 0.006 of 0.015 NDCG it would have lost when trained on labels alone.
+
+**Interpretation.** A 5× smaller model costs 1.4% relative quality when distilled. **Engineering implication.** Plot quality against serving cost for several student sizes and pick the knee, then confirm with an online test (§57.14); offline NDCG differences of this size may or may not move orders.
+:::
+
+::: industry
+**DistilBERT.** Hugging Face distilled BERT-base into a 6-layer student that is 40% smaller and 60% faster while retaining 97% of BERT's score on the GLUE language-understanding benchmark, using a loss that combines soft-target distillation, masked-language modeling and a hidden-state alignment term.
+*Evidence: Primary* — [Sanh et al. 2019]
+:::
+
+For LLMs, distillation trains a small model on a large model's token distributions or generated outputs; Chapter 76 covers the data pipelines. Check the teacher model's license terms before distilling from it.
+
+## 67.9 Efficient architectures
+
+Sometimes the best compression is a model designed to be cheap. Two ideas recur.
+
+**Depthwise separable convolutions** split a standard convolution into a per-channel spatial filter (**depthwise**) and a 1×1 channel-mixing convolution (**pointwise**), the building block of MobileNets [Howard et al. 2017].
+
+::: formula
+**Cost of depthwise separable versus standard convolution**
+
+$$\frac{D_K^2\, M\, D_F^2 + M\, N\, D_F^2}{D_K^2\, M\, N\, D_F^2} = \frac{1}{N} + \frac{1}{D_K^2}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $D_K$ | Kernel width and height | pixels |
+| $M, N$ | Input and output channels | channels |
+| $D_F$ | Output feature-map width and height | pixels |
+:::
+
+::: example
+**Worked example — A 3×3 layer with 256 channels on a 56×56 map.** Standard: $9 \times 256 \times 256 \times 3{,}136 = 1.85 \times 10^9$ multiply–adds. Separable: $9 \times 256 \times 3{,}136 + 256 \times 256 \times 3{,}136 = 7.2 \times 10^6 + 2.06 \times 10^8 = 2.13 \times 10^8$. Ratio $1/256 + 1/9 = 0.115$: 8.7× fewer operations, matching the "8 to 9 times" Howard et al. report for 3×3 kernels.
+
+**Interpretation.** Almost all remaining cost is the 1×1 pointwise convolution, a plain GEMM. **Engineering implication.** FLOP savings do not translate one-for-one into speed: depthwise layers have low arithmetic intensity (§64.9) and can be memory-bound on GPUs, so benchmark on the target device.
+:::
+
+**Low-rank factorization** replaces an $m \times n$ weight with $U_{m \times r} V_{r \times n}$, cutting parameters and FLOPs from $mn$ to $r(m + n)$ [Denton et al. 2014]. For $1{,}024 \times 1{,}024$ at $r = 128$: 262,144 versus 1,048,576, a 4× reduction; it saves anything only when $r < mn/(m + n) = 512$. Accuracy depends on how quickly the weight's singular values decay, so factorize, fine-tune and measure. The same idea underlies LoRA adapters (Chapter 76).
+
+**Figure 67.10 — Standard versus depthwise separable convolution.**
+
+```mermaid
+flowchart LR
+  IN["Input<br/>56 x 56 x 256"] --> STD["Standard 3 x 3 conv:<br/>each of 256 filters spans all 256 channels"]
+  STD --> O1["Output<br/>56 x 56 x 256"]
+  IN --> DW["Depthwise 3 x 3:<br/>one filter per channel"]
+  DW --> PW["Pointwise 1 x 1:<br/>mixes channels, a GEMM"]
+  PW --> O2["Output<br/>56 x 56 x 256"]
+```
+
+**Reading the diagram.** Both paths turn the same input into the same output shape. The upper path does spatial filtering and channel mixing in one step, costing $1.85 \times 10^9$ multiply–adds. The lower path filters each channel spatially on its own (cheap, memory-bound) and then mixes channels with a 1×1 convolution (a dense GEMM), costing 8.7× less in total. Everything is synchronous within one forward pass; the representational cost is that spatial and channel interactions are no longer learned jointly, which architectures such as MobileNetV2 offset with more layers.
+

@@ -704,5 +704,334 @@ flowchart LR
 **Scale to zero.** Removing all replicas saves money for models that are idle most of the day: development endpoints, per-tenant models, asynchronous workers. The first request then waits for the full cold start, tens of seconds to minutes for a GPU model (§66.10), so scale to zero only where a client can wait or where an asynchronous queue absorbs the delay. QuickBite's dish-photo workers scale to zero on queue depth overnight; the ETA service never does. MArk combined predictive autoscaling of instances with serverless functions to absorb bursts while new instances started [Zhang et al. 2019].
 
 ::: mistake
-**Mistake — Scaling a GPU server on GPU utilization.** At low load a work-conserving batcher keeps the GPU "busy" with tiny batches (95% in the §66.6 simulation at 7% of capacity), so the autoscaler sees a hot GPU and adds replicas that are not needed; at high load the signal saturates at 100% and cannot show how far over capacity you are. Scale on queue depth or in-flight requests per replica.
+**Mistake — Scaling a GPU server on GPU utilization.** At low load a work-conserving batcher keeps the GPU "busy" with tiny batches (95% busy in the §66.6 simulation at 8% of capacity), so the autoscaler sees a hot GPU and adds replicas that are not needed; at high load the signal saturates at 100% and cannot show how far over capacity you are. Scale on queue depth or in-flight requests per replica.
 :::
+
+## 66.10 Model loading and warm-up
+
+### 66.10.1 Where cold-start time goes
+
+::: definition
+**Definition — Model cold start and warm-up.** A **cold start** is the time from deciding to start a replica until it serves traffic within its latency objective: node provisioning, container image pull, model download, deserialization and transfer to device memory, runtime initialization, and **warm-up**, the deliberate execution of representative requests so that one-time costs (memory allocation, kernel selection, lazy compilation, cache population) are paid before real traffic arrives.
+:::
+
+A model is not a program you start; it is gigabytes you must move. A web service starts in seconds because its binary is small. A 4 GB ranking model must travel from object storage over the network, be parsed, and be copied over PCIe into GPU memory before the first prediction, and its first predictions are slow until allocators and kernels are warm. This time is the dominant term of $T_{\text{react}}$ in §66.9, so it sets how much headroom you must pay for.
+
+::: formula
+**Cold-start time of a model replica**
+
+$$T_{\text{cold}} = T_{\text{node}} + T_{\text{image}} + \frac{S}{B_{\text{store}}} + \frac{S}{B_{\text{load}}} + T_{\text{init}} + T_{\text{warm}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $T_{\text{node}}$ | Provisioning a node, zero if a spare node exists | s |
+| $T_{\text{image}}$ | Pulling the container image, zero if cached on the node | s |
+| $S$ | Model artifact size | GB |
+| $B_{\text{store}}$ | Download bandwidth from the model store or node cache | GB/s |
+| $B_{\text{load}}$ | Effective deserialization and host-to-device copy bandwidth | GB/s |
+| $T_{\text{init}}$ | Runtime and device context initialization | s |
+| $T_{\text{warm}}$ | Warm-up requests | s |
+:::
+
+::: example
+**Worked example — Starting a replica of the home-page ranking model.** The model holds QuickBite's embedding tables (2.56 GB of customers and 1.28 GB of dishes, §58.6) plus dense layers: $S = 4$ GB. Assumed: GPU node provisioning 120 s; a 5 GB serving image pulled at 0.25 GB/s; object storage at 0.4 GB/s with parallel ranged reads (0.1 GB/s with one stream); node-local NVMe at 2 GB/s; effective load 4 GB/s; initialization 5 s; 200 warm-up requests over several batch sizes, 10 s.
+
+1. Fully cold: $120 + 5/0.25 + 4/0.4 + 4/4 + 5 + 10 = 120 + 20 + 10 + 1 + 5 + 10 = 166$ s.
+2. Same, but downloading with one stream: $4/0.1 = 40$ s instead of 10: 196 s.
+3. Warm node, image cached, model on local NVMe: $0 + 0 + 4/2 + 1 + 5 + 10 = 18$ s.
+4. If the server compiled a TensorRT engine at start-up instead of loading a prebuilt one, add minutes; build engines in the deployment pipeline for each GPU type.
+
+**Interpretation.** Node provisioning is 72% of a fully cold start; moving the model bytes is 7–21%. **Engineering implication.** Keep spare GPU capacity warm, pre-pull images, cache models on nodes, and parallelize downloads; together they cut $T_{\text{cold}}$ from about 3 minutes to under 20 seconds, which in §66.9 lets the target utilization rise.
+:::
+
+**Figure 66.8 — Cold start of a GPU model replica: cold node versus warm node.**
+
+```mermaid
+gantt
+  title Seconds from scale-up decision to serving
+  dateFormat x
+  axisFormat %S
+  section Cold node
+  Provision GPU node    :a1, 0, 120000
+  Pull image            :a2, after a1, 20000
+  Download model        :a3, after a2, 10000
+  Load to GPU and init  :a4, after a3, 6000
+  Warm-up               :a5, after a4, 10000
+  section Warm node
+  Read model from NVMe  :b1, 0, 2000
+  Load to GPU and init  :b2, after b1, 6000
+  Warm-up               :b3, after b2, 10000
+```
+
+**Reading the diagram.** Time runs left to right from the autoscaler's decision; each bar is a sequential, synchronous step inside one replica's start-up. The cold-node row crosses two storage boundaries (the image registry and the object store) and is dominated by provisioning; the warm-node row reads the model from a node-local cache and is dominated by warm-up. Failure points: a capacity shortage stalls the first bar indefinitely; many replicas downloading at once can saturate the object store or a network gateway. Scaling: shorter bars come from keeping capacity warm and moving bytes closer to the GPU, not from faster models.
+
+#### Techniques
+
+- **Node-local caching.** A DaemonSet or KServe's model cache pre-downloads popular models to local NVMe, so new replicas skip the object store.
+- **Lazy loading.** Memory-map the model file and start serving while pages load, or load large embedding tables in the background and answer early requests with a fallback. Useful on CPU; on GPUs the weights must be resident before the first batch.
+- **Warm-up before ready.** Triton can run warm-up requests declared in the model configuration before marking the model ready [NVIDIA Triton Docs]; elsewhere, send synthetic requests in a start-up hook. The readiness probe (§42.7.3) must pass only after warm-up.
+- **Avoid thundering herds.** Stagger rollouts and limit concurrent downloads, so 50 new replicas do not pull 200 GB from one bucket at once.
+
+::: mistake
+**Mistake — "Ready" when the process starts.** If readiness reports true as soon as the server process is up, the load balancer sends traffic to a replica whose model is still downloading or whose first requests take seconds. The p99 spike after every deployment or scale-up is the symptom. Tie readiness to "all required models loaded and warmed".
+:::
+
+## 66.11 Model versioning and routing
+
+### 66.11.1 From registry to traffic
+
+::: definition
+**Definition — Model version, alias and version pinning.** A **model version** is an immutable, numbered artifact in the model registry with its training data, code, metrics and signature. An **alias** (or stage) such as `production` or `challenger` is a movable pointer to one version. **Version pinning** means a deployment or client names an exact version (`eta:42`) rather than an alias, so what runs changes only through a reviewed deployment. **Traffic splitting** routes fractions of requests to different versions by weight, by user hash or by request header.
+:::
+
+The registry (Chapter 69) records *what exists*; the deployment records *what runs*; the router decides *who gets which*. Keep the three separate. A GitOps repository (§43.10) holds a deployment manifest that pins versions and weights, for example `eta:42` at 95% and `eta:43` at 5%; a pull request changes it, and the platform reconciles the cluster to match. Promotion in the registry (moving the `production` alias) then triggers that pull request rather than changing traffic directly, so every change is reviewed, auditable and revertible.
+
+**Figure 66.9 — From registry to version-aware routing.**
+
+```mermaid
+flowchart LR
+  TP[Training pipeline] -->|register v43| REG[(Model registry)]
+  REG -.->|promotion event| CI[Deployment pipeline]
+  CI -->|PR: pin v43 at 5%| GIT[(GitOps repo)]
+  GIT -.->|reconcile| CTRL[Platform controller]
+  CTRL --> V42[Replicas eta:42]
+  CTRL --> V43[Replicas eta:43]
+  C([ETA service]) -->|gRPC| RT{Router:<br/>weights or user hash}
+  RT -->|95%| V42
+  RT -->|5%| V43
+```
+
+**Reading the diagram.** The control path (top) is asynchronous: the training pipeline registers version 43 in the registry, a storage boundary; a promotion event starts the deployment pipeline, which opens a pull request pinning v43 at 5% in the GitOps repository; the controller reconciles the cluster, creating v43 replicas beside v42. The request path (bottom) is synchronous: the ETA service calls the router over gRPC, which splits traffic by weight or by a hash of the user ID. Failure points: a registry alias moved by hand bypasses review; routing by random weight rather than user hash shows one customer two models' answers on successive searches. Scaling: each version scales independently; the router is stateless.
+
+Three rules keep routing safe. **Route by a stable key** (user or session hash) when the user can see the prediction, so one customer sees consistent ETAs; route per request only for invisible predictions. **Return the model version in every response and log it** with the prediction (§66.15), or you cannot attribute outcomes to versions. **Keep model and features compatible**: a new version that needs a new feature must wait until the feature is served everywhere (expand then contract, §43.13.2).
+
+## 66.12 Safe deployment
+
+### 66.12.1 Shadow, canary, A/B, interleaving and rollback
+
+A model can be healthy as a process (low latency, no errors) and still harmful (miscalibrated ETAs that make customers abandon orders). Safe deployment therefore tests three things in increasing order of cost: **does it run** (latency, errors, memory), **does it predict well** (accuracy against labels, prediction distribution), and **does it help the business** (orders, conversion). Each stage below answers one of them [Huyen 2022].
+
+::: definition
+**Definition — Shadow deployment, canary, A/B test and interleaving.** In **shadow deployment** (dark launch) the new model receives a copy of production requests and its predictions are logged but never used. A **canary** sends a small fraction of real traffic to the new model and compares guardrail metrics with the old one, rolling back automatically on regression (§43.6). An **A/B test** randomizes users between models long enough to measure a business metric with statistical power (§57.14). **Interleaving**, for rankers, merges the two models' ranked lists into one list shown to the same user and credits each model with the clicks on its items.
+:::
+
+**Figure 66.10 — The progressive rollout of a model version.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Shadow: offline gates passed
+  Shadow --> Canary: latency, errors, prediction drift OK
+  Shadow --> RolledBack: crash or skew
+  Canary --> ABTest: guardrails OK at 5%
+  Canary --> RolledBack: automated judge fails
+  ABTest --> Full: business metric wins
+  ABTest --> RolledBack: no gain or harm
+  Full --> RolledBack: incident
+  RolledBack --> [*]
+  Full --> [*]
+```
+
+**Reading the diagram.** Each state is a deployment stage; transitions are gated by automated checks. Shadow traffic tests the system (latency, errors, memory) and compares the new predictions with the old on identical inputs, with no user impact. The canary exposes a small slice of real users and is judged on guardrails. The A/B test measures business impact at a larger split. Every stage can roll back, and rollback is fast only if the previous version is still loaded. Failure points: a shadow that triggers side effects (writes, emails), and a canary judged before enough labels have arrived. Scaling: shadow doubles inference cost for the mirrored fraction, so mirror a sample.
+
+**Shadow traffic.** Mirror requests asynchronously (a service mesh can do it) so the shadow cannot slow or fail the primary path, and disable side effects. Because both models score the *same* requests, you can compare them **paired**, which is far more sensitive than comparing two groups of users, as the next example shows.
+
+::: formula
+**Sample size to detect a regression in a continuous ML metric**
+
+$$n_{\text{two-group}} = \frac{2\,(z_{1-\alpha} + z_{1-\beta})^2\,\sigma^2}{\delta^2} \qquad n_{\text{paired}} = \frac{(z_{1-\alpha} + z_{1-\beta})^2\,\sigma_d^2}{\delta^2}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\delta$ | Smallest regression worth catching (for example in mean absolute error) | min |
+| $\sigma$ | Standard deviation of the per-order metric in each group | min |
+| $\sigma_d$ | Standard deviation of the per-order difference between the two models on the same order | min |
+| $z_{1-\alpha}$, $z_{1-\beta}$ | Normal quantiles for the one-sided false-positive rate and the power | dimensionless |
+| $n$ | Labeled orders needed (per group for two-group) | orders |
+:::
+
+::: example
+**Worked example — How long must the ETA canary run?** Catch an increase of $\delta = 0.2$ min in mean absolute error, one-sided $\alpha = 0.05$ ($z = 1.645$), power 0.8 ($z = 0.842$). Assumed: absolute errors have $\sigma = 6$ min; the per-order difference between two similar models has $\sigma_d = 1.5$ min.
+
+1. $(1.645 + 0.842)^2 = 2.487^2 = 6.185$.
+2. Two-group canary: $n = 2 \times 6.185 \times 36 / 0.04 = 11{,}133$ orders per group. At 5% of 500,000 orders a day the canary receives 25,000 orders a day, so about 11 hours of order volume, plus the 35-minute label delay, before the judge can decide.
+3. Paired shadow comparison: $n = 6.185 \times 2.25 / 0.04 = 348$ orders, a few minutes of dinner traffic.
+
+**Interpretation.** Comparing two models on the same orders removes the order-to-order variation that dominates $\sigma$, cutting the sample 32-fold. **Engineering implication.** Judge accuracy in shadow (paired), judge the system and guardrails in the canary within minutes using latency, error rate and prediction-distribution metrics (two-proportion tests, §43.6.4), and keep the slow two-group comparison for effects shadow cannot see, such as customers reacting to different ETAs.
+:::
+
+**Canary guardrails for ML.** Beyond latency and error rate, compare the canary's **prediction distribution** with the baseline's (mean, quantiles, a population stability index, Chapter 70), the **fallback rate** (§60.12.2) and the **feature-default rate**; these move within minutes when a model is broken, long before labels arrive. A rollout controller such as Argo Rollouts or Flagger, or KServe's canary field, can run these checks automatically and shift weights in steps (1%, 5%, 25%, 50%, 100%).
+
+**Interleaving for rankers.** For a restaurant ranker, team-draft interleaving alternately lets each model pick its next-best restaurant not yet shown, builds one list, and records which model contributed each clicked item [Chapelle et al. 2012]. Because each user compares both rankers directly, user-to-user variance cancels and decisions need far fewer users than an A/B test; interleaving measures preference, though, not revenue, so it is a fast first filter before an A/B test.
+
+::: industry
+**Netflix — Interleaving as a first stage of ranking experiments.** Netflix described a two-stage process in which interleaving quickly prunes candidate ranking algorithms with a small number of users, and the survivors go to a conventional A/B test that measures member engagement. They reported that interleaving reached decisions with a much smaller sample than A/B testing and that its preferences agreed well with A/B results.
+*Evidence: Primary* — [Parks et al. 2017]
+:::
+
+**Rollback.** Keep the previous version loaded (TensorFlow Serving's availability-preserving policy [Olston et al. 2017]; two Deployments, or two models in one server), so rollback is a routing change taking seconds, not a cold start taking minutes. Roll back on guardrail failure automatically, and on business-metric harm by decision.
+
+## 66.13 Batch inference at scale
+
+### 66.13.1 Throughput, workers and idempotent output
+
+::: definition
+**Definition — Batch inference job.** A scheduled distributed job that reads a bounded input dataset, loads the model once per worker, scores rows in large batches, and writes predictions to an output table or key-value store, so that a re-run produces the same result.
+:::
+
+Batch inference trades freshness for cost: no latency objective, so batches are as large as memory allows, utilization is high, and spot capacity is acceptable because tasks can be retried (§51.6.2). In Spark, the model is loaded once per executor and applied with a vectorized function over Arrow batches (`mapInPandas` or a pandas UDF), never once per row (§29.5). In Ray Data, `map_batches` with a pool of actors keeps one model per actor and can assign GPUs to actors while CPU tasks read and decode data, keeping the GPUs fed.
+
+::: formula
+**Batch scoring job duration**
+
+$$T_{\text{job}} = T_{\text{start}} + \frac{N}{W \, X \, u}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Rows to score | rows |
+| $W$ | Workers (GPUs or executors) | count |
+| $X$ | Rows per second per worker at a large batch | rows/s |
+| $u$ | Fraction of time workers compute (not reading, writing or waiting) | dimensionless |
+| $T_{\text{start}}$ | Cluster start, model loading and output commit | s |
+:::
+
+::: example
+**Worked example — Nightly home-page candidates.** Score 200 candidate restaurants for each of 4 million weekly active users with a deep ranking model at an assumed $X = 50{,}000$ rows/s per GPU, $W = 8$ GPUs, $u = 0.8$, $T_{\text{start}} = 300$ s.
+
+1. $N = 4 \times 10^6 \times 200 = 8 \times 10^8$ rows.
+2. Compute: $8 \times 10^8 / (8 \times 50{,}000 \times 0.8) = 8 \times 10^8 / 320{,}000 = 2{,}500$ s.
+3. $T_{\text{job}} = 300 + 2{,}500 = 2{,}800$ s ≈ 47 min.
+4. Cost: $8 \times (2{,}800 / 3{,}600) \times 2.50 = \$15.6$ per night.
+5. Output: the top 50 per user, $2 \times 10^8$ rows, written to a new partition.
+
+**Interpretation.** Eight hundred million predictions cost about \$0.00002 per 1,000, about an eighth of the online ETA fleet's \$0.000154 (§66.7). **Engineering implication.** Push every prediction whose inputs are known in advance into batch, and size $W$ from the deadline: a run that must finish in 30 minutes needs $\lceil 8 \times 10^8 / (1{,}500 \times 50{,}000 \times 0.8) \rceil = 14$ GPUs.
+:::
+
+**Figure 66.11 — An idempotent batch scoring pipeline.**
+
+```mermaid
+flowchart LR
+  SCH[Scheduler, run date D] --> J[Spark or Ray job]
+  IN[(Features partition D)] --> J
+  REG[(Registry: pinned version)] -.-> J
+  J -->|overwrite partition D,<br/>atomic commit| OUT[(Prediction table)]
+  OUT --> VAL{Validation gate}
+  VAL -->|pass| LOAD[Bulk load to<br/>KV table D]
+  LOAD -->|swap pointer| KV[(Serving KV store)]
+  VAL -->|fail| KEEP[Keep yesterday's table]
+```
+
+**Reading the diagram.** The scheduler starts a job for run date D (synchronous control); the job reads one input partition and a pinned model version (dotted: read once at start), and writes its output by **overwriting partition D** with an atomic commit in a table format (§61.8), so a retried or duplicated run replaces rather than appends. A validation gate checks row counts, null rates and prediction distribution before a bulk load into a new key-value table, and an atomic pointer swap makes it live. Storage boundaries: the feature partition, the prediction table and the serving store. Failure points: a partial write (prevented by atomic commit) and a bad model (caught by the gate, which keeps yesterday's table live). Scaling: add workers; the job is embarrassingly parallel across input files.
+
+::: mistake
+**Mistake — Appending batch predictions.** A job that appends rows and is retried after a spot preemption writes some users' predictions twice, and a downstream "latest prediction" query may pick either. Key outputs by (run date, entity, model version), overwrite whole partitions, and record the run's model version and input snapshot (§61.5.1, §22.15).
+:::
+
+## 66.14 Reliability
+
+### 66.14.1 Timeouts, fallbacks, breakers, shedding and hedging
+
+Serving reliability applies the patterns of Chapter 22 with one ML-specific advantage: there is almost always a cheaper, slightly worse answer available (§60.12.2).
+
+1. **Deadlines.** Propagate the caller's remaining budget (§22.11); the server drops a queued request whose deadline has passed instead of computing an answer nobody will read. Clockwork showed that because DNN execution time is highly predictable, a server can decide at admission whether a request can meet its deadline and reject it early, keeping tail latency close to the objective [Gujarati et al. 2020].
+2. **Fallbacks.** On timeout or error, the caller drops one rung of the ladder: reduced model, heuristic, static range (Figure 60.9). Fallbacks must not share the failing dependency.
+3. **Circuit breakers.** When the model server's error or timeout rate crosses a threshold, the caller's breaker opens and goes straight to the fallback for a cool-down period, so a sick server is not hammered while it recovers (§22.13).
+4. **Overload protection.** Bound the queue: a request that cannot finish within the budget should be rejected at once, which is cheaper for everyone than a timeout.
+5. **Hedging.** Send a second copy of a slow request to another replica after the p95 delay and use the first answer (§23.7) [Dean and Barroso 2013]. It suits cheap CPU models; on a saturated GPU fleet it adds load exactly when capacity is short, so cap it with a hedging budget.
+
+::: formula
+**Queue limit from the latency budget**
+
+$$Q_{\max} = X(B_{\max}) \times \left(L_{\text{budget}} - T(B_{\max})\right)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $X(B_{\max})$ | Instance throughput at full batches | rows/s |
+| $L_{\text{budget}}$ | Model-stage latency budget | s |
+| $T(B_{\max})$ | Execution time of the request's own batch | s |
+| $Q_{\max}$ | Rows that can be queued and still finish within budget | rows |
+:::
+
+::: example
+**Worked example — Admission limit for the deep ETA GPU server.** $X(64) = 24{,}615$ rows/s, $T(64) = 2.6$ ms, model budget 20 ms.
+
+1. $Q_{\max} = 24{,}615 \times (0.020 - 0.0026) = 24{,}615 \times 0.0174 = 428$ rows.
+2. An ETA request carries 20 rows, so about 21 requests may wait; the 22nd is rejected immediately with a "resource exhausted" status, and the ETA service answers with the reduced model in under 1 ms.
+
+**Interpretation.** Rejecting the 22nd request costs it a slightly worse ETA; queueing it would make it, and every request behind it, miss the budget. **Engineering implication.** Configure queue limits from the formula (Triton supports queue policies with maximum queue size and timeouts [NVIDIA Triton Docs]) and treat rejections as a scaling signal, not an error.
+:::
+
+**Figure 66.12 — Reliability layers around a model call.**
+
+```mermaid
+flowchart LR
+  E([ETA service]) --> CB{Breaker open?}
+  CB -->|yes| FB[Fallback rung]
+  CB -->|no| H["Call with deadline<br/>hedge after p95"]
+  H --> AD{"Server queue<br/>below Q_max?"}
+  AD -->|no: reject| FB
+  AD -->|yes| M[Model server]
+  M -->|answer in time| OK([Response])
+  M -->|timeout or error| FB
+  FB --> OK
+```
+
+**Reading the diagram.** The caller checks its circuit breaker first; an open breaker goes straight to the fallback. Otherwise it calls the model server synchronously with a deadline, hedging to a second replica if the first is slow. The server admits the request only if its queue is below $Q_{\max}$, otherwise it rejects at once. Timeouts and errors also drop to the fallback, so every path ends in a response. Failure points: a fallback that depends on the same feature store as the model; hedges that double load during overload. Scaling: rejections and breaker openings feed the autoscaler and alerts.
+
+## 66.15 Observability for serving
+
+Serving needs the RED metrics of any service (§23.3.3) plus model-specific signals. Break latency into its parts, because "p99 rose" has five different fixes.
+
+**Table 66.8 — What to measure in a model server.**
+
+| Signal | Metrics | Why |
+|---|---|---|
+| Latency breakdown | Network, queue, pre-processing, compute, post-processing time per request (histograms) | Locates the slow stage; queue time rising first means capacity |
+| Batching | Batch-size histogram, queue depth, rejections | Shows whether batching works and how close to $X(B_{\max})$ |
+| GPU | DCGM SM activity, tensor activity, memory used, temperature, errors (§64.11) | Efficiency and hardware faults |
+| Model | Version served, prediction distribution, fallback rate, feature-default rate | Catches silent model failures (Chapter 70) |
+| Logging | Features as served, prediction, version, request ID | Training data, skew checks, replay (§60.6.2) |
+
+Log the model version and fallback level with every prediction and trace span (§40.6); export per-model, per-version metrics with bounded cardinality (§40.5.3), not per-user labels. The prediction log is also the training set of the next model, so it is a product, with a schema and an owner: QuickBite logs every ordered prediction and a 10% sample of the rest, about 11 GB a day (§60.6.2).
+
+## 66.16 Reference architecture: QuickBite ETA serving at 40,000 predictions/s
+
+The primary ETA model is gradient-boosted trees at 0.1 ms per prediction (§60.11). By §66.7 a separate GPU server would cost more and add a network hop longer than the inference itself, so the model runs **in-process** inside the ETA service, with a challenger deep model in shadow on a small GPU pool.
+
+**Figure 66.13 — QuickBite ETA serving.**
+
+```mermaid
+flowchart LR
+  S([Search service]) -->|gRPC, 100 ms deadline| LB[Load balancer]
+  LB --> P["ETA pods x6-24, 3 zones<br/>features, in-process GBT,<br/>rules, fallback ladder"]
+  P -->|multi-get| OFS[(Online feature store)]
+  P -.->|prediction log| K[[Kafka]]
+  P -.->|10% mirror| TR["Triton GPU pool x2<br/>deep challenger, shadow"]
+  TR -.-> K
+  REG[(Model registry)] -.->|pinned version,<br/>hot swap| P
+  K -.-> LAKE[(Lake: training, skew,<br/>shadow comparison)]
+  P -.->|RED, version, fallback rate| MON[Monitoring]
+```
+
+**Reading the diagram.** The search service calls the ETA service over gRPC with a 100 ms deadline (synchronous). Each pod fetches features with one multi-get to the online store (the storage boundary on the critical path), scores the 20 restaurants as one batch in-process, applies rules and the fallback ladder, and responds. Asynchronously, pods log predictions to Kafka and mirror 10% of requests to the shadow Triton pool, whose predictions are logged but never returned; the lake joins both with delivery outcomes for training, skew checks and the paired comparison of §66.12. A sidecar watches the registry, downloads a new pinned version (about 20 MB), warms it and swaps it atomically, keeping the previous one loaded for rollback. Failure points: the feature store (reduced model), a bad model version (automatic rollback), the shadow pool (dropped mirror only). Scaling: pods scale on RPS; the feature store by partition.
+
+::: example
+**Worked example — Sizing the ETA pods.** Per request: 1 ms of CPU for decoding, feature merge and rules, plus $20 \times 0.1 = 2$ ms of inference: 3 ms. Pods have 4 vCPUs.
+
+1. Peak busy CPU: $2{,}000 \times 0.003 = 6$ vCPU. At $u_{\text{target}} = 0.5$: 12 vCPU = 3 pods.
+2. Zone failure: losing one of three zones leaves 8 vCPU at $6 / 8 = 0.75 = u_{\max}$. Acceptable, but with no room for a surge, so run a minimum of 6 pods (2 per zone), which also allows rolling deployments and gives $6 / 24 = 0.25$ at peak.
+3. HPA on RPS per pod, 6–24 pods; the 30% surge of §66.9 on 6 pods gives $7.8 / 24 = 0.33$.
+4. Cost: about 6 pods × 4 vCPU × \$0.048 = \$1.15/h, plus 2 shadow GPUs at \$5.00/h while a challenger is evaluated.
+:::
+
+**Table 66.9 — How the design meets the requirements.**
+
+| Requirement | Mechanism |
+|---|---|
+| 100 ms p99, model stage ≤ 20 ms | In-process trees: ~2 ms for 20 rows; no network hop |
+| 40,000 predictions/s | 6–24 pods on RPS-based HPA; minimum survives a zone loss |
+| Safe model changes | Pinned versions via GitOps; shadow then canary by user hash; instant rollback |
+| Availability | Four-rung fallback ladder; breaker around the shadow pool and feature store |
+| Learning loop | Prediction log with version and fallback level, joined with outcomes |
+| Cost | About \$0.0001 of inference per order (§60.11) |
+
+If the deep challenger wins its A/B test, it moves to Triton on GPUs: 3 GPUs plus 1 spare at $B_{\max} = 64$, $D_{\max} = 2$ ms (§66.6), with queue limits from §66.14 and the in-process trees retained as the first fallback rung.
