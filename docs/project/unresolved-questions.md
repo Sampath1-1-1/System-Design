@@ -344,3 +344,5 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-337 | 71 | EU AI Act timeline after the July 2026 "Digital Omnibus on AI" (reported Regulation (EU) 2026/1744): Annex III → 2 Dec 2027, Annex I → 2 Aug 2028; Article 50 dates disputed — legal commentary only, not Official Journal | Open | Time-sensitive; not legal advice |
 | UQ-338 | 71 | Abadi et al. 2016 ε 1.26 vs 9.34 and MNIST 90/95/97% accuracies; Carlini et al. 2021 extracted-sequence count; McMahan et al. "10–100× fewer rounds" | Open | |
 | UQ-339 | 71 | Gboard FL eligibility rules and recall gains (Hard et al. 2018; Bonawitz et al. 2019); CJEU SCHUFA ruling (C-634/21); CFPB Circular 2022-03 scope | Open | |
+| UQ-340 | 72 | Llama 3 tokenizer compression (3.17 → 3.94 chars/token); Llama 3.1 staged 128K context extension; "1.3 tokens per English word" rule; Petrov et al. 2023 language-disparity range | Open | |
+| UQ-341 | 72 | Chinchilla fitted constants (§72.16); Pope et al. 2023 (29 ms/token, 76% MFU); Ainslie et al. ~5% uptraining compute for GQA; Mistral 7B 8× cache reduction at 32K; DeepSeek-V3 671B total / 37B active | Open | |

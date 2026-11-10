@@ -43,7 +43,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a phone keyboard's autocomplete, made enormously better. You type "where is my" and it offers "order", "refund", "driver". An LLM does the same over a vocabulary of 32,000 to 256,000 tokens, conditioning on up to hundreds of thousands of previous tokens; "writing a paragraph" is pressing a suggestion a few hundred times in a row. Doing this one task well requires learning a great deal: to continue "the courier left at 12:10 and the trip takes 25 minutes, so the food arrives at", a model must have learned clock arithmetic. Next-token prediction is **self-supervised** (§57.4): every position in every document is a free training example labeled by the following token, so the training set is trillions of tokens.
+Think of a phone keyboard's autocomplete, made enormously better. You type "where is my" and it offers "order", "refund", "driver". An LLM does the same over a vocabulary of 32,000 to 256,000 tokens, conditioning on up to hundreds of thousands of previous tokens; "writing a paragraph" is pressing a suggestion a few hundred times in a row. Doing this one task well requires learning a great deal: to continue "the courier left at 12:10 and the trip takes 25 minutes, so the food arrives at", a model must have learned clock arithmetic. Next-token prediction is **self-supervised** (§57.4.3): every position in every document is a free training example labeled by the following token, so the training set is trillions of tokens.
 
 #### Mathematical foundations
 
@@ -1409,7 +1409,7 @@ import numpy as np
 
 rng = np.random.default_rng(0)
 T, d, E, k = 4096, 64, 8, 2                      # tokens, width, experts, experts per token
-X = rng.normal(size=(T, d)) + 0.5           # inputs share a common direction
+X = rng.normal(size=(T, d)) + 0.5               # inputs share a common direction
 W_router = rng.normal(size=(d, E)) * 0.1
 W_router[:, 0] += 0.08                           # a bias toward expert 0 (untrained router)
 
