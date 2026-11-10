@@ -884,3 +884,475 @@ What to notice:
 ::: mistake
 **Leaving timestamps or IDs in the domain classifier.** An order ID that increases over time, a timestamp or a "days since launch" feature separates the windows perfectly and reports AUC near 1.0 every run. Drop identifiers and time features, or the detector measures the calendar.
 :::
+
+## 70.8 Performance monitoring with delayed labels
+
+### 70.8.1 What you can measure, and when
+
+Drift monitors are proxies; the quantity users care about is accuracy, and accuracy needs labels. §59.12.2 showed that the earliest time to detect an ETA error shift is the label delay plus the time to collect enough labeled orders (about 63 minutes platform-wide, 3.7 hours for a small city). For fraud, labels follow the chargeback curve $F(a)$ of §63.4.2 and take up to 90 days. Measuring on immature labels is not just slow; it is biased.
+
+::: formula
+**Observed precision and recall on immature labels**
+
+$$\text{Precision}_{\text{obs}}(a) = \text{Precision} \times F(a) \qquad \text{Recall}_{\text{obs}}(a) = \text{Recall} \quad \text{(if arrival is independent of the score)}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $a$ | Age of the prediction cohort | days |
+| $F(a)$ | Fraction of eventual positive labels arrived by age $a$ (§63.4.2) | fraction |
+| Precision, Recall | Values once all labels have arrived | fraction |
+| $\text{Precision}_{\text{obs}}$, $\text{Recall}_{\text{obs}}$ | Values computed from labels available at age $a$ | fraction |
+:::
+
+::: example
+**Worked example — Fraud metrics at 15 days.** The fraud model flags 3,500 orders a day; 1,750 are fraud (precision 50%) out of 2,500 frauds (recall 70%). At 15 days, $F = 0.40$.
+
+1. Observed true positives: $1{,}750 \times 0.40 = 700$. Observed precision: $700 / 3{,}500 = 20\%$.
+2. Observed positives: $2{,}500 \times 0.40 = 1{,}000$. Observed recall: $700 / 1{,}000 = 70\%$, unbiased.
+3. Corrected precision: $20\% / 0.40 = 50\%$.
+
+*Interpretation:* a dashboard showing raw precision on recent cohorts reports a collapse that never happened. *Engineering implication:* report every metric with its cohort age, correct by $F(a)$ where the independence assumption is plausible, and mark cohorts as matured only after $W_\varepsilon$ (60 days here). Recall's independence assumption fails if flagged orders are blocked and so never charge back (§59.13.2); keep a small unblocked holdout.
+:::
+
+**Figure 70.8 — Labels arriving after an ETA prediction and a fraud score.**
+
+```mermaid
+sequenceDiagram
+  participant S as ETA and fraud services
+  participant L as Prediction log
+  participant J as Label join job
+  participant M as Metric store
+  S-)L: prediction, features, model version, t=0
+  S-)L: re-predicted ETA at pickup, about 15 min
+  Note over J,M: proxy metrics computed from the log in minutes
+  L-)J: delivery event, median 35 min
+  J->>M: ETA error for cohort, hourly
+  L-)J: chargebacks, days 1 to 90
+  J->>M: fraud metrics recomputed per daily cohort
+  Note over M: cohort marked matured at 60 days
+```
+
+**Reading the diagram.** All writes into the prediction log are asynchronous (open arrowheads); the services never wait for monitoring. The log first receives the prediction with its features and model version, then partial information such as the ETA re-predicted at pickup, an early **partial label** that already reveals whether the kitchen was slow. The label join job (§63.4) attaches outcomes as they arrive: ETA labels within about an hour, chargebacks over 90 days. Metrics are stored per **prediction cohort** (the hour or day the prediction was made), and recomputed as labels arrive, a process called **backfilled evaluation**; each value carries its cohort age, and a cohort becomes final when it matures. Failure points: predictions without IDs (the join silently drops them; monitor the join rate) and log retention shorter than the label delay.
+
+### 70.8.2 Proxies and estimation without labels
+
+While labels mature, three kinds of evidence stand in for them.
+
+1. **Proxy metrics:** prediction drift (§70.4), the fallback rate (§60.12.2), the ETA revision at pickup, customer contacts about lateness, early disputes for fraud. They move within minutes and correlate with quality, but not perfectly.
+2. **Confidence-based performance estimation (CBPE):** if a classifier is calibrated and only covariate shift has occurred, its own probabilities predict its confusion matrix. The NannyML library popularized the approach (as of 2026, §70.15.3).
+3. **Label-shift estimation:** if only the prior $P(Y)$ moved, the change in the rate of positive predictions reveals the new prior [Saerens et al. 2002; Lipton et al. 2018].
+
+::: formula
+**Expected precision and recall from scores; prior from the flag rate**
+
+$$\widehat{\text{Prec}} = \frac{1}{|F|}\sum_{i \in F} \hat{p}_i \qquad \widehat{\text{Rec}} = \frac{\sum_{i \in F} \hat{p}_i}{\sum_{i} \hat{p}_i} \qquad \hat{\pi}' = \frac{r - \text{FPR}}{\text{TPR} - \text{FPR}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\hat{p}_i$ | Calibrated predicted probability that order $i$ is fraud | probability |
+| $F$ | Set of flagged orders | orders |
+| $\widehat{\text{Prec}}$, $\widehat{\text{Rec}}$ | Estimated precision and recall without labels | fraction |
+| $r$ | Current flag rate (flagged / all) | fraction |
+| TPR, FPR | True- and false-positive rates measured on validation data | fraction |
+| $\hat{\pi}'$ | Estimated current positive rate under label shift | fraction |
+:::
+
+::: example
+**Worked example — Fraud health on day 1.** Validation gave TPR $= 0.70$ and FPR $= 0.0035$; at the training prior of 0.5% the flag rate is $0.005 \times 0.70 + 0.995 \times 0.0035 = 0.70\%$ (3,500 a day).
+
+1. *CBPE.* Today's 3,500 flagged orders have mean $\hat{p} = 0.50$, so $\widehat{\text{Prec}} = 0.50$ and expected true positives $= 1{,}750$. The 496,500 unflagged orders have mean $\hat{p} = 0.00151$, so expected missed frauds $= 750$, and $\widehat{\text{Rec}} = 1{,}750/2{,}500 = 0.70$. No change.
+2. *Label shift.* Tomorrow the flag rate is 1.0%. $\hat{\pi}' = (0.010 - 0.0035)/(0.70 - 0.0035) = 0.0065/0.6965 = 0.93\%$: the fraud rate has nearly doubled.
+
+*Interpretation:* two label-free estimates in one day, versus 60 days for matured labels. *Engineering implication:* both rest on assumptions that concept drift breaks (a new fraud pattern that the model scores low changes $P(Y \mid X)$, and neither method can see it). Use them to raise early tickets and to size investigations, and confirm with analyst-labeled samples.
+:::
+
+## 70.9 Prediction quality monitoring
+
+### 70.9.1 Calibration drift
+
+A model can keep its ranking quality (AUC) while its probabilities drift: a fraud score of 0.7 that once meant 70% fraud now means 40%. Every downstream threshold, expected-loss calculation and CBPE estimate silently breaks. Calibration is monitored with the reliability diagram of §57.10.3, summarized by the **expected calibration error** (ECE) [Guo et al. 2017]. For regression with prediction intervals, the analog is **coverage**: the fraction of deliveries finishing before the p90 ETA should be 90%.
+
+::: formula
+**Expected calibration error and the standard error of a slice rate**
+
+$$\text{ECE} = \sum_{b=1}^{B} \frac{n_b}{N}\,\big|\bar{y}_b - \bar{p}_b\big| \qquad \text{SE}(\hat{q}) = \sqrt{\frac{q(1 - q)}{n}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n_b$, $N$ | Predictions in score bin $b$; all predictions | count |
+| $\bar{p}_b$, $\bar{y}_b$ | Mean predicted probability and observed positive rate in bin $b$ | fraction |
+| ECE | Mass-weighted calibration gap | fraction |
+| $q$, $\hat{q}$ | True and measured rate in a slice (e.g. share within ±5 min) | fraction |
+| $n$ | Labeled predictions in the slice | count |
+:::
+
+::: example
+**Worked example — A miscalibrated fraud model and noisy zones.** One matured day of 500,000 orders: bin [0, 0.1) has 490,000 orders, $\bar{p} = 0.0010$, $\bar{y} = 0.00092$; bin [0.1, 0.5) has 6,500, $\bar{p} = 0.20$, $\bar{y} = 0.10$; bin [0.5, 1] has 3,500, $\bar{p} = 0.70$, $\bar{y} = 0.40$.
+
+1. ECE $= (490{,}000 \times 0.00008 + 6{,}500 \times 0.10 + 3{,}500 \times 0.30)/500{,}000 = (40 + 650 + 1{,}050)/500{,}000 = 0.35\%$.
+2. Yet the flagged bin overstates fraud by 30 percentage points.
+3. Slice noise: a zone has $500{,}000 / 4{,}000 = 125$ orders a day. With $q = 0.82$, $\text{SE} = \sqrt{0.82 \times 0.18 / 125} = 3.4$ points per zone-day, and 1.3 points per zone-week (875 orders).
+
+*Interpretation:* mass-weighted ECE is dominated by the easy bin and hides the bin that drives decisions; a zone-day rate wobbles by ±7 points (2 SE) with no change at all. *Engineering implication:* monitor calibration per decision-relevant bin, and alert on slices only above a minimum sample size and an effect floor.
+:::
+
+### 70.9.2 Slice-level metrics and segment alerts
+
+Aggregate accuracy hides slices: a 10-point drop in one city of 20 moves the platform metric by half a point. Monitor the slices that matter to users and to fairness (Chapter 71): city, zone, hour, restaurant tier, vehicle type, new versus returning customers. Two constraints shape the design: sample size (above) and metric cardinality (§40.5.3: 4,000 zones × 24 hours × 10 metrics is too many time series for a metrics system, so slice metrics live in the lakehouse and only alerts become time series).
+
+**Figure 70.9 — Hierarchical slice alerting.**
+
+```mermaid
+flowchart TB
+  J[(Labeled predictions)] --> P[Platform metric<br/>hourly]
+  J --> C[20 city metrics<br/>every 3 h]
+  J --> Z[4,000 zone metrics<br/>weekly]
+  P --> G1{Burn-rate rule<br/>§70.13}
+  C --> G2{"n above minimum and<br/>drop above 3 points?"}
+  Z --> G3{"BH-adjusted and<br/>drop above 5 points?"}
+  G1 -->|fires| PG([Page])
+  G2 -->|fires| TK([Ticket to city owner])
+  G3 -->|fires| RP[(Weekly zone report)]
+```
+
+**Reading the diagram.** One table of labeled predictions feeds three levels with windows sized to their traffic: the platform hourly, each city every three hours (about 1,250 orders), each zone weekly (875 orders). Each level has its own gate: the platform uses the burn-rate rule; cities need a minimum sample and an effect floor; zones need both plus a Benjamini–Hochberg correction across 4,000 tests. Severity falls with level, from page to ticket to report, because a single zone rarely justifies waking someone. Failure point: a problem spread thinly across many zones, invisible at each; the city and platform levels catch it.
+
+## 70.10 Data quality monitoring in production
+
+Chapter 59 (§59.7) validates batches before training; production needs the same checks continuously on served features, because serving reads data that training never validated. They are the cheapest, sharpest monitors in this chapter and should fire before any drift statistic does.
+
+**Table 70.5 — Production data-quality checks.**
+
+| Check | Where it runs | QuickBite expectation | Catches | Severity |
+|---|---|---|---|---|
+| Schema and type | Feature pipeline, serving | Fields and types match the registry | Renamed or dropped fields | Block / page owner |
+| Null and default rate | Serving, per feature, 5 min | `prep_min` null < 1% | Broken producers, join misses | Page if top feature |
+| Range and units | Serving | 0 < `distance_km` < 50 | Unit bugs (§70.5.6) | Page |
+| Domain | Serving | `city` in registry | New or misspelled categories | Ticket |
+| Freshness | Feature store reads | Backlog age p99 < 93 s (§60.15) | Stalled streams | Page |
+| Volume | Prediction log | Hourly count within ±30% of seasonal norm | Lost traffic, logging gaps | Ticket |
+| Join rate | Label join | > 99% of orders matched | Missing prediction IDs | Ticket |
+
+Volume deserves a note: a sudden drop in predictions per minute is often the first sign that a client stopped calling the model and fell back to a default, which no model-side metric can see. Compare volume with the same hour last week, not with a fixed number.
+
+## 70.11 Model freshness and staleness
+
+Two clocks run on every prediction. **Feature age** is the time since each feature value was computed, measured at read time (§62.10). **Model age** is the time since the training data's cutoff, not since deployment: a model deployed today but trained on data ending a week ago is a week old. Zinkevich's rules of ML advise knowing the freshness requirements of your system, that is, how much quality is lost per day of model age [Zinkevich n.d.], and the ML Test Score lists "models are not too stale" as a monitoring test [Breck et al. 2017].
+
+Monitor both as gauges with SLAs derived from measured decay. For QuickBite's ETA model, nightly retraining keeps model age under 30 hours (§60.15); an alert fires at 54 hours, meaning two nightly runs failed, which, at the decay rate of §59.13.1 (0.05 min of MAE per day), still costs only about 0.1 min of MAE but signals a broken pipeline. For the fraud model, model age is dominated by label maturity (§63.4.2): the freshest training example is 60 days old by design, so its staleness SLA concerns the *serving* model's age beyond that floor. Treat a model that silently stops being replaced as an incident: the pipeline failure is invisible to every metric except the age gauge.
+
+## 70.12 Operational metrics
+
+Models are services, and all of Chapter 40's operational monitoring applies: the four golden signals (latency, traffic, errors, saturation) per model version, with histograms for latency (§40.5.2). Chapter 66 covers serving-specific details; Table 70.6 lists what ML adds.
+
+**Table 70.6 — Operational metrics specific to ML serving.**
+
+| Metric | Why it matters | QuickBite ETA value |
+|---|---|---|
+| Latency by stage (features, inference, post-processing) | Feature reads, not the model, usually dominate | p99 within the 100 ms budget (§60.10) |
+| Batch size and queue time | Dynamic batching trades latency for throughput (Chapter 66) | CPU tree model, no batching |
+| GPU or CPU utilization, memory | Saturation and cost; low GPU utilization wastes money (Chapter 64) | 3-node CPU fleet (§60.11) |
+| Fallback rate by rung | Silent degradation (§60.12.2) | ~1% normally; ticket at 3%, page at 10% |
+| Model version mix | Canary and rollback state | One version except during canaries |
+| Cost per 1,000 predictions | Unit economics; detects runaway fleets | About \$0.0001 per order (§60.15) |
+
+Cost per prediction is the operational metric most often missing. Divide the fleet's hourly cost by predictions served in that hour, per model, and alert on step changes: a doubled cost per prediction with flat traffic means an autoscaler or batching regression, and for large models it is usually the largest line in the ML budget (Chapters 73 and 79).
+
+## 70.13 Alerting design for ML
+
+### 70.13.1 What pages and what files a ticket
+
+Chapter 40's rules apply unchanged: page on user-visible symptoms that need urgent human action, file tickets for everything else, and give every alert a runbook (§40.10.1, §40.10.4). For ML they translate into a short list of pages and a longer list of tickets.
+
+**Table 70.7 — Alert severity for an ML service.**
+
+| Signal | Page | Ticket | Dashboard only |
+|---|---|---|---|
+| Latency, errors, availability SLO burn | Fast burn (§39.7.3) | Slow burn | — |
+| Quality SLO burn (labels) | Fast burn (below) | Slow burn | Per-slice detail |
+| Range, unit, schema, null violations on top features | Yes | Other features | — |
+| Prediction-distribution step (mean ETA moves > 3 min in 15 min) | Yes | Smaller steps | — |
+| Fallback rate | > 10% | > 3% | — |
+| Input drift (PSI, KS, domain classifier) | Never alone | Effect above threshold | Everything else |
+| Model age | — | Above SLA | — |
+| Calibration and slice metrics | — | Effect above floor | Everything else |
+
+Drift never pages on its own: it is a cause-based signal (§40.10.1) whose relation to user harm is uncertain. It pages only when a symptom (quality burn, prediction step) fires too.
+
+### 70.13.2 Burn-rate alerts on a quality SLO
+
+A quality SLO has an error budget like any other (§60.12.1): with a target of 80% of orders within ±5 minutes, 20% may miss. The burn rate $b = e/(1 - \text{SLO})$ and the alert threshold $b_{\text{alert}} = fP/W$ come from §39.7.3. Two differences from availability SLOs change the numbers.
+
+::: example
+**Worked example — Paging on ETA quality.** SLO period $P = 7$ days $= 168$ h; budget $1 - \text{SLO} = 0.20$.
+
+1. *Baseline burn.* The model misses ±5 min on 18% of orders: $b = 0.18/0.20 = 0.9$. A healthy quality SLO already spends 90% of its budget, unlike an availability SLO that spends a few percent.
+2. *Maximum burn.* Even if every order misses, $b = 1/0.20 = 5$. The Workbook's 14.4× page is impossible, because it would need 288% of orders to miss.
+3. *Choose by budget.* Page when 2% of the weekly budget is consumed in 1 hour: $b_{\text{alert}} = 0.02 \times 168/1 = 3.4$, that is 68% of orders missing (with a 5-minute short window to confirm, §39.7.3). File a ticket when 10% is consumed in a day: $b = 0.10 \times 168/24 = 0.7$, which the baseline already exceeds, so tie the ticket to the *excess* over baseline instead, for example $b \ge 1.2$ (24% missing) over 24 hours.
+4. *Detection time.* For a total breakage ($e = 1$), the 1-hour window crosses $b = 3.4$ after $t = 0.20 \times 3.4 \times 60/1 = 41$ min of labeled orders, which start arriving about 35 min after the breakage: roughly 75 minutes in all.
+
+*Interpretation:* quality burn-rate alerts work but are slow and coarse, because labels are delayed and the healthy burn is close to 1. *Engineering implication:* use them as the authoritative page for sustained quality loss, and rely on label-free symptoms (prediction steps, range violations, fallback rate) to page within minutes for sharp failures.
+:::
+
+**Figure 70.10 — Routing ML alerts.**
+
+```mermaid
+flowchart LR
+  OPS[Operational SLO burn] --> R{Alert router}
+  QB[Quality SLO burn] --> R
+  DQ[Data-quality violations] --> R
+  PS[Prediction step,<br/>fallback rate] --> R
+  DR[Drift and slice findings] --> AG[Aggregate,<br/>BH-adjust, dedupe]
+  AG --> R
+  R -->|symptom, urgent| PG([Page ML on-call<br/>with runbook])
+  R -->|feature owner| FO([Page or ticket<br/>data owner])
+  R -->|not urgent| TK[(Ticket queue)]
+  R -->|retrain candidate| CT[Retraining trigger<br/>§70.14]
+```
+
+**Reading the diagram.** Five signal families enter a router such as Alertmanager (§40.10.3). Drift and slice findings are first aggregated, corrected for multiple testing and deduplicated, so hundreds of raw tests become a handful of findings. The router sends urgent symptoms to the ML on-call with a runbook, data-quality violations to the owner of the failing feature (from the feature registry), and non-urgent findings to a ticket queue. One path goes to a machine rather than a person: findings that meet the retraining policy reach the trigger of §70.14, which applies its own guards. Inhibition rules suppress drift tickets while a data-quality incident is open on the same feature, since the drift is the bug. Failure point: routing everything to one channel, which recreates alert fatigue.
+
+::: recommendation
+**Recommendation — Write the runbook before the alert.** Each ML runbook answers: what does this signal mean for users; which dashboard slices to open; how to tell a bug from real change (Figure 70.4); the safe mitigations (roll back to the previous model version, switch to the reduced model or heuristic rung of §60.12.2, pin a feature to its default); and who owns the upstream data. If no safe mitigation exists, the alert should be a ticket.
+:::
+
+## 70.14 Retraining triggers
+
+### 70.14.1 Three kinds of trigger
+
+§59.13.1 derived a retraining cadence from the decay rate; Chapter 69 builds the continuous-training pipeline. This section decides what should *start* that pipeline. **Scheduled** retraining runs on a calendar. **Drift-triggered** retraining runs when input drift crosses a threshold. **Performance-triggered** retraining runs when measured (or estimated) quality degrades. Each has a characteristic failure: schedules waste compute and react slowly to sudden change; drift triggers fire on harmless shift, sleep through concept drift (inputs unchanged) and wake up for bugs; performance triggers react only after labels arrive and, unguarded, retrain on the very corruption that degraded performance.
+
+**Figure 70.11 — A guarded retraining trigger.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Serving
+  Serving --> Suspect: trigger fires
+  Suspect --> Blocked: data-quality check fails
+  Blocked --> Serving: owner fixes pipeline, window excluded
+  Suspect --> Training: data valid
+  Training --> Gate: candidate model
+  Gate --> Serving: fails gate, keep current
+  Gate --> Canary: beats current on recent data
+  Canary --> Serving: promote or roll back
+```
+
+**Reading the diagram.** A trigger moves the model from *Serving* to *Suspect*, not straight to training. The first guard validates the data that would be used: if the window contains schema, range or null violations, the state becomes *Blocked*, the data owner is paged, and the bad window is excluded from all future training sets. Only valid data reaches *Training*. The candidate must beat the current model on recent, matured labels at the evaluation gate, then pass a canary (§43.6) before promotion. Every exit returns to *Serving*, so a failed trigger costs compute but never quality. A cooldown on the *Suspect* transition prevents retraining storms.
+
+### 70.14.2 Code example: scheduled versus triggered retraining
+
+The simulation serves a linear ETA model for 106 days on 2,000 labeled orders a day (noise MAE about 4.3 min). The world contains a gradual change (minutes per km rise 0.006 a day), a harmless covariate shift (a suburbs launch from day 30), a sudden concept change (road works add 3 min to rush-hour orders from day 60) and an upstream bug (prep time logged in seconds for 30% of orders on days 90–91). Each policy retrains on the last 14 days; costs use \$1,000 per retrain and \$2,000 per minute-day of MAE above the noise floor (§59.13.1).
+
+```python
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+rng = np.random.default_rng(70)
+DAYS, N, WINDOW = 120, 2_000, 14          # days simulated, orders/day, train window
+C_RETRAIN, K_MAE, FLOOR = 1_000, 2_000, 4.31   # $/retrain, $/(min*day), noise MAE
+
+def day_data(t):
+    scale = 1.6 if t < 30 else min(2.0, 1.6 + 0.04 * (t - 30))  # suburbs launch
+    dist = rng.gamma(2.0, scale, N)
+    prep = rng.normal(14, 4, N).clip(3, 45)
+    rain = (rng.random(N) < 0.2).astype(float)
+    peak = (rng.random(N) < 0.4).astype(float)
+    per_km = 3.0 + 0.006 * t                       # slow congestion growth
+    road_works = 3.0 * peak * (t >= 60)            # sudden concept change
+    y = 6 + per_km * dist + prep + 4 * rain + 2 * peak + road_works \
+        + rng.normal(0, 5.4, N)
+    logged_prep = prep.copy()
+    if t in (90, 91):                              # upstream bug: seconds
+        bad = rng.random(N) < 0.3
+        logged_prep[bad] *= 60
+    X = np.column_stack([dist, logged_prep.clip(0, 60), rain, peak])
+    valid = np.mean(logged_prep > 60) < 0.01       # range check on raw values
+    return X, y, X[:, 0], valid
+
+data = [day_data(t) for t in range(DAYS)]
+
+def psi(ref, cur, bins=10):
+    e = np.quantile(ref, np.linspace(0, 1, bins + 1)); e[0], e[-1] = -np.inf, np.inf
+    p = np.clip(np.histogram(ref, e)[0] / len(ref), 1e-6, None)
+    q = np.clip(np.histogram(cur, e)[0] / len(cur), 1e-6, None)
+    return float(np.sum((q - p) * np.log(q / p)))
+
+def train(days, gate):
+    use = [d for d in days if data[d][3] or not gate]
+    X = np.vstack([data[d][0] for d in use]); y = np.concatenate([data[d][1] for d in use])
+    return LinearRegression().fit(X, y), use
+
+def run(policy, gate=False):
+    model, used = train(range(WINDOW), gate)
+    maes, retrains = [], []
+    for t in range(WINDOW, DAYS):
+        X, y, dist, valid = data[t]
+        maes.append(np.mean(np.abs(model.predict(X) - y)))
+        # decide, after today's labels arrive, whether to retrain for tomorrow
+        if policy == "weekly":
+            fire = (t - WINDOW + 1) % 7 == 0
+        elif policy == "daily":
+            fire = True
+        elif policy == "drift":
+            ref_dist = np.concatenate([data[d][2] for d in used])
+            ref_prep = np.concatenate([data[d][0][:, 1] for d in used])
+            fire = max(psi(ref_dist, dist), psi(ref_prep, X[:, 1])) > 0.2
+        elif policy == "perf":
+            fire = maes[-1] > 4.6
+        else:
+            fire = False
+        if gate and not valid:
+            fire = False                           # page the data owner instead
+        if fire:
+            model, used = train(range(t - WINDOW + 1, t + 1), gate)
+            retrains.append(t + 1)                 # new model serves day t+1
+    maes = np.array(maes)
+    cost = C_RETRAIN * len(retrains) + K_MAE * np.sum(maes - FLOOR)
+    return maes, retrains, cost
+
+policies = [("never", False), ("weekly", False), ("daily", False),
+            ("drift", False), ("perf", False), ("perf", True), ("daily", True)]
+print(f"{'policy':<12}{'MAE':>6}{'d60-66':>8}{'d90-91':>8}{'d92-98':>8}"
+      f"{'retrains':>9}{'cost $k':>9}")
+log = {}
+for name, gate in policies:
+    m, r, c = run(name, gate)
+    label = name + ("+gate" if gate else "")
+    w = lambda a, b: m[a - WINDOW:b + 1 - WINDOW].mean()   # days a..b inclusive
+    print(f"{label:<12}{m.mean():6.2f}{w(60, 66):8.2f}{w(90, 91):8.2f}"
+          f"{w(92, 98):8.2f}{len(r):9d}{c / 1000:9.0f}")
+    log[label] = r
+for label in ["drift", "perf", "perf+gate"]:
+    print(f"{label} new models from days: {log[label]}")
+```
+
+Output:
+
+```text
+policy         MAE  d60-66  d90-91  d92-98 retrains  cost $k
+never         5.11    4.97   15.98    5.31        0      169
+weekly        4.60    4.54   11.61    4.89       15       77
+daily         4.57    4.48   11.60    5.04      106      160
+drift         4.92    4.97   11.42    5.04        2      131
+perf          4.61    4.54   11.47    5.04       20       84
+perf+gate     4.61    4.54   16.06    4.43        5       69
+daily+gate    4.55    4.48   16.31    4.28      104      156
+drift new models from days: [91, 92]
+perf new models from days: [60, 61, 62, 69, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106]
+perf+gate new models from days: [60, 61, 62, 69, 100]
+```
+
+What to notice:
+
+- **The drift trigger slept through the road works** (day 60: inputs unchanged, MAE 4.97 like the never-retrained model), ignored the harmless suburbs launch (PSI below 0.2), and fired only for the bug (new models on days 91 and 92), training on corrupted data and then staying bad until the end.
+- **The unguarded performance trigger caught the road works within a day** (new models on days 61 and 62) but then entered a **retraining storm**: 16 retrains on days 91–106, as long as the corrupted days sat inside its 14-day window, each producing a model that had learned to discount prep time.
+- **Retraining on corrupted data looks helpful during the bug** (MAE 11.5 on days 90–91 versus 16 for gated policies, because the model "adapts" to the bug) and harmful afterward (5.04 versus 4.43 and 4.28 in the following week). Fix the pipe; do not learn it.
+- **The gate is the largest single improvement:** it turns 20 retrains into 5 for the performance trigger and cuts the post-bug week's MAE from 5.04 to 4.43.
+
+::: example
+**Worked example — Which policy is cheapest?** From the output, cost = retrains × \$1,000 + excess MAE cost.
+
+1. Performance trigger with gate: $5 \times 1{,}000 = \$5$k retraining $+ \$64$k excess error $= \$69$k. Weekly: $\$15$k $+ \$62$k $= \$77$k. Daily with gate: $\$104$k $+ \$52$k $= \$156$k.
+2. Daily with gate has the lowest error but pays for 104 retrains, each including an engineer's review.
+3. If automated gates cut the retraining cost to \$100 (no human review), daily with gate costs $\$10.4$k $+ \$52$k $= \$62$k and becomes cheapest; the triggered policy costs $\$0.5$k $+ \$64$k $= \$64.5$k.
+
+*Interpretation:* which policy wins depends on the cost of one retrain, exactly as $T^* = \sqrt{2C/(kr)}$ in §59.13.1 predicts. *Engineering implication:* combine them: a schedule as the default (cadence from §59.13.1), a performance trigger as the backstop for sudden concept drift, a cooldown against storms, and a data-validation gate in front of *every* path. Treat input drift as a reason to look, not to retrain.
+:::
+
+## 70.15 Monitoring architecture
+
+### 70.15.1 Components
+
+**Figure 70.12 — Reference ML monitoring architecture.**
+
+```mermaid
+flowchart LR
+  subgraph Serving
+    SV[Model service] -->|metrics scrape| PR[(Prometheus)]
+    SV -.->|prediction events| K[[Kafka topic]]
+  end
+  subgraph Streaming
+    K -.-> SJ[Stream job: nulls, ranges,<br/>prediction stats, 5 min]
+    SJ --> PR
+  end
+  subgraph Batch
+    K -.-> LK[(Lakehouse<br/>prediction log)]
+    EV[[Outcome events]] -.-> LJ[Label join]
+    LK --> LJ
+    LJ --> LT[(Labeled predictions)]
+    LT --> BJ[Batch jobs: drift, slices,<br/>calibration, backfill]
+    LK --> BJ
+    BJ --> MS[(Monitoring tables)]
+  end
+  PR --> AM[Alertmanager]
+  MS --> AM
+  PR --> DB([Dashboards])
+  MS --> DB
+```
+
+**Reading the diagram.** *Serving:* the model service exposes operational metrics to Prometheus (pull, §40.8) and emits one prediction event per prediction (request ID, model version, features, output, fallback level) asynchronously to Kafka, never blocking the response. *Streaming:* a stream job computes cheap, fixed-cardinality statistics every few minutes (null rates, range violations, prediction mean and quantiles, volume) and writes them back as time series, so they can page quickly. *Batch:* the same events land in the lakehouse (the main storage boundary), where a label join attaches outcomes as they arrive and scheduled jobs compute what needs joins or large windows: drift tests, domain classifiers, slice metrics, calibration and backfilled cohorts. Both paths feed one alert router and one set of dashboards. Failure points: event loss between service and Kafka (monitor volume against the request counter), and a lakehouse partition missing for a day (treat a missing window as an alert, not as "no drift"). Scaling: the stream path scales with Kafka partitions; the batch path with sampling.
+
+::: example
+**Worked example — Sizing the ETA prediction log.** Each event is about 300 bytes (40 features plus metadata); 1 GB $= 10^9$ bytes.
+
+1. Logging every prediction: $360 \times 10^6 \times 300 = 108$ GB a day, 3.2 TB per 30 days, mostly for restaurants that were never ordered from and so will never be labeled.
+2. Log 100% of order-linked predictions (500,000 a day, 150 MB) for accuracy, plus a 1% random sample of search-time predictions (3.6 million, 1.08 GB) for drift.
+3. Total about 1.2 GB a day, 37 GB over a 30-day reference period: a 90-fold reduction.
+
+*Interpretation:* labeled monitoring needs only predictions that can receive labels; drift needs only a random sample. *Engineering implication:* sample by purpose, record the sampling rate in each event, and keep the random sample truly random, because labeled orders are a selected population (customers choose restaurants with shorter ETAs), so their inputs differ from search traffic by design.
+:::
+
+### 70.15.2 Tools as of 2026
+
+**Table 70.8 — Monitoring tools (as of 2026; check current documentation).**
+
+| Tool | Kind | Notable for |
+|---|---|---|
+| Evidently | Open-source Python library, plus hosted service | Drift presets: KS / chi-square for small columns, normed Wasserstein / JS for large ones, "share of drifted columns" dataset drift |
+| whylogs (WhyLabs) | Open-source data profiling | Mergeable statistical profiles instead of raw rows |
+| NannyML | Open-source library | CBPE and other label-free performance estimation |
+| Arize | Commercial ML observability (plus open-source Phoenix for LLMs) | Prediction and label joins, slices, embedding drift |
+| Amazon SageMaker Model Monitor | Managed (AWS) | Data-quality, model-quality, bias and attribution drift jobs |
+| Vertex AI Model Monitoring | Managed (Google Cloud) | Training–serving skew and drift on features |
+| Azure Machine Learning model monitoring | Managed (Microsoft) | Data drift, quality and performance signals |
+
+The tools compute the statistics of §70.5–§70.9; none removes the design work in this chapter: choosing references, windows, thresholds and owners. Many teams start, as the open-source tools allow, by computing statistics in their existing batch jobs and sending them to the existing metrics and alerting stack (Chapter 40), which keeps one on-call workflow.
+
+## 70.16 QuickBite ETA monitoring plan
+
+**Table 70.9 — QuickBite ETA monitoring plan.**
+
+| Layer | Signal | Window and reference | Threshold | Action | Owner |
+|---|---|---|---|---|---|
+| Infrastructure | Latency, errors | 1 h / 5 min | Burn 14.4× (§39.7.3) | Page | ETA on-call |
+| Infrastructure | Cost per 1,000 predictions | Daily | +30% at flat traffic | Ticket | Platform |
+| Data | Range, units, nulls, top 10 features | 5 min, stream | Any range breach; nulls > 1% | Page feature owner | Feature owners |
+| Data | Feature age | Per read | Backlog p99 > 93 s | Page | Streaming team |
+| Model | Mean and p90 ETA, fallback rate | 15 min vs same hour last 4 weeks | Mean ±3 min; fallback > 10% | Page | ETA on-call |
+| Model | Input drift, top 10 features | Daily vs training data; 3 h vs seasonal | Normed $W_1$ > 0.1 or PSI > 0.2, BH-adjusted | Ticket | ML team |
+| Model | Domain classifier | Daily | AUC > 0.55 and $z$ > 3 | Ticket with explanations | ML team |
+| Model | Within ±5 min, MAE | Platform hourly, city 3 h, zone weekly | Burn 3.4× page; 1.2× ticket | Page / ticket | ETA on-call |
+| Model | p90 coverage by city | Daily | Outside 88–92% | Ticket | ML team |
+| Model | Model age | Gauge | > 54 h | Ticket | ML platform |
+| Business | Lateness contacts per 1,000 orders | Daily vs seasonal | +20% | Review | Product analytics |
+
+**Figure 70.13 — Detection timeline for three ETA incidents.**
+
+```mermaid
+gantt
+  title Time from onset to alert, minutes after 18:00
+  dateFormat HH:mm
+  axisFormat %H:%M
+  section Prep-time unit bug
+  Range check page :crit, b1, 18:00, 5m
+  section Bridge closure, east city
+  Labels accumulate :a1, 18:00, 60m
+  City quality ticket :a2, after a1, 120m
+  section Sudden total breakage
+  Prediction step page :crit, c1, 18:00, 15m
+  Quality burn page :c2, 18:00, 75m
+```
+
+**Reading the diagram.** Each row is an incident starting at 18:00. The unit bug is caught by the stream job's range check within one 5-minute window, before most affected customers have even ordered. The bridge closure changes $P(Y \mid X)$ in one city and is invisible to inputs; it surfaces only after labels arrive (about 60 minutes) and the city's 3-hour window accumulates enough orders, about three hours in all, matching §59.12.2. A total breakage moves the prediction distribution within 15 minutes and is confirmed by the quality burn-rate page after about 75 minutes. The timeline is the argument for layering: no single monitor catches all three in time.
+
+The plan follows the chapter's principles: every page is a symptom with a runbook; drift produces tickets with explanations; every slice window is larger than its noise floor; references are seasonal or training-based depending on the question; and every retraining path passes the data gate of Figure 70.11.

@@ -4,7 +4,7 @@
 
 A QuickBite customer opens the app at 7:40 p.m. on a rainy Tuesday. Within a fraction of a second the home screen shows twenty restaurants and a row of "dishes for you", picked from 50,000 restaurants and about 5 million dishes. Most of those dishes cannot reach this customer tonight, most of the rest she would never want, and the system has never asked her a single question about her tastes. Everything it knows comes from what she and millions of other customers did: what they opened, ordered, ignored and rated. Choosing those twenty items well is worth more to a marketplace than almost any other model it runs, because every order starts with something the customer saw.
 
-Chapter 56 (§56.5) designed the serving system behind such a feed as a data platform: the orchestrator, the parallel candidate sources, the latency budget, feature placement and impression logging, with the models treated as black boxes of known cost. This chapter opens the boxes. You will learn what the recommendation problem actually optimizes, why every large recommender is a **multi-stage funnel**, how candidate generators (matrix factorization, item-to-item tables, two-tower networks) find a few hundred plausible items among millions, how ranking models (gradient-boosted trees, Wide & Deep, DLRM, DCN, multi-task networks) order them, and how re-ranking turns a scored list into a good page. The second half covers what makes recommenders unlike other ML systems: embedding tables that dwarf the rest of the model, the need to **explore**, feedback loops in which the model writes its own training data, real-time personalization, evaluation that offline metrics alone cannot settle, and cold start. The chapter ends with a reference architecture for QuickBite.
+Chapter 56 (§56.5) designed the serving system behind such a feed as a data platform: the orchestrator, the parallel candidate sources, the latency budget, feature placement and impression logging, with the models treated as black boxes of known cost. This chapter opens the boxes: the objective, the **multi-stage funnel**, candidate generators, ranking and re-ranking models, then what makes recommenders unusual: huge embedding tables, **exploration**, feedback loops, real-time personalization, evaluation and cold start. It ends with a reference architecture for QuickBite.
 
 Vector search internals (HNSW, IVF-PQ) belong to Chapter 74 and are previewed only. Complete product case studies (YouTube, Instagram, Netflix, advertising) are in Chapter 81. Model servers, dynamic batching and rollout mechanics are in Chapter 66.
 
@@ -47,7 +47,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a good waiter in a restaurant you visit every week. She never handed you a questionnaire, yet she knows you order the spicy dishes, skip dessert on weekdays and try the special when it is fish. She learned from what you did, not what you said, and she also learned from other customers who order like you. A recommender is that waiter at the scale of millions of customers and millions of dishes, with one more difficulty: she only ever sees your reaction to the dishes she chose to suggest.
+Think of a waiter in a restaurant you visit weekly. She never handed you a questionnaire, yet she knows you like spicy dishes, learned from what you did and from customers who order like you. A recommender is that waiter at the scale of millions, with one handicap: she only sees your reaction to the dishes she chose to suggest.
 
 #### Why does this exist?
 
@@ -76,11 +76,11 @@ flowchart LR
   REG -.->|rollout| SRV
 ```
 
-**Reading the diagram.** The solid arrows are the synchronous request: the app asks the recommendation service for a page and receives items with positions. Everything else is asynchronous. The app logs what the customer did, the service logs what it served (with the features it used and, ideally, the probability of having shown each item), and a join job (§56.5.8) turns the two into labeled examples in the training store. Training produces a model that is registered and rolled out, and the next page is chosen by that model. The storage boundaries are the event log, the training store and the registry. The distinctive failure point is not a crash but the loop itself: if the service only ever shows popular restaurants, the training data contains only popular restaurants, and the next model is even more confident about them (§68.12). Scaling concerns sit on the serving side (requests per second) and the logging side (impressions per day), covered in §56.5.4.
+**Reading the diagram.** Solid arrows are the synchronous request for a page; everything else is asynchronous. The app logs what the customer did, the service logs what it served (features and the probability of showing each item), and a join job (§56.5.8) produces labeled examples. Training yields a model that is registered and rolled out. Storage boundaries: event log, training store, registry. The distinctive failure point is the loop itself: show only popular restaurants and the next model is even more confident about them (§68.12). Serving and logging scale separately (§56.5.4).
 
 #### Objectives: what "good" means
 
-The label you train on is a decision about what the business values. **Table 68.1** lists QuickBite's options from fastest and noisiest to slowest and truest.
+The label you train on is a decision about what the business values. Table 68.1 lists QuickBite's options from fastest and noisiest to slowest and truest.
 
 **Table 68.1 — Candidate objectives for QuickBite recommendations.**
 
@@ -93,7 +93,7 @@ The label you train on is a decision about what the business values. **Table 68.
 | Reorder within 30 days | 30 days | Thousands | Durable fit | Too slow to train on directly |
 | Customer retention, lifetime value | Months | — | The business goal | Needs surrogates and holdouts (§68.14) |
 
-YouTube's published candidate and ranking models illustrate the move from clicks to engagement depth: the ranker was trained to predict **expected watch time** rather than click probability, by weighting positive (clicked) impressions by their watch time in a logistic regression, because click-through rate rewarded deceptive thumbnails [Covington et al. 2016]. QuickBite's analogue is to predict orders, and to combine several predictions (click, order, good rating) into one score (§68.7.4).
+YouTube's ranker predicted **expected watch time** rather than click probability, by weighting clicked impressions by watch time in a logistic regression, because click-through rate rewarded deceptive thumbnails [Covington et al. 2016]. QuickBite's analogue is to combine click, order and rating predictions into one score (§68.7.4).
 
 ::: mistake
 **"The model's objective is the business objective."** A model can only optimize a label that arrives fast enough to train on. Orders arrive in minutes; retention arrives in months. In practice you train on short-term proxies, combine them with weights chosen by experiment, and check the long-term effect with holdouts (§68.14.3). Optimizing a proxy hard enough eventually breaks it (Goodhart's law).
@@ -123,19 +123,19 @@ Two marketplace facts shape every design choice that follows. First, **eligibili
 
 #### First-principles explanation
 
-A company hiring for one position does not interview 10,000 applicants. A keyword screen reduces them to 500 in seconds each, a recruiter's 10-minute read to 50, a phone screen to 10, and only those get a full day of interviews. Each step is cheap enough for the number of people it sees, and each step only needs to be good enough not to throw away the eventual hire. A recommendation funnel is the same: the cost per item rises by orders of magnitude from stage to stage, and the number of items falls by a similar factor.
+A company hiring for one position does not give 10,000 applicants a day of interviews: a keyword screen, a recruiter's read and a phone screen cut them to 10 first. Each step is cheap enough for the number it sees and only needs to keep the eventual hire. In a funnel, cost per item rises by orders of magnitude per stage while the item count falls by a similar factor.
 
 #### Why does this exist?
 
-The best ranking model available, one with hundreds of features and cross-feature interactions, costs about 100 µs of CPU per candidate. Applied to every deliverable dish, that is 12 seconds of CPU per request. The funnel exists so that the expensive model sees only the few hundred items that could plausibly win. YouTube's 2016 system made the two-stage shape (candidate generation, then ranking) the standard description [Covington et al. 2016]; Chapter 60 traces the idea to cascaded classifiers in computer vision (§60.13).
+The best ranker costs about 100 µs of CPU per candidate; applied to every deliverable dish, that is 12 seconds per request. YouTube's 2016 system made the two-stage shape (candidate generation, then ranking) standard [Covington et al. 2016]; §60.13 traces it to cascaded classifiers.
 
 #### How it works internally
 
 1. **Eligibility.** A geographic index returns the restaurants that deliver to this address and are open now; their dishes form the eligible set (here about 120,000 of 5 million).
-2. **Candidate generation.** Several sources run in parallel, each returning a few hundred items: embedding retrieval (§68.6), item-to-item from the last order (§68.5.3), trending in the zone (§68.5.4), the customer's own favorites. Merged and deduplicated, about 1,000 candidates remain (§56.5.8 shows the merge code).
-3. **Filtering.** Business and safety rules: out of stock, allergens the customer declared, restaurants paused for quality, items already shown in this session.
-4. **Light ranking.** A small model (often a GBDT with tens of features, or a distilled network) scores all candidates and keeps the top 300.
-5. **Heavy ranking.** The full multi-task model (§68.7) predicts click, order and rating probabilities for 300 candidates.
+2. **Candidate generation.** Several sources run in parallel (§68.5–§68.6); merged and deduplicated, about 1,000 candidates remain.
+3. **Filtering.** Out of stock, declared allergens, paused restaurants, items already shown this session.
+4. **Light ranking.** A GBDT or distilled network keeps the top 300.
+5. **Heavy ranking.** The multi-task model (§68.7) predicts click, order and rating probabilities.
 6. **Re-ranking.** Diversity, freshness, provider fairness and capacity rules choose the 20 to show (§68.10).
 
 **Figure 68.2 — QuickBite's dish funnel: item counts and per-item cost at each stage.**
@@ -151,7 +151,7 @@ flowchart LR
   RR --> C([Customer])
 ```
 
-**Reading the diagram.** Data flows left to right on the synchronous request path; each arrow is labeled with the operation or per-item cost of the stage it enters. The catalog is the only storage boundary drawn (the feature stores and indexes behind each stage are in Figure 68.17). Candidate generation is the only parallel stage: its four sources run concurrently under one deadline, and a late source is dropped rather than waited for (§56.5.4). Each later stage is sequential. Failure points: a retrieval source that silently returns nothing reduces quality without raising errors; a heavy ranker overload is absorbed by shrinking its input from 300 to 150 or by serving light-ranker order. Scaling is per stage: the heavy ranker dominates CPU and is scaled first.
+**Reading the diagram.** Data flows left to right on the synchronous path; arrows carry each stage's operation or per-item cost. The catalog is the only storage boundary drawn (others are in Figure 68.14). Only candidate generation is parallel, under one deadline that drops late sources (§56.5.4). Failure points: a source silently returning nothing; heavy-ranker overload, absorbed by scoring 150 items or serving light-ranker order. The heavy ranker dominates CPU and is scaled first.
 
 #### Mathematical foundations
 
@@ -182,7 +182,7 @@ $$C_\text{req} = \sum_{s} N_s \, c_s + \sum_{s} f_s \qquad \text{Cores} = \frac{
 **Interpretation.** The heavy ranker is 74% of the funnel's CPU while seeing 0.25% of the eligible items. **Engineering implication.** The two levers that matter are the heavy ranker's input size and its per-item cost; doubling its input from 300 to 600 raises the fleet by about 74%. Each earlier stage exists only to make that number small without losing the items the heavy ranker would have ranked first.
 :::
 
-The CPU budget and the latency budget are different constraints. **Table 68.3** allocates QuickBite's 120 ms server-side p99, following the method of §56.5.4 (which also explains why per-stage percentiles do not add).
+The CPU budget and the latency budget are different constraints. Table 68.3 allocates QuickBite's 120 ms server-side p99, following the method of §56.5.4 (which also explains why per-stage percentiles do not add).
 
 **Table 68.3 — Latency allocation for one QuickBite recommendation request.**
 
@@ -202,10 +202,10 @@ The CPU budget and the latency budget are different constraints. **Table 68.3** 
 A funnel is only as good as its weakest early stage. If retrieval misses the item the heavy ranker would have put first, no ranker can recover it. Two rules follow.
 
 - **Train each stage for its role.** Retrieval is measured by **recall@K** of the items users eventually engaged with (§57.12), because its job is not to miss; rankers are measured by NDCG or log loss on what they are given, because their job is order.
-- **Train later stages on what earlier stages actually produce.** A heavy ranker trained only on shown items never sees the kinds of candidates the light ranker usually rejects; when retrieval changes, the ranker meets inputs it has never been trained on. Logging a sample of the full candidate set with scores (§56.5.8) lets you train and evaluate each stage on its real input distribution.
+- **Train later stages on what earlier stages actually produce.** A ranker trained only on shown items meets unfamiliar inputs when retrieval changes; log a sample of full candidate sets with scores (§56.5.8).
 
 ::: recommendation
-**Recommendation — Distill the heavy ranker into the light one.** Train the light ranker to reproduce the heavy ranker's scores on logged candidate sets, not only to predict labels. The light ranker's job is to keep what the heavy ranker would rank highly, so imitating the heavy ranker is the most direct way to raise the funnel's end-to-end recall (Chapter 67 covers distillation).
+**Recommendation — Distill the heavy ranker into the light one.** The light ranker's job is to keep what the heavy ranker would rank highly, so train it on the heavy ranker's scores over logged candidate sets (distillation, Chapter 67).
 :::
 
 #### Failure scenarios
@@ -215,7 +215,6 @@ A funnel is only as good as its weakest early stage. If retrieval misses the ite
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Quality falls, no errors | A retrieval source returns empty lists after an index rebuild | Per-source candidate counts and share of shown items | Roll back index | Index validation before swap; source-level alerts |
-| Heavy ranker latency spikes | Candidate count grew after adding a source | Ranker p99 and input-size histogram | Cap ranker input | Hard per-stage quotas |
 | New ranker wins offline, loses online | Trained on shown items only; real input differs | Offline evaluation on logged full candidate sets | Retrain on sampled candidate logs | Log candidates, not only impressions |
 | Stage mismatch after a retrieval change | Light ranker drops what the new source finds | Recall of heavy-ranker top items through the light stage | Retrain or distill light ranker | Evaluate funnel end to end |
 
@@ -1141,3 +1140,271 @@ $$\hat{V}_\text{IPS}(\pi) = \frac{1}{n}\sum_{k=1}^{n} r_k \, \frac{\pi(a_k \mid 
 :::
 
 Joachims, Swaminathan and Schnabel showed that propensity-weighting clicks by examination probability gives an unbiased learning-to-rank objective, and estimated the propensities with small randomized swaps of result positions [Joachims et al. 2017]. In deep rankers the same goal is met by the shallow position tower of §68.7.4 [Zhao et al. 2019]. For **counterfactual evaluation**, keep a small slice of traffic (1% or less) under a randomized or high-exploration policy: its logs are the cleanest data you will ever have for comparing candidate policies offline [Bottou et al. 2013].
+
+## 68.13 Real-time personalization
+
+A customer who has just viewed three sushi restaurants and searched "poke" is telling you what she wants tonight, and a model whose user features were computed last night cannot hear it. Real-time personalization closes that gap at three levels of increasing risk.
+
+1. **Session features** (lowest risk): a stream job keeps per-user counters of the last minutes' views, searches and cart events in an online store (§62.10); the unchanged model reads them as features. This captures most of the value.
+2. **Streaming item and supply updates:** new restaurants are encoded and inserted into the index within minutes (Figure 68.6); trending counts and kitchen backlogs refresh in seconds.
+3. **Online learning** (highest risk): model weights update continuously from the event stream. It adapts fastest to new items and shifting tastes, but a bug, a bot attack or a feedback spiral reaches production within minutes with no offline gate. Most teams retrain daily, fine-tune embeddings or the last layers hourly, and keep true online learning to bandit posteriors and counters.
+
+::: formula
+**Exponentially decayed counter**
+
+$$c \leftarrow c \cdot e^{-\Delta t/\tau} + 1 \qquad t_{1/2} = \tau \ln 2$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $c$ | Decayed count of events (for example sushi views) | events |
+| $\Delta t$ | Time since the counter was last updated | minutes |
+| $\tau$ | Decay time constant | minutes |
+| $t_{1/2}$ | Half-life of an event's contribution | minutes |
+:::
+
+::: example
+**Worked example — Session interest in sushi.** Views 30, 20 and 10 minutes ago, $\tau = 30$ min ($t_{1/2} = 20.8$ min). Reading now: $e^{-1} + e^{-2/3} + e^{-1/3} = 0.368 + 0.513 + 0.717 = 1.598$. A view yesterday contributes $e^{-48} \approx 0$. **Interpretation.** One number, updated in O(1) per event and stored in a few bytes, summarizes recency and frequency. **Engineering implication.** Keep several time constants (10 minutes for the session, 7 days for habits) per user and category; the stream job stores $c$ and its last-update time, and decays on read.
+:::
+
+**Figure 68.13 — Streaming path for session features.**
+
+```mermaid
+flowchart LR
+  APP([App]) -.->|view, search, cart| K[[Kafka events]]
+  K -.-> SJ["Stream job:<br/>decayed counters"]
+  SJ -.->|seconds| RT[(Real-time store)]
+  REQ([Feed request]) --> ORC[Orchestrator]
+  ORC -->|get user session| RT
+  ORC -->|features| RK[Rankers]
+  SJ -.->|bot and spike filters| ALERT{{Alerting}}
+```
+
+**Reading the diagram.** Events flow asynchronously from the app to Kafka and a stream job (§29.8), which updates decayed counters in a low-latency store within seconds. The feed request reads them synchronously, once per request, and passes them to the rankers as ordinary features. The storage boundary is the real-time store, with a TTL so idle sessions expire. Failure points: stream lag makes features stale (the ranker still works, slightly worse, so lag is monitored as freshness), and a bot generating thousands of events per minute can distort counters, so the job filters and rate-limits per user. Scaling: partition events by user so each user's counters live on one worker.
+
+## 68.14 Evaluation
+
+### 68.14.1 Offline metrics and their limits
+
+Offline evaluation uses a **time-based split** (train on weeks 1–8, test on week 9), never a random one, which leaks the future. Each stage has its own metric: recall@K for retrieval sources and the funnel end to end, NDCG@K and AUC for rankers, log loss and calibration ratio for each multi-task head (§57.10–§57.12), plus **coverage** (share of catalog ever recommended) and intra-list diversity. All of these are computed on logs produced by the old policy, so they reward resembling it; they are filters, not verdicts (§57.13).
+
+### 68.14.2 A/B tests and interleaving
+
+The A/B test (§57.14) is the verdict: users are randomized between policies and the business metric (orders per user) is compared with guardrails (delivery time, cancellations, p99 latency). In a marketplace, arms share supply: if treatment sends more customers to a popular restaurant, its kitchen slows down for control customers too, which biases the comparison. Watch restaurant-side metrics and, for supply-heavy changes, randomize by zone or time window.
+
+**Interleaving** is a faster filter for rankers (§66.12): the two rankers' lists are merged into one page by **team draft** (the rankers alternately pick their best item not yet chosen, the first picker decided by coin toss), and each order or click credits the ranker that contributed the item. Each user compares both rankers, so between-user variance cancels; Chapelle et al. found interleaving agreed with A/B outcomes while needing far less traffic [Chapelle et al. 2012].
+
+::: formula
+**Interleaving preference**
+
+$$\Delta_{AB} = \frac{w_A + \tfrac{1}{2}t}{w_A + w_B + t} - \frac{1}{2} \qquad z = \frac{w_A - w_B}{\sqrt{w_A + w_B}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $w_A$, $w_B$ | Sessions where A's (B's) items received more engagement | sessions |
+| $t$ | Tied sessions | sessions |
+| $\Delta_{AB}$ | Preference for A; 0 means no preference | fraction |
+| $z$ | Sign-test statistic on non-tied sessions | standard errors |
+:::
+
+::: example
+**Worked example — 10,000 interleaved sessions.** A wins 3,400, B wins 3,000, ties 3,600. $\Delta_{AB} = (3{,}400 + 1{,}800)/10{,}000 - 0.5 = 0.02$. $z = 400/\sqrt{6{,}400} = 400/80 = 5.0$. **Interpretation.** A is clearly preferred after only 10,000 sessions. **Engineering implication.** Use interleaving to prune candidate rankers in days, then A/B test the survivor, because interleaving measures preference, not revenue or long-term effects.
+:::
+
+### 68.14.3 Long-term effects and holdouts
+
+Short tests miss slow effects: a feed that pushes discounted restaurants raises orders this week and trains customers to wait for discounts. Keep a **long-term holdout** (for example 1% of users on last quarter's system) and compare retention and order frequency over months; Hohnhold et al. describe measuring long-term user learning effects at Google this way [Hohnhold et al. 2015]. Use short-term **surrogate metrics** (reorders within 30 days, rated orders) that have been validated against long-term outcomes.
+
+## 68.15 Cold start
+
+**New customers** have no history, but they have context: address, time, device, entry point (a pizza advertisement). Serve zone popularity and trending blended with a context-aware ranker, ask an optional two-tap cuisine preference, and switch to session features after the first few views; the two-tower user tower works from these features even with an empty history. **New restaurants and dishes** have no interactions, but they have content: cuisine, price, menu text and photo embeddings (Chapter 58), and location. The item tower embeds them from content on day one, and a dedicated candidate source and exploration slots (§68.10, §68.11) give them exposure. The Bayesian view connects the two: a new restaurant starts with a prior borrowed from similar restaurants and earns its own estimate.
+
+::: formula
+**Beta–Bernoulli posterior for a new item's order rate**
+
+$$\hat{p} = \frac{\alpha_0 + s}{\alpha_0 + \beta_0 + n}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\alpha_0$, $\beta_0$ | Prior pseudo-orders and pseudo-non-orders | impressions |
+| $s$, $n$ | Observed orders and impressions | count |
+| $\hat{p}$ | Posterior mean order rate | probability |
+:::
+
+::: example
+**Worked example — A new ramen shop.** Similar ramen shops in the zone convert at 5%; encode that as $\alpha_0 = 2$, $\beta_0 = 38$ (worth 40 impressions). After 200 impressions with 15 orders: $\hat{p} = 17/240 = 0.0708$, versus the raw $15/200 = 0.075$ and the prior 0.05. **Interpretation.** The prior keeps one lucky order from catapulting the shop to the top and fades as evidence arrives. **Engineering implication.** Thompson sampling over these posteriors (§68.11) allocates exploration to new restaurants automatically; set the prior's weight so that a few days of traffic dominate it.
+:::
+
+## 68.16 Reference architecture for QuickBite recommendations
+
+**Figure 68.14 — QuickBite recommendation reference architecture.**
+
+```mermaid
+flowchart LR
+  subgraph SERVE["Online serving, 2,500 RPS peak"]
+    APP([App]) -->|HTTPS| ORC[Feed orchestrator]
+    ORC -->|user tower| ANN[Two-tower ANN]
+    ORC --> KV[(I2I, favorites,<br/>zone lists)]
+    ORC --> FS[(Feature store +<br/>real-time store)]
+    ORC -->|~900 items| RK["Light GBDT +<br/>MMoE heavy ranker"]
+    ORC --> RR[Re-rank: MMR,<br/>slots, Thompson]
+  end
+  subgraph STREAM["Nearline"]
+    K[[Kafka]] -.-> SJ[Stream jobs]
+    SJ -.-> FS
+    SJ -.-> KV
+  end
+  subgraph OFFL["Offline, daily"]
+    LAKE[(Data lake)] -.-> TRN["Train: ALS, I2I,<br/>two-tower, rankers"]
+    TRN -.-> REG[(Model registry)]
+  end
+  APP -.->|events| K
+  ORC -.->|impressions + propensities| K
+  K -.-> LAKE
+  REG -.->|index + models,<br/>one version| ANN
+  REG -.-> RK
+```
+
+**Reading the diagram.** The synchronous path (solid) runs inside the serving boundary: the orchestrator computes the user vector, queries the ANN index and key–value sources in parallel, reads user, session and supply features, calls the rankers with about 900 candidates, and re-ranks to 20, within the 120 ms budget of Table 68.3. The nearline boundary turns app events into session counters, trending lists and item-to-item updates within seconds to minutes. The offline boundary trains every model daily from the lake, where impressions with features and propensities have been joined with outcomes. Models, ID vocabularies and the ANN index are published together through the registry and rolled out by canary (§66.12). Failure points and fallbacks: a source times out (merge without it), the heavy ranker overloads (light-ranker order), the whole stack fails (zone popularity list from cache). Scaling: rankers scale with traffic; the index scales with catalog; logging scales with impressions.
+
+**Table 68.8 — QuickBite recommendation components.**
+
+| Component | Model or data | Cadence | Size (assumed) | Serving cost |
+|---|---|---|---|---|
+| Implicit ALS | Customer × restaurant factors, $k = 64$ | Nightly | 2.56 GB + 12.8 MB | Batch; feeds a source |
+| Item-to-item | Top 50 related dishes per dish | Nightly + streaming | 5M × 50 × 12 B = 3 GB | KV read, 2 ms |
+| Two-tower | 64-d towers; 120k eligible dishes per request | Daily; new dishes in minutes | 1.28 GB dish vectors | ~1.5 ms exact or ANN |
+| Light ranker | GBDT, ~60 features | Daily | Tens of MB | 5 µs per item |
+| Heavy ranker | MMoE, 3 heads, DCN-V2 crosses | Daily, hourly fine-tune | ~3 GB embeddings | 100 µs per item, ~203 cores at peak |
+| Bandit and re-rank | Beta posteriors, MMR | Continuous | Small | < 5 ms |
+
+**Evolution, not big bang.** QuickBite should earn this architecture in steps, each proved by an A/B test against the previous: (1) zone popularity plus favorites; (2) a GBDT ranker over those candidates; (3) implicit ALS and item-to-item sources; (4) a two-tower source and a multi-task deep ranker with calibration; (5) Thompson-sampling exploration slots, propensity logging and IPS-weighted training; (6) real-time session features. Each step adds operational cost, and each must beat the simpler system it replaces.
+
+## 68.17 Summary and revision notes
+
+::: summary
+- Recommenders learn mostly from implicit, positive-only feedback conditioned on exposure; the objective is a chain of proxies (click → order → good rating → retention) combined by weights and checked with holdouts.
+- The funnel exists for compute: $C_\text{req} = \sum N_s c_s$. QuickBite's heavy ranker is 74% of 40.5 ms CPU per request while seeing 0.25% of eligible dishes; without the funnel the fleet grows about 300×.
+- Matrix factorization learns user and item vectors from IDs; implicit ALS weights all cells by confidence $1 + \alpha r$ and costs about $\text{nnz}\,k^2 + (U+I)k^3$ per sweep. Item-to-item tables and zone popularity are cheap, explainable, strong sources. Merge sources by quota and rank, and measure marginal recall.
+- Two-tower models add features and context; in-batch negatives need logQ correction ($s - \log q_j$) or popular items are over-penalized. Serve with precomputed item vectors and ANN, versioning both towers and the index together.
+- Feed rankers are pointwise multi-task networks (Wide & Deep, DLRM, DCN-V2, MMoE) because fused scores need calibrated probabilities; correct negative downsampling with $p = p'/(p' + (1-p')/w)$.
+- Embedding tables dominate memory: $V d s (1+k)$; shard them model-parallel with all-to-all while MLPs stay data-parallel.
+- Re-ranking optimizes the list: MMR, caps, exploration slots, provider fairness and kitchen capacity.
+- Thompson sampling beat ε-greedy and UCB1 in the simulation; log propensities so IPS can debias training and evaluate policies offline.
+- Evaluate offline with time splits, prune with interleaving, decide with A/B tests, and keep long-term holdouts. Cold start relies on content features, context and Bayesian priors.
+:::
+
+## 68.18 Knowledge checkpoint
+
+1. Why is the absence of an order weak evidence of disinterest?
+2. A heavy ranker costs 100 µs per item. What does raising its input from 300 to 500 add per request, and to the fleet at 2,500 RPS and 50% utilization?
+3. In implicit ALS with $\alpha = 2$, what confidence does a pair with 4 orders get?
+4. Why does item-to-item recommendation react to the current session better than nightly MF?
+5. What does logQ correction subtract, and why?
+6. Why can a dot product of two towers not express "cheaper than this user's usual"?
+7. A model trained with 5% of negatives predicts 0.10. What is the calibrated probability?
+8. How large is a 50M-row, 64-dimension FP16 table?
+9. Compute the MMR score of an item with relevance 0.8 and maximum similarity 0.6 to the selected set, $\lambda = 0.5$.
+10. Why does ε-greedy have linear regret?
+11. Logged policy showed X with probability 0.25; the new policy shows it with 0.75. What IPS weight does an order on X get?
+12. Why must a randomized traffic slice be kept for counterfactual evaluation?
+13. Why can an A/B test in a food marketplace be biased even with perfect user randomization?
+
+<details><summary>Answers</summary>
+
+1. The customer may never have seen the item, may have ordered it elsewhere, or may simply not be hungry; unobserved is not negative.
+2. $200 \times 100\ \mu\text{s} = 20$ ms; $2{,}500 \times 0.02 / 0.5 = 100$ extra cores.
+3. $c = 1 + 2 \times 4 = 9$, with $p = 1$.
+4. Its input is the latest action, looked up in a precomputed table at request time, rather than a user vector computed last night.
+5. The log of the item's sampling probability; popular items appear as negatives in proportion to popularity, and the correction removes that over-penalty.
+6. Each tower computes its vector without seeing the other side, so features that compare user and item cannot be formed; the ranker handles them.
+7. $0.10/(0.10 + 0.90/0.05) = 0.10/18.1 = 0.0055$.
+8. $5 \times 10^7 \times 64 \times 2 = 6.4$ GB.
+9. $0.5 \times 0.8 - 0.5 \times 0.6 = 0.10$.
+10. It explores at a fixed rate ε forever, paying the average gap on every exploratory round.
+11. $0.75/0.25 = 3$.
+12. Only data collected with known, non-zero propensities for all actions supports unbiased off-policy estimates; deterministic logs cannot evaluate actions they never took.
+13. Arms share restaurants and couriers, so treatment's extra demand slows deliveries for control customers too (interference).
+
+</details>
+
+## 68.19 Interview questions
+
+### Basic
+
+**Q1. Why do recommenders use a multi-stage funnel?**
+**Answer.** The best model is too expensive to score the whole catalog within the latency and CPU budget. Cheap retrieval reduces millions of items to about a thousand, a light ranker to a few hundred, and the heavy ranker scores only those; each stage must keep what the next would rank highly.
+
+**Q2. Explicit versus implicit feedback?**
+**Answer.** Explicit feedback (ratings) is sparse and biased toward extremes; implicit feedback (clicks, orders) is plentiful but positive-only and exposure-dependent. Most production systems train on implicit signals with confidence weighting.
+
+### Intermediate
+
+**Q3. Design candidate generation for QuickBite's dish module.**
+**Answer.** Filter to deliverable dishes (~120,000), then run in parallel: a two-tower source (exact or ANN), item-to-item from recent orders, zone trending, favorites and a new-restaurant source, each with a quota; merge by rank with provenance and measure each source's marginal recall.
+
+**Q4. Your new ranker has better offline AUC but fewer orders online. Why?**
+**Answer.** Offline data reflects the old policy (selection and position bias); the ranker may be uncalibrated so fusion weights shift; it may never have seen the candidates retrieval now produces; latency may have risen. Check calibration, evaluate on logged candidate sets, and interleave before A/B.
+
+### Advanced
+
+**Q5. A recommender trains on 10⁹-row embedding tables. How do you train and serve it?**
+**Answer.** 512 GB of FP32 weights: shard tables model-parallel (table- and row-wise) across GPUs with all-to-all, keep MLPs data-parallel with all-reduce, use row-wise Adagrad and FP16 communication, cache hot rows. Serve user rows from a sharded embedding service once per request and hot item rows in ranker memory; version tables and ID maps with the model.
+
+**Q6. How do you stop popularity feedback loops while launching new restaurants?**
+**Answer.** Reserve exploration slots filled by Thompson sampling with content-based priors, log propensities, train with IPS or a position tower, cap exposure per restaurant, keep a randomized slice for counterfactual evaluation, and watch coverage and new-restaurant conversion as guardrails.
+
+## 68.20 Practical exercises
+
+1. Add biases and an SGD solver to the ALS program, and compare SGD on binary data with weighted ALS at equal training time.
+2. Add 64 uniformly sampled negatives per batch to the two-tower program (mixed negatives) and measure recall@50 on the 500 least popular dishes.
+3. Make the bandit's best arm change at $t = 50{,}000$ and add a discounted Thompson sampler; compare regret after the change.
+4. Simulate position bias with $\eta = 1$ on logged clicks and show that IPS-weighted click rates recover true relevance.
+
+## 68.21 Design challenges
+
+1. **Restaurant home feed for 20 new cities.** Design candidate sources, cold start and exploration budgets for launch day, and the metrics that decide when to switch to personalized ranking.
+2. **Ads in the feed.** Add sponsored restaurants paying per order: define calibrated scores, how ads compete with organic slots, and guardrails on user experience.
+3. **10× scale.** At 100 million customers and 50 million dishes, re-size embeddings, choose ANN and sharding, and recompute the ranker fleet.
+
+## 68.22 References
+
+1. Covington, P., Adams, J., Sargin, E. *Deep Neural Networks for YouTube Recommendations*. RecSys, 2016.
+2. Yi, X., Yang, J., Hong, L., Cheng, D. Z., Heldt, L., Kumthekar, A., Zhao, Z., Wei, L., Chi, E. *Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations*. RecSys, 2019.
+3. Koren, Y., Bell, R., Volinsky, C. *Matrix Factorization Techniques for Recommender Systems*. IEEE Computer 42(8), 2009.
+4. Hu, Y., Koren, Y., Volinsky, C. *Collaborative Filtering for Implicit Feedback Datasets*. ICDM, 2008.
+5. Linden, G., Smith, B., York, J. *Amazon.com Recommendations: Item-to-Item Collaborative Filtering*. IEEE Internet Computing 7(1), 2003.
+6. Cheng, H.-T., et al. *Wide & Deep Learning for Recommender Systems*. DLRS Workshop, RecSys, 2016.
+7. Naumov, M., et al. *Deep Learning Recommendation Model for Personalization and Recommendation Systems*. arXiv:1906.00091, 2019.
+8. Wang, R., Fu, B., Fu, G., Wang, M. *Deep & Cross Network for Ad Click Predictions*. ADKDD, 2017.
+9. Wang, R., Shivanna, R., Cheng, D. Z., Jain, S., Lin, D., Hong, L., Chi, E. *DCN V2: Improved Deep & Cross Network and Practical Lessons for Web-scale Learning to Rank Systems*. WWW, 2021.
+10. Zhao, Z., et al. *Recommending What Video to Watch Next: A Multitask Ranking System*. RecSys, 2019.
+11. Ma, J., Zhao, Z., Yi, X., Chen, J., Hong, L., Chi, E. *Modeling Task Relationships in Multi-task Learning with Multi-gate Mixture-of-Experts*. KDD, 2018.
+12. Carbonell, J., Goldstein, J. *The Use of MMR, Diversity-Based Reranking for Reordering Documents and Producing Summaries*. SIGIR, 1998.
+13. Li, L., Chu, W., Langford, J., Schapire, R. E. *A Contextual-Bandit Approach to Personalized News Article Recommendation*. WWW, 2010.
+14. Auer, P., Cesa-Bianchi, N., Fischer, P. *Finite-time Analysis of the Multiarmed Bandit Problem*. Machine Learning 47, 2002.
+15. Chapelle, O., Li, L. *An Empirical Evaluation of Thompson Sampling*. NeurIPS, 2011.
+16. Joachims, T., Swaminathan, A., Schnabel, T. *Unbiased Learning-to-Rank with Biased Feedback*. WSDM, 2017.
+17. Schnabel, T., Swaminathan, A., Singh, A., Chandak, N., Joachims, T. *Recommendations as Treatments: Debiasing Learning and Evaluation*. ICML, 2016.
+18. Dudík, M., Langford, J., Li, L. *Doubly Robust Policy Evaluation and Learning*. ICML, 2011.
+19. Bottou, L., et al. *Counterfactual Reasoning and Learning Systems: The Example of Computational Advertising*. JMLR 14, 2013.
+20. Chapelle, O., Joachims, T., Radlinski, F., Yue, Y. *Large-Scale Validation and Analysis of Interleaved Search Evaluation*. ACM TOIS 30(1), 2012.
+21. Hohnhold, H., O'Brien, D., Tang, D. *Focusing on the Long-term: It's Good for Users and Business*. KDD, 2015.
+22. Burges, C., et al. *Learning to Rank using Gradient Descent*. ICML, 2005.
+23. Burges, C. J. C. *From RankNet to LambdaRank to LambdaMART: An Overview*. Microsoft Research Technical Report MSR-TR-2010-82, 2010.
+24. Ke, G., et al. *LightGBM: A Highly Efficient Gradient Boosting Decision Tree*. NeurIPS, 2017.
+25. Chen, T., Guestrin, C. *XGBoost: A Scalable Tree Boosting System*. KDD, 2016.
+26. He, X., et al. *Practical Lessons from Predicting Clicks on Ads at Facebook*. ADKDD, 2014.
+27. Platt, J. *Probabilistic Outputs for Support Vector Machines and Comparisons to Regularized Likelihood Methods*. In Advances in Large Margin Classifiers, MIT Press, 1999.
+28. Rendle, S. *Factorization Machines*. ICDM, 2010.
+29. Shi, H.-J. M., Mudigere, D., Naumov, M., Yang, J. *Compositional Embeddings Using Complementary Partitions for Memory-Efficient Recommendation Systems*. KDD, 2020.
+30. Mudigere, D., et al. *Software-Hardware Co-design for Fast and Scalable Training of Deep Learning Recommendation Models*. ISCA, 2022.
+31. Malkov, Y. A., Yashunin, D. A. *Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs*. IEEE TPAMI 42(4), 2020.
+32. Jégou, H., Douze, M., Schmid, C. *Product Quantization for Nearest Neighbor Search*. IEEE TPAMI 33(1), 2011.
+
+## 68.23 Open verification items
+
+- Mudigere et al. 2022: the "tables up to terabytes" characterization of model sizes.
+- Chapelle et al. 2012: wording that interleaving agreed with A/B outcomes at far lower traffic (no ratio quoted).
+- Hohnhold et al. 2015: scope of the Google long-term holdout description.
+- DCN-V2 production-deployment claim as stated in Wang et al. 2021.
+- All QuickBite numbers new in this chapter (2,500 RPS, 1,200 deliverable restaurants, per-item ranker costs) are teaching assumptions.
