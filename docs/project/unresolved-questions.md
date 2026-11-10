@@ -324,3 +324,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-317 | 66 | BentoML reported acquisition by Modular (Feb 2026, third-party sources); KServe CNCF incubation date (29 Sep vs 11 Nov 2025) | Open | Time-sensitive |
 | UQ-318 | 66 | Triton details (backend list, model_warmup, queue-policy fields, Open Inference Protocol paths); Ray Serve batching/autoscaling/multiplexing parameter names — docs unreachable | Open | Version-dependent |
 | UQ-319 | 66 | Netflix interleaving sample-size wording; Michelangelo multi-model container wording; TF Serving version-policy names; Olston et al. 2017 author list | Open | |
+| UQ-320 | 69 | Kreuzberger et al. (2023) MLOps definition (paraphrased) | Open | |
+| UQ-321 | 69 | FBLearner Flow figures (>25% of engineers, >1M models, >6M predictions/s) via secondary reports | Open | |
+| UQ-322 | 69 | Michelangelo multi-model serving container (models addressed by ID/tag); MLflow alias URI syntax (stages deprecated in 2.9 — confirmed); Airbnb Bighead component names/status; Netflix Metaflow announcement URL/date; KServe canaryTrafficPercent | Open | Version-dependent; merge with UQ-319 |

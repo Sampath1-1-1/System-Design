@@ -4,7 +4,7 @@
 
 An airline does not keep its aircraft safe by hiring brilliant pilots alone. It keeps a logbook for every airframe, follows checklists before every departure, swaps parts only through a controlled maintenance process, and can say for any flight which engine, which software version and which inspector signed it off. When something goes wrong, the airline can ground one aircraft type, roll back a software update or replace a batch of parts, because every component has a serial number and a history.
 
-**MLOps** is that discipline for machine-learning systems. Chapter 59 drew the lifecycle as a loop and placed teams on maturity levels (§59.15); Chapter 60 drew a training pipeline (§60.5). This chapter is about the *platform engineering* that makes the loop safe and cheap to run many times a day: the three pipelines (continuous integration, continuous delivery and continuous training), the tests that guard them, the experiment tracker and model registry that remember everything, the orchestrators that run the steps, and the governance, rollback and retraining machinery around them. You will build a mini experiment tracker and a statistical promotion gate in Python, size the savings from pipeline caching, decide when retraining pays for itself, and finish with published platforms from Uber, Google, Meta, Netflix and Airbnb and a reference platform for QuickBite.
+**MLOps** is that discipline for machine-learning systems. Chapter 59 drew the lifecycle as a loop and placed teams on maturity levels (§59.15); Chapter 60 drew a training pipeline (§60.5). This chapter is about the *platform engineering* that makes the loop safe and cheap to run many times a day: three pipelines (continuous integration, delivery and training), their tests, the experiment tracker and model registry, orchestrators, and the governance, rollback and retraining machinery. You will build a mini experiment tracker and a statistical promotion gate, and finish with published platforms and a reference platform for QuickBite.
 
 Two neighboring chapters share the territory. Chapter 70 owns monitoring and drift statistics (PSI, KS, delayed labels); here you will see only the *hooks* the platform provides and what the platform does when a monitor fires. Chapter 66 owns model servers and safe deployment patterns (§66.12); here you will see how the platform drives them.
 
@@ -68,7 +68,7 @@ flowchart LR
   SVC -.->|prediction logs| DATA
 ```
 
-**Reading the diagram.** Rectangles are processes; cylinders are storage boundaries with immutable versions. The training pipeline is a function of code, configuration and a data snapshot, and its output is a model artifact stored under a registry version. The prediction service depends on two versions at once: its own code (feature fetching, pre- and post-processing) and the model it loads. The dotted asynchronous arrow closes the loop: logged predictions and later labels become tomorrow's training data. Failure points: an unversioned input (a hand-edited config, a mutable table read without a snapshot ID) breaks the ability to explain or reproduce a model. Scaling: each artifact store scales independently (Git, lakehouse, object storage).
+**Reading the diagram.** Rectangles are processes; cylinders are storage boundaries with immutable versions. The training pipeline is a function of code, configuration and a data snapshot, and its output is a model artifact stored under a registry version. The prediction service depends on two versions at once: its own code (feature fetching, pre- and post-processing) and the model it loads. The dotted asynchronous arrow closes the loop: logged predictions and later labels become tomorrow's training data. Failure point: any unversioned input (a hand-edited config, a table read without a snapshot ID) makes the model unexplainable. Scaling: each store scales independently.
 
 **Table 69.1 — What can change, and how DevOps and MLOps handle it.**
 
@@ -89,7 +89,7 @@ A unit test asserts that a function returns an exact output. A model cannot be t
 2. **Model tests** check learned behavior: aggregate metrics, slice metrics, and **behavioral tests** that probe specific capabilities (§69.4.3).
 3. **Infrastructure tests** check the pipeline itself: does it run end to end on a tiny sample, does the served model produce the same output as the trained one, does the model load within the memory budget?
 
-Breck et al.'s **ML Test Score** organizes 28 such tests into four groups: features and data, model development, ML infrastructure, and monitoring. Each test earns half a point when done manually and one point when automated, and the team's score is the *minimum* over the four groups, so excellence in one area cannot hide a gap in another [Breck et al. 2017]. §59.15 introduced it as a maturity yardstick; this chapter builds the automation that earns the full points.
+Breck et al.'s **ML Test Score** organizes 28 such tests into four groups (data, model development, infrastructure, monitoring) and awards a full point only for automated tests [Breck et al. 2017]; §59.15 introduced it, and this chapter builds the automation that earns those points.
 
 ### 69.3.3 Three pipelines: CI, CD and CT
 
@@ -125,7 +125,7 @@ flowchart LR
   ROLL -.->|metrics and labels| TRG
 ```
 
-**Reading the diagram.** CI runs synchronously on each pull request and ends by publishing pipeline images identified by content digest. CT runs those exact images whenever a trigger fires; its output is a candidate that must pass the promotion gate before it lands in the registry. CD starts from the registry: an alias change (for example, `champion` now points at version 58) is written to a configuration repository, and a GitOps controller rolls it out (§69.6). The dotted asynchronous arrow is the feedback loop: production metrics and delayed labels feed CT's triggers (§69.12). Storage boundaries: the image registry, the model registry and the config repository, all versioned. Failure points: the gate (too loose ships regressions; too strict starves production of fresh models) and the loop (retraining on data the model itself corrupted). Scaling: CT runs are independent per model and scale out on the cluster; CI scales with a test budget measured in minutes.
+**Reading the diagram.** CI runs synchronously on each pull request and ends by publishing pipeline images identified by content digest. CT runs those exact images whenever a trigger fires; its output is a candidate that must pass the promotion gate before it lands in the registry. CD starts from the registry: an alias change (for example, `champion` now points at version 58) is written to a configuration repository, and a GitOps controller rolls it out (§69.6). The dotted asynchronous arrow is the feedback loop: production metrics and delayed labels feed CT's triggers (§69.12). Storage boundaries: the image registry, the model registry and the config repository, all versioned. Failure points: the gate (too loose ships regressions; too strict starves production) and the loop (retraining on data the model corrupted). Scaling: CT runs are independent per model; CI is bounded by a test budget of minutes.
 
 ::: mistake
 **"MLOps is DevOps with a GPU."** DevOps assumes behavior changes only with code; MLOps must handle behavior that changes with data, so it needs data versioning, statistical gates and a third pipeline (CT) triggered by the world rather than by engineers. Teams that only add `model.pkl` to their CI pipeline end up at Google level 0 with extra steps (§59.15).
@@ -256,8 +256,8 @@ A CI run that passes on one machine and fails on another is worse than no CI. Pi
 
 - **Lock files** with exact versions and hashes for Python packages (pip-tools, Poetry, uv or conda-lock).
 - **Container images referenced by digest** (`image@sha256:...`), not by mutable tags such as `latest` (§42.5).
-- **Hardware-specific layers** pinned too: CUDA, cuDNN and driver versions for GPU steps, because numerical results can change across them (§69.10).
-- **One base image per runtime family** (CPU training, GPU training, serving) owned by the platform team and rebuilt on a schedule for security patches, with CI re-run against the new base.
+- **Hardware-specific layers** pinned too: CUDA, cuDNN and driver versions (§69.10).
+- **One base image per runtime family** (CPU training, GPU training, serving), rebuilt on a schedule for security patches with CI re-run against it.
 
 ::: warning
 **Warning — The notebook environment is not the pipeline environment.** A data scientist's notebook often has a newer library than the pipeline image. A model pickled with one scikit-learn version may fail to load, or load and behave differently, under another. Export models in a version-tolerant format where possible (ONNX, a framework's native saved format) and run the parity test of Figure 69.3 against the *serving* image.
@@ -314,7 +314,7 @@ flowchart LR
   REG -.->|event| CD[CD pipeline]
 ```
 
-**Reading the diagram.** The trigger queue (a log or work queue) feeds one run at a time per model. The first step **pins** every input: the lakehouse snapshot ID (§61.13) and the image digests from CI, so the run is reproducible even if tables change while it runs. Data validation and the promotion gate are the two hard stops; either ends the run with an alert and leaves the champion serving, which is always a safe outcome. The training set is built with point-in-time joins (§62.8). Evaluation scores the candidate and the current champion on the *same* held-out window. A passing candidate is registered with the alias `challenger`; CD picks it up asynchronously from a registry event. Every step writes lineage to the metadata store (dotted arrows). Failure points: late upstream partitions (the run waits on a data sensor or skips), a stale champion score (always re-score the champion on the new window), and silent gate erosion when thresholds are loosened to "unblock" a run. Scaling: runs for different models are independent; the expensive steps (feature building, training) run on Spark or GPU pools, not on the orchestrator.
+**Reading the diagram.** The trigger queue (a log or work queue) feeds one run at a time per model. The first step **pins** every input: the lakehouse snapshot ID (§61.13) and the image digests from CI, so the run is reproducible even if tables change while it runs. Data validation and the promotion gate are the two hard stops; either ends the run with an alert and leaves the champion serving, which is always a safe outcome. Evaluation scores candidate and champion on the *same* held-out window. A passing candidate is registered with the alias `challenger`; CD picks it up asynchronously from a registry event. Every step writes lineage to the metadata store (dotted arrows). Failure points: late upstream partitions (wait on a data sensor or skip), a stale champion score, and gate erosion when thresholds are loosened to "unblock" a run. Scaling: runs for different models are independent; heavy steps run on Spark or GPU pools, not on the orchestrator.
 
 #### Mathematical foundations: does a retraining run pay for itself?
 
@@ -518,7 +518,7 @@ What to notice:
 **Definition — Model package.** A self-describing, immutable bundle containing the trained weights, the preprocessing the model expects, an input/output **signature** (names, types and shapes), the runtime environment (library versions or a container image digest), and metadata linking it to the run that produced it.
 :::
 
-A model file alone is like a spare part without a part number: you cannot be sure what it fits. Packaging makes the model a deployable unit that any compliant server can load. Common formats (as of 2026) are a framework's native export (TensorFlow SavedModel, PyTorch's `torch.export` programs or TorchScript), the framework-neutral **ONNX** graph format (Chapter 67), and wrapper formats such as MLflow's **model flavors**, where an `MLmodel` file describes how to load the same artifact as a native object or as a generic Python function, alongside a signature and an environment specification [MLflow Docs]. Serving systems such as Triton, KServe and TorchServe each read one or more of these formats (Chapter 66).
+A model file alone is like a spare part without a part number: you cannot be sure what it fits. Common package formats (as of 2026) are a framework's native export (TensorFlow SavedModel, PyTorch `torch.export` or TorchScript), the framework-neutral **ONNX** format (Chapter 67), and wrappers such as MLflow's **model flavors**, where an `MLmodel` file describes how to load the artifact, its signature and its environment [MLflow Docs]. Model servers read one or more of these (Chapter 66).
 
 Two rules make packages safe to promote. **Build once, promote the same bytes**: the artifact that passed the gate is the artifact that serves, identified by a content hash, never rebuilt per environment. And **embed or pin preprocessing**: either export transforms with the model (TFX's approach, §69.14) or pin the version of the shared feature library, so a model cannot be served with transforms it was not trained on.
 
@@ -548,7 +548,7 @@ flowchart LR
   AN -.->|promote or revert PR| CFG
 ```
 
-**Reading the diagram.** The registry emits an event asynchronously when `challenger` moves. A promotion bot opens a pull request that changes two fields in the serving manifest: the artifact URI (version 58) and the canary traffic share. A model owner approves it; for low-risk models the gate's report can auto-approve (§69.11). The controller inside the cluster pulls the repository over HTTPS and applies the change; the model server downloads the artifact from object storage by immutable path. Canary analysis reads metrics asynchronously and writes back to Git, either a commit that raises traffic to 100% or a revert. Storage boundaries: registry, config repository and object storage. Failure points: an artifact URI that points at a mutable path (always use versioned paths or digests), a controller that cannot reach Git (the cluster keeps the last state), and canary analysis with too little traffic to decide (§43.6.4). Scaling: one controller per cluster; many models per repository, one manifest each.
+**Reading the diagram.** The registry emits an event asynchronously when `challenger` moves. A promotion bot opens a pull request that changes two fields in the serving manifest: the artifact URI (version 58) and the canary traffic share. A model owner approves it; for low-risk models the gate's report can auto-approve (§69.11). The in-cluster controller pulls the repository over HTTPS and applies the change; the server downloads the artifact by immutable path. Canary analysis reads metrics asynchronously and writes back to Git, either a commit that raises traffic to 100% or a revert. Storage boundaries: registry, config repository and object storage. Failure points: a mutable artifact path, a controller that cannot reach Git (the cluster keeps its last state), and a canary with too little traffic to decide (§43.6.4). Scaling: one controller per cluster; many models per repository, one manifest each.
 
 The manifest below is illustrative, in KServe's `InferenceService` format, where `canaryTrafficPercent` sends a share of traffic to the newly applied revision while the previous revision keeps the rest [KServe Docs]:
 
@@ -572,7 +572,7 @@ spec:
 
 ### 69.6.4 Shadow and canary for models
 
-§66.12 owns the mechanics of shadow, canary and A/B deployment for models, and §43.6 the statistics of canary judgment. The platform's job is to make the sequence the default: **shadow** (the candidate scores a copy of live traffic; nothing is shown) to verify latency, errors and prediction distributions at zero user risk; **canary** at 1–5% to verify operational health under real load; and, for models whose outcome depends on what users see, an **A/B test** to measure the business metric (§57.14). For ETA, shadow mode also measures accuracy, because delivery time barely depends on the displayed promise (§59.11.2).
+§66.12 owns the mechanics of shadow, canary and A/B deployment, and §43.6 the statistics of canary judgment. The platform makes the sequence the default: **shadow** to verify latency, errors and prediction distributions at zero user risk; **canary** at 1–5% for operational health under real load; and an **A/B test** when the outcome depends on what users see (§57.14). For ETA, shadow mode also measures accuracy (§59.11.2).
 
 ### 69.6.5 Automated rollback
 
@@ -594,7 +594,7 @@ sequenceDiagram
   AN--)GIT: open incident note on PR
 ```
 
-**Reading the diagram.** Monitoring feeds per-revision metrics to the analysis job. ML adds **prediction-level guardrails** to the usual latency and error checks: the mean and quantiles of the predicted ETA, the share of predictions hitting a clamp, and the null rate of input features, compared between canary and baseline. A breach produces a revert commit, not an imperative API call, so Git remains the record of what happened; the controller converges within its sync interval (or immediately on a webhook). The previous revision was never scaled down, so rollback is a routing change taking seconds, not a model load taking minutes. The final asynchronous message records the decision for the post-incident review. Failure point: rollback restores the *model*, but if the incident was caused by a feature change, the old model may be just as broken (§69.13).
+**Reading the diagram.** Monitoring feeds per-revision metrics to the analysis job. ML adds **prediction-level guardrails** to the usual latency and error checks: the mean and quantiles of the predicted ETA, the share of predictions hitting a clamp, and the null rate of input features, compared between canary and baseline. A breach produces a revert commit, so Git records what happened; the controller converges within its sync interval. The previous revision was never scaled down, so rollback is a routing change of seconds, not a model load of minutes. The final asynchronous message records the decision for review. Failure point: rollback restores the *model*, but if the incident was caused by a feature change, the old model may be just as broken (§69.13).
 
 ::: recommendation
 **Recommendation — Make "keep the champion" the default outcome.** Every failure path in CT and CD, whether a validation failure, a gate rejection, a canary breach or a timeout, should end with the current champion serving and a ticket filed. A platform in which failure means "no model" will be bypassed by teams under pressure.
@@ -630,7 +630,7 @@ flowchart LR
   REGS[Model registry] -->|run ID reference| BS
 ```
 
-**Reading the diagram.** Training code calls a client library that sends parameters, metrics and tags to a **tracking server** over REST; these small records land in a **backend store**, a relational database in team deployments (a local file or SQLite store suffices for one person). Artifacts, which can be gigabytes, go to an **artifact store** in object storage, either uploaded directly by the client or proxied through the server [MLflow Docs]. The UI and search API read both. The registry references runs by ID, which is how a model version links back to its experiment. Calls are synchronous; logging inside a training loop should be batched or asynchronous so the tracker never slows training. Failure points: the tracking server as a single dependency of every training job (clients should buffer and retry, and training should not fail because logging failed); an artifact store without lifecycle rules, which grows forever. Scaling: the server is stateless and scales horizontally; the database holds metadata only.
+**Reading the diagram.** Training code calls a client library that sends parameters, metrics and tags to a **tracking server** over REST; these small records land in a **backend store**, a relational database in team deployments (a local file or SQLite store suffices for one person). Artifacts, which can be gigabytes, go to an **artifact store** in object storage, either uploaded directly by the client or proxied through the server [MLflow Docs]. The UI and search API read both. The registry references runs by ID. Calls are synchronous, so logging inside a training loop should be batched. Failure points: the tracking server as a dependency of every job (clients should buffer and retry; training must not fail because logging failed) and an artifact store without lifecycle rules. Scaling: the server is stateless and scales horizontally; the database holds metadata only.
 
 ### 69.7.3 Comparing runs without fooling yourself
 
@@ -870,7 +870,7 @@ erDiagram
 
 Sources for the table: [Kubeflow Docs; Apache Airflow Docs; Metaflow Docs; Flyte Docs; Google Cloud Docs: Vertex AI Pipelines; AWS Docs: SageMaker Pipelines].
 
-A few details matter when choosing. **Kubeflow Pipelines** compiles a Python definition into a portable pipeline specification and runs each component as a container; it caches step results and records artifacts and executions in a metadata store [Kubeflow Docs]. **Airflow** schedules tasks rather than artifacts; large data passes through external storage, small values through XComs, and data-aware scheduling (datasets, renamed assets in Airflow 3) can trigger a DAG when an upstream table updates [Apache Airflow Docs]. **Metaflow** persists every attribute assigned in a step (`self.model = ...`) as a versioned artifact, can `resume` a failed run from the failed step, runs steps on cloud compute with decorators, and deploys flows to production schedulers such as AWS Step Functions or Argo Workflows [Metaflow Docs]. **Flyte** type-checks the interfaces between tasks, registers immutable versions of workflows, and caches a task's outputs when it is declared cacheable with a cache version [Flyte Docs]. **Vertex AI Pipelines** runs Kubeflow Pipelines or TFX definitions as a managed service, and **SageMaker Pipelines** offers a managed equivalent with configurable step caching.
+Two details matter most when choosing. Kubeflow Pipelines, Flyte and the managed services cache step results and record artifact lineage natively [Kubeflow Docs; Flyte Docs]; Airflow schedules tasks rather than artifacts, so large data passes through external storage and caching is your own convention [Apache Airflow Docs]. Metaflow persists every attribute assigned in a step as a versioned artifact and can `resume` a failed run from the failed step [Metaflow Docs].
 
 ### 69.9.3 Caching of pipeline steps
 
@@ -958,7 +958,7 @@ Seeds are necessary but not sufficient. On GPUs, several sources of nondetermini
 | Distributed reductions | All-reduce order and bucketing vary (§65.7) | Fixed world size and bucketing; accept statistical reproducibility | Often impractical |
 | Library and driver versions | Different kernels and numerics | Pin image, CUDA, cuDNN and driver | Upgrade discipline |
 
-The practical target for most deep learning is **statistical reproducibility**: re-runs land within a known band. Measure that band once per model family by training with three to five seeds; the spread of the validation metric across seeds is the noise floor below which promotion gates and experiment comparisons cannot distinguish models. For the tree models in this chapter, which run on CPU with a fixed thread count, bitwise reproduction is realistic, and the programs above print identical outputs on every run.
+The practical target for most deep learning is **statistical reproducibility**: re-runs land within a known band. Measure that band once per model family by training with three to five seeds; the spread across seeds is the noise floor below which gates cannot distinguish models. The CPU tree models in this chapter, with a fixed thread count, reproduce bitwise.
 
 ::: recommendation
 **Recommendation — Test reproducibility, do not assume it.** Once a month, have the platform re-run a recent production training run from its manifest and compare metrics with the original. A failure means an unpinned input exists, and you want to find it before an auditor or an incident does.
@@ -975,7 +975,7 @@ The practical target for most deep learning is **statistical reproducibility**: 
 Governance is the part of MLOps that answers questions after the fact: who approved the model that denied this customer's order, on what evidence, and what data trained it? Four mechanisms answer them:
 
 1. **Approvals.** Promotion to `champion` requires sign-off proportional to risk: automatic for a low-risk model whose gate passed, a model owner for medium risk, an independent validator for high risk.
-2. **Audit trails.** The registry, the config repository and the pipeline metadata store record every alias move, deployment and approval with actor, timestamp and reason. Git history already does this for GitOps deployments (§43.10).
+2. **Audit trails.** The registry, config repository and metadata store record every alias move, deployment and approval with actor, time and reason (Git does this for GitOps, §43.10).
 3. **Access control.** Separate permissions to train, to register, to approve and to deploy, granted to roles and to pipeline service identities (§43.11). The person who trained a high-risk model should not be the one who approves it.
 4. **Documentation.** Model cards (§69.8.1) and data documentation as required registry fields, versioned with the model.
 
@@ -999,7 +999,7 @@ flowchart TB
 
 **Reading the diagram.** A new model or a *material* change (new features, new architecture, new use) is tiered by the harm its errors can cause. Low-risk models ship on an automated gate; medium-risk ones add the owner's approval; high-risk models, such as QuickBite's fraud model that blocks payments, need an independent validator who did not build the model. All paths end in the registry, whose audit log is the evidence, and in monitoring with a periodic review whose frequency also follows the tier. Routine retrains with unchanged features can use a lighter path than material changes, which is what makes continuous training compatible with governance. Failure point: treating every nightly retrain as a material change, which pushes teams to retrain less often or to bypass the process.
 
-Regulation is moving in the same direction. The EU AI Act imposes documentation, logging, human-oversight and risk-management obligations on high-risk AI systems; Chapter 71 covers it with fairness, privacy and explainability. A platform that already records lineage, approvals and model cards meets much of the record-keeping burden by construction.
+Regulation points the same way: the EU AI Act imposes documentation, logging, human-oversight and risk-management obligations on high-risk AI systems (Chapter 71). A platform that records lineage, approvals and model cards meets much of the record-keeping burden by construction.
 
 ## 69.12 Monitoring hooks and the retraining loop
 
@@ -1096,7 +1096,7 @@ sequenceDiagram
 Each platform below is described only from its builders' publications; details may have changed since.
 
 ::: industry
-**Uber — Michelangelo (2017).** Built to give teams a standard workflow: manage data, train, evaluate, deploy, predict and monitor. It provides a shared feature store with batch and near-real-time paths (§62.13), distributed training, and a model repository: every trained model is stored as a versioned object recording who trained it, the configuration, references to training and evaluation data, accuracy metrics and learned parameters. Models are deployed for offline batch prediction or to an online prediction service; several models can be deployed to the same serving container, addressed by a unique identifier or a tag, which supports A/B testing and safe transitions. For monitoring, the platform logs a share of predictions and later joins them with observed outcomes to compute ongoing accuracy.
+**Uber — Michelangelo (2017).** A standard workflow (manage data, train, evaluate, deploy, predict, monitor) with a shared feature store (§62.13) and a model repository storing every trained model as a versioned object with its trainer, configuration, data references, metrics and parameters. Models deploy to batch or online prediction; several can share a serving container, addressed by identifier or tag, enabling A/B tests and safe transitions. Monitoring logs a share of predictions and joins them with observed outcomes.
 *Evidence: Primary* — [Hermann and Del Balso 2017]
 :::
 
@@ -1130,7 +1130,7 @@ Each platform below is described only from its builders' publications; details m
 | Metaflow | Upstream systems | Python flow class | Versioned artifacts | Via other systems | Via other systems |
 | Bighead | Zipline | ML Automator on Airflow | Model service | Deep Thought | Standard logging, alerting |
 
-The lesson is convergence: each company found that teams kept rebuilding the same glue, and centralized it behind a standard workflow, a model store with lineage and a standard serving path. They differ in scope: Michelangelo and Bighead span the whole lifecycle, while Metaflow deliberately focuses on the authoring and orchestration experience and integrates with other systems for the rest.
+The lesson is convergence: each company centralized the glue that teams kept rebuilding behind a standard workflow, a model store with lineage and a standard serving path. Michelangelo and Bighead span the whole lifecycle; Metaflow deliberately focuses on authoring and orchestration.
 
 ## 69.15 Build versus buy an ML platform
 
@@ -1178,7 +1178,7 @@ $$\text{TCO} = E\,s + C\,(1 + p) + F \qquad C^{*} = \frac{(E_b - E_m)\,s + (F_b 
 | Lock-in tolerance | Low | Acceptable, with owned interfaces |
 | Model count | Dozens of models, many teams | A handful of models |
 
-Most organizations land on a **hybrid**: managed compute and storage, open-source tracking and orchestration where they want portability, and a thin internal layer of templates, gates and conventions (the "paved path") that encodes their own policies.
+Most organizations land on a **hybrid**: managed compute, open-source tracking and orchestration for portability, and a thin internal "paved path" of templates and gates encoding their policies.
 
 ::: mistake
 **"Buying a platform gives you MLOps."** Tools provide mechanisms; the practices (gates with real thresholds, slice guardrails, rollback runbooks, risk tiers) are still yours to define. Shankar et al.'s interviewees described validation and versioning as cultural as much as technical problems [Shankar et al. 2022].
@@ -1213,7 +1213,7 @@ flowchart LR
   LAKE -.->|monitors, Ch 70| ORC
 ```
 
-**Reading the diagram.** Authoring: data scientists change code and pipeline definitions through pull requests; CI tests them and publishes images by digest. Training plane: the orchestrator runs cached, idempotent steps; Spark builds features from tagged lakehouse snapshots; training runs on shared CPU and GPU pools and logs to the tracking and metadata store; the promotion gate registers passing candidates. The registry is the contract: alias changes become pull requests to the config repository, which the GitOps controller applies to model servers that read the online feature store. The loop closes asynchronously through prediction logs and monitors, which enqueue CT runs. Storage boundaries: Git, lakehouse, tracking store, registry, config repository and feature store. Failure isolation: if the training plane is down, serving continues on the last champion; if the registry is down, nothing new is promoted but nothing breaks. Scaling: training pools autoscale per queue; serving scales per model (Chapter 66).
+**Reading the diagram.** Authoring: data scientists change code and pipeline definitions through pull requests; CI tests them and publishes images by digest. Training plane: the orchestrator runs cached, idempotent steps; Spark builds features from tagged snapshots; training logs to the tracking store; the gate registers passing candidates. The registry is the contract: alias changes become pull requests that the GitOps controller applies to model servers. The loop closes asynchronously through prediction logs and monitors, which enqueue CT runs. Storage boundaries: Git, lakehouse, tracking store, registry, config repository and feature store. Failure isolation: if the training plane is down, serving continues on the last champion; if the registry is down, nothing new is promoted but nothing breaks. Scaling: training pools autoscale per queue; serving scales per model (Chapter 66).
 
 **Table 69.10 — QuickBite platform decisions.**
 
@@ -1237,10 +1237,10 @@ flowchart LR
 
 ::: summary
 - MLOps extends DevOps to systems whose behavior changes with data: version code, configuration, data, models and environments, and test data and models as well as code.
-- Three pipelines: **CI** tests every change (code, data fixtures, smoke tests, behavioral tests, parity); **CT** retrains on triggers; **CD** delivers approved pipelines and models through progressive rollout with automated rollback. At higher maturity you deploy the pipeline, and the pipeline produces models.
+- Three pipelines: **CI** tests every change; **CT** retrains on triggers; **CD** delivers approved pipelines and models with progressive rollout and automated rollback. At higher maturity you deploy the pipeline, which produces models.
 - Behavioral tests (MFT, INV, DIR) catch failures that aggregate metrics average away; monotonic constraints and feature removal fix them by construction.
 - Triggers start runs, never promote. Combine schedule, data volume, drift and performance triggers behind one deduplicated, rate-limited queue. Retrain when $\Delta E > C/(kH)$.
-- Promotion gates compare candidate and champion **paired** on the same held-out window, usually as a non-inferiority test ($z = (\bar{d} + m)/SE$), plus slice guardrails, behavioral and operational checks. Pairing cut the standard error 7.6-fold in the example.
+- Promotion gates compare candidate and champion **paired** on the same held-out window, usually as non-inferiority ($z = (\bar{d} + m)/SE$), plus slice, behavioral and operational checks. Pairing cut the standard error 7.6-fold.
 - The experiment tracker records parameters, metrics, artifacts and lineage; beware the winner's curse ($\approx c_k \sigma_v$) when picking the best of many runs.
 - The registry holds immutable versions, movable aliases, signatures and model cards, and is the contract between training and serving. Deploy aliases through GitOps; rollback is a revert.
 - Orchestrators differ in artifact handling, caching and operational weight. Step caching with complete cache keys and idempotent steps cut experimentation cost by 70% in the example.
