@@ -954,7 +954,7 @@ $$p_i^{(T)} = \frac{e^{z_i/T}}{\sum_j e^{z_j/T}} \qquad \mathcal{L} = \alpha\, T
 3. Hard-label term: $\text{CE} = -\ln 0.592 = 0.524$ (student at $T = 1$ gives refund 0.592).
 4. $\mathcal{L} = 0.7 \times 0.601 + 0.3 \times 0.524 = 0.421 + 0.157 = 0.578$.
 
-**Interpretation.** The KL term pushes the student to lower "late order" relative to "refund" while keeping the teacher's ordering of the wrong classes. **Engineering implication.** Teacher logits can be computed once over a large *unlabeled* corpus and stored, so the student can train on far more data than was ever labeled; log them with the model version that produced them.
+**Interpretation.** The KL term pushes the student to lower "late order" relative to "refund" while keeping the teacher's ordering of wrong classes. **Engineering implication.** Teacher logits can be computed once over a large *unlabeled* corpus and stored, so the student trains on far more data than was ever labeled.
 :::
 
 **Figure 67.9 — Offline distillation pipeline.**
@@ -970,7 +970,7 @@ flowchart LR
   EV -->|no: larger student or more data| ST
 ```
 
-**Reading the diagram.** Teacher inference is a batch job over a large corpus (Chapter 66's offline inference), writing soft labels to storage; storing the top-k probabilities rather than full vocabularies keeps LLM soft labels affordable. The student trains from stored soft labels and any hard labels, so the expensive teacher runs once. The gate compares student and teacher on the same slices; failing students grow or receive more data. Failure points: soft labels from an outdated teacher, and a student evaluated only on aggregate metrics.
+**Reading the diagram.** Teacher inference is an offline batch job (Chapter 66) writing soft labels to storage; keeping only top-k probabilities makes LLM soft labels affordable. The student trains from stored soft and hard labels, so the expensive teacher runs once. The gate compares student and teacher on the same slices; failing students grow or get more data. Failure points: soft labels from an outdated teacher, and aggregate-only evaluation.
 
 ::: example
 **Worked example — Choosing a student for a re-ranker.** QuickBite re-ranks the top 50 dishes for each browse request at 7,000 RPS: 350,000 candidates/s. A 110M-parameter cross-encoder teacher reads 64 tokens per candidate. Assumed quality, measured as NDCG@10 offline (illustrative numbers):
@@ -985,9 +985,9 @@ flowchart LR
 | Student, distilled | 5.5M | $7.0 \times 10^{8}$ | 0.401 | 0.6 |
 
 1. Teacher compute: $350{,}000 \times 1.41 \times 10^{10} = 4.93 \times 10^{15}$ FLOP/s; one H100 at 40% of 989 TFLOP/s delivers $3.96 \times 10^{14}$: 12.4 GPUs.
-2. The 22M student needs $4.93/5 = 0.99 \times 10^{15}$ FLOP/s: 2.5 GPUs, keeping 0.006 of 0.015 NDCG it would have lost when trained on labels alone.
+2. The 22M student needs $4.93/5 = 0.99 \times 10^{15}$ FLOP/s: 2.5 GPUs. Distillation recovers 0.009 of the 0.015 NDCG the same student loses when trained on labels alone.
 
-**Interpretation.** A 5× smaller model costs 1.4% relative quality when distilled. **Engineering implication.** Plot quality against serving cost for several student sizes and pick the knee, then confirm with an online test (§57.14); offline NDCG differences of this size may or may not move orders.
+**Interpretation.** A 5× smaller model costs 1.4% relative quality when distilled. **Engineering implication.** Plot quality against serving cost for several student sizes, pick the knee, and confirm with an online test (§57.14).
 :::
 
 ::: industry
@@ -1021,7 +1021,7 @@ $$\frac{D_K^2\, M\, D_F^2 + M\, N\, D_F^2}{D_K^2\, M\, N\, D_F^2} = \frac{1}{N} 
 **Interpretation.** Almost all remaining cost is the 1×1 pointwise convolution, a plain GEMM. **Engineering implication.** FLOP savings do not translate one-for-one into speed: depthwise layers have low arithmetic intensity (§64.9) and can be memory-bound on GPUs, so benchmark on the target device.
 :::
 
-**Low-rank factorization** replaces an $m \times n$ weight with $U_{m \times r} V_{r \times n}$, cutting parameters and FLOPs from $mn$ to $r(m + n)$ [Denton et al. 2014]. For $1{,}024 \times 1{,}024$ at $r = 128$: 262,144 versus 1,048,576, a 4× reduction; it saves anything only when $r < mn/(m + n) = 512$. Accuracy depends on how quickly the weight's singular values decay, so factorize, fine-tune and measure. The same idea underlies LoRA adapters (Chapter 76).
+**Low-rank factorization** replaces an $m \times n$ weight with $U_{m \times r} V_{r \times n}$, cutting parameters and FLOPs from $mn$ to $r(m + n)$ [Denton et al. 2014]. For $1{,}024 \times 1{,}024$ at $r = 128$: 262,144 versus 1,048,576, a 4× reduction; it saves memory only when $r < mn/(m + n) = 512$. Accuracy depends on how fast the weight's singular values decay: factorize, fine-tune, measure. The same idea underlies LoRA adapters (Chapter 76).
 
 ## 67.10 ONNX and ONNX Runtime
 
@@ -1048,15 +1048,15 @@ flowchart LR
   CPU --> RUN
 ```
 
-**Reading the diagram.** Export writes a self-contained file (the storage boundary between training and serving). At session creation, ORT optimizes the graph and assigns each node to the first execution provider in the application's priority list that supports it; consecutive nodes on one EP form a subgraph. At run time, data crossing from a GPU subgraph to a CPU subgraph is copied over PCIe, so a single unsupported operator in the middle of a GPU model can dominate latency. Scaling is by more sessions or processes; ORT sessions are thread-safe for concurrent `run` calls.
+**Reading the diagram.** Export writes a self-contained file, the storage boundary between training and serving. At session creation ORT optimizes the graph and assigns each node to the first execution provider in the priority list that supports it; consecutive nodes on one EP form a subgraph. Data crossing between GPU and CPU subgraphs is copied over PCIe, so one unsupported operator mid-model can dominate latency. Scale with more sessions or processes; concurrent `run` calls on one session are thread-safe.
 
-**Export pitfalls.** Most ONNX incidents happen at export, not at run time:
+**Export pitfalls.** Most ONNX incidents happen at export:
 
-- **Frozen shapes.** Tracing records the shapes it saw; undeclared dynamic axes bake in batch size 1 or one sequence length.
-- **Data-dependent control flow.** Tracing records only the branch taken by the example input; other branches silently disappear.
-- **Unsupported or custom operators** fail to export or fall back to slow CPU kernels; opset too new for the deployed runtime fails to load.
-- **Preprocessing outside the graph.** Tokenizers and feature scaling are not in the model, so serving code must replicate them exactly (training–serving skew, §59.8.3).
-- **Size limits.** Protocol buffers cap a single file at 2 GB, so larger models store weights as external data files beside the graph.
+- **Frozen shapes.** Undeclared dynamic axes bake in the example's batch size or sequence length.
+- **Data-dependent control flow.** Tracing keeps only the branch the example input took.
+- **Operators and opsets.** Unsupported or custom operators fail to export or fall back to CPU; an opset newer than the deployed runtime fails to load.
+- **Preprocessing outside the graph.** Tokenizers and feature scaling must be replicated exactly in serving code (training–serving skew, §59.8.3).
+- **Size limits.** Protocol buffers cap a file at 2 GB, so larger models store weights as external data files.
 
 ::: recommendation
 **Gate every export with a parity test.** Run the original and exported models on a few thousand real inputs, including edge cases (empty lists, maximum lengths, batch sizes 1 and maximum), and assert that outputs match within a tolerance (for FP32, a maximum absolute difference around $10^{-4}$ relative to output scale). Keep the test in CI next to the export script.
@@ -1081,12 +1081,12 @@ flowchart LR
   RT --> SRV["Model server<br/>Chapter 66"]
 ```
 
-**Reading the diagram.** The left half runs at build time on a GPU of the same model as production, because auto-tuning measures real kernel timings there; it can take minutes, or much longer for large models. Inputs are the ONNX graph, a configuration with allowed precisions and dynamic-shape **optimization profiles** (minimum, optimal and maximum input shapes), and either a calibration set or explicit quantize/dequantize (Q/DQ) nodes from PTQ or QAT tooling. The plan file is a storage boundary: an engine is tied to the GPU architecture and TensorRT version it was built with, so a driver or GPU change requires a rebuild. At run time, the server deserializes the engine in milliseconds and creates one execution context per concurrent stream.
+**Reading the diagram.** The build runs on the same GPU model as production, because auto-tuning times real kernels there; it takes minutes, longer for large models. Inputs are the ONNX graph, a configuration with allowed precisions and dynamic-shape **optimization profiles** (minimum, optimal and maximum shapes), and a calibration set or explicit quantize/dequantize (Q/DQ) nodes. The plan file is a storage boundary tied to the GPU architecture and TensorRT version, so changing either requires a rebuild. At run time the server deserializes the engine and creates one execution context per concurrent stream.
 
 The three biggest wins come from fusion (a convolution, bias, batch-norm and ReLU become one kernel; batch-norm folds into the convolution's weights), lower precision where accuracy allows, and choosing the fastest kernel for the exact shapes. For LLMs, NVIDIA's TensorRT-LLM adds the generation-specific machinery of Chapter 73.
 
 ::: warning
-**Engines are build artifacts, not models.** Treat the ONNX file and build configuration as the source of truth, and build engines in CI for every (GPU type, TensorRT version, profile) combination you deploy, keyed by those values in the model registry. Teams that copy an engine built on one GPU type to another, or upgrade the container without rebuilding, get load failures or, worse, silently slower kernels.
+**Engines are build artifacts, not models.** Keep the ONNX file and build configuration as the source of truth, and build engines in CI for every (GPU type, TensorRT version, profile) you deploy, keyed by those values in the model registry. Copying an engine to another GPU type, or upgrading the container without rebuilding, causes load failures or silently slower kernels.
 :::
 
 ## 67.12 ML compilers and operator fusion
@@ -1109,7 +1109,7 @@ flowchart TB
   AT --> BIN[("Compiled kernels<br/>and cache")]
 ```
 
-**Reading the diagram.** Every compiler here follows the same funnel, synchronously at compile time. The frontend captures a graph from the framework; graph passes rewrite operators; lowering turns operators into loops or tiles; code generation emits kernels; autotuning picks parameters by timing them on the device. Compiled kernels are cached on disk, a storage boundary that should be warmed before a replica takes traffic, because the first compilation can take seconds to minutes. Failure points: a graph that cannot be captured whole (graph breaks), and recompilation when input shapes change.
+**Reading the diagram.** Every compiler here follows this funnel at compile time: capture a graph, rewrite operators, lower them to loops or tiles, emit kernels, and autotune parameters by timing them on the device. Compiled kernels are cached on disk, a storage boundary to warm before a replica takes traffic, because first compilation takes seconds to minutes. Failure points: graphs that cannot be captured whole (graph breaks) and recompilation when input shapes change.
 
 - **XLA** compiles graphs expressed in its HLO IR (now via StableHLO in OpenXLA) for CPUs, GPUs and TPUs; it is the compiler under JAX and TensorFlow and, through PyTorch/XLA, PyTorch on TPUs [OpenXLA docs].
 - **TorchInductor** is the default back-end of `torch.compile`. TorchDynamo captures FX graphs by analyzing Python bytecode, inserting **guards** that trigger recompilation when assumptions (shapes, types) change and **graph breaks** where it cannot trace; Inductor generates Triton kernels for GPUs and C++/OpenMP for CPUs [Ansel et al. 2024].
@@ -1158,7 +1158,7 @@ $$S_\text{fuse} \le \frac{\sum_{k=1}^{K} (i_k + o_k)\, b\, n / B + K\, t_\text{l
 
 ## 67.13 Memory optimization at inference
 
-Inference needs no gradients or optimizer state, so memory is weights, activations of the layers currently running, runtime workspace and, for generative models, the KV cache. Four levers apply:
+Inference memory is weights, live activations, runtime workspace and, for generative models, the KV cache. Four levers apply:
 
 - **Weight sharing.** Tie the input embedding and output projection (one matrix, used twice); serve many fine-tuned variants as one shared base model plus small adapters (Chapters 73 and 76); load several small models into one process instead of one GPU each (§64.15).
 - **Activation memory planning.** Runtimes (ORT, TensorRT, Inductor) compute tensor lifetimes and reuse buffers, so peak activation memory is the largest set of simultaneously live tensors, not their sum.
@@ -1185,18 +1185,18 @@ $$t_\text{step} \ge \frac{M_\text{off}}{B_\text{link}} \qquad t_\text{token} \ge
 1. $t_\text{step} \ge 36.1/64 = 0.56$ s: at batch 1, under two tokens per second.
 2. At batch 256 for an overnight summarization job: $0.56/256 = 2.2$ ms per token-equivalent.
 
-**Interpretation.** PCIe is about 50 times slower than HBM, so offloading turns a memory-capacity problem into a bandwidth problem. **Engineering implication.** Offload for large-batch offline jobs or single-user local inference; never for an interactive service with a latency objective.
+**Interpretation.** PCIe is about 50 times slower than HBM, so offloading trades a capacity problem for a bandwidth problem. **Engineering implication.** Offload for large-batch offline jobs or single-user local inference, not for interactive services.
 :::
 
 ## 67.14 Latency versus throughput optimization
 
 ### 67.14.1 Batch size, concurrency and graph capture
 
-A model server can optimize for the time of one request or for requests per second per dollar, and the knobs pull in opposite directions (§4.18.6):
+Latency and throughput per dollar pull the knobs in opposite directions (§4.18.6):
 
-- **Batch size.** With $T(B) = t_0 + B\,t_1$, throughput $B/T(B)$ rises toward $1/t_1$ as $B$ grows while each request waits for the whole batch. Below the ridge point, larger batches are almost free (§64.9.3); QuickBite's GPU-served ETA model runs batch 64 in about 2.6 ms (25,000 predictions/s, §60.11). Dynamic batching, which forms batches from arriving requests under a delay limit, belongs to Chapter 66.
-- **Concurrency.** Running two or more model instances or CUDA streams per GPU overlaps one batch's data transfer and CPU work with another's compute. It raises throughput when a single instance leaves gaps, at some cost to tail latency.
-- **Graph capture.** At small batch, each step is hundreds of tiny kernels and the CPU cannot launch them fast enough. **CUDA Graphs** record the sequence of kernels once and replay it with one launch [NVIDIA CUDA C++ Programming Guide]; `torch.compile(mode="reduce-overhead")` and TensorRT use them.
+- **Batch size.** With $T(B) = t_0 + B\,t_1$, throughput $B/T(B)$ rises toward $1/t_1$ as $B$ grows while each request waits for the whole batch. Below the ridge point, larger batches are almost free (§64.9.3); QuickBite's GPU-served ETA model runs batch 64 in about 2.6 ms (25,000 predictions/s, §60.11). Dynamic batching belongs to Chapter 66.
+- **Concurrency.** Two or more model instances or CUDA streams per GPU overlap one batch's transfers and CPU work with another's compute, raising throughput when one instance leaves gaps, at some cost to tail latency.
+- **Graph capture.** At small batch, each step is hundreds of tiny kernels and the CPU cannot launch them fast enough. **CUDA Graphs** record the sequence of kernels once and replay it with one launch [NVIDIA CUDA C++ Programming Guide]; `torch.compile(mode="reduce-overhead")` uses them, and TensorRT and LLM engines can capture their launches the same way.
 
 **Figure 67.13 — Eager launches versus CUDA Graph replay for one decode step.**
 
@@ -1320,8 +1320,6 @@ flowchart TB
 10. At what sparsity does CSR with INT8 values and 16-bit indices break even with dense INT8?
 11. Teacher logits $(2, 0)$. What are the soft targets at $T = 1$ and $T = 2$?
 12. Why must a TensorRT engine be rebuilt after a GPU change?
-13. Unfused, a chain makes 8 tensor passes; fused, 2. What is the memory-bound speed-up bound?
-14. Why can quantizing weights leave a decode step no faster?
 
 <details><summary>Answers</summary>
 
@@ -1337,8 +1335,6 @@ flowchart TB
 10. $(1 - \text{sp}) \times 24/8 = 1$, so sp $= 2/3$.
 11. $T = 1$: $e^2/(e^2 + 1) = 0.881$, so $(0.881, 0.119)$. $T = 2$: $e/(e + 1) = 0.731$, so $(0.731, 0.269)$.
 12. Kernel choices are auto-tuned for, and compiled to, one GPU architecture and TensorRT version.
-13. $8/2 = 4\times$, before launch overhead.
-14. If the step is overhead-bound (launches, Python) or dominated by KV-cache reads, fewer weight bytes do not shorten it.
 
 </details>
 
@@ -1384,7 +1380,7 @@ flowchart TB
 
 1. Ansel, J., et al. *PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation*. ASPLOS, 2024.
 2. Bengio, Y., Léonard, N., Courville, A. *Estimating or Propagating Gradients Through Stochastic Neurons for Conditional Computation*. arXiv:1308.3432, 2013.
-3. Chen, T., Moreau, T., Jiang, Z., Zheng, L., Yan, E., Cowan, M., Shen, H., Wang, L., Hu, Y., Ceze, L., Guestrin, C., Krishnamurthy, A. *TVM: An Automated End-to-End Optimizing Compiler for Deep Learning*. USENIX OSDI, 2018.
+3. Chen, T., Moreau, T., Jiang, Z., et al. *TVM: An Automated End-to-End Optimizing Compiler for Deep Learning*. USENIX OSDI, 2018.
 4. Denton, E., Zaremba, W., Bruna, J., LeCun, Y., Fergus, R. *Exploiting Linear Structure Within Convolutional Networks for Efficient Evaluation*. NeurIPS, 2014.
 5. Dettmers, T., Lewis, M., Belkada, Y., Zettlemoyer, L. *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale*. NeurIPS, 2022.
 6. Frankle, J., Carbin, M. *The Lottery Ticket Hypothesis: Finding Sparse, Trainable Neural Networks*. ICLR, 2019.
@@ -1392,14 +1388,14 @@ flowchart TB
 8. Han, S., Mao, H., Dally, W. J. *Deep Compression: Compressing Deep Neural Networks with Pruning, Trained Quantization and Huffman Coding*. ICLR, 2016.
 9. Hassibi, B., Stork, D. G. *Second Order Derivatives for Network Pruning: Optimal Brain Surgeon*. NeurIPS (NIPS 5), 1993.
 10. Hinton, G., Vinyals, O., Dean, J. *Distilling the Knowledge in a Neural Network*. arXiv:1503.02531, 2015.
-11. Howard, A. G., Zhu, M., Chen, B., Kalenichenko, D., Wang, W., Weyand, T., Andreetto, M., Adam, H. *MobileNets: Efficient Convolutional Neural Networks for Mobile Vision Applications*. arXiv:1704.04861, 2017.
-12. Jacob, B., Kligys, S., Chen, B., Zhu, M., Tang, M., Howard, A., Adam, H., Kalenichenko, D. *Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference*. IEEE/CVF CVPR, 2018.
+11. Howard, A. G., Zhu, M., Chen, B., et al. *MobileNets: Efficient Convolutional Neural Networks for Mobile Vision Applications*. arXiv:1704.04861, 2017.
+12. Jacob, B., Kligys, S., Chen, B., et al. *Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference*. IEEE/CVF CVPR, 2018.
 13. Krishnamoorthi, R. *Quantizing Deep Convolutional Networks for Efficient Inference: A Whitepaper*. arXiv:1806.08342, 2018.
-14. Lattner, C., Amini, M., Bondhugula, U., Cohen, A., Davis, A., Pienaar, J., Riddle, R., Shpeisman, T., Vasilache, N., Zinenko, O. *MLIR: Scaling Compiler Infrastructure for Domain Specific Computation*. IEEE/ACM CGO, 2021.
-15. Lin, J., Tang, J., Tang, H., Yang, S., Chen, W.-M., Wang, W.-C., Xiao, G., Dang, X., Gan, C., Han, S. *AWQ: Activation-aware Weight Quantization for On-Device LLM Compression and Acceleration*. MLSys, 2024.
+14. Lattner, C., Amini, M., Bondhugula, U., et al. *MLIR: Scaling Compiler Infrastructure for Domain Specific Computation*. IEEE/ACM CGO, 2021.
+15. Lin, J., Tang, J., Tang, H., et al. *AWQ: Activation-aware Weight Quantization for On-Device LLM Compression and Acceleration*. MLSys, 2024.
 16. Micikevicius, P., et al. *FP8 Formats for Deep Learning*. arXiv:2209.05433, 2022.
-17. Mishra, A., Latorre, J. A., Pool, J., Stosic, D., Stosic, D., Venkatesh, G., Yu, C., Micikevicius, P. *Accelerating Sparse Deep Neural Networks*. arXiv:2104.08378, 2021.
-18. Nagel, M., Fournarakis, M., Amjad, R. A., Bondarenko, Y., van Baalen, M., Blankevoort, T. *A White Paper on Neural Network Quantization*. arXiv:2106.08295, 2021.
+17. Mishra, A., Latorre, J. A., Pool, J., et al. *Accelerating Sparse Deep Neural Networks*. arXiv:2104.08378, 2021.
+18. Nagel, M., Fournarakis, M., Amjad, R. A., et al. *A White Paper on Neural Network Quantization*. arXiv:2106.08295, 2021.
 19. NVIDIA. *CUDA C++ Programming Guide* (CUDA Graphs). https://docs.nvidia.com/cuda/cuda-c-programming-guide/
 20. NVIDIA. *TensorRT Documentation* (Developer Guide). https://docs.nvidia.com/deeplearning/tensorrt/
 21. ONNX. *ONNX Documentation* (IR specification and operator schemas). https://onnx.ai/onnx/
@@ -1407,7 +1403,7 @@ flowchart TB
 23. OpenXLA. *XLA Documentation*. https://openxla.org/xla
 24. PyTorch. *PyTorch Documentation: torch.compile and Quantization*. https://pytorch.org/docs/stable/
 25. Sanh, V., Debut, L., Chaumond, J., Wolf, T. *DistilBERT, a Distilled Version of BERT: Smaller, Faster, Cheaper and Lighter*. arXiv:1910.01108, 2019.
-26. Xiao, G., Lin, J., Seznec, M., Wu, H., Demouth, J., Han, S. *SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models*. ICML, 2023.
+26. Xiao, G., Lin, J., Seznec, M., et al. *SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models*. ICML, 2023.
 27. Zhu, M., Gupta, S. *To Prune, or Not to Prune: Exploring the Efficacy of Pruning for Model Compression*. arXiv:1710.01878, 2017.
 
 ## 67.23 Open verification items

@@ -1131,3 +1131,220 @@ Each platform below is described only from its builders' publications; details m
 | Bighead | Zipline | ML Automator on Airflow | Model service | Deep Thought | Standard logging, alerting |
 
 The lesson is convergence: each company found that teams kept rebuilding the same glue, and centralized it behind a standard workflow, a model store with lineage and a standard serving path. They differ in scope: Michelangelo and Bighead span the whole lifecycle, while Metaflow deliberately focuses on the authoring and orchestration experience and integrates with other systems for the rest.
+
+## 69.15 Build versus buy an ML platform
+
+Uber, Google, Meta, Netflix and Airbnb built platforms because nothing suitable existed in 2015–2018 and their scale justified dedicated teams. By 2026 most components exist as open-source projects or managed services, so the question for most companies is how much to assemble and run themselves. The honest comparison is **total cost of ownership** (TCO), in which people usually cost more than infrastructure.
+
+::: formula
+**Annual platform TCO and the compute break-even**
+
+$$\text{TCO} = E\,s + C\,(1 + p) + F \qquad C^{*} = \frac{(E_b - E_m)\,s + (F_b - F_m)}{p_m - p_b}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $E$ | Platform engineers needed to build and run the option ($E_b$ build, $E_m$ managed) | engineers |
+| $s$ | Fully loaded cost per engineer-year | \$/year |
+| $C$ | Underlying compute and storage spend for training and pipelines | \$/year |
+| $p$ | Price premium on compute ($p_b$ self-run, usually 0; $p_m$ managed) | fraction |
+| $F$ | Fixed licenses, support contracts and subscriptions ($F_b$, $F_m$) | \$/year |
+| $C^{*}$ | Compute spend above which building is cheaper | \$/year |
+:::
+
+::: example
+**Worked example — QuickBite's platform decision (all figures are assumptions).** QuickBite spends $C = \$800{,}000$ a year on ML compute and storage; an engineer costs $s = \$250{,}000$ loaded.
+
+*Build* on open source (Kubernetes, Flyte or Kubeflow, MLflow, Feast): $E_b = 6$ engineers, $p_b = 0$, $F_b = \$50{,}000$ for support.
+
+1. $\text{TCO}_b = 6 \times 250{,}000 + 800{,}000 + 50{,}000 = \$2{,}350{,}000$.
+
+*Managed* (a cloud ML platform plus a thin internal layer): $E_m = 2$, an assumed 30% premium $p_m = 0.30$, and $F_m = \$150{,}000$.
+
+2. $\text{TCO}_m = 2 \times 250{,}000 + 800{,}000 \times 1.30 + 150{,}000 = 500{,}000 + 1{,}040{,}000 + 150{,}000 = \$1{,}690{,}000$.
+3. Break-even: $C^{*} = (4 \times 250{,}000 + (50{,}000 - 150{,}000)) / 0.30 = 900{,}000 / 0.30 = \$3{,}000{,}000$ a year.
+
+*Interpretation:* managed is \$660,000 a year cheaper at QuickBite's spend; building wins only when compute exceeds about \$3 million a year, or when needs are unusual enough that managed services force workarounds. Four engineers' salaries equal a 30% premium on \$3 million. *Engineering implication:* revisit the decision as spend grows, and keep the exit cost low by owning the *interfaces* (registry contract, pipeline definitions, prediction-log schema) even when vendors run the implementation.
+:::
+
+**Table 69.9 — Build versus buy decision guide.**
+
+| Factor | Favors building | Favors buying or managed |
+|---|---|---|
+| Team size | Dedicated platform team of 5 or more | Fewer than 3 people for the platform |
+| Compute spend | Above the break-even $C^{*}$ | Below it |
+| Requirements | Unusual: on-premises GPUs, strict data residency, custom serving | Standard tabular and deep learning workflows |
+| Existing stack | Kubernetes and Airflow already run well | One cloud used for everything |
+| Time to value | Can wait 6–12 months for first version | Need pipelines this quarter |
+| Lock-in tolerance | Low | Acceptable, with owned interfaces |
+| Model count | Dozens of models, many teams | A handful of models |
+
+Most organizations land on a **hybrid**: managed compute and storage, open-source tracking and orchestration where they want portability, and a thin internal layer of templates, gates and conventions (the "paved path") that encodes their own policies.
+
+::: mistake
+**"Buying a platform gives you MLOps."** Tools provide mechanisms; the practices (gates with real thresholds, slice guardrails, rollback runbooks, risk tiers) are still yours to define. Shankar et al.'s interviewees described validation and versioning as cultural as much as technical problems [Shankar et al. 2022].
+:::
+
+## 69.16 Reference QuickBite ML platform architecture
+
+**Figure 69.15 — QuickBite ML platform.**
+
+```mermaid
+flowchart LR
+  subgraph Dev["Authoring"]
+    DS([Data scientists]) -->|PR| GIT[(Git: code,<br/>pipeline defs)]
+    GIT --> CI[CI: tests,<br/>images by digest]
+  end
+  subgraph Train["Training plane"]
+    ORC[Orchestrator<br/>cached steps] --> SPK[Spark features]
+    ORC --> TRN[CPU and GPU<br/>training pools]
+    TRN --> TRK[(Tracking and<br/>metadata store)]
+    TRN --> GATE{Promotion gate}
+  end
+  subgraph Serve["Serving plane"]
+    CTRL[GitOps controller] --> MS[Model servers<br/>Chapter 66]
+    MS --> FS[(Online<br/>feature store)]
+  end
+  CI --> ORC
+  LAKE[(Lakehouse<br/>tagged snapshots)] --> SPK
+  GATE -->|pass| REG[(Model registry<br/>aliases, cards)]
+  REG -->|bot PR| CFG[(Config repo)]
+  CFG --> CTRL
+  MS -.->|prediction logs| LAKE
+  LAKE -.->|monitors, Ch 70| ORC
+```
+
+**Reading the diagram.** Authoring: data scientists change code and pipeline definitions through pull requests; CI tests them and publishes images by digest. Training plane: the orchestrator runs cached, idempotent steps; Spark builds features from tagged lakehouse snapshots; training runs on shared CPU and GPU pools and logs to the tracking and metadata store; the promotion gate registers passing candidates. The registry is the contract: alias changes become pull requests to the config repository, which the GitOps controller applies to model servers that read the online feature store. The loop closes asynchronously through prediction logs and monitors, which enqueue CT runs. Storage boundaries: Git, lakehouse, tracking store, registry, config repository and feature store. Failure isolation: if the training plane is down, serving continues on the last champion; if the registry is down, nothing new is promoted but nothing breaks. Scaling: training pools autoscale per queue; serving scales per model (Chapter 66).
+
+**Table 69.10 — QuickBite platform decisions.**
+
+| Decision | Choice | Reason |
+|---|---|---|
+| Build or buy | Managed compute and registry, open-source orchestration and tracking | Below compute break-even (§69.15); portability of pipeline definitions |
+| Pipelines | One template per model type, step caching on | 70% cheaper experimentation, 20-minute iterations (§69.9.3) |
+| Gates | Paired non-inferiority, $m = 0.1$ min, slice tolerance 0.2 min, behavioral suite | Catches broken features that average metrics miss (§69.5.3) |
+| CT triggers | Nightly for ETA; data volume and drift for fraud; rate limit 4 runs a day | Break-even analysis (§69.5.2) |
+| Deployment | Aliases, bot PRs, GitOps, shadow then 5% canary | Git is the audit trail; rollback is a revert (§69.6) |
+| Governance | Three risk tiers; independent validation for fraud | Proportionate control (§69.11) |
+| Features | Expand-and-contract for definition changes | Keeps model rollback safe (§69.13) |
+| Platform team | 2 engineers plus embedded ML engineers | TCO (§69.15) |
+
+::: industry
+**QuickBite (illustrative).** This platform is a teaching design assembled from the published systems and documentation cited in this chapter; it is not a description of any company's platform.
+*Evidence: Illustrative*
+:::
+
+## 69.17 Summary and revision notes
+
+::: summary
+- MLOps extends DevOps to systems whose behavior changes with data: version code, configuration, data, models and environments, and test data and models as well as code.
+- Three pipelines: **CI** tests every change (code, data fixtures, smoke tests, behavioral tests, parity); **CT** retrains on triggers; **CD** delivers approved pipelines and models through progressive rollout with automated rollback. At higher maturity you deploy the pipeline, and the pipeline produces models.
+- Behavioral tests (MFT, INV, DIR) catch failures that aggregate metrics average away; monotonic constraints and feature removal fix them by construction.
+- Triggers start runs, never promote. Combine schedule, data volume, drift and performance triggers behind one deduplicated, rate-limited queue. Retrain when $\Delta E > C/(kH)$.
+- Promotion gates compare candidate and champion **paired** on the same held-out window, usually as a non-inferiority test ($z = (\bar{d} + m)/SE$), plus slice guardrails, behavioral and operational checks. Pairing cut the standard error 7.6-fold in the example.
+- The experiment tracker records parameters, metrics, artifacts and lineage; beware the winner's curse ($\approx c_k \sigma_v$) when picking the best of many runs.
+- The registry holds immutable versions, movable aliases, signatures and model cards, and is the contract between training and serving. Deploy aliases through GitOps; rollback is a revert.
+- Orchestrators differ in artifact handling, caching and operational weight. Step caching with complete cache keys and idempotent steps cut experimentation cost by 70% in the example.
+- Reproducibility needs a manifest: tagged snapshot, commit, config hash, image digest, seeds, hardware. GPU training is usually only statistically reproducible.
+- Governance scales controls with risk: automated approval for low risk, independent validation for high risk, audit trails throughout.
+- The retraining loop needs a trigger policy that pages humans when labels are suspect. Model, feature and data rollback differ; expand-and-contract feature changes keep model rollback safe.
+- Published platforms converged on the same shape. Build only above the TCO break-even $C^{*}$; otherwise buy and own the interfaces.
+:::
+
+## 69.18 Knowledge checkpoint
+
+1. Name the three pipelines of MLOps and what triggers each.
+2. Give one MFT, one INV and one DIR test for a fraud model.
+3. Why should a trigger never promote a model by itself?
+4. A run costs \$300, $k = \$4{,}000$ per minute-day, and the model serves 3 days. What improvement breaks even?
+5. Why compare candidate and champion with paired differences?
+6. $\bar{d} = -0.03$ min, $s_d = 0.6$ min, $n = 3{,}600$, $m = 0.1$, $\alpha = 0.01$. Promote?
+7. What is the difference between a registry stage and an alias?
+8. List the inputs to a step's cache key, and one way a cached step can return a stale result.
+9. Five steps cost \$10, \$5, \$20, \$10 and \$5; on repeat runs the first three always hit. What are the savings per repeat run?
+10. Name three sources of nondeterminism in GPU training that seeds do not remove.
+11. Why can a model rollback make an incident worse?
+12. Under what condition is building an ML platform cheaper than a managed one?
+
+<details><summary>Answers</summary>
+
+1. CI, on every code or pipeline change; CT, on schedule, data, drift or performance triggers; CD, on an approved model (alias change) or a pipeline that passed CI.
+2. MFT: a known stolen-card pattern must score above the block threshold. INV: changing the customer's display name must not change the score. DIR: adding three failed payment attempts must not lower the score.
+3. Triggers fire on proxies and can fire on broken data; promotion needs the gate's evidence, and a trigger storm must not become a deployment storm.
+4. $\Delta E^{*} = 300/(4{,}000 \times 3) = 0.025$ minutes of MAE.
+5. Both models score the same examples, so shared difficulty cancels; the standard error shrinks sharply and smaller differences become detectable.
+6. $SE = 0.6/60 = 0.01$; $z = (-0.03 + 0.1)/0.01 = 7.0 > 2.326$. Promote: worse by 0.03 min but significantly within the 0.1-min margin.
+7. A stage is one of a fixed set of lifecycle labels (deprecated in MLflow 2.9); an alias is a named, movable pointer to exactly one version, with as many names as needed.
+8. Code version, image digest, parameters, and input artifact identities. Stale when a step reads "latest" data or the current time, which the key does not capture.
+9. Full run \$50; repeat run \$15; savings $1 - 15/50 = 70\%$.
+10. Atomic floating-point accumulation, autotuned convolution algorithm selection, and nondeterministic reductions in distributed training (also library and driver versions).
+11. If the feature definition changed with the model, the old model receives inputs with new semantics: training–serving skew.
+12. When compute spend exceeds $C^{*} = ((E_b - E_m)s + F_b - F_m)/(p_m - p_b)$, or requirements cannot be met by managed services.
+</details>
+
+## 69.19 Interview questions
+
+### Basic
+
+**Q1. What does MLOps add to DevOps?** **Answer.** Data and models become versioned artifacts alongside code; tests extend to data validation and model behavior; and a third pipeline, continuous training, produces models when data changes. Deployment adds statistical promotion gates, prediction-level canary guardrails and a registry that links each served model to its data, code and environment.
+
+**Q2. What does an experiment tracker record and why?** **Answer.** Parameters, metrics, artifacts and lineage (data snapshot, commit, image) for every run, so results can be compared, reproduced and traced from a production model back to its inputs.
+
+### Intermediate
+
+**Q3. Design a promotion gate for a nightly ETA retrain.** **Answer.** Score champion and candidate on the latest held-out week neither trained on; run a paired non-inferiority test on absolute errors with a margin set by product; require every city slice to stay within a tolerance; re-run behavioral tests; check latency and model size on the serving image. On failure, keep the champion and alert. Size the window so the smallest guarded slice has enough examples.
+
+**Q4. Airflow or Kubeflow Pipelines for a new ML team?** **Answer.** If Airflow already runs the data platform and models are few, extend it and add artifact tracking and caching conventions. If the team runs Kubernetes well and needs per-step GPU resources, artifact lineage and caching, use a Kubernetes-native ML orchestrator. With a small team on one cloud, consider a managed pipeline service.
+
+### Advanced
+
+**Q5. Your automated retraining loop shipped a model that learned an outage. How do you redesign it?** **Answer.** Add label-quality checks before training; route severe or suspicious signals to humans rather than to CT; lengthen or weight the training window so one bad day cannot dominate; add slice guardrails and a superiority requirement after anomalies; rate-limit runs; and keep a randomized holdout to detect feedback effects.
+
+**Q6. How do you make rollback safe when features and models evolve together?** **Answer.** Version features; change definitions by expand-and-contract so old and new values are served side by side; record each model version's feature versions in its signature; block retiring a feature version while any `champion` or `previous` model reads it; and include a compatibility check in the rollback runbook.
+
+## 69.20 Practical exercises
+
+1. Extend the §69.7.4 tracker with step-wise metrics and a `compare(run_a, run_b)` function that runs the paired test of §69.5.3 on stored validation predictions.
+2. In the §69.5.3 gate, make candidate C by dropping city 3's data from days 40–82. Does the slice guardrail catch it? What held-out size would it need?
+3. Add an INV test to the gate for the `promo_flag` feature of §69.4.3 and show it rejecting the unconstrained model.
+4. Write a cache-key function for a pipeline step that hashes the image digest, parameters and input snapshot IDs, and a test proving that a change to any of them changes the key.
+
+## 69.21 Design challenges
+
+1. **Fraud model platform path.** Design CT and CD for QuickBite's fraud model: 60-day labels, high risk tier, weekly cost-benefit check. Specify triggers, gate statistics on immature labels, approvals and rollback.
+2. **From five notebooks to a platform.** A 15-person data science team ships five models by hand. Propose a 12-month plan with build-versus-buy reasoning, the first three platform components and how you would measure success with the ML Test Score.
+
+## 69.22 References
+
+1. Apache Software Foundation. *Apache Airflow Documentation*. 2026. https://airflow.apache.org/docs/
+2. AWS. *Amazon SageMaker Pipelines*. Amazon SageMaker Developer Guide, 2026. https://docs.aws.amazon.com/sagemaker/latest/dg/pipelines.html
+3. Baylor, D., et al. *TFX: A TensorFlow-Based Production-Scale Machine Learning Platform*. KDD, 2017.
+4. Board of Governors of the Federal Reserve System and Office of the Comptroller of the Currency. *Supervisory Guidance on Model Risk Management* (SR 11-7). 2011. https://www.federalreserve.gov/supervisionreg/srletters/sr1107.htm
+5. Breck, E., Cai, S., Nielsen, E., Salib, M., Sculley, D. *The ML Test Score: A Rubric for ML Production Readiness and Technical Debt Reduction*. IEEE International Conference on Big Data, 2017.
+6. Dunn, J. *Introducing FBLearner Flow: Facebook's AI Backbone*. Engineering at Meta (Facebook Engineering blog), 2016. https://engineering.fb.com/2016/05/09/core-infra/introducing-fblearner-flow-facebook-s-ai-backbone/
+7. Flyte. *Flyte Documentation*. Linux Foundation AI & Data, 2026. https://docs.flyte.org/
+8. Google Cloud. *MLOps: Continuous Delivery and Automation Pipelines in Machine Learning*. Cloud Architecture Center, 2020. https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning
+9. Google Cloud. *Introduction to Vertex AI Pipelines*. Vertex AI documentation, 2026. https://cloud.google.com/vertex-ai/docs/pipelines/introduction
+10. Hermann, J., Del Balso, M. *Meet Michelangelo: Uber's Machine Learning Platform*. Uber Engineering Blog, 2017. https://www.uber.com/blog/michelangelo-machine-learning-platform/
+11. Kale, A. *Bighead: Airbnb's Machine Learning Platform*. TWiML AI Podcast, episode 198, 2018. https://twimlai.com/talk/198
+12. KServe. *KServe Documentation: InferenceService and canary rollout*. 2026. https://kserve.github.io/website/
+13. Kreuzberger, D., Kühl, N., Hirschl, S. *Machine Learning Operations (MLOps): Overview, Definition, and Architecture*. IEEE Access 11, 2023.
+14. Kubeflow. *Kubeflow Pipelines Documentation*. 2026. https://www.kubeflow.org/docs/components/pipelines/
+15. Metaflow. *Metaflow Documentation*. 2026. https://docs.metaflow.org/
+16. Mitchell, M., Wu, S., Zaldivar, A., Barnes, P., Vasserman, L., Hutchinson, B., Spitzer, E., Raji, I. D., Gebru, T. *Model Cards for Model Reporting*. FAT\*, 2019.
+17. MLflow. *MLflow Documentation: Tracking, Models and Model Registry*. 2026. https://mlflow.org/docs/latest/
+18. Netflix Technology Blog. *Open-Sourcing Metaflow, a Human-Centric Framework for Data Science*. 2019.
+19. Puttaswamy, K., Hoh, A. *Bighead: Airbnb's End-to-End Machine Learning Platform*. DataEngConf SF, 2018.
+20. PyTorch. *Reproducibility*. PyTorch documentation, 2026. https://pytorch.org/docs/stable/notes/randomness.html
+21. Ribeiro, M. T., Wu, T., Guestrin, C., Singh, S. *Beyond Accuracy: Behavioral Testing of NLP Models with CheckList*. ACL, 2020.
+22. Shankar, S., Garcia, R., Hellerstein, J. M., Parameswaran, A. G. *Operationalizing Machine Learning: An Interview Study*. arXiv:2209.09125, 2022.
+23. Zaharia, M., Chen, A., Davidson, A., Ghodsi, A., Hong, S. A., Konwinski, A., Murching, S., Nykodym, T., Ogilvie, P., Parkhe, M., Xie, F., Zumar, C. *Accelerating the Machine Learning Lifecycle with MLflow*. IEEE Data Engineering Bulletin 41(4), 2018.
+
+## 69.23 Open verification items
+
+- Kreuzberger et al. 2023: confirm the paraphrased definition of MLOps against the paper's wording.
+- FBLearner Flow figures (over 25% of engineers, over a million models, over 6 million predictions per second) were confirmed via secondary reports of the 2016 post; the post itself could not be fetched while writing.
+- Michelangelo: confirm that the 2017 post describes deploying several models to one serving container addressed by identifier or tag.
+- MLflow: stage deprecation in 2.9 confirmed via the project's GitHub issue; confirm the alias URI syntax against current documentation.
+- Bighead component names come from 2018 talks and an interview; confirm current status.
+- Netflix Metaflow announcement: confirm URL and date.
+- KServe `canaryTrafficPercent` field: confirm against current API version.

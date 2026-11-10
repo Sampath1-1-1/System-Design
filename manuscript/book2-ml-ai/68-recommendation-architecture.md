@@ -779,3 +779,365 @@ $$p = \frac{p'}{p' + (1 - p')/w}$$
 
 **Interpretation.** The uncorrected model would claim an 8-fold higher order rate. **Engineering implication.** Apply the correction in the serving graph, not in downstream code, so every consumer sees calibrated output; then monitor the **calibration ratio** (sum of predictions divided by sum of outcomes, per surface and segment) and refit a Platt or isotonic layer [Platt 1999] when it drifts from 1.
 :::
+
+## 68.8 Embedding tables at scale
+
+In a large recommender almost all parameters are embedding rows, and almost all FLOPs are in the MLPs (§58.6). The two halves therefore have opposite bottlenecks: tables are bound by memory capacity and bandwidth, MLPs by compute. Every design decision in this section follows from that split.
+
+::: formula
+**Embedding memory, hashing collisions and all-to-all traffic**
+
+$$M = \sum_{t} V_t \, d_t \, s \,(1 + k) \qquad P_\text{collide} \approx 1 - e^{-n/m} \qquad A = b \, T \, d \, s_c$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M$ | Memory for all tables, weights plus optimizer state | bytes |
+| $V_t$, $d_t$ | Rows and dimension of table $t$ | rows, values |
+| $s$, $s_c$ | Bytes per stored value; bytes per communicated value | bytes |
+| $k$ | Optimizer state copies per value (Adam 2, SGD 0; row-wise Adagrad about 0) | copies |
+| $n$, $m$ | Distinct active IDs and hash buckets | IDs, rows |
+| $P_\text{collide}$ | Probability an active ID shares its row with another | probability |
+| $A$ | Pooled-embedding bytes each GPU receives per step in the all-to-all | bytes |
+| $b$, $T$, $d$ | Examples per GPU, sparse features (tables), embedding dimension | examples, tables, values |
+:::
+
+::: example
+**Worked example — 100 million IDs at 128 dimensions.** $V = 10^8$, $d = 128$, FP32 ($s = 4$).
+
+1. Weights: $10^8 \times 128 \times 4 = 5.12 \times 10^{10}$ bytes $= 51.2$ GB. FP16: 25.6 GB; INT8 with per-row scale: about 12.8 GB.
+2. Training with dense Adam: $51.2 \times 3 = 153.6$ GB, two 80 GB GPUs for one table. Row-wise Adagrad adds one value per row: $10^8 \times 4 = 0.4$ GB.
+3. Hashing QuickBite's 4 million weekly active customers into $m = 10^7$ rows instead of one row per registered customer: $P_\text{collide} \approx 1 - e^{-0.4} = 33\%$. Into $m = 4 \times 10^7$: $1 - e^{-0.1} = 9.5\%$.
+4. All-to-all for a sharded model with $b = 4{,}096$, $T = 40$, $d = 128$, FP16 ($s_c = 2$): $4{,}096 \times 40 \times 128 \times 2 = 41.9$ MB received per GPU per step, and the same again for gradients in backward; at 50 GB/s per GPU (Chapter 65 assumptions) about 0.84 ms each way.
+
+**Interpretation.** A single 100M-row table already exceeds one accelerator for training, and an industrial model has dozens of tables. Hashing trades memory for collisions, and the collision rate is set by *active* IDs, not registered ones. **Engineering implication.** QuickBite's tables (customers 2.56 GB, dishes 1.28 GB at $d = 64$, §58.6) fit on one GPU, so plain data parallelism suffices (§65.8); the sharding below is for catalogs and user bases one to two orders of magnitude larger.
+:::
+
+**Compression techniques.** Beyond lower precision and hashing: **frequency-aware sizing** gives popular IDs full rows and pools the long tail into hashed buckets; **mixed dimensions** use 128 dimensions for user IDs but 16 for a 50-value cuisine field; and **compositional embeddings** represent an ID as the combination of rows from two small tables indexed by quotient and remainder, which removes collisions between any two IDs at a fraction of the memory [Shi et al. 2020].
+
+**Table 68.6 — Sharding strategies for embedding tables.**
+
+| Strategy | What is split | Advantage | Disadvantage | Choose when |
+|---|---|---|---|---|
+| Replicated (data-parallel) | Nothing | No embedding communication | Memory × GPUs | Small tables (cuisine, zone) |
+| Table-wise | Whole tables to GPUs | Simple; one lookup per table | Load imbalance across tables | Many medium tables |
+| Row-wise | Rows of one table across GPUs | Balances huge tables | Every batch touches many shards | A table larger than one GPU |
+| Column-wise | Embedding dimensions | Balances very wide tables | Must concatenate results | Large $d$, hot tables |
+
+**Figure 68.9 — DLRM hybrid parallelism: model-parallel embeddings, data-parallel MLPs.**
+
+```mermaid
+flowchart TB
+  subgraph G1["GPU 1"]
+    T1[("Tables A, B")]
+    M1[MLPs: full replica]
+  end
+  subgraph G2["GPU 2"]
+    T2[("Tables C, D")]
+    M2[MLPs: full replica]
+  end
+  D1[["Batch shard 1"]] -->|sparse IDs for all tables| A2A{{All-to-all}}
+  D2[["Batch shard 2"]] -->|sparse IDs for all tables| A2A
+  A2A -->|lookups| T1
+  A2A -->|lookups| T2
+  T1 -->|pooled vectors| A2B{{All-to-all}}
+  T2 -->|pooled vectors| A2B
+  A2B -->|own examples' vectors| M1
+  A2B -->|own examples' vectors| M2
+  M1 <-.->|all-reduce MLP gradients| M2
+```
+
+**Reading the diagram.** Each GPU owns a subset of tables (model parallelism) and a full copy of the MLPs (data parallelism). A step begins with each GPU holding a shard of the batch; an all-to-all routes each sparse ID to the GPU that owns its table, lookups and pooling happen there, and a second all-to-all returns each example's pooled vectors to the GPU that holds the example. The MLPs then run locally, and their gradients are all-reduced (dotted, overlapping backward, §65.6); embedding gradients travel back through the reverse all-to-all and update only touched rows. Storage boundaries are the table shards in GPU memory (or host memory for cold rows). Failure points: a hot table overloads its GPU (rebalance with row-wise sharding or replicate the hottest rows); the all-to-all is on the critical path and sensitive to network congestion. Scaling: tables scale with GPU memory, MLP throughput with GPU count.
+
+::: industry
+**DLRM and its training systems.** Naumov et al. published DLRM with exactly this hybrid: model parallelism for embedding tables, data parallelism for MLPs, connected by all-to-all ("butterfly shuffle") communication. Mudigere et al. later described Meta's hardware–software co-design for training such models, including sharding of tables up to terabytes across GPUs and the role of the all-to-all.
+*Evidence: Primary* — [Naumov et al. 2019; Mudigere et al. 2022]
+:::
+
+At serving time the same split reappears in miniature. Rankers keep small and hot tables in process memory; very large user tables live in a sharded key–value or embedding service, fetched once per request (one user, not one per candidate); item rows for the hot head are cached in each ranker (§56.5.8). Version the tables with the model: a ranker reading v12 weights with a v13 ID mapping returns plausible-looking garbage.
+
+## 68.9 Feature crossing and context features
+
+### 68.9.1 Why crosses matter
+
+Many signals matter only in combination. "Late-night" and "pizza" are each weakly predictive; "late-night *and* pizza" is strongly predictive. A linear model cannot represent an AND, so the classic remedy is a **cross feature**, the Cartesian product of two fields, hashed into buckets (§62.3). Crosses are powerful but explode combinatorially: 30 categorical fields give $30 \times 29/2 = 435$ pairs, before triples. Three generations of models learn them instead of enumerating them:
+
+1. **Factorization machines** give every feature value an embedding and model each pairwise interaction as a dot product, so a pair never seen together still gets a weight [Rendle 2010]. DLRM's interaction layer is the same idea.
+2. **Deep & Cross Network (DCN)** stacks explicit cross layers next to a deep MLP so that each layer raises the polynomial degree of interactions by one [Wang et al. 2017].
+3. **DCN-V2** replaces DCN's rank-one cross with a full (or low-rank) weight matrix, which is more expressive and was reported to work in large-scale production learning-to-rank systems [Wang et al. 2021].
+
+::: formula
+**DCN-V2 cross layer** [Wang et al. 2021]
+
+$$\mathbf{x}_{l+1} = \mathbf{x}_0 \odot \left(W_l \mathbf{x}_l + \mathbf{b}_l\right) + \mathbf{x}_l \qquad P_\text{layer} = d^2 + d \;\;\text{or}\;\; 2dr + d \text{ (low-rank } W_l = U_l V_l^\top)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\mathbf{x}_0$ | Input: concatenated embeddings and dense features | $d$ reals |
+| $\mathbf{x}_l$ | Output of cross layer $l$ | $d$ reals |
+| $W_l$, $\mathbf{b}_l$ | Learned weight matrix and bias | $d \times d$, $d$ |
+| $\odot$ | Element-wise product | — |
+| $r$ | Rank of the low-rank factorization | dimensions |
+| $P_\text{layer}$ | Parameters per cross layer | parameters |
+:::
+
+::: example
+**Worked example — A cross layer creates products, cheaply.** Toy input $\mathbf{x}_0 = (a, b) = (2, 3)$ with $W_0 = \begin{pmatrix}0 & 1\\ 0 & 0\end{pmatrix}$, $\mathbf{b}_0 = \mathbf{0}$.
+
+1. $W_0 \mathbf{x}_0 = (b, 0) = (3, 0)$.
+2. $\mathbf{x}_0 \odot (3, 0) = (a \cdot b, 0) = (6, 0)$; adding the residual gives $\mathbf{x}_1 = (a + ab, b) = (8, 3)$. The product $ab$ appeared without anyone defining it; a second layer can produce degree-3 terms.
+3. Production size: 16 fields × 64 dimensions gives $d = 1{,}024$. Full rank: $1{,}024^2 + 1{,}024 = 1{,}049{,}600$ parameters per layer, about 4.2 MB in FP32. Low rank $r = 128$: $2 \times 1{,}024 \times 128 + 1{,}024 = 263{,}168$, a quarter.
+
+**Interpretation.** Each layer learns which pairs matter instead of enumerating 120 field pairs by hand. **Engineering implication.** Three low-rank cross layers add under a million parameters and a few hundred thousand multiply–adds per candidate, affordable in the heavy ranker; keep hand-built crosses only where they carry domain knowledge (`zone × hour`).
+:::
+
+### 68.9.2 Context features
+
+Context answers "what does this customer want *now*". For food delivery it is unusually strong: the same customer orders coffee at 8 a.m., a salad at 1 p.m. and noodles at 11 p.m.
+
+**Table 68.7 — Context features for QuickBite ranking.**
+
+| Feature | Example | Source and freshness |
+|---|---|---|
+| Time | Hour, weekday, holiday, minutes to usual dinner time | Request |
+| Location | Delivery zone, home versus office address | Request; zone table (Ch 62) |
+| Weather | Rain in zone | Hourly per zone (§61.4) |
+| Session | Cuisines viewed in the last 10 minutes, searches | Streaming, seconds (§68.13) |
+| Supply state | Restaurant ETA now, kitchen backlog, courier availability | Nearline, under a minute (§60.7) |
+| Device and entry point | iOS, push notification, banner | Request |
+
+Two features deserve special mention. **ETA** (Chapter 60's model) is both a feature and a constraint: a 55-minute delivery estimate should lower a restaurant's rank whatever the taste match. **Example age** handles time-dependent popularity: Covington et al. feed the age of the training example during training and set it to zero at serving, which lets the model learn that fresh content is preferred instead of averaging over the training window [Covington et al. 2016].
+
+## 68.10 Re-ranking and business logic
+
+::: definition
+**Definition — Re-ranking.** The final funnel stage, which turns independently scored items into a page by optimizing properties of the *list*: diversity, freshness, deduplication, fairness of exposure to providers, and hard business and policy rules.
+:::
+
+A ranker scores each item alone, so its top 20 for a pizza lover may be 20 pizzerias: each is individually the best bet, but the page is a poor one, because if she does not want pizza tonight every slot is wasted. Re-ranking fixes this with list-level objectives, typically on the 300 heavy-ranked items in a few milliseconds:
+
+- **Diversity:** spread cuisines, price levels and restaurants so the page covers several plausible intents.
+- **Deduplication:** one restaurant per feed, or at most two dishes from one restaurant in a dish row.
+- **Freshness and exploration slots:** reserve positions for new restaurants or bandit arms (§68.11).
+- **Provider fairness:** cap any restaurant's share of impressions in a zone and hour, and give small restaurants a floor of exposure; in a two-sided marketplace exposure is income.
+- **Capacity:** demote restaurants whose kitchen backlog or ETA is high right now, so recommendations do not overload the supply they depend on.
+
+::: formula
+**Maximal marginal relevance (MMR)** [Carbonell and Goldstein 1998]
+
+$$i^* = \arg\max_{i \in C \setminus S} \Big[\lambda \, \text{rel}(i) - (1 - \lambda) \max_{j \in S} \text{sim}(i, j)\Big]$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $C$, $S$ | Candidate set; items already selected (initially empty) | sets |
+| $\text{rel}(i)$ | Ranker score normalized to [0, 1] | dimensionless |
+| $\text{sim}(i, j)$ | Similarity, for example embedding cosine | [0, 1] |
+| $\lambda$ | Relevance–diversity trade-off; 1 = pure relevance | dimensionless |
+:::
+
+::: example
+**Worked example — Picking three restaurants with $\lambda = 0.7$.** Relevance: Pizza Napoli 0.95, Pizza Roma 0.92, Sushi Kai 0.85, Burger Bros 0.80. Similarities: Napoli–Roma 0.90; Napoli–Sushi 0.10; Roma–Sushi 0.15; Napoli–Burger 0.30; Roma–Burger 0.30; Sushi–Burger 0.05.
+
+1. First pick, $S$ empty: highest $0.7 \times \text{rel}$, Napoli (0.665).
+2. Second pick: Roma $0.644 - 0.3 \times 0.90 = 0.374$; Sushi $0.595 - 0.3 \times 0.10 = 0.565$; Burger $0.560 - 0.3 \times 0.30 = 0.470$. Choose Sushi.
+3. Third pick: Roma $0.644 - 0.3 \times \max(0.90, 0.15) = 0.374$; Burger $0.560 - 0.3 \times \max(0.30, 0.05) = 0.470$. Choose Burger.
+
+**Interpretation.** Pure relevance gives Napoli, Roma, Sushi (total relevance 2.72); MMR gives Napoli, Sushi, Burger (2.60), 4.4% less predicted relevance but three cuisines instead of two. **Engineering implication.** MMR costs $O(K \cdot |C|)$ similarity evaluations, 6,000 for 20 picks from 300, well under a millisecond. Tune $\lambda$ by A/B test on orders per session, not on offline relevance, which diversity always lowers.
+:::
+
+**Figure 68.10 — Re-ranking pipeline: hard rules, then soft objectives.**
+
+```mermaid
+flowchart LR
+  IN["300 scored items"] --> HR["Hard filters: policy,<br/>dedupe, capacity cutoff"]
+  HR --> SL["Reserve slots:<br/>exploration, new, promoted"]
+  SL --> MMR["Greedy MMR with<br/>caps per cuisine and restaurant"]
+  MMR --> CHK{"Exposure caps<br/>respected?"}
+  CHK -->|no| MMR
+  CHK -->|yes| OUT["20 items + position<br/>+ reason codes"]
+  CFG[(Rule config,<br/>versioned)] -.-> HR
+  CFG -.-> SL
+```
+
+**Reading the diagram.** The stage runs synchronously in the orchestrator. Hard filters remove items that must never appear (policy violations, duplicates, restaurants above a backlog cutoff). Reserved slots are filled first by their own rules. MMR fills the remaining positions greedily, subject to caps; a violated cap sends the pass back to choose the next-best item. The output carries positions and **reason codes** (which rule placed each item), which are logged for debugging and for bias correction. The rule configuration is a versioned store pushed asynchronously. Failure points: conflicting rules that leave fewer than 20 items (fall back to relevance order and alert), and rule changes deployed without an experiment, which change what users see as much as a new model does. Scaling: cost is linear in candidates and negligible next to ranking.
+
+Greedy MMR is the workhorse; determinantal point processes select a whole set at once and have been used for feed diversity, at more complexity. Whatever the method, treat re-ranking rules like a model: version them, A/B test them, and log their decisions.
+
+## 68.11 Exploration versus exploitation
+
+### 68.11.1 The bandit problem
+
+::: definition
+**Definition — Multi-armed bandit and regret.** A **bandit** repeatedly chooses one of $K$ actions (arms), observes a reward only for the chosen arm, and aims to maximize total reward. **Exploitation** chooses the arm that looks best; **exploration** chooses others to learn about them. **Regret** is the reward lost relative to always choosing the best arm. A **contextual bandit** observes features (user, time) before choosing and learns which arm is best in each context [Li et al. 2010].
+:::
+
+A new restaurant joins QuickBite. The ranker has no data on it, so it scores it low, so it is never shown, so the ranker never gets data on it. Pure exploitation is self-confirming; the only way out is to sometimes show items the model is unsure about. The question is how much, and which ones. Three classical answers:
+
+1. **ε-greedy:** with probability ε pick a random arm, otherwise the best estimate. Simple, but it explores forever at the same rate, even among arms already known to be bad.
+2. **Upper confidence bound (UCB):** pick the arm with the highest optimistic estimate, mean plus a bonus that shrinks with the number of trials [Auer et al. 2002]. Uncertain arms get tried; once their uncertainty shrinks, bad arms are dropped.
+3. **Thompson sampling:** keep a posterior distribution for each arm's reward rate (a Beta distribution for click or order rates), draw one sample from each, and pick the largest. Arms are chosen with the probability that they are best [Chapelle and Li 2011].
+
+::: formula
+**Regret and the UCB rules**
+
+$$R_T = T\mu^* - \sum_{t=1}^{T} \mu_{a_t} \qquad \text{UCB1: } a_t = \arg\max_a \Big[\hat{\mu}_a + \sqrt{2\ln t / n_a}\Big] \qquad \text{LinUCB: } a_t = \arg\max_a \Big[\mathbf{x}_{t,a}^\top \hat{\boldsymbol\theta}_a + \alpha\sqrt{\mathbf{x}_{t,a}^\top A_a^{-1} \mathbf{x}_{t,a}}\Big]$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $R_T$ | Expected regret after $T$ rounds | reward units (orders) |
+| $\mu^*$, $\mu_a$ | Best arm's and arm $a$'s true mean reward | orders per impression |
+| $a_t$ | Arm chosen at round $t$ | — |
+| $\hat{\mu}_a$, $n_a$ | Observed mean and pull count of arm $a$ | — , pulls |
+| $\mathbf{x}_{t,a}$ | Context features of arm $a$ at round $t$ | vector |
+| $\hat{\boldsymbol\theta}_a$, $A_a$ | Ridge-regression weights and design matrix of arm $a$ | vector, matrix |
+| $\alpha$ | Exploration strength | dimensionless |
+:::
+
+::: example
+**Worked example — ε-greedy's regret floor.** Ten new restaurants compete for one slot with true order rates 0.040, 0.045, …, 0.080 and 0.100 per impression (the best). Mean rate $0.064$, so a uniformly random pick loses $0.100 - 0.064 = 0.036$ on average.
+
+1. With $\varepsilon = 0.1$, exploration alone costs $0.1 \times 0.036 = 0.0036$ orders per impression, forever.
+2. Over $T = 100{,}000$ impressions: at least $0.0036 \times 10^5 = 360$ orders lost, even if exploitation is perfect.
+3. UCB1's textbook bound, $\sum_a 8 \ln T / \Delta_a$, is $8 \times 11.51 \times 254.0 \approx 23{,}400$ for these gaps ($\sum 1/\Delta_a = 16.7 + 18.2 + \dots + 50 = 254.0$): correct but far above what UCB1 actually loses (simulated below).
+
+**Interpretation.** ε-greedy's regret grows linearly in $T$; UCB and Thompson sampling grow logarithmically once uncertain arms are resolved. **Engineering implication.** Decay ε over time or use UCB/Thompson, and treat worst-case bounds as qualitative: measure regret by simulation on your own reward rates.
+:::
+
+#### Code example
+
+```python
+"""Bernoulli bandit: cumulative regret of greedy, epsilon-greedy, UCB1, UCB1-Tuned and
+Thompson sampling. Arms are 10 new restaurants competing for one home-feed slot; reward =
+order (1) or not (0). All 100 independent runs of a policy are simulated side by side."""
+import numpy as np
+
+RATES = np.array([0.040, 0.045, 0.050, 0.055, 0.060,
+                  0.065, 0.070, 0.075, 0.080, 0.100])   # true order rate per impression (unknown)
+K, T, RUNS = len(RATES), 100_000, 100
+CHECKPOINTS = (1_000, 10_000, 100_000)
+
+def simulate(policy, seed=42):
+    rng = np.random.default_rng(seed)
+    rows = np.arange(RUNS)
+    pulls, wins = np.ones((RUNS, K)), (rng.random((RUNS, K)) < RATES).astype(float)  # 1 pull each
+    regret, out = K * RATES.max() - RATES.sum(), {}
+    for t in range(K, T):
+        mean = wins / pulls
+        if policy == "greedy":
+            a = mean.argmax(1)
+        elif policy == "eps-greedy":                    # explore uniformly 10% of the time
+            a = np.where(rng.random(RUNS) < 0.1, rng.integers(K, size=RUNS), mean.argmax(1))
+        elif policy == "ucb1":                          # optimism under uncertainty
+            a = (mean + np.sqrt(2 * np.log(t) / pulls)).argmax(1)
+        elif policy == "ucb1-tuned":                    # bonus scaled by the arm's variance
+            v = mean * (1 - mean) + np.sqrt(2 * np.log(t) / pulls)
+            a = (mean + np.sqrt(np.log(t) / pulls * np.minimum(0.25, v))).argmax(1)
+        else:                                           # Thompson: sample Beta posteriors
+            a = rng.beta(1 + wins, 1 + pulls - wins).argmax(1)
+        pulls[rows, a] += 1
+        wins[rows, a] += rng.random(RUNS) < RATES[a]
+        regret += np.mean(RATES.max() - RATES[a])       # expected regret, averaged over runs
+        if t + 1 in CHECKPOINTS:
+            out[t + 1] = regret
+    return out, np.mean(pulls[:, RATES.argmax()] / T)
+
+for policy in ("greedy", "eps-greedy", "ucb1", "ucb1-tuned", "thompson"):
+    out, share = simulate(policy)
+    cells = "  ".join(f"@{c // 1000}k {out[c]:7.1f}" for c in CHECKPOINTS)
+    print(f"{policy:<10} regret {cells}   best-arm share {share:.2f}")
+```
+
+Output (about 30 seconds on one CPU core):
+
+```text
+greedy     regret @1k    46.3  @10k   463.9  @100k  4639.9   best-arm share 0.07
+eps-greedy regret @1k    30.2  @10k   132.2  @100k   552.9   best-arm share 0.83
+ucb1       regret @1k    34.5  @10k   312.2  @100k  2014.0   best-arm share 0.42
+ucb1-tuned regret @1k    31.7  @10k   216.1  @100k   434.3   best-arm share 0.87
+thompson   regret @1k    29.1  @10k   118.0  @100k   192.6   best-arm share 0.94
+```
+
+What to notice:
+
+- **Greedy locks in early:** after one impression per arm most arms show zero orders, and it keeps choosing whichever got lucky; regret grows linearly at about 0.046 per impression, and the best restaurant gets 7% of impressions.
+- **ε-greedy** loses 0.0047 per impression between 10k and 100k, close to the 0.0036 exploration floor plus occasional wrong exploitation.
+- **UCB1's bonus** $\sqrt{2\ln t/n}$ assumes rewards anywhere in [0, 1]; with order rates near 5% it is far too wide, so it keeps exploring. UCB1-Tuned scales the bonus by the observed variance [Auer et al. 2002] and cuts regret by 78%. Use variance-aware bonuses for low rates.
+- **Thompson sampling** has the lowest regret at every horizon and gives the best arm 94% of impressions, which is why it is the default in production bandits; its posteriors are also natural priors for cold start (§68.15).
+
+### 68.11.2 Contextual bandits in production
+
+Li et al. applied LinUCB to Yahoo!'s front-page news module: each article's expected click rate is a ridge regression on user and article features, and the bonus is the regression's predictive uncertainty, so exploration concentrates where the model is ignorant for *this kind of user* [Li et al. 2010]. In a full recommender, exploration is rarely a separate system choosing the whole page; it is a small budget inside the funnel.
+
+**Figure 68.11 — Exploration inside the funnel, with propensity logging.**
+
+```mermaid
+flowchart LR
+  RK["Heavy ranker<br/>scores + uncertainty"] --> POL{"Exploration<br/>policy"}
+  POL -->|"slots 1-17: exploit"| PAGE[Page of 20]
+  POL -->|"slots 18-20: Thompson<br/>over uncertain items"| PAGE
+  PAGE --> C([Customer])
+  POL -.->|"item, slot, propensity"| LOG[[Impression log]]
+  C -.->|order or not| LOG
+  LOG -.->|"IPS-weighted training"| TR[Training]
+```
+
+**Reading the diagram.** The ranker produces scores and an uncertainty estimate (for example from an ensemble or the posterior of a Beta prior). The exploration policy, running synchronously in the re-ranker, fills most slots by exploitation and a few by sampling among uncertain candidates. Crucially, it logs the **propensity**, the probability with which each item was placed in its slot, asynchronously with the impression. Outcomes join the log, and training uses the propensities to correct for the policy's choices (§68.12). Failure points: a policy that does not log propensities produces data no one can debias later; an exploration budget that is too large costs orders measurably. Scaling: exploration adds no meaningful compute.
+
+Three production details matter more than the algorithm. Rewards are **delayed** (an order arrives minutes after the impression), so posteriors update in batches. Rates are **non-stationary** (lunch differs from dinner), so old evidence is discounted. And exploration has a **business cost** that must be budgeted and reported, like any other experiment.
+
+## 68.12 Feedback loops and biases
+
+### 68.12.1 How the loop biases the data
+
+**Figure 68.12 — How serving decisions bias the next model's training data.**
+
+```mermaid
+flowchart LR
+  M[Model v_n] -->|ranks popular high| SH[Shown at top]
+  SH -->|more exposure| CL[More clicks and orders]
+  CL -.->|logged as positives| TD[(Training data)]
+  NS[Never shown] -.->|no labels at all| TD
+  TD -.->|retrain| M2["Model v_n+1:<br/>even more confident"]
+  M2 -.->|next cycle| M
+```
+
+**Reading the diagram.** The model's ranking decides exposure (solid, synchronous at serving time). Exposure produces engagement, which is logged as positive labels (dotted, asynchronous); items never shown produce no labels at all. Training on this data yields a model that is more confident in what was already shown, and the cycle repeats daily. The storage boundary is the training data, where the bias becomes permanent. The failure is gradual: catalog coverage shrinks, new restaurants starve, and offline metrics *improve*, because the test set is drawn from the same biased logs. Mitigations act at three points: exploration widens exposure, propensity logging records the bias, and IPS-weighted training removes it.
+
+Four biases recur:
+
+- **Position bias:** items at the top are examined more, so they are clicked more regardless of relevance.
+- **Popularity bias:** popular items get more exposure and so more labels, and models trained on those labels over-recommend them.
+- **Selection bias (missing not at random):** users rate and order only what they chose to look at; unobserved items are not a random sample [Schnabel et al. 2016].
+- **Exposure bias:** an item never shown has no negative or positive labels, so the model's beliefs about it are untested.
+
+### 68.12.2 Inverse propensity scoring
+
+The remedy is to reweight each logged outcome by how unlikely the logging policy was to produce it, so that rarely shown items count more.
+
+::: formula
+**IPS estimator of a new policy's value, and position-bias weighting**
+
+$$\hat{V}_\text{IPS}(\pi) = \frac{1}{n}\sum_{k=1}^{n} r_k \, \frac{\pi(a_k \mid x_k)}{\pi_0(a_k \mid x_k)} \qquad \widehat{\text{rel}}(i) = \frac{1}{N_i}\sum_{\text{clicks on } i} \frac{1}{p_{\text{pos}}}, \quad p_k = (1/k)^\eta$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\pi_0$, $\pi$ | Logging policy and new policy: probability of action $a$ in context $x$ | probability |
+| $r_k$, $a_k$, $x_k$ | Logged reward, action and context of record $k$ | — |
+| $n$ | Logged records | records |
+| $p_k$ | Probability a user examines position $k$ (propensity) | probability |
+| $\eta$ | Severity of position bias | dimensionless |
+| $N_i$ | Times item $i$ was shown | impressions |
+:::
+
+::: example
+**Worked example — Evaluating a policy that was never deployed, and correcting position.** The promotion slot showed restaurant A with probability 0.8 and B with 0.2. Of 10,000 impressions, A got 8,000 with 400 orders (5%), B got 2,000 with 160 orders (8%). A proposed policy would show B with 0.9 and A with 0.1.
+
+1. Naive average of the log: $560/10{,}000 = 0.056$, the *old* policy's value.
+2. IPS: A's orders weigh $0.1/0.8 = 0.125$, B's $0.9/0.2 = 4.5$: $(400 \times 0.125 + 160 \times 4.5)/10{,}000 = (50 + 720)/10{,}000 = 0.077$.
+3. Truth: $0.1 \times 0.05 + 0.9 \times 0.08 = 0.077$. The estimate matches.
+4. Clipping weights at 3 to reduce variance: $(50 + 160 \times 3)/10{,}000 = 0.053$, now biased low.
+5. Position: X at rank 1 gets 100 clicks in 1,000 impressions; Y at rank 5 gets 30 in 1,000. With $\eta = 1$, $p_5 = 0.2$: X's relevance $0.10/1 = 0.10$, Y's $0.03/0.2 = 0.15$. Y is the better restaurant.
+
+**Interpretation.** Logged data can evaluate a new policy without deploying it, but only for actions the old policy took with non-zero probability, and large weights make the estimate noisy. **Engineering implication.** Log propensities at serving time, keep every action's propensity above a floor (exploration), and use clipped or self-normalized IPS for low variance; the doubly robust estimator adds a reward model to reduce variance further [Dudík et al. 2011].
+:::
+
+Joachims, Swaminathan and Schnabel showed that propensity-weighting clicks by examination probability gives an unbiased learning-to-rank objective, and estimated the propensities with small randomized swaps of result positions [Joachims et al. 2017]. In deep rankers the same goal is met by the shallow position tower of §68.7.4 [Zhao et al. 2019]. For **counterfactual evaluation**, keep a small slice of traffic (1% or less) under a randomized or high-exploration policy: its logs are the cleanest data you will ever have for comparing candidate policies offline [Bottou et al. 2013].

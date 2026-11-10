@@ -680,3 +680,207 @@ Shankar et al.'s interview study of ML engineers reports alert fatigue from nois
 | Every Friday alarms | Non-seasonal reference | Alerts cluster by hour of week | Seasonal reference | Hour-of-week conditioning |
 | Small-city alarms are random | Windows below the noise floor | PSI noise ≈ threshold | Longer windows for small slices | Minimum $n$ per window |
 | Incident becomes "normal" | Incident window used as reference | Reference drifts after incidents | Rebuild reference | Exclude flagged windows |
+
+## 70.7 Multivariate and embedding drift
+
+### 70.7.1 Why per-feature tests are not enough
+
+Per-feature tests look at one column at a time. They miss changes in the *relationships* between features. Suppose a ranking change starts sending customers to faraway restaurants that are also slow to cook: distance and preparation time become correlated, yet each feature's histogram is exactly what it was. An ETA model that never saw long distances combined with long prep times may extrapolate badly on exactly those orders. High-dimensional inputs such as text and image embeddings make the problem worse: a 768-dimensional embedding has 768 marginals, none of which means anything on its own.
+
+### 70.7.2 The domain classifier
+
+::: definition
+**Definition — Domain classifier (classifier two-sample test).** A drift detector that labels reference rows 0 and current rows 1, trains a classifier to tell them apart, and measures its out-of-sample discrimination (usually AUC). If the two windows come from the same distribution, no classifier can beat chance (AUC 0.5) [Lopez-Paz and Oquab 2017; Rabanser et al. 2019].
+:::
+
+#### First-principles explanation
+
+To check whether two bags of coins came from the same mint, you could measure every property separately. Or you could hire an expert, show her coins from both bags and ask her to guess which bag each came from. If she can do no better than a coin toss, the bags are indistinguishable by anything she can perceive. If she guesses right 70% of the time, they differ, and asking her *how* she tells them apart tells you what changed. The domain classifier is that expert, and feature importance is her explanation.
+
+#### How it works internally
+
+1. Sample a reference window and a current window of similar size (a few thousand rows each).
+2. Label reference 0 and current 1, concatenate and shuffle.
+3. Train a flexible classifier (gradient-boosted trees for tabular data; logistic regression or a small network on embeddings) with $k$-fold cross-validation so every row is scored by a model that never saw it.
+4. Compute the AUC of the out-of-fold scores and compare it with its null distribution.
+5. If drift is detected, use permutation importance to name the features responsible, and inspect the rows scored most "current-like" to see what kind of example is new.
+
+**Figure 70.7 — A domain-classifier drift detector.**
+
+```mermaid
+flowchart LR
+  PL[(Prediction log)] -->|sample, label 0| REF[Reference window]
+  PL -->|sample, label 1| CUR[Current window]
+  REF --> MIX[Concatenate<br/>and shuffle]
+  CUR --> MIX
+  MIX --> CV[5-fold classifier<br/>out-of-fold scores]
+  CV --> AUC{AUC above<br/>0.5 + 3 SE<br/>and effect floor?}
+  AUC -->|no| OK[No drift]
+  AUC -->|yes| EXP[Permutation importance<br/>and top-scored rows]
+  EXP --> TK([Drift ticket with<br/>features and examples])
+```
+
+**Reading the diagram.** Both windows are sampled from the same prediction log (the storage boundary), so the comparison sees exactly what the model saw. The detector is a scheduled batch job, run hourly or daily, never on the request path. Cross-validation is essential: in-sample AUC of a flexible classifier is above 0.5 even with no drift. The decision box applies both a significance test and an effect-size floor (for example AUC above 0.55), for the reasons of §70.6.3. When it fires, the explanation step turns "something changed" into "distance and prep time changed jointly; here are 20 example orders", which is what makes the alert actionable. Failure points: leakage features such as timestamps or row IDs, which make the windows trivially separable (drop them before training), and windows too small for the classifier to learn anything (low power, a finding of Rabanser et al. for small samples). Scaling: cost grows with window size and classifier complexity; a few thousand rows per window trains in seconds.
+
+::: formula
+**AUC under no drift**
+
+$$\mathbb{E}[\text{AUC}] = 0.5 \qquad \text{SE}_0(\text{AUC}) = \sqrt{\frac{n + m + 1}{12\,n\,m}} \qquad z = \frac{\text{AUC} - 0.5}{\text{SE}_0}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$, $m$ | Reference and current window sizes | rows |
+| $\text{SE}_0$ | Standard error of AUC when both windows come from one distribution (Mann–Whitney null) | dimensionless |
+| $z$ | Distance of the observed AUC from chance in standard errors | dimensionless |
+:::
+
+::: example
+**Worked example — Is AUC 0.53 drift?** Windows of $n = m = 2{,}000$.
+
+1. $\text{SE}_0 = \sqrt{4{,}001 / (12 \times 4{,}000{,}000)} = \sqrt{8.34 \times 10^{-5}} = 0.0091$.
+2. $z = (0.53 - 0.50)/0.0091 = 3.3$: unlikely to be chance.
+3. With $n = m = 4{,}000$, $\text{SE}_0 = 0.0065$, and AUC 0.664 (the program below) gives $z = 25$.
+
+*Interpretation:* AUC 0.53 is a real but small difference. *Engineering implication:* as with every test, pair the $z$ threshold with an effect floor; AUC is itself a readable effect size ("the classifier ranks a random current row above a random reference row 53% of the time").
+:::
+
+### 70.7.3 Maximum mean discrepancy (MMD)
+
+::: definition
+**Definition — Maximum mean discrepancy (MMD).** A distance between two distributions computed from a **kernel** $k(x, y)$, a similarity function such as the Gaussian (RBF) kernel $\exp(-\lVert x - y \rVert^2 / 2\sigma^2)$. MMD compares the average similarity within each sample with the average similarity across samples; with a characteristic kernel such as the RBF, it is zero only if the distributions are identical [Gretton et al. 2012].
+:::
+
+::: formula
+**Squared MMD (unbiased estimate)**
+
+$$\widehat{\text{MMD}}^2 = \frac{1}{n(n-1)}\sum_{i \ne j} k(x_i, x_j) + \frac{1}{m(m-1)}\sum_{i \ne j} k(y_i, y_j) - \frac{2}{nm}\sum_{i, j} k(x_i, y_j)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $x_i$, $y_j$ | Reference and current rows (vectors, standardized) | feature units |
+| $k$ | Kernel: similarity in $[0, 1]$ for the RBF kernel | dimensionless |
+| $\sigma$ | Kernel bandwidth, often the median pairwise distance | feature units |
+| $n$, $m$ | Sample sizes | rows |
+| $\widehat{\text{MMD}}^2$ | Within-sample similarity minus cross-sample similarity; can be slightly negative from noise | dimensionless |
+:::
+
+::: example
+**Worked example — Two tiny samples, RBF kernel with $\sigma = 1$.** Reference $\{0, 0.5\}$.
+
+1. Current $\{2, 2.5\}$ (shifted). Within reference: $k(0, 0.5) = e^{-0.125} = 0.882$; within current also $0.882$. Cross pairs: $e^{-2} = 0.135$, $e^{-3.125} = 0.044$, $e^{-1.125} = 0.325$, $e^{-2} = 0.135$; mean $0.160$. $\text{MMD}^2 = 0.882 + 0.882 - 2 \times 0.160 = 1.445$.
+2. Current $\{0.25, 0.75\}$ (same region). Cross pairs: $0.969, 0.755, 0.969, 0.969$; mean $0.916$. $\text{MMD}^2 = 1.765 - 1.831 = -0.066$, zero up to noise.
+
+*Interpretation:* when samples overlap, cross-similarity is as high as within-similarity and MMD vanishes; when they separate, it grows toward its maximum of 2. *Engineering implication:* MMD needs no classifier and works on any vector, but its cost grows with $(n + m)^2$ kernel evaluations and its threshold comes from a permutation test, so it suits windows of hundreds to a few thousand rows, typically after reducing dimension.
+:::
+
+### 70.7.4 Embedding drift for text and images
+
+For unstructured inputs, monitor in a representation space. Three representations are common: the embeddings of a fixed, pretrained encoder (stable across model retrains, so drift is comparable over time); the model's own penultimate layer; or the model's output probabilities. Rabanser et al. compared many combinations on image benchmarks and found that reducing dimension first, and in particular using a pretrained classifier's softmax outputs (**black-box shift detection**) followed by per-dimension KS tests with a Bonferroni correction, was among the strongest and simplest detectors; domain classifiers were less powerful at small sample sizes but most useful for characterizing *which* examples had shifted [Rabanser et al. 2019]. QuickBite's support chatbot and review moderation (Chapter 63) monitor the embeddings of incoming messages this way, and Chapter 75 applies the same idea to retrieval queries in RAG systems.
+
+### 70.7.5 Code example: a domain-classifier drift detector
+
+The program builds QuickBite order features with fixed marginals. In the "joint drift" window, distance and preparation time become correlated (a Gaussian copula keeps each marginal identical). It compares per-feature KS tests, the domain classifier and MMD, explains the detection with permutation importance, and repeats the domain classifier on 32-dimensional review embeddings where a new topic cluster makes up 10% of current reviews.
+
+```python
+import numpy as np
+from scipy import stats
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.inspection import permutation_importance
+from sklearn.model_selection import cross_val_predict, train_test_split
+from sklearn.metrics import roc_auc_score
+
+rng = np.random.default_rng(70)
+FEATURES = ["distance_km", "prep_min", "couriers_nearby", "hour"]
+
+def orders(n, corr):
+    """ETA features with fixed marginals; corr couples distance and prep time."""
+    z = rng.multivariate_normal([0, 0], [[1, corr], [corr, 1]], size=n)
+    u = stats.norm.cdf(z)                                  # Gaussian copula
+    distance = stats.gamma.ppf(u[:, 0], a=2.0, scale=1.6)  # km
+    prep = stats.norm.ppf(u[:, 1], loc=14, scale=4)        # minutes
+    couriers = rng.poisson(6, n)
+    hour = rng.choice(np.arange(10, 23), n)
+    return np.column_stack([distance, prep, couriers, hour])
+
+def domain_classifier(ref, cur):
+    """Label reference 0 and current 1; out-of-fold AUC near 0.5 = no drift."""
+    X = np.vstack([ref, cur])
+    y = np.r_[np.zeros(len(ref)), np.ones(len(cur))]
+    clf = RandomForestClassifier(n_estimators=100, min_samples_leaf=20,
+                                 random_state=0)
+    scores = cross_val_predict(clf, X, y, cv=5, method="predict_proba")[:, 1]
+    auc = roc_auc_score(y, scores)
+    se0 = np.sqrt((len(ref) + len(cur) + 1) / (12 * len(ref) * len(cur)))
+    return auc, (auc - 0.5) / se0, scores, X, y, clf
+
+def mmd2_rbf(x, y, n_perm=200):
+    """Unbiased MMD^2 with an RBF kernel (median bandwidth) and permutation p."""
+    z = np.vstack([x, y]); z = (z - z.mean(0)) / z.std(0)
+    d2 = ((z[:, None, :] - z[None, :, :]) ** 2).sum(-1)
+    K = np.exp(-d2 / np.median(d2[d2 > 0]))
+    n = len(x)
+    def stat(idx):
+        a, b = idx[:n], idx[n:]
+        kxx, kyy, kxy = K[np.ix_(a, a)], K[np.ix_(b, b)], K[np.ix_(a, b)]
+        m = len(a)
+        return ((kxx.sum() - np.trace(kxx)) / (m * (m - 1))
+                + (kyy.sum() - np.trace(kyy)) / (m * (m - 1)) - 2 * kxy.mean())
+    idx = np.arange(2 * n)
+    observed = stat(idx)
+    null = [stat(rng.permutation(idx)) for _ in range(n_perm)]
+    return observed, (1 + np.sum(np.array(null) >= observed)) / (1 + n_perm)
+
+ref = orders(4_000, corr=0.0)
+cases = {"no drift": orders(4_000, corr=0.0),
+         "joint drift": orders(4_000, corr=0.6)}     # far orders from slow kitchens
+for name, cur in cases.items():
+    ks_p = [stats.ks_2samp(ref[:, j], cur[:, j]).pvalue for j in range(4)]
+    auc, z, _, X, y, clf = domain_classifier(ref, cur)
+    mmd, mmd_p = mmd2_rbf(ref[:500], cur[:500])
+    print(f"{name}: min per-feature KS p={min(ks_p):.2f} | domain AUC={auc:.3f} "
+          f"(z={z:.1f}) | MMD^2={mmd:.4f}, perm p={mmd_p:.3f}")
+
+# Which features let the classifier tell the windows apart? (joint-drift case)
+Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.3, random_state=0, stratify=y)
+clf.fit(Xtr, ytr)
+imp = permutation_importance(clf, Xte, yte, scoring="roc_auc", n_repeats=5,
+                             random_state=0)
+print("AUC drop when shuffled:",
+      {f: round(float(v), 3) + 0.0 for f, v in zip(FEATURES, imp.importances_mean)})
+
+# Embedding drift: 32-d review embeddings; a new topic cluster appears in 10%
+center = rng.normal(0, 1, 32)
+emb_ref = rng.normal(0, 1, (3_000, 32))
+emb_cur = rng.normal(0, 1, (3_000, 32))
+new_topic = rng.random(3_000) < 0.10
+emb_cur[new_topic] = center * 0.5 + rng.normal(0, 0.8, (new_topic.sum(), 32))
+ks_min = min(stats.ks_2samp(emb_ref[:, j], emb_cur[:, j]).pvalue for j in range(32))
+auc, z, scores, *_ = domain_classifier(emb_ref, emb_cur)
+print(f"embeddings: min per-dimension KS p={ks_min:.1e} (Bonferroni needs "
+      f"< {0.05 / 32:.1e}) | domain AUC={auc:.3f} (z={z:.1f})")
+top = np.argsort(scores[3_000:])[-300:]          # most 'current-looking' items
+print(f"new-topic share: all current items {new_topic.mean():.0%}, "
+      f"top-300 by classifier score {new_topic[top].mean():.0%}")
+```
+
+Output:
+
+```text
+no drift: min per-feature KS p=0.34 | domain AUC=0.500 (z=-0.0) | MMD^2=-0.0002, perm p=0.527
+joint drift: min per-feature KS p=0.36 | domain AUC=0.664 (z=25.4) | MMD^2=0.0047, perm p=0.015
+AUC drop when shuffled: {'distance_km': 0.158, 'prep_min': 0.17, 'couriers_nearby': 0.0, 'hour': 0.0}
+embeddings: min per-dimension KS p=4.2e-06 (Bonferroni needs < 1.6e-03) | domain AUC=0.544 (z=5.9)
+new-topic share: all current items 10%, top-300 by classifier score 80%
+```
+
+What to notice:
+
+- **Per-feature KS sees nothing** in the joint-drift case (smallest $p = 0.36$), because every marginal is unchanged by construction. The domain classifier finds it with AUC 0.664 ($z = 25$), and MMD on just 500 rows per window also rejects ($p = 0.015$).
+- **The no-drift control gives AUC 0.500.** Out-of-fold scoring is what makes this honest; in-sample AUC would be optimistic.
+- **Permutation importance names the culprits:** shuffling `distance_km` or `prep_min` costs about 0.16 AUC each; the untouched features cost nothing. That is the content of the drift ticket.
+- **On embeddings both methods detect the new topic,** consistent with Rabanser et al.: per-dimension KS with Bonferroni is a strong baseline. The classifier's extra value is the last line: 80% of its 300 most "current-looking" reviews belong to the new topic (versus 10% overall), so a reviewer reading them sees immediately what is new.
+- Use a CPU-light classifier and a few thousand rows; the detector runs as a batch job, so seconds of training are acceptable.
+
+::: mistake
+**Leaving timestamps or IDs in the domain classifier.** An order ID that increases over time, a timestamp or a "days since launch" feature separates the windows perfectly and reports AUC near 1.0 every run. Drop identifiers and time features, or the detector measures the calendar.
+:::
