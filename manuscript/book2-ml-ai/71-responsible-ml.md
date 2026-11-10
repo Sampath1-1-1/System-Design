@@ -6,7 +6,7 @@ QuickBite's fraud model shipped with 50% precision and 70% recall, and it met bo
 
 None of these is a model bug in the usual sense. Each is a property of the whole system: data, labels, features, objectives, thresholds, product decisions and feedback loops. **Responsible ML** is the engineering discipline that measures and controls three such properties: **fairness** (who bears the errors), **privacy** (what the model reveals about the people it learned from) and **explainability** (whether people can understand and contest its decisions), and documents them well enough to satisfy reviewers and regulators.
 
-Chapter 50 owns privacy engineering, k-anonymity and the definition of ε-differential privacy (§50.11); Chapter 57 owns the confusion matrix and calibration; Chapter 59 introduced slices and model cards; Chapter 63 owns datasheets; Chapter 69 owns governance; Chapter 70 owns slice monitoring. This chapter owns fairness metrics and mitigation, explanation methods, ML-specific privacy attacks, DP-SGD, federated learning and the review process that ties them together.
+This chapter builds on ε-differential privacy (§50.11), metrics (§57.10), slices and model cards (§59.10), datasheets (§63.13), governance (§69.11) and slice monitoring (§70.9.2), and owns fairness metrics and mitigation, explanation methods, ML privacy attacks, DP-SGD, federated learning and the review process.
 
 ::: note
 **QuickBite assumptions used in this chapter.** Teaching assumptions reused from earlier chapters, not measurements of a real company. 500,000 orders per day; 0.5% fraud rate (2,500 frauds per day); the fraud model flags 0.7% of orders (3,500 per day) for review with 50% precision and 70% recall (§70.3); a missed fraud costs about \$60 and a wrongly blocked good order about \$8 (§57.10.1); 20 cities, 4,000 delivery zones, 50,000 registered couriers; ETA MAE about 4.3 minutes with an SLO requirement of mean error within ±1 minute per city (§60.9.1); protected attributes are not model features (§60.9.1). **New in this chapter:** for fairness analysis, zones are grouped into group A (80% of orders, fraud base rate 0.4%) and group B (20% of orders, fraud base rate 0.9%). The groups and their numbers are synthetic and illustrative.
@@ -16,16 +16,14 @@ Chapter 50 owns privacy engineering, k-anonymity and the definition of ε-differ
 
 After this chapter you should be able to:
 
-- Classify ML harms as allocation, quality-of-service or representation harms, and trace where bias enters a system.
-- Compute demographic parity, equalized odds, equal opportunity, predictive parity and calibration within groups from per-group confusion matrices, and state individual fairness.
-- Explain the impossibility results of Kleinberg et al. and Chouldechova with numbers.
-- Measure fairness with confidence intervals, size samples for small groups, and reason about proxies when protected attributes are missing.
+- Classify harms (allocation, quality of service, representation) and trace where bias enters a system.
+- Compute group fairness metrics from per-group confusion matrices and explain the impossibility results with numbers.
+- Measure fairness with confidence intervals and proxies when protected attributes are missing.
 - Apply reweighing, constrained training and group thresholds, and quantify their cost.
 - Compute exact Shapley values, explain TreeSHAP, LIME, permutation importance and counterfactual explanations, and design reason codes within a latency budget.
-- Describe membership inference, model inversion and training-data extraction, and bound attack success under differential privacy.
-- Implement DP-SGD, read its privacy accounting, and predict its utility cost.
-- Compute a FedAvg update and the communication cost of federated learning, and explain secure aggregation.
-- Write model cards and audit logs, map a system to EU AI Act risk tiers, GDPR Article 22 and US adverse-action rules, and run a responsible-ML review.
+- Describe ML privacy attacks and bound their success under differential privacy.
+- Implement DP-SGD, read its privacy accounting and predict its utility cost; compute FedAvg updates and federated communication cost.
+- Write model cards and audit logs, map systems to the EU AI Act, GDPR Article 22 and US adverse-action rules, and run a review.
 
 ## 71.2 Prerequisites
 
@@ -220,7 +218,7 @@ $$D\big(M(x), M(x')\big) \le L \cdot d(x, x')$$
 :::
 
 ::: example
-**Worked example — Two identical orders, different zones.** Two orders have the same card history, value and address distance; they differ only in that one customer lives in a group-B zone, which raises "account newness" by 0.8 standard deviations through its correlation with zone. Suppose the agreed metric says these customers are identical for fraud purposes, $d = 0$. Then individual fairness requires $D = 0$. If the scores are 0.10 and 0.16, $D = 0.06 > L \times 0 = 0$: violated. **Interpretation.** Individual fairness turns "treat like cases alike" into a testable property, but everything rests on $d$, and agreeing what makes two people similar *is* the fairness question. **Engineering implication.** Use it as a test: generate paired inputs that differ only in a proxy and assert the score moves less than a tolerance; such counterfactual pair tests belong in the CI gate of §69.4.
+**Worked example — Two identical orders, different zones.** Two orders are identical except that one customer lives in a group-B zone, which raises "account newness" through its correlation with zone. Suppose the agreed metric says they are identical for fraud purposes, $d = 0$. Then individual fairness requires $D = 0$. If the scores are 0.10 and 0.16, $D = 0.06 > L \times 0 = 0$: violated. **Interpretation.** Everything rests on $d$; agreeing what makes two people similar *is* the fairness question. **Engineering implication.** Generate paired inputs that differ only in a proxy and assert the score moves less than a tolerance, as a CI test (§69.4).
 :::
 
 **Figure 71.3 — Choosing a fairness criterion.**
@@ -270,7 +268,7 @@ The identity follows from the definitions: $FP = TP(1-\text{PPV})/\text{PPV}$, $
 **Interpretation.** With base rates of 0.4% and 0.9%, *any* model that is equally precise and equally sensitive across groups holds innocent B customers 2.26 times as often. **Engineering implication.** Fairness requires choosing which property to give up, and the choice is a product and policy decision, recorded in the model card, not an optimization detail.
 :::
 
-Kleinberg, Mullainathan and Raghavan prove the score-based version: **calibration within groups**, **balance for the positive class** (equal average score for positives in each group) and **balance for the negative class** cannot hold simultaneously unless prediction is perfect or base rates are equal [Kleinberg et al. 2017]. Approximate versions degrade gracefully: small base-rate differences permit small violations of each.
+Kleinberg, Mullainathan and Raghavan prove the score-based version: **calibration within groups**, **balance for the positive class** (equal average score for positives in each group) and **balance for the negative class** cannot hold simultaneously unless prediction is perfect or base rates are equal [Kleinberg et al. 2017].
 
 **Figure 71.4 — Why the three families collide.**
 
@@ -886,7 +884,7 @@ What to notice:
 - Efficiency holds exactly: the four attributions sum to the gap between this order's log-odds (1.705) and the background average (−5.273).
 - For the additive features the Shapley value equals the coefficient times the deviation from the background mean: card failures $0.9 \times (2 - 0.185) = 1.633$.
 - Account age is almost irrelevant globally (permutation importance +0.00003, since few accounts are new) yet contributes +1.631 to this order: global and local importance answer different questions.
-- Sampling 10 or 100 permutations leaves errors of 0.24–0.39 log-odds, enough to reorder the top reasons; 1,000 permutations bring it to 0.016 at 1,000 times the cost.
+- Sampling 10 or 100 permutations leaves errors of 0.24–0.39 log-odds, enough to reorder the top reasons.
 - Only one single-feature counterfactual is actionable (order value); "be 23 days older" explains but offers no recourse.
 
 ::: mistake
@@ -1414,7 +1412,7 @@ flowchart TB
   T -->|no: ETA, fraud detection| MIN[Minimal risk:<br/>voluntary codes]
 ```
 
-**Reading the diagram.** The questions run top to bottom, once per system and again on material change, as part of the review in §71.14. Prohibited practices under Article 5 (social scoring, exploiting vulnerabilities, untargeted facial-image scraping and others) are banned. High-risk systems are safety components of regulated products (Annex I) or listed uses (Annex III), including employment and worker management, such as allocating tasks or monitoring performance, which plausibly covers courier dispatch, and creditworthiness assessment, which explicitly excludes systems used to detect financial fraud. High-risk providers need risk management (Art. 9), data governance including bias examination (Art. 10), technical documentation (Art. 11), automatic logging (Art. 12), information for deployers (Art. 13), human oversight (Art. 14), and accuracy, robustness and cybersecurity (Art. 15), plus conformity assessment and post-market monitoring. A chatbot must tell users they are talking to an AI. The failure point is classification itself: a fraud model that starts setting credit limits changes tier.
+**Reading the diagram.** The questions run top to bottom, once per system and on material change (§71.14). Article 5 practices (social scoring, exploiting vulnerabilities, untargeted facial-image scraping and others) are banned. High-risk systems are safety components of regulated products (Annex I) or listed uses (Annex III), including employment and worker management, such as allocating tasks or monitoring performance, which plausibly covers courier dispatch, and creditworthiness assessment, which explicitly excludes systems used to detect financial fraud. High-risk providers need risk management (Art. 9), data governance including bias examination (Art. 10), technical documentation (Art. 11), automatic logging (Art. 12), information for deployers (Art. 13), human oversight (Art. 14), and accuracy, robustness and cybersecurity (Art. 15), plus conformity assessment and post-market monitoring. A chatbot must tell users they are talking to an AI. The failure point is classification itself: a fraud model that starts setting credit limits changes tier.
 
 ### 71.13.2 GDPR and US sectoral rules
 
@@ -1489,15 +1487,12 @@ stateDiagram-v2
 4. Compute the DP ratio and FPR ratio for Table 71.1.
 5. State Chouldechova's identity and what it implies when base rates differ.
 6. How many legitimate orders are needed to estimate a 0.5% FPR to ±0.1 points at 95%?
-7. What does reweighing assume about base-rate differences?
-8. Why do group thresholds need the group at decision time, and why does that matter?
-9. Compute $\phi_3$ for $f = 2x_1 + x_2 + 3x_1x_3$ at $(1,1,1)$ with baseline 0.
-10. Why can a feature be globally unimportant and locally decisive?
-11. What is the TPR bound for a membership attack at FPR 1% under ε = 1, δ ≈ 0?
-12. Why must DP-SGD clip per-example gradients rather than the batch gradient?
-13. Why does doubling the dataset at fixed $q$ reduce DP-SGD's accuracy cost without changing ε?
-14. Compute the FedAvg update for $n = (100, 300, 600)$ and weights $(0.5, 0.4, 0.3)$.
-15. Under the EU AI Act, why is QuickBite's fraud detector not high-risk as a credit system, while courier dispatch may be?
+7. Why do group thresholds need the group at decision time, and why does that matter?
+8. Compute $\phi_3$ for $f = 2x_1 + x_2 + 3x_1x_3$ at $(1,1,1)$ with baseline 0.
+9. What is the TPR bound for a membership attack at FPR 1% under ε = 1, δ ≈ 0?
+10. Why must DP-SGD clip per-example gradients rather than the batch gradient?
+11. Compute the FedAvg update for $n = (100, 300, 600)$ and weights $(0.5, 0.4, 0.3)$.
+12. Under the EU AI Act, why is QuickBite's fraud detector not high-risk as a credit system, while courier dispatch may be?
 
 <details><summary>Answers</summary>
 
@@ -1507,15 +1502,12 @@ stateDiagram-v2
 4. $0.525/1.40 = 0.375$; $0.757/0.251 = 3.0$.
 5. $\text{FPR} = \frac{p}{1-p}\frac{1-\text{PPV}}{\text{PPV}}\text{TPR}$; equal PPV and TPR force FPR proportional to the odds.
 6. $3.8416 \times 0.005 \times 0.995/0.001^2 \approx 19{,}100$.
-7. That they are artifacts to remove; if real, it under-detects in the higher-rate group.
-8. Thresholds differ by group; it requires holding or inferring protected attributes online and may be disparate treatment.
-9. 1.5.
-10. Importance averages over the population; a rare condition (a new account) can dominate one case.
-11. $e^1 \times 0.01 = 2.7\%$.
-12. Sensitivity must bound one example's influence; batch clipping does not.
-13. The batch $L = qN$ doubles, so noise per averaged gradient halves.
-14. $0.05 + 0.12 + 0.18 = 0.35$.
-15. Annex III's creditworthiness item excludes fraud detection; task allocation and performance monitoring of workers is listed under employment.
+7. Thresholds differ by group; it requires holding or inferring protected attributes online and may be disparate treatment.
+8. 1.5.
+9. $e^1 \times 0.01 = 2.7\%$.
+10. Sensitivity must bound one example's influence; batch clipping does not.
+11. $0.05 + 0.12 + 0.18 = 0.35$.
+12. Annex III's creditworthiness item excludes fraud detection; task allocation and performance monitoring of workers is listed under employment.
 
 </details>
 
@@ -1543,8 +1535,7 @@ stateDiagram-v2
 
 1. Extend the §71.5.3 program with bootstrap intervals for the FPR *difference* and compare with Wilson intervals per group.
 2. Implement reweighing in the §71.6.3 program (pass `sample_weight`) and compare FPR, TPR and cost with threshold adjustment.
-3. Replace the Monte Carlo explainer in §71.7.4 with a KernelSHAP-style weighted regression and measure error versus model calls.
-4. Run the §71.10.3 program with $C \in \{0.1, 1, 10\}$ at $\sigma = 1$ and explain the accuracy differences.
+3. Run the §71.10.3 program with $C \in \{0.1, 1, 10\}$ at $\sigma = 1$ and explain the accuracy differences.
 
 ## 71.19 Design challenges
 

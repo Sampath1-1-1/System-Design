@@ -1239,7 +1239,7 @@ flowchart LR
   TRIM --> ASM
 ```
 
-**Reading the diagram.** A context assembler builds each prompt from a fixed system prompt, synchronous calls to the order service and policy retrieval (data stores), and the stored history. A token-count check, using the model's tokenizer, enforces the window with a reserve for the reply; if it fails, the oldest turns are summarized or dropped and the check repeats. Failure points: counting words instead of tokens, and silently dropping the order facts the answer depends on. Scaling: the assembler is a stateless service; history lives in a session store (Chapter 77).
+**Reading the diagram.** A stateless assembler builds each prompt from the system prompt, synchronous calls to the order service and policy retrieval, and stored history, then checks the token count (with the model's tokenizer) against the window minus a reply reserve; on failure it summarizes or drops the oldest turns. Failure points: counting words instead of tokens, and dropping the order facts the answer needs.
 
 ::: mistake
 **"A 128K window means the model uses 128K tokens well."** Models often retrieve facts from the beginning and end of a long context better than from the middle [Liu et al. 2024]. Nominal length is an upper bound; measure accuracy at the position and length your application uses.
@@ -1258,7 +1258,7 @@ flowchart LR
 **Definition — Decoding strategy.** The rule that turns the model's next-token distribution into a chosen token. **Greedy** decoding takes the most probable token. **Temperature** $T$ divides logits by $T$ before the softmax. **Top-$k$** sampling keeps the $k$ most probable tokens [Fan et al. 2018]. **Top-$p$ (nucleus)** sampling keeps the smallest set whose probabilities sum to at least $p$ [Holtzman et al. 2020]. **Beam search** keeps the $W$ highest-probability partial sequences at each step.
 :::
 
-Greedy decoding is like always ordering the most popular dish: safe, but a whole meal of it is repetitive, and it can loop ("I apologize. I apologize."). Sampling adds controlled variety; temperature sets how adventurous, and top-$k$/top-$p$ remove the absurd options from the menu entirely. Holtzman et al. [2020] showed that maximizing likelihood (greedy or beam search) produces bland, repetitive open-ended text, and that truncating the unreliable tail of the distribution (nucleus sampling) produces text closer to human statistics.
+Greedy decoding always orders the most popular dish: safe, repetitive, and prone to loops. Temperature sets how adventurous sampling is; top-$k$/top-$p$ remove absurd options from the menu. Holtzman et al. [2020] showed that likelihood maximization yields bland, repetitive open-ended text and that truncating the unreliable tail (nucleus sampling) yields text closer to human statistics.
 
 ::: formula
 **Temperature softmax and the nucleus**
@@ -1357,7 +1357,7 @@ flowchart LR
   STOP -->|yes| END(["Finish, report reason"])
 ```
 
-**Reading the diagram.** Every decode step runs this chain on the GPU for each sequence in the batch. Optional penalties down-weight repeated tokens, and a grammar mask forces valid JSON for structured output (Chapter 76). A seeded draw picks the token; three **stop conditions** end generation: the end-of-sequence token, a configured stop string (checked on detokenized text, since a string can span tokens), or the maximum-token limit, which must always be set to bound cost and latency. Failure point: a missing max-token limit lets a looping model consume a slot for thousands of steps.
+**Reading the diagram.** Each decode step runs this chain per sequence on the GPU. Penalties down-weight repeats; a grammar mask can force valid JSON (Chapter 76). Three **stop conditions** end generation: the end-of-sequence token, a stop string (checked on detokenized text, since it can span tokens), and the max-token limit, which must always be set. Failure point: without it, a looping model holds a slot for thousands of steps.
 
 **Beam search** keeps $W$ hypotheses and multiplies decode compute and KV cache by up to $W$ (the shared prompt prefix is stored once); it suits short, closed-form outputs such as translation, rarely chat. **Determinism**: greedy decoding with a fixed seed is reproducible on one machine with one batch composition, but production servers batch requests dynamically, and floating-point sums computed in different orders for different batch shapes can change a near-tied argmax, so identical requests can diverge. Treat bit-exact reproducibility as a feature you must engineer (fixed batch shapes, deterministic kernels), not a default.
 
@@ -1383,7 +1383,7 @@ flowchart LR
   SUM --> OUT["To next block"]
 ```
 
-**Reading the diagram.** Attention is dense and shared; only the MLP is replaced. The router scores 8 experts and dispatches the token to 2 (solid), whose outputs are mixed by the router weights; the others do no work for this token (dotted) but still occupy GPU memory. With experts on different GPUs, dispatch and combine are all-to-all exchanges (§65.12.2). Failure points: router imbalance (a hot expert becomes a straggler) and expert weights that do not fit. Scaling: add experts to add capacity at constant FLOPs per token.
+**Reading the diagram.** Attention stays dense; the router sends the token to 2 of 8 expert MLPs (solid) and mixes their outputs; idle experts (dotted) do no work but occupy memory. Across GPUs, dispatch and combine are all-to-all exchanges (§65.12.2). Failure points: a hot expert becomes a straggler; expert weights may not fit. Scaling: more experts add capacity at constant FLOPs per token.
 
 ::: formula
 **Total and active parameters, and experts touched per decode step**
@@ -1519,24 +1519,24 @@ flowchart TB
   FOUR --> COST
 ```
 
-**Reading the diagram.** Requirements feed an evaluation of candidate models on QuickBite's own task set (Chapter 78); the smallest model that meets the bar wins, because weights, decode time and GPUs per replica all scale with size. The capacities come from the §72.11 calculator. If none qualifies, adaptation (dotted loop) often lets a small model pass. Failure points: choosing on public benchmarks rather than the task, and sizing from weights without the KV cache. Scaling: replicas behind a router (Chapter 79).
+**Reading the diagram.** Candidates are evaluated on QuickBite's own task set (Chapter 78) and the smallest that passes wins, since weights, decode time and GPUs per replica scale with size; capacities come from the §72.11 calculator. If none passes, adaptation (dotted) may rescue a small model. Failure points: choosing on public benchmarks, and sizing without the KV cache. Scaling: replicas behind a router (Chapter 79).
 
 ## 72.17 Summary and revision notes
 
 ::: summary
-- An LLM computes $P(x_t \mid x_{<t})$; training minimizes per-token cross-entropy (perplexity $e^{\mathcal{L}}$); generation samples one token at a time. Pre-training builds a base model; adaptation (Chapter 76) makes an assistant.
-- Tokenizers (BPE, unigram/SentencePiece, byte-level BPE) are versioned artifacts shipped with the weights. English is about 1.3 tokens per word; other languages can need several times more, multiplying cost and latency.
-- Embedding table and output head are $Vd$ parameters each (shared if tied); the head costs $2Vd$ FLOPs per generated token.
-- Attention: $\text{softmax}(QK^\top/\sqrt{d_k} + M)V$; the causal mask makes earlier positions independent of later tokens, which makes the KV cache correct. Cost $4T^2d$ per layer.
+- An LLM computes $P(x_t \mid x_{<t})$, trains on per-token cross-entropy (perplexity $e^{\mathcal{L}}$) and generates one token at a time.
+- Tokenizers are versioned artifacts shipped with the weights; English is about 1.3 tokens per word, other languages several times more, multiplying cost and latency.
+- Embedding and output head are $Vd$ parameters each unless tied; the head costs $2Vd$ FLOPs per generated token.
+- Attention is $\text{softmax}(QK^\top/\sqrt{d_k} + M)V$ at $4T^2d$ FLOPs per layer; the causal mask is what makes the KV cache correct.
 - GQA/MQA share KV heads: KV bytes per token per layer $= 2 g d_h b$; GQA-8 cuts a 32-head model's cache 4× at near-MHA quality.
 - A pre-norm block (RMSNorm, attention, residual, RMSNorm, SwiGLU MLP, residual) has about $12d^2$ parameters; $N \approx 12Ld^2 + Vd$. Llama 2 7B is exactly 6,738,415,616.
 - RoPE rotates queries and keys so scores depend on relative position; context extension rescales positions or frequencies and still needs evaluation at length.
 - Prefill is compute-bound ($I \approx s$, sets TTFT); decode is memory-bound ($I \approx B$ for weights, $\approx h/g$ for KV; sets TPOT). 7B on an H100: about 48 ms for a 2,048-token prefill, at least 4.3 ms per decode step at batch 1.
 - $M_\text{KV} = 2 L g d_h b t B$: 0.5 MiB per token for MHA 7B, 320 KiB for GQA 70B. The KV cache, not the weights, sets concurrency.
 - Attention overtakes linear FLOPs at $t = 6d$ in decode and $s = 12d$ in prefill; long contexts cost quadratic prefill and linear memory.
-- Sampling: greedy, temperature, top-$k$, top-$p$, beam; always set a max-token stop; batched serving is not bit-deterministic by default.
-- MoE: memory scales with total parameters, FLOPs with active; at moderate batch nearly every expert is read each step.
-- Inference $\approx 2N_m + 4Ldt$ per token; training $\approx 6N + 12Lds$ (PaLM) or $6N + 6Lds$ (causal). Overtrained small models trade training compute for permanently cheaper serving.
+- Sampling: temperature reshapes, top-$k$/top-$p$ truncate; always set a max-token stop; batched serving is not bit-deterministic by default.
+- MoE: memory scales with total parameters, FLOPs with active ones; at moderate batch nearly every expert is read each step.
+- Inference $\approx 2N_m + 4Ldt$ per token; training $\approx 6N + 12Lds$ (PaLM convention). Overtrained small models buy cheaper serving.
 :::
 
 ## 72.18 Knowledge checkpoint
@@ -1580,15 +1580,15 @@ flowchart TB
 ### Basic
 
 **Q1. What is the KV cache and why is it needed?**
-**Answer.** It stores each past token's key and value vectors per layer and KV head, so a decode step computes K and V only for the new token. Without it each step would recompute the whole prefix. It is correct because of the causal mask, and its size, $2Lg d_h b t$ per sequence, limits how many sequences fit on a GPU.
+**Answer.** Each past token's keys and values per layer and KV head, so a decode step computes K and V only for the new token instead of the whole prefix. The causal mask makes it exact; its size, $2Lg d_h b t$ per sequence, limits concurrency.
 
 **Q2. Why is the first token slower than the rest, yet each later token more expensive per token?**
-**Answer.** The first token waits for prefill of the whole prompt, a compute-bound pass over $s$ tokens (tens to thousands of milliseconds). Each later token is one memory-bound pass that reads all weights for one token per sequence: a few milliseconds, but around 100–200 times more GPU time per token than prefill unless many sequences are batched.
+**Answer.** The first token waits for a compute-bound prefill of the whole prompt. Each later token is a memory-bound pass that reads all weights for one token per sequence: milliseconds, but 100–200 times more GPU time per token than prefill unless many sequences are batched.
 
 ### Intermediate
 
 **Q3. You must serve a chat model to 500 concurrent users at 8K context. How do you decide GPU count?**
-**Answer.** Compute weights ($N b_w$) and KV per sequence ($2Lg d_h b \times 8{,}192$), multiply by 500, add a reserve, divide by usable HBM per GPU. Check the TPOT bound from bytes read per step against the SLO and the TTFT from prefill FLOPs. Prefer a GQA model and FP8 KV; load-test with real length distributions (Chapter 73).
+**Answer.** Weights ($N b_w$) plus $500 \times 2Lg d_h b \times 8{,}192$ of KV plus a reserve, divided by usable HBM per GPU; then check TPOT from bytes per step and TTFT from prefill FLOPs against the SLO. Prefer GQA and FP8 KV; load-test with real lengths (Chapter 73).
 
 **Q4. Why does an MoE model with 13B active parameters not decode as fast as a 13B dense model?**
 **Answer.** At batch sizes above a few tokens the router touches nearly every expert each step, so the step reads all experts' weights (47B for Mixtral), and expert-parallel serving adds all-to-all latency. MoE saves FLOPs, which helps prefill and large batches, not bytes at small batches.
@@ -1596,10 +1596,10 @@ flowchart TB
 ### Advanced
 
 **Q5. Your chatbot's p99 TPOT spikes whenever a user pastes a long document. Explain and fix.**
-**Answer.** Long prefills run in the same iteration as other sequences' decode steps, so every decode in that batch waits for a compute-bound pass of thousands of tokens. Fixes: chunked prefill with a per-iteration token budget, a separate pool or disaggregated prefill, a prompt length cap with retrieval instead of pasting, and admission control by tokens.
+**Answer.** The long prefill runs in the same iteration as other sequences' decode steps, which all wait for it. Fixes: chunked prefill with a per-iteration token budget, disaggregated prefill, a prompt cap with retrieval, and admission control by tokens.
 
 **Q6. A team proposes extending your 8K model to 64K by changing the RoPE scaling config. What do you require?**
-**Answer.** A validated extension method (interpolation or YaRN plus long-document fine-tuning), evaluation of retrieval and task accuracy at several positions and lengths, and a capacity plan: KV per sequence grows 8× and prefill attention 64×, so concurrency, TTFT and cost per request change. Ship it as a separate tier with its own limits.
+**Answer.** A validated method (interpolation or YaRN plus long-document fine-tuning), accuracy tests at several positions and lengths, and a capacity plan: KV per sequence grows 8× and prefill attention 64×. Ship it as a separate tier with its own limits.
 
 ## 72.20 Practical exercises
 

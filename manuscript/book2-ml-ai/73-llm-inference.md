@@ -2,14 +2,14 @@
 
 > **Level:** 4 · **Track:** B (ML/AI) · **Estimated reading time:** 5.5 h
 
-A classic model server answers a question with one forward pass: features in, a score out, a few milliseconds later. A large language model (LLM) answers by *writing*. It reads the whole prompt, then produces the reply one token at a time, and every token needs another pass through billions of parameters. A 200-token answer is 200 dependent steps. The request holds GPU memory the whole time, its length is unknown until it ends, and the user watches the words appear.
+A classic model server answers with one forward pass. A large language model (LLM) answers by *writing*: it reads the prompt, then produces the reply one token at a time, each token another pass through billions of parameters. A 200-token answer is 200 dependent steps; the request holds GPU memory throughout, its length is unknown until it ends, and the user watches the words appear.
 
-This changes almost every serving decision. Batching becomes a scheduling problem solved at every step. GPU memory, not arithmetic, usually decides how many users one GPU can serve. Latency splits into two numbers: how long until the first word appears, and how fast the rest arrive. Cost is quoted per million tokens, not per request. This chapter builds the machinery that production LLM engines use to cope: continuous batching, paged key–value (KV) cache memory, prefix caching, fused attention kernels, speculative decoding, parallelism across GPUs, split prefill and decode fleets, quantization, scheduling and capacity planning. It closes with a comparison of the main open-source engines and a cost playbook.
+This changes almost every serving decision. Batching becomes a per-step scheduling problem, GPU memory rather than arithmetic decides how many users a GPU serves, latency splits into time to the first word and pace of the rest, and cost is quoted per million tokens. This chapter builds the machinery production engines use: continuous batching, paged KV-cache memory, prefix caching, attention kernels, speculative decoding, multi-GPU parallelism, disaggregated prefill and decode, quantization, scheduling and capacity planning, then compares engines and cost levers.
 
-Chapter 72 explains the transformer itself: prefill and decode, the KV cache formula, grouped-query attention, mixture of experts and sampling. Chapter 64 supplies the roofline, precision formats and interconnects; Chapter 65 the tensor, pipeline and expert parallelism concepts; Chapter 66 general model serving, dynamic batching and autoscaling; Chapter 67 weight quantization (GPTQ, AWQ, FP8). This chapter uses those results and does not re-derive them.
+Chapter 72 explains the transformer (prefill and decode, the KV cache, grouped-query attention, mixture of experts, sampling); Chapters 64–67 supply the roofline, parallelism, general serving and weight quantization. This chapter uses those results without re-deriving them.
 
 ::: note
-**Assumptions used in this chapter.** Units are SI (1 GB = 10⁹ bytes; 1 TB/s = 10¹² bytes/s); 1 kB = 10³ bytes. The reference GPU is an NVIDIA H100 SXM: 80 GB HBM at 3.35 TB/s and 989 TFLOP/s dense BF16 (Table 64.4, as of 2026), priced at an illustrative \$2.50 per GPU-hour (§60.11). For estimates we assume an engine achieves 80% of peak memory bandwidth (2.68 TB/s) in decode and 50% model FLOPs utilization (MFU, §64.11) in prefill (494.5 TFLOP/s), plus a fixed 2 ms of per-step overhead (scheduling, sampling, kernel launches). **QuickBite's support chatbot** is the 7B model of §58.11 ($h = 4{,}096$, $L = 32$ layers, 32 attention heads of 128 dimensions, standard multi-head attention, so 32 KV heads), adapted by continued pre-training (§65.9.1) and served in FP16. The **hypothetical 70B option** has $h = 8{,}192$, $L = 80$, 64 query heads and 8 KV heads of 128 dimensions (Llama-2-70B-like, §67.6). **Traffic:** 10,000 support conversations a day (2% of orders, §61.4), six LLM calls per conversation (assumed), 2,000 input tokens per call (a 1,200-token system prompt with policies and tool descriptions, plus 800 tokens of order details and conversation history) and 200 output tokens, with a peak-to-average ratio of 10 (QuickBite's 60 orders/s peak over its 5.8 orders/s average). These are teaching assumptions, not measurements of any real company.
+**Assumptions used in this chapter.** Units are SI (1 kB, GB = 10³, 10⁹ bytes; 1 TB/s = 10¹² bytes/s). The reference GPU is an NVIDIA H100 SXM: 80 GB HBM at 3.35 TB/s and 989 TFLOP/s dense BF16 (Table 64.4, as of 2026), priced at an illustrative \$2.50 per GPU-hour (§60.11). We assume engines achieve 80% of peak bandwidth (2.68 TB/s) in decode, 50% model FLOPs utilization (MFU, §64.11) in prefill (494.5 TFLOP/s) and 2 ms of fixed overhead per step. **QuickBite's support chatbot** is the 7B model of §58.11 ($h = 4{,}096$, $L = 32$ layers, 32 attention heads of 128 dimensions, standard multi-head attention, so 32 KV heads), served in FP16. The **hypothetical 70B option** has $h = 8{,}192$, $L = 80$, 64 query heads and 8 KV heads of 128 dimensions (Llama-2-70B-like, §67.6). **Traffic:** 10,000 support conversations a day (2% of orders, §61.4), six LLM calls per conversation (assumed), 2,000 input tokens per call (a 1,200-token system prompt plus 800 tokens of order details and history) and 200 output tokens, with a peak-to-average ratio of 10 (QuickBite's 60 orders/s peak over its 5.8 orders/s average). These are teaching assumptions, not measurements of any real company.
 :::
 
 ## 73.1 Learning objectives
@@ -45,18 +45,18 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Picture a storyteller who tells many stories at once to many listeners around a table. Each round, the storyteller says *one* next word of every story. To pick the next word, they must remember everything said so far in that story, so they keep one notebook per listener. Notebooks pile up on the table, and the table is the limit: when it is full, no new listener can join, however fast the storyteller talks. A new listener's request first needs the whole opening read aloud (their prompt) before the first word of the answer can come.
+Picture a storyteller telling many stories at once, one word of every story per round. To pick each next word they must remember their story so far, so they keep one notebook per listener, and the notebooks pile up on a table of fixed size. When the table is full, no new listener can join, however fast the storyteller talks; a new listener's opening must first be read aloud before the first word of the answer.
 
-Map it back: the storyteller is the GPU running the model, a round is one **decode step**, the notebooks are each request's **KV cache**, and the table is GPU memory. Reading the opening is **prefill**. Everything in this chapter is about running more rounds per second, fitting more notebooks on the table, and deciding who sits down next.
+The storyteller is the GPU, a round is a **decode step**, the notebooks are each request's **KV cache**, the table is GPU memory, and reading the opening is **prefill**.
 
 #### Why does this exist?
 
 Four properties break the assumptions of request-level serving (Chapter 66):
 
-1. **Variable-length outputs.** Output length is decided by the model (it emits an end-of-sequence token) or by a cap. A chatbot reply may be 10 or 1,000 tokens; the server cannot know in advance how long a request will hold resources.
-2. **Stateful KV cache.** Each request keeps the keys and values of every past token in every layer (§72.11) so that each decode step processes only the newest token. That state grows by one token per step and lives in GPU memory until the request ends: about 0.52 MB per token for QuickBite's 7B model (§73.5).
+1. **Variable-length outputs.** The model decides when to stop; a reply may be 10 or 1,000 tokens, so the server cannot know how long a request will hold resources.
+2. **Stateful KV cache.** Each request keeps the keys and values of every past token in every layer (§72.11), about 0.52 MB per token for the 7B chatbot (§73.5), growing every step until the request ends.
 3. **Two phases with different bottlenecks.** Prefill processes the whole prompt in one parallel pass and is compute-bound; decode generates one token per request per step and is memory-bandwidth-bound (§64.12, §72.10).
-4. **Streaming tokens.** Users read as text arrives, so latency has two parts that users feel differently: the wait for the first token and the pace of the rest. Responses are streamed over long-lived HTTP responses such as Server-Sent Events (§9.5).
+4. **Streaming tokens.** Users read as text arrives over long-lived responses such as Server-Sent Events (§9.5), so the wait for the first token and the pace of the rest are separate requirements.
 
 **Table 73.1 — Classic model serving versus LLM serving.**
 
@@ -74,11 +74,11 @@ Four properties break the assumptions of request-level serving (Chapter 66):
 
 A request moves through these steps inside an engine:
 
-1. **Admission.** The API server tokenizes the prompt, checks limits (maximum context, rate limits by tokens, §79) and queues the request.
+1. **Admission.** The API server tokenizes the prompt, checks limits and queues the request.
 2. **Scheduling.** Before each GPU step, the scheduler picks which waiting requests to admit, subject to free KV-cache memory and a per-step token budget (§73.14).
-3. **Prefill.** Admitted prompts run through the model in parallel; their keys and values are written into the KV cache; the last position's output gives the first token.
-4. **Decode loop.** Each step runs one forward pass for every running request at once, appends one token to each, and writes one more KV entry per layer per request.
-5. **Streaming and retirement.** New tokens are detokenized and streamed; a request that emits end-of-sequence or reaches its token cap is retired and its KV memory freed in the same step.
+3. **Prefill.** Admitted prompts run through the model in parallel, writing their KV cache and producing the first token.
+4. **Decode loop.** Each step runs one forward pass for all running requests, appending one token and one KV entry per layer to each.
+5. **Streaming and retirement.** Tokens are streamed; a finished request's KV memory is freed in the same step.
 
 **Figure 73.1 — An LLM serving system and the inside of one engine replica.**
 
@@ -99,7 +99,7 @@ flowchart LR
   MON -.->|add or remove replicas| REP
 ```
 
-**Reading the diagram.** The client opens one HTTPS request and receives tokens as a Server-Sent Events stream (synchronous, long-lived). The gateway authenticates and limits by tokens, not just requests (§22.3, Chapter 79). The router chooses a replica by load and, ideally, by which replica already caches the request's prefix (§73.8). Inside the replica, the scheduler decides every step which requests run; the KV cache manager allocates and frees memory blocks; the executor runs the model and samples. The storage boundary that matters is GPU high-bandwidth memory (HBM): weights are fixed, the KV cache is the dynamic, contended resource. Weights load asynchronously from the object store at start-up (dotted), and metrics drive the autoscaler (dotted). Failure points: a replica that runs out of KV memory must preempt requests (§73.14); a slow replica stalls every stream it holds; replica loss drops in-flight streams, which clients must retry. Scaling: add replicas behind the router; split a model too large for one GPU across a tensor-parallel group (§73.11).
+**Reading the diagram.** The client opens one HTTPS request and receives tokens as a Server-Sent Events stream (synchronous, long-lived). The gateway authenticates and limits by tokens (§22.3, Chapter 79); the router picks a replica by load and by cached prefix (§73.8). Inside the replica the scheduler decides each step which requests run, the KV cache manager allocates blocks, and the executor runs the model. The key storage boundary is GPU HBM: weights fixed, KV cache dynamic and contended. Weights load from the object store at start-up and metrics feed the autoscaler (dotted, asynchronous). Failure points: KV exhaustion forces preemption (§73.14); replica loss drops in-flight streams, which clients retry. Scaling: more replicas behind the router; a tensor-parallel group for models too large for one GPU (§73.11).
 
 **Figure 73.2 — Life of one chatbot request: prefill, then a streamed decode loop.**
 
@@ -125,11 +125,11 @@ sequenceDiagram
   E-->>U: final event, stream closed
 ```
 
-**Reading the diagram.** Solid arrows are synchronous calls; dashed arrows are returns and streamed events. The user's request waits in the queue, then joins a prefill step (often batched with other work); the first token ends the time to first token. The loop is the decode phase: every step serves *all* running requests, not just this one, which is why per-step time depends on the batch. The KV cache lives on the GPU from prefill to the final event. Failure points: a long queue inflates TTFT; a slow decode step delays every running stream at once; a dropped connection should cancel the request and free its KV memory, or the GPU keeps generating tokens nobody reads. Scaling: more requests per step raise GPU throughput at the cost of a longer step.
+**Reading the diagram.** Solid arrows are synchronous calls; dashed arrows are returns and streamed events. The request waits in the queue, joins a prefill step, and the first token ends TTFT. In the loop, every decode step serves *all* running requests, so step time depends on the batch. The KV cache lives on the GPU from prefill to the final event. Failure points: a long queue inflates TTFT; a slow step delays every stream; a dropped connection must cancel the request and free its KV memory. Scaling: more requests per step raise throughput at the cost of a longer step.
 
 #### Mathematical foundations
 
-Two simple models explain most LLM serving behavior. A decode step reads all weights once plus each running sequence's KV cache, and does little arithmetic per byte (§64.9.2); prefill does $2N$ FLOPs per prompt token and is compute-bound.
+Two simple models explain most serving behavior: a decode step reads all weights plus each sequence's KV cache (§64.9.2); prefill does $2N$ FLOPs per prompt token and is compute-bound.
 
 ::: formula
 **Decode step time and prefill time**
@@ -174,9 +174,6 @@ $$t_\text{step}(B) \approx t_0 + \max\!\left(\frac{M_\text{w} + B\,\bar{c}\,k}{W
 **"A faster GPU in FLOP/s makes my chatbot faster."** Decode at realistic batch sizes is memory-bound: step time tracks bytes read divided by memory bandwidth. A GPU with 2× the FLOP/s and the same HBM bandwidth barely changes TPOT. Compare accelerators for LLM decode on memory bandwidth and capacity first (§64.9).
 :::
 
-::: mistake
-**"Serving cost is proportional to the number of requests."** It is proportional to tokens, and input and output tokens cost very different amounts: a prompt token is processed in a parallel, compute-bound pass; an output token needs its own memory-bound step. §73.15 shows a 20× gap per token for the chatbot.
-:::
 
 ## 73.4 Latency metrics
 
@@ -188,21 +185,16 @@ $$t_\text{step}(B) \approx t_0 + \max\!\left(\frac{M_\text{w} + B\,\bar{c}\,k}{W
 
 #### First-principles explanation
 
-Think of a waiter in a busy restaurant. How long you wait before the bread arrives (TTFT) shapes your first impression; the pace of courses afterwards (TPOT) decides whether the meal feels smooth; one 20-minute gap between courses (a bad ITL) is remembered even if the average pace was fine. The restaurant cares about something else: meals served per hour (per-GPU throughput). Serving more tables at once raises meals per hour but slows every table. Goodput asks how many tables per hour the kitchen can serve *while keeping every table happy*.
+Think of a restaurant. The wait for the bread (TTFT) shapes your first impression, the pace of courses (TPOT) decides whether the meal feels smooth, and one 20-minute gap (a bad ITL) is remembered even if the average was fine. The owner counts meals per hour (per-GPU throughput); goodput counts meals per hour *with every table happy*.
 
 #### Why does this exist?
 
-A single "p99 latency" hides the trade-off. A server can make TPOT excellent by running one request at a time (and wasting the GPU), or make throughput excellent by packing hundreds of sequences per step (and making every stream crawl). Product requirements also differ by use: a chat interface needs a TTFT under about a second and a token pace faster than reading speed (a few words per second, roughly 5–10 tokens/s; assumption); a code-completion popup needs a TTFT of a few hundred milliseconds and short outputs; an offline summarization job cares only about tokens per dollar.
+A single p99 latency hides the trade-off: one request at a time gives excellent TPOT and a wasted GPU; hundreds per step give excellent throughput and crawling streams. Uses also differ: chat needs a TTFT under about a second and a pace faster than reading (roughly 5–10 tokens/s; assumption); code completion needs a few hundred milliseconds; offline jobs care only about tokens per dollar.
 
 #### How it works internally
 
-Each metric decomposes into parts you can engineer:
+Each metric decomposes into parts you can engineer: TTFT into network, queueing (§4.10) and prefill (shortened by prefix caching, §73.8); TPOT into decode step time (batch, context, quantization, speculation); ITL spikes into steps doing extra work (a large prefill, a preemption, §73.14); per-GPU throughput into batch over step time.
 
-1. **TTFT = network + queueing + prefill (+ first sampling step).** Queueing grows with load (§4.10); prefill grows with prompt length and shrinks with prefix caching (§73.8).
-2. **TPOT ≈ decode step time.** It grows with batch size and context length (§73.3) and shrinks with quantization (§73.13) and speculative decoding (§73.10).
-3. **ITL spikes** come from steps that do extra work: a large prefill sharing the step (§73.14), a preemption, a garbage-collection pause or a network hiccup.
-4. **Per-GPU throughput = batch / step time,** divided by the GPUs in a replica.
-5. **Goodput** counts only requests whose TTFT and TPOT both meet their targets.
 
 **Figure 73.3 — Where the latency of a streamed response comes from.**
 
@@ -217,7 +209,7 @@ flowchart LR
   DN --> L(["Last token<br/>end-to-end ends"])
 ```
 
-**Reading the diagram.** The request crosses the network into the engine's queue, waits for admission, and is prefilled; the first token ends TTFT. Each decode step then adds one token, and each gap is one ITL sample; the dotted edge stands for the repeated steps. Everything after the queue runs on the GPU, and the KV cache persists across all decode steps. Failure points: a growing queue (overload) shows up first as TTFT; a slow step shows up in every stream's ITL at once. Scaling levers differ per segment: more replicas shorten the queue, prefix caching shortens prefill, smaller batches or quantization shorten each step.
+**Reading the diagram.** The request crosses the network into the engine queue, waits for admission and is prefilled; the first token ends TTFT. Each decode step adds one token, and each gap is one ITL sample (the dotted edge stands for the repeated steps). Everything after the queue runs on the GPU, with the KV cache persisting across steps. Failure points: overload shows first as TTFT; a slow step shows in every stream's ITL. Scaling: replicas shorten the queue, prefix caching shortens prefill, smaller batches or quantization shorten steps.
 
 #### Mathematical foundations
 
@@ -286,9 +278,6 @@ $$A(\lambda) = \Pr\big[\text{TTFT} \le S_\text{TTFT} \ \wedge\ \text{TPOT} \le S
 **"Our engine does 10,000 tokens/s, so it is fast."** Throughput numbers without the batch size, input and output lengths, and the TTFT and TPOT at which they were measured are meaningless: the same engine can show 10× different numbers by changing batch size. Always ask for throughput at a latency target.
 :::
 
-::: mistake
-**"TPOT includes the first token."** By the usual definition it excludes it, because the first token's wait is dominated by queueing and prefill. Some tools average over all tokens; check the definition before comparing reports.
-:::
 
 ## 73.5 GPU memory budget
 
@@ -300,17 +289,17 @@ $$A(\lambda) = \Pr\big[\text{TTFT} \le S_\text{TTFT} \ \wedge\ \text{TPOT} \le S
 
 #### First-principles explanation
 
-A GPU is a parking garage with a fixed number of spaces. The model weights are permanent tenants: they take the same spaces every day. The step's activations are delivery vans that park briefly. The rest is short-term parking for conversations, one space per token. How many cars fit at once (concurrent sequences) depends on how many spaces each conversation needs: its prompt plus its answer.
+A GPU is a parking garage. The weights are permanent tenants, the step's activations are delivery vans that park briefly, and the rest is short-term parking for conversations, one space per token. How many conversations fit depends on how many spaces each needs: prompt plus answer.
 
 #### Why does this exist?
 
-Concurrency, and therefore throughput, is set by how many tokens of KV cache fit (§73.3). Without a budget, a team discovers at peak load that its GPUs serve a third of the conversations planned, or that a long prompt triggers out-of-memory errors. The KV cache per token was derived in Chapter 72 (§72.11); here we turn it into capacity.
+Concurrency, and therefore throughput, is set by how many tokens of KV cache fit (§73.3). Teams that skip this budget discover at peak that a GPU serves a third of the planned conversations, or that a long prompt triggers out-of-memory errors.
 
 #### How it works internally
 
-1. **Weights:** $N \times$ bytes per parameter, divided by the tensor-parallel degree (each GPU holds $1/t$ of each matrix, §65.10).
-2. **Activations:** sized by the largest step the scheduler allows (the per-step token budget, §73.14). Decode steps need little; a prefill chunk of a few thousand tokens needs hundreds of megabytes for the MLP intermediates.
-3. **Overhead:** a few gigabytes for the CUDA context, libraries, NCCL buffers and CUDA Graphs; engines also leave headroom (vLLM's `gpu_memory_utilization` defaults to 0.9, as of 2026 [vLLM Docs]).
+1. **Weights:** $N \times$ bytes per parameter, divided by the tensor-parallel degree $t$ (§65.10).
+2. **Activations:** sized by the largest step the scheduler allows (§73.14); decode needs little, a multi-thousand-token prefill chunk hundreds of megabytes.
+3. **Overhead:** CUDA context, NCCL buffers, CUDA Graphs; engines also leave headroom (vLLM's `gpu_memory_utilization` defaults to 0.9, as of 2026 [vLLM Docs]).
 4. **KV cache:** everything left, carved into fixed-size blocks (§73.7).
 
 **Figure 73.4 — Memory budget of one 80 GB H100 serving the 7B chatbot.**
@@ -326,7 +315,7 @@ flowchart TB
   KV --> SEQ["~103,000 tokens<br/>= 46 sequences of 2,200"]
 ```
 
-**Reading the diagram.** Memory flows top to bottom from the physical 80 GB. A tenth is left unmanaged as safety margin. Of the managed 72 GB, weights are fixed at load time, activations and overhead are reserved after a start-up profiling run, and the remainder becomes a pool of KV blocks (cylinder: it is the stateful store of the replica). The last box converts the pool into concurrency. Failure points: an activation spike larger than the reserve (a longer prefill chunk than profiled) causes out-of-memory errors; a pool sized for average prompts overflows on long ones and forces preemption (§73.14). Scaling: shrink weights (quantization), shrink bytes per token (GQA, KV quantization), share tokens (prefix caching) or add GPUs (TP).
+**Reading the diagram.** A tenth of the 80 GB is left unmanaged as margin. Of the managed 72 GB, weights are fixed at load, activations and overhead are reserved after a start-up profiling run, and the remainder becomes a pool of KV blocks (cylinder: the replica's stateful store), converted in the last box into concurrency. Failure points: an activation spike beyond the reserve causes out-of-memory errors; a pool sized for average prompts overflows on long ones and forces preemption (§73.14). Scaling: shrink weights (quantization), bytes per token (GQA, KV quantization), share tokens (prefix caching) or add GPUs (TP).
 
 #### Mathematical foundations
 
@@ -384,18 +373,8 @@ $$k = 2 \cdot L \cdot n_\text{kv} \cdot d_\text{head} \cdot b_\text{kv} \qquad M
 | 70B, GQA (Llama-2-70B-like) | 80 | 8 × 128 | 327,680 | 3,052 |
 | 70B if it used MHA | 80 | 64 × 128 | 2,621,440 | 381 |
 
-The last row shows why large models adopted GQA: with MHA the 70B model would hold eight times fewer tokens per gigabyte. Some newer architectures compress the KV cache further, for example by caching a low-rank latent instead of full keys and values (Chapter 72).
+The last row shows why large models adopted GQA: with MHA the 70B model would hold eight times fewer tokens per gigabyte. Some newer architectures cache a compressed latent instead (Chapter 72).
 
-#### Failure scenarios
-
-**Table 73.4 — Memory-budget failures.**
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Out-of-memory on a long prompt | Activation reserve profiled for shorter steps | CUDA OOM errors, replica restarts | Restart with a lower per-step token budget | Cap per-step tokens; profile at the maximum |
-| Throughput far below plan | Planned with GQA numbers, model is MHA | KV usage at 100% with small batches | Quantize KV, add GPUs | Compute $k$ from the model config |
-| Constant preemption at peak | Pool sized for average, prompts longer than planned | Preemption counter, ITL spikes | Admission control (§73.14) | Size on the p95 prompt, not the mean |
-| Two models on one GPU starve | Both engines assume they own the GPU | OOM at the second start | Set each engine's memory fraction | One engine per GPU, or MIG partitions (§64.15) |
 
 ::: mistake
 **"Weights fit, so the model fits."** A 70B FP16 model on two 80 GB GPUs leaves essentially nothing for the KV cache. Serving needs weights plus KV cache for the target concurrency plus overhead; check all three before choosing hardware.

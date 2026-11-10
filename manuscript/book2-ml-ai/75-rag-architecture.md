@@ -891,6 +891,10 @@ q10 rewritten: ['d10', 'd0', 'd4']
 What to notice:
 
 - **The retrievers fail on different queries.** BM25 misses q7 ("nut allergy" versus "allergens": no stemming) and q5 ("billed twice" versus "duplicate payment"); the stand-in dense retriever finds q7 but ranks the promo-code chunk above PAY-409 for q0, blurring the exact identifier. Hybrid recall@5 (0.833) beats both (0.750).
+- **Fusion is not free.** On q0, d13 and d3 swap places across the two lists and tie at $1/61 + 1/62$; the tie is broken by chunk ID, which happens to be wrong. On q5 hybrid ranks the answer 9th, worse than dense, because BM25 contributed confident noise. A reranker fixes such cases.
+- **Some misses need a different query.** Nobody finds q10 ("reimbursement for crushed pizza box"); the rewritten query "refund for damaged food" puts d10 first (§75.10).
+- With 12 queries, one query moves recall by 0.083, so §75.13 asks whether such gaps are real.
+- `zlib.crc32` replaces Python's `hash()`, which is randomized per process for strings and would change the "embedding" between runs.
 
 ## 75.9 Reranking
 
