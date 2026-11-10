@@ -390,11 +390,11 @@ The last row shows why large models adopted GQA: with MHA the 70B model would ho
 
 #### First-principles explanation
 
-A tour bus that leaves when full and returns only after dropping off its last passenger wastes seats: someone getting off at the first stop leaves an empty seat for the rest of the trip, and people at the depot wait for the bus to come back. A tram that stops at every block lets passengers off and on at each stop; seats stay full and nobody waits for a whole round trip. Static and dynamic batching are the bus; continuous batching is the tram. The stops are decode steps.
+A tour bus that returns only after dropping its last passenger leaves empty seats after early stops while people wait at the depot. A tram lets passengers off and on at every stop. Static and dynamic batching are the bus; continuous batching is the tram; the stops are decode steps.
 
 #### Why does this exist?
 
-Output lengths vary by an order of magnitude. With request-level batching, a batch of 46 runs as long as its longest reply, sequences that finished early occupy padding slots, and new requests wait for the entire batch. Orca observed that a transformer's work is already split into iterations and proposed scheduling at that granularity. Its second idea, **selective batching**, batches the matrix multiplies of all sequences together (they share weights) while running attention per sequence (each has its own KV cache and length), which makes batching sequences at different positions possible [Yu et al. 2022].
+Output lengths vary by an order of magnitude. With request-level batching a batch runs as long as its longest reply, early finishers occupy padding slots, and new requests wait for the whole batch. Orca scheduled at iteration granularity instead, and added **selective batching**: matrix multiplies of all sequences are batched (they share weights) while attention runs per sequence (each has its own KV cache and length) [Yu et al. 2022].
 
 #### How it works internally
 
@@ -423,7 +423,7 @@ gantt
   R4 joins slot 2       :c4, 100, 120
 ```
 
-**Reading the diagram.** The horizontal axis is decode steps on one GPU with two batch slots. Under static batching, R1 finishes at step 50 but its slot stays idle (red) until R2 ends at step 100; R3 and R4 wait the whole time. Under continuous batching, R3 takes R1's slot at step 50 and R4 takes R2's at step 100, so all four finish by step 120 instead of 160. All work is synchronous GPU steps; the state boundary is each slot's KV cache, freed and reused at step granularity. Failure point: continuous batching must still prefill each joining request, which lengthens the step it joins (§73.14). Scaling: more slots need more KV memory (§73.5, §73.7).
+**Reading the diagram.** The axis is decode steps on one GPU with two batch slots. Under static batching, R1 finishes at step 50 but its slot idles (red) until R2 ends at step 100, while R3 and R4 wait. Under continuous batching R3 takes R1's slot at step 50 and R4 takes R2's at step 100, so all four finish by step 120 instead of 160. The state boundary is each slot's KV cache, freed and reused per step. Failure point: each joining request's prefill lengthens the step it joins (§73.14). Scaling: more slots need more KV memory (§73.5, §73.7).
 
 **Figure 73.6 — The continuous-batching scheduler loop.**
 
@@ -441,7 +441,7 @@ flowchart LR
   RUN --> STEP
 ```
 
-**Reading the diagram.** Each pass of the loop is one GPU iteration. Admission checks two resources, free KV blocks and the step's token budget; admitted prompts are prefilled in the next step together with one decode token for every running sequence. After sampling, finished sequences free their blocks immediately, which lets the queue advance; unfinished ones stay in the running set. Everything is synchronous with the GPU step; the CPU-side scheduling must be fast (well under a millisecond) or it becomes the bottleneck at small step times. Failure points: if blocks run out mid-generation, a running sequence must be preempted (§73.14). Scaling: the loop runs per replica; the router spreads requests across replicas.
+**Reading the diagram.** Each pass is one GPU iteration. Admission checks free KV blocks and the step's token budget; admitted prompts are prefilled in the next step together with one decode token per running sequence. Finished sequences free their blocks immediately so the queue advances. The loop is synchronous with the GPU, so CPU-side scheduling must take well under a millisecond. Failure point: blocks running out mid-generation force preemption (§73.14). Scaling: one loop per replica; the router spreads load across replicas.
 
 #### Mathematical foundations
 
@@ -572,21 +572,12 @@ rate     policy  tok/s  TTFT p50  TTFT p99 TPOT p50  ITL p99  E2E p99 batch
 
 What to notice:
 
-- `step_time` is the §73.3 model: weights and KV bytes over bandwidth, or prefill and decode FLOPs over compute, whichever is larger. The `batch` column is the mean number of sequences producing a token per step.
-- **Static batching saturates at about 360–380 tokens/s.** At 1.5 req/s it keeps up, but TTFT p50 is 6.4 s because new requests wait for the running batch to drain. At 4 and 7 req/s the queue grows without bound (TTFT of minutes in a 600-second run): the server is overloaded at a load continuous batching handles easily.
-- **Continuous batching serves the offered load** (774 tokens/s at 4 req/s) with a TTFT p50 of 70 ms, and reaches about 1,300 tokens/s at 7 req/s, 3.4× static's ceiling. But its ITL p99 is 134–239 ms: every whole-prompt prefill (about 57 ms per 2,000 tokens, several per step under load) stalls every running stream.
-- **Chunked prefill** keeps ITL p99 at 17–28 ms and, at 7 req/s, lifts throughput to 1,399 tokens/s with TTFT p99 0.59 s, because 512-token chunks ride along with memory-bound decode steps almost for free (§73.14).
-- The model omits real-engine costs (scheduler CPU time, imperfect kernels), so treat ratios as indicative and absolute numbers as optimistic.
+- `step_time` is the §73.3 model; `batch` is the mean number of sequences producing a token per step.
+- **Static batching saturates at about 360–380 tokens/s.** At 1.5 req/s it keeps up but TTFT p50 is 6.4 s (new requests wait for the batch to drain); at 4 and 7 req/s its queue grows without bound.
+- **Continuous batching serves the offered load** (774 tokens/s at 4 req/s, TTFT p50 70 ms) and reaches about 1,300 tokens/s at 7 req/s, 3.4× static's ceiling. Its ITL p99 of 134–239 ms comes from whole-prompt prefills (about 57 ms per 2,000 tokens) stalling every stream.
+- **Chunked prefill** keeps ITL p99 at 17–28 ms and lifts throughput at 7 req/s to 1,399 tokens/s with TTFT p99 0.59 s, because 512-token chunks ride along with memory-bound decode steps (§73.14).
+- Real engines add scheduler CPU time and imperfect kernels: treat ratios as indicative.
 
-**Table 73.5 — Batching policies compared.**
-
-| Row | Static | Dynamic (§66.6) | Continuous (iteration-level) |
-|---|---|---|---|
-| What it is | Fixed batch until all finish | Batch formed when free or on timeout | Batch re-formed every step |
-| Advantages | Simplest | Good for fixed-cost models | Highest throughput, low TTFT |
-| Disadvantages | Padding, head-of-line waits | Same within a batch | Complex scheduler and memory manager |
-| Performance | Ceiling set by longest reply | Same as static for LLMs | 2–4×+ static at equal latency |
-| Choose when | Offline jobs of equal lengths | Classifiers, embeddings | Any generative LLM service |
 
 ::: industry
 **Orca.** Yu et al. introduced iteration-level scheduling and selective batching in Orca, a distributed serving system for transformer generation, and reported a 36.9× throughput improvement over NVIDIA FasterTransformer at the same latency on a GPT-3 175B-scale model. Every major open-source engine adopted iteration-level scheduling afterwards; TensorRT-LLM calls it in-flight batching.
@@ -607,7 +598,7 @@ What to notice:
 
 #### First-principles explanation
 
-Early engines gave each request a contiguous stretch of memory big enough for its maximum possible length, like a hotel that books every guest the largest suite in case their family shows up. Most guests use one room. PagedAttention hands out rooms one at a time as the family arrives, in any free spot in the building, and keeps a card listing which rooms belong to whom.
+Early engines gave each request contiguous memory for its maximum possible length, like a hotel booking every guest the largest suite in case the family shows up. PagedAttention hands out rooms one at a time, anywhere in the building, and keeps a card listing whose rooms are whose.
 
 #### Why does this exist?
 
@@ -617,7 +608,7 @@ Contiguous allocation wastes KV memory in three ways [Kwon et al. 2023]:
 2. **Internal fragmentation:** space reserved for the maximum length that the request never uses.
 3. **External fragmentation:** gaps between variably sized allocations that no new request fits.
 
-Kwon et al. measured that in existing systems only 20.4–38.2% of KV-cache memory held actual token states. Since KV memory sets concurrency, wasted memory is wasted throughput.
+Kwon et al. measured that existing systems used only 20.4–38.2% of KV-cache memory for actual token states; since KV memory sets concurrency, wasted memory is wasted throughput.
 
 #### How it works internally
 
@@ -654,7 +645,7 @@ flowchart LR
   B1 --> P3
 ```
 
-**Reading the diagram.** Each sequence has a block table (left groups) whose entries point to physical blocks (cylinders) anywhere in the pool. Sequence A's 40 tokens occupy two full blocks and half of a third; B's 20 tokens one full block and a quarter of another. The only waste is the unfilled tail of each sequence's last block. Lookups are synchronous inside the attention kernel; the block table is small and lives on the GPU. Failure points: when no free block exists for a sequence's next token, the scheduler must preempt (§73.14); a very small block size increases table size and kernel indexing cost. Scaling: blocks of any sequence fill any free slot, so the pool stays usable as sequences come and go.
+**Reading the diagram.** Each sequence's block table (left groups) points to physical blocks (cylinders) anywhere in the HBM pool. A's 40 tokens fill two blocks and half a third; B's 20 tokens fill one and a quarter. The only waste is each sequence's unfilled last block. Lookups happen synchronously inside the attention kernel. Failure points: no free block for a sequence's next token forces preemption (§73.14); tiny blocks raise indexing cost. Scaling: any free block serves any sequence, so the pool stays usable as sequences come and go.
 
 #### Mathematical foundations
 
@@ -697,24 +688,16 @@ flowchart TB
   COW -->|no| INPL["Write in place"]
 ```
 
-**Reading the diagram.** Both samples point to the same full prompt blocks and to a partly filled tail block, each with reference count 2. When sample 2 appends its first generated token, the manager sees the tail is shared, copies it (one block, a few kilobytes per layer), decrements the shared count and lets sample 2 write privately; sample 1 then owns the original and writes in place. Full blocks are never copied. The check is synchronous in the scheduler before the step. Failure point: a bug in reference counting corrupts another sequence's context, a silent correctness error, so engines test this path heavily. Scaling: beam search uses the same mechanism as beams fork and die.
+**Reading the diagram.** Both samples share the full prompt blocks and a partly filled tail block (reference count 2). When sample 2 appends its first token, the manager copies the tail, decrements the shared count and lets sample 2 write privately; sample 1 keeps the original. Full blocks are never copied. The check is synchronous in the scheduler. Failure point: a reference-counting bug silently corrupts another sequence's context, so engines test this path heavily. Scaling: beam search uses the same mechanism as beams fork and die.
 
 ::: industry
 **vLLM.** Kwon et al. built vLLM around PagedAttention and reported 2–4× higher throughput than FasterTransformer and Orca at the same latency, with near-zero KV waste (under 4%) and larger gains for longer sequences, larger models and complex decoding such as beam search. The paper describes block-level sharing for parallel sampling and beam search, and swapping or recomputation for preemption (§73.14).
 *Evidence: Primary* — [Kwon et al. 2023]
 :::
 
-#### Failure scenarios and alternatives
+#### Alternatives
 
-**Table 73.6 — PagedAttention failures.**
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Throughput regresses on new kernels | Block indexing slows attention | Attention kernel time in profiles | Larger block size | Benchmark block sizes 16–32 |
-| Silent cross-sequence corruption | Reference-count or COW bug | Nonsense outputs under parallel sampling | Disable sharing, roll back | Property tests on fork and free |
-| Pool exhaustion mid-generation | Sequences grow after admission | Preemption rate | Preempt lowest priority | Watermark of free blocks at admission |
-
-The alternative to paging is reserving contiguous memory per request and reallocating (copying) when it grows, or virtual-memory tricks that keep the KV cache virtually contiguous while mapping physical pages on demand through the GPU driver, which avoids changing attention kernels; both appear in research and engines as of 2026, and paging with block tables remains the common default.
+The alternatives are contiguous reservation with copying when a sequence grows, or keeping the KV cache virtually contiguous while the GPU driver maps physical pages on demand, which leaves attention kernels unchanged. As of 2026, paging with block tables remains the common default.
 
 ::: mistake
 **"PagedAttention makes attention faster."** It makes *memory* denser; the kernel itself does slightly more work to follow block tables. The speed-up comes from the larger batch the freed memory allows.

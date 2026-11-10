@@ -86,9 +86,9 @@ flowchart LR
 
 #### How it works internally
 
-1. **The world.** Historical inequality is in the data before you touch it. Fraud is genuinely more common in some zones, and so are the conditions that cause it.
+1. **The world.** Historical inequality is in the data before you touch it.
 2. **Sampling.** Who is in the data? New cities have little history; groups who use the app less are under-represented.
-3. **Labels.** The label is a proxy for what you care about. Chargebacks measure fraud *that was disputed*; delivery time measures service *for orders placed*. Obermeyer et al. showed that a US health-risk algorithm used cost as the label for medical need; because less money was spent on Black patients at the same level of need, Black patients at a given risk score were considerably sicker than white patients, and correcting the label would have raised the share of Black patients flagged for extra care from 17.7% to 46.5% [Obermeyer et al. 2019].
+3. **Labels.** The label is a proxy for what you care about. Chargebacks measure fraud *that was disputed*; delivery time measures service *for orders placed*. Obermeyer et al. showed that a US health-risk algorithm used cost as the label for medical need; because less was spent on Black patients at the same need, correcting the label would have raised the share of Black patients flagged for extra care from 17.7% to 46.5% [Obermeyer et al. 2019].
 4. **Features.** Removing the protected attribute does not remove it: zone, account age, device type and payment method each correlate with income and ethnicity. This is **fairness through unawareness**, and it fails whenever proxies exist [Barocas et al. 2023].
 5. **Objective.** Minimizing average loss rewards accuracy on the majority. A group of 2% of orders contributes 2% of the loss.
 6. **Thresholds and product rules.** A single global threshold applied to groups with different score distributions produces different error rates, as the next sections show.
@@ -571,7 +571,7 @@ $$\hat{Y} = \mathbb{1}[S \ge t_G], \qquad t_g = F^{-1}_{S \mid Y=0, G=g}(1 - f^{
 :::
 
 ::: example
-**Worked example — Equal FPR at fixed capacity (from the code below).** On a validation day the common FPR that keeps about 3,500 holds is $f^{*} \approx 0.35\%$, giving $t_A = 0.111$ and $t_B = 0.230$. On the test day: FPR A 0.33%, B 0.37% (was 0.25% and 0.62%); B's TPR falls from 0.71 to 0.65; missed frauds rise from 708 to 734 and false holds from 1,630 to 1,682. Cost: $60 \times 734 + 8 \times 1{,}682 = \$57{,}496$ against \$55,520, so $+\$1{,}976$ per day (+3.6%). **Interpretation.** Equalizing the false-hold rate costs 3.6% of daily fraud-related cost; equalizing selection rates costs 10%. **Engineering implication.** Put that number in front of decision makers: "we can cut false holds of group-B customers by 40% for about \$0.7 million a year" is a decision a review board can make; "the model is unfair" is not.
+**Worked example — Equal FPR at fixed capacity (from the code below).** Validation-day thresholds keeping about 3,500 holds are $t_A = 0.111$, $t_B = 0.230$. On the test day FPR becomes 0.33% (A) and 0.37% (B), from 0.25% and 0.62%; B's TPR falls from 0.71 to 0.65; missed frauds rise from 708 to 734 and false holds from 1,630 to 1,682. Cost: $60 \times 734 + 8 \times 1{,}682 = \$57{,}496$ against \$55,520, so $+\$1{,}976$ per day (+3.6%). **Interpretation.** Equalizing the false-hold rate costs 3.6% of daily fraud-related cost; equalizing selection rates costs 10%. **Engineering implication.** Put that number in front of decision makers: "we can cut false holds of group-B customers by 40% for about \$0.7 million a year" is a decision a review board can make; "the model is unfair" is not.
 :::
 
 ```python
@@ -707,7 +707,7 @@ flowchart TB
 
 **Reading the diagram.** The first split is by audience, because audiences need different questions answered. Global methods summarize behavior across a dataset and run offline in validation or monitoring jobs. Local methods explain one prediction; SHAP and LIME attribute the score to features, counterfactuals describe a change that flips the decision. Mean absolute SHAP bridges the two by aggregating local attributions. The two local methods that feed reason codes run on, or next to, the serving path, which is where their latency matters (§71.8). Failure points: presenting a debugging artifact (a SHAP plot) to a customer, or a global importance as if it explained one decision.
 
-**Permutation importance** shuffles one feature's column in a held-out set and measures how much the loss rises [Breiman 2001; Fisher et al. 2019]. It is model-agnostic and cheap ($M$ extra evaluations of the dataset), but correlated features share credit unpredictably and shuffling creates impossible inputs (a brand-new account with ten years of order history).
+**Permutation importance** shuffles one feature's column in a held-out set and measures how much the loss rises [Breiman 2001]. It is model-agnostic and cheap ($M$ extra evaluations of the dataset), but correlated features share credit unpredictably and shuffling creates impossible inputs (a brand-new account with ten years of order history).
 
 ### 71.7.2 Shapley values and SHAP
 
@@ -967,7 +967,7 @@ A student who memorized last year's exam answers does suspiciously well on exact
 **Definition — Training-data extraction.** Causing a generative model to emit verbatim sequences from its training data.
 :::
 
-Shokri et al. introduced **shadow models**: the attacker trains several models on data from a similar distribution, where membership is known, records how outputs differ for members and non-members, and trains an attack classifier on those outputs; it succeeded against commercial ML-as-a-service APIs [Shokri et al. 2017]. Carlini et al. later argued that attacks should be judged by their true-positive rate at very low false-positive rates, where average accuracy hides whether *any* individual is confidently exposed, and introduced the likelihood-ratio attack (LiRA) [Carlini et al. 2022]. Fredrikson, Jha and Ristenpart used confidence scores to reconstruct recognizable images of individuals from a face-recognition model [Fredrikson et al. 2015]. For large language models, Carlini et al. extracted hundreds of verbatim sequences from GPT-2, including names, phone numbers, email addresses and code, by generating many samples and ranking them by how much more likely the model found them than a reference model did; larger models memorized more [Carlini et al. 2021].
+Shokri et al. introduced **shadow models**: the attacker trains models on similar data with known membership and learns an attack classifier from how their outputs differ for members and non-members; it succeeded against commercial ML-as-a-service APIs [Shokri et al. 2017]. Carlini et al. later argued that attacks should be judged by their true-positive rate at very low false-positive rates, where average accuracy hides whether *any* individual is confidently exposed, and introduced the likelihood-ratio attack (LiRA) [Carlini et al. 2022]. Fredrikson, Jha and Ristenpart used confidence scores to reconstruct recognizable images of individuals from a face-recognition model [Fredrikson et al. 2015]. For large language models, Carlini et al. extracted hundreds of verbatim sequences from GPT-2, including names, phone numbers, email addresses and code, by generating many samples and ranking them by how much more likely the model found them than a reference model did; larger models memorized more [Carlini et al. 2021].
 
 **Figure 71.9 — A shadow-model membership inference attack.**
 
@@ -1079,7 +1079,7 @@ $$\bar{g}_i = \frac{g_i}{\max\!\left(1, \frac{\lVert g_i \rVert_2}{C}\right)}, \
 
 ### 71.10.2 Privacy accounting, conceptually
 
-Each step is a subsampled Gaussian mechanism. Composing $T$ of them by simple summation (§50.11.3) would give a useless ε. Abadi et al. introduced the **moments accountant**, which tracks the tail of the privacy-loss distribution and shows that DP-SGD is $(\varepsilon, \delta)$-DP when $\sigma \ge c_2\, q\sqrt{T \log(1/\delta)}/\varepsilon$ for constants $c_2$; for $q = 0.01$, $\sigma = 4$, $T = 10{,}000$ and $\delta = 10^{-5}$ they report $\varepsilon \approx 1.26$, against about 9.34 from the strong composition theorem [Abadi et al. 2016]. Modern libraries express the same idea as **Rényi differential privacy** (RDP): each step costs $\varepsilon_{\text{RDP}}(\alpha)$ at order $\alpha$, costs add across steps, and a final conversion yields $(\varepsilon, \delta)$ [Mironov 2017; Mironov et al. 2019].
+Each step is a subsampled Gaussian mechanism. Composing $T$ of them by simple summation (§50.11.3) would give a useless ε. Abadi et al. introduced the **moments accountant**, which tracks the tail of the privacy-loss distribution and shows that DP-SGD is $(\varepsilon, \delta)$-DP when $\sigma \ge c_2\, q\sqrt{T \log(1/\delta)}/\varepsilon$ for constants $c_2$; for $q = 0.01$, $\sigma = 4$, $T = 10{,}000$ and $\delta = 10^{-5}$ they report $\varepsilon \approx 1.26$, against about 9.34 from the strong composition theorem [Abadi et al. 2016]. Modern libraries express the same idea as **Rényi differential privacy** (RDP): each step costs $\varepsilon_{\text{RDP}}(\alpha)$ at order $\alpha$, costs add across steps, and a final conversion yields $(\varepsilon, \delta)$ [Mironov et al. 2019].
 
 ::: formula
 **RDP composition and conversion**
@@ -1293,7 +1293,7 @@ flowchart LR
 
 **Reading the diagram.** Dotted edges are the setup phase: each pair derives a shared mask seed by key agreement, relayed through the server but unreadable by it. Solid edges are the upload phase, each carrying a masked vector that looks random on its own. The aggregator adds them and every mask cancels. Failure points: a client that drops after masking (handled by secret-shared seeds recovered from survivors) and a server that colludes with many clients. Cost grows with the number of clients per round, which is why deployments aggregate in groups of hundreds to thousands.
 
-Three further problems dominate real deployments. **Non-IID data**: each courier's phone sees one city, one vehicle and one schedule, so local models drift toward local optima and the average converges more slowly or to a worse model; the effect is mild for the convex model below and severe for deep networks [Zhao et al. 2018; Karimireddy et al. 2020]. **Systems heterogeneity**: availability is diurnal and devices differ in speed, so participation is biased toward well-connected, newer phones, a fairness issue in its own right. **Privacy of updates**: updates can be inverted or used for membership inference, so production systems add client-level DP, clipping each client's update and adding noise to the aggregate [McMahan et al. 2018].
+Three further problems dominate deployments. **Non-IID data**: each courier's phone sees one city and schedule, so local models drift toward local optima and the average converges more slowly or to a worse model, mildly for the convex model below and severely for deep networks [Karimireddy et al. 2020]. **Systems heterogeneity**: availability is diurnal and devices differ in speed, so participation is biased toward well-connected, newer phones, a fairness issue in its own right. **Privacy of updates**: updates can be inverted or used for membership inference, so production systems add client-level DP, clipping each client's update and adding noise to the aggregate [McMahan et al. 2018].
 
 ::: industry
 **Gboard next-word prediction.** Google trained a recurrent language model for next-word prediction in the Gboard keyboard with federated learning on users' phones, and reported better prediction recall than a model trained on server-side data, without exporting users' typing to servers [Hard et al. 2018]. Bonawitz et al. describe the production system: device eligibility (idle, charging, unmetered network), rounds coordinated by servers with over-selection to tolerate dropouts, and secure aggregation [Bonawitz et al. 2019].
@@ -1467,7 +1467,7 @@ stateDiagram-v2
 ## 71.15 Summary and revision notes
 
 ::: summary
-- Harms are allocation, quality-of-service or representation; bias enters through the world, sampling, labels, proxies, objectives, thresholds and feedback loops. Unawareness hides disparity without removing it.
+- Harms are allocation, quality-of-service or representation; bias enters at every pipeline stage. Unawareness hides disparity without removing it.
 - Independence (demographic parity), separation (equalized odds, equal opportunity) and sufficiency (predictive parity, calibration) are built from per-group confusion matrices. Decide first whether the positive decision is a benefit or a burden.
 - With unequal base rates, equal PPV and TPR force unequal FPR: $\text{FPR} = \frac{p}{1-p}\cdot\frac{1-\text{PPV}}{\text{PPV}}\cdot\text{TPR}$. Choosing which criterion to give up is a documented policy decision.
 - Report intervals; FPR near 0.5% needs about 19,000 negatives for ±0.1 points, so measure groups of zones, not zones. Keep group attributes and proxies in a restricted store.
@@ -1476,7 +1476,7 @@ stateDiagram-v2
 - Models leak membership and training text; under $(\varepsilon,\delta)$-DP, attack TPR $\le e^{\varepsilon}\,\text{FPR} + \delta$.
 - DP-SGD clips per-example gradients to $C$ and adds $\mathcal{N}(0,\sigma^2C^2)$ noise; subsampling amplifies privacy; utility cost falls with more data and fewer parameters.
 - FedAvg averages locally trained models weighted by $n_k$, cutting rounds; secure aggregation reveals only sums; non-IID data and stragglers dominate operations.
-- Model cards, system cards, datasheets and audit logs are the evidence that reviews and regulators (EU AI Act, GDPR Art. 22, ECOA) ask for.
+- Model cards, system cards, datasheets and audit logs are the evidence reviews and regulators ask for.
 :::
 
 ## 71.16 Knowledge checkpoint
@@ -1565,31 +1565,28 @@ stateDiagram-v2
 19. Elliott, M. N., Morrison, P. A., Fremont, A., et al. *Using the Census Bureau's Surname List to Improve Estimates of Race/Ethnicity and Associated Disparities*. Health Services and Outcomes Research Methodology 9(2), 2009.
 20. European Union. *Regulation (EU) 2024/1689 laying down harmonised rules on artificial intelligence (Artificial Intelligence Act)*. Official Journal of the EU, 2024.
 21. Fairlearn contributors. *Fairlearn User Guide*. n.d. https://fairlearn.org
-22. Fisher, A., Rudin, C., Dominici, F. *All Models are Wrong, but Many are Useful*. Journal of Machine Learning Research 20, 2019.
-23. Fredrikson, M., Jha, S., Ristenpart, T. *Model Inversion Attacks that Exploit Confidence Information and Basic Countermeasures*. ACM CCS, 2015.
-24. Gebru, T., Morgenstern, J., Vecchione, B., et al. *Datasheets for Datasets*. Communications of the ACM 64(12), 2021.
-25. Hard, A., Rao, K., Mathews, R., et al. *Federated Learning for Mobile Keyboard Prediction*. arXiv:1811.03604, 2018.
-26. Hardt, M., Price, E., Srebro, N. *Equality of Opportunity in Supervised Learning*. NeurIPS, 2016.
-27. Kairouz, P., Oh, S., Viswanath, P. *The Composition Theorem for Differential Privacy*. ICML, 2015.
-28. Kamiran, F., Calders, T. *Data Preprocessing Techniques for Classification without Discrimination*. Knowledge and Information Systems 33(1), 2012.
-29. Karimireddy, S. P., Kale, S., Mohri, M., et al. *SCAFFOLD: Stochastic Controlled Averaging for Federated Learning*. ICML, 2020.
-30. Kleinberg, J., Mullainathan, S., Raghavan, M. *Inherent Trade-Offs in the Fair Determination of Risk Scores*. ITCS, 2017.
-31. Lundberg, S. M., Lee, S.-I. *A Unified Approach to Interpreting Model Predictions*. NeurIPS, 2017.
-32. Lundberg, S. M., Erion, G., Chen, H., et al. *From Local Explanations to Global Understanding with Explainable AI for Trees*. Nature Machine Intelligence 2, 2020.
-33. McMahan, H. B., Moore, E., Ramage, D., Hampson, S., Agüera y Arcas, B. *Communication-Efficient Learning of Deep Networks from Decentralized Data*. AISTATS, 2017.
-34. McMahan, H. B., Ramage, D., Talwar, K., Zhang, L. *Learning Differentially Private Recurrent Language Models*. ICLR, 2018.
-35. Mironov, I. *Rényi Differential Privacy*. IEEE CSF, 2017.
-36. Mironov, I., Talwar, K., Zhang, L. *Rényi Differential Privacy of the Sampled Gaussian Mechanism*. arXiv:1908.10530, 2019.
-37. Mitchell, M., Wu, S., Zaldivar, A., et al. *Model Cards for Model Reporting*. FAT*, 2019.
-38. Obermeyer, Z., Powers, B., Vogeli, C., Mullainathan, S. *Dissecting Racial Bias in an Algorithm Used to Manage the Health of Populations*. Science 366(6464), 2019.
-39. OpenAI. *GPT-4 System Card*. 2023.
-40. Ribeiro, M. T., Singh, S., Guestrin, C. *"Why Should I Trust You?": Explaining the Predictions of Any Classifier*. KDD, 2016.
-41. Rudin, C. *Stop Explaining Black Box Machine Learning Models for High Stakes Decisions and Use Interpretable Models Instead*. Nature Machine Intelligence 1, 2019.
-42. Shokri, R., Stronati, M., Song, C., Shmatikov, V. *Membership Inference Attacks Against Machine Learning Models*. IEEE S&P, 2017.
-43. Singh, A., Joachims, T. *Fairness of Exposure in Rankings*. KDD, 2018.
-44. Slack, D., Hilgard, S., Jia, E., Singh, S., Lakkaraju, H. *Fooling LIME and SHAP: Adversarial Attacks on Post hoc Explanation Methods*. AIES, 2020.
-45. Wachter, S., Mittelstadt, B., Russell, C. *Counterfactual Explanations without Opening the Black Box: Automated Decisions and the GDPR*. Harvard Journal of Law & Technology 31(2), 2018.
-46. Zhao, Y., Li, M., Lai, L., et al. *Federated Learning with Non-IID Data*. arXiv:1806.00582, 2018.
+22. Fredrikson, M., Jha, S., Ristenpart, T. *Model Inversion Attacks that Exploit Confidence Information and Basic Countermeasures*. ACM CCS, 2015.
+23. Gebru, T., Morgenstern, J., Vecchione, B., et al. *Datasheets for Datasets*. Communications of the ACM 64(12), 2021.
+24. Hard, A., Rao, K., Mathews, R., et al. *Federated Learning for Mobile Keyboard Prediction*. arXiv:1811.03604, 2018.
+25. Hardt, M., Price, E., Srebro, N. *Equality of Opportunity in Supervised Learning*. NeurIPS, 2016.
+26. Kairouz, P., Oh, S., Viswanath, P. *The Composition Theorem for Differential Privacy*. ICML, 2015.
+27. Kamiran, F., Calders, T. *Data Preprocessing Techniques for Classification without Discrimination*. Knowledge and Information Systems 33(1), 2012.
+28. Karimireddy, S. P., Kale, S., Mohri, M., et al. *SCAFFOLD: Stochastic Controlled Averaging for Federated Learning*. ICML, 2020.
+29. Kleinberg, J., Mullainathan, S., Raghavan, M. *Inherent Trade-Offs in the Fair Determination of Risk Scores*. ITCS, 2017.
+30. Lundberg, S. M., Lee, S.-I. *A Unified Approach to Interpreting Model Predictions*. NeurIPS, 2017.
+31. Lundberg, S. M., Erion, G., Chen, H., et al. *From Local Explanations to Global Understanding with Explainable AI for Trees*. Nature Machine Intelligence 2, 2020.
+32. McMahan, H. B., Moore, E., Ramage, D., Hampson, S., Agüera y Arcas, B. *Communication-Efficient Learning of Deep Networks from Decentralized Data*. AISTATS, 2017.
+33. McMahan, H. B., Ramage, D., Talwar, K., Zhang, L. *Learning Differentially Private Recurrent Language Models*. ICLR, 2018.
+34. Mironov, I., Talwar, K., Zhang, L. *Rényi Differential Privacy of the Sampled Gaussian Mechanism*. arXiv:1908.10530, 2019.
+35. Mitchell, M., Wu, S., Zaldivar, A., et al. *Model Cards for Model Reporting*. FAT*, 2019.
+36. Obermeyer, Z., Powers, B., Vogeli, C., Mullainathan, S. *Dissecting Racial Bias in an Algorithm Used to Manage the Health of Populations*. Science 366(6464), 2019.
+37. OpenAI. *GPT-4 System Card*. 2023.
+38. Ribeiro, M. T., Singh, S., Guestrin, C. *"Why Should I Trust You?": Explaining the Predictions of Any Classifier*. KDD, 2016.
+39. Rudin, C. *Stop Explaining Black Box Machine Learning Models for High Stakes Decisions and Use Interpretable Models Instead*. Nature Machine Intelligence 1, 2019.
+40. Shokri, R., Stronati, M., Song, C., Shmatikov, V. *Membership Inference Attacks Against Machine Learning Models*. IEEE S&P, 2017.
+41. Singh, A., Joachims, T. *Fairness of Exposure in Rankings*. KDD, 2018.
+42. Slack, D., Hilgard, S., Jia, E., Singh, S., Lakkaraju, H. *Fooling LIME and SHAP: Adversarial Attacks on Post hoc Explanation Methods*. AIES, 2020.
+43. Wachter, S., Mittelstadt, B., Russell, C. *Counterfactual Explanations without Opening the Black Box: Automated Decisions and the GDPR*. Harvard Journal of Law & Technology 31(2), 2018.
 
 ## 71.21 Open verification items
 

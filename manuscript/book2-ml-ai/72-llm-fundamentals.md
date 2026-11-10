@@ -296,7 +296,7 @@ BPE as described pre-splits text on spaces, which fails for Chinese, Japanese an
 
 ### 72.4.4 Byte-level BPE
 
-Character-level BPE still needs a base alphabet, and Unicode has about 150,000 characters. GPT-2 introduced **byte-level BPE**: the base symbols are the 256 possible byte values of UTF-8, so *any* string, including emoji, code and corrupted text, is representable with no unknown token, and merges then build up frequent byte sequences [Radford et al. 2019]. GPT-2's vocabulary has 50,257 entries: 256 bytes, 50,000 merges and one end-of-text token. Llama 3 uses a byte-level BPE vocabulary of 128,256 tokens [Dubey et al. 2024].
+Unicode has about 150,000 characters, too many for a base alphabet. GPT-2's **byte-level BPE** uses the 256 UTF-8 byte values as base symbols, so *any* string is representable, and merges build frequent byte sequences [Radford et al. 2019]. GPT-2's vocabulary has 50,257 entries: 256 bytes, 50,000 merges and one end-of-text token. Llama 3 uses a byte-level BPE vocabulary of 128,256 tokens [Dubey et al. 2024].
 
 The cost of a byte base is visible in UTF-8 itself: ASCII letters take 1 byte, accented Latin letters 2, most Chinese, Japanese and Indic characters 3, and emoji 4.
 
@@ -337,9 +337,7 @@ What to notice:
 
 ### 72.4.5 Tokens per word: why tokenization sets the bill
 
-Every cost in LLM serving is counted in tokens: prefill compute is proportional to input tokens, decode time to output tokens, KV-cache memory to context tokens (§72.11), and API prices are quoted per million tokens. Words are what users and product managers think in. The conversion factor between them is therefore a capacity-planning input, and it varies with language, domain and tokenizer.
-
-For English prose and GPT-style tokenizers a common rule of thumb is about 0.75 words per token, roughly **1.3 tokens per word** or about 4 characters per token. Code, numbers, URLs and JSON tokenize worse. Larger vocabularies tokenize better: the Llama 3 report gives about 3.94 characters per token on English for its 128K vocabulary against 3.17 for Llama 2's 32K [Dubey et al. 2024], about 20% fewer tokens for the same text. Across languages the spread is much wider: Petrov et al. [2023] measured that the same content can need several times, and for some language–tokenizer pairs more than ten times, as many tokens as in English.
+Every serving cost is counted in tokens: prefill compute in input tokens, decode time in output tokens, KV memory in context tokens (§72.11), API prices per million tokens. Users think in words, so tokens per word is a capacity-planning input. For English prose with GPT-style tokenizers a rule of thumb is about **1.3 tokens per word** (about 4 characters per token); code, numbers and JSON tokenize worse. Larger vocabularies tokenize better: the Llama 3 report gives about 3.94 characters per token on English for its 128K vocabulary against 3.17 for Llama 2's 32K [Dubey et al. 2024], about 20% fewer tokens for the same text. Across languages the spread is much wider: Petrov et al. [2023] measured that the same content can need several times, and for some language–tokenizer pairs more than ten times, as many tokens as in English.
 
 ::: formula
 **Tokens and token-driven cost**
@@ -405,7 +403,7 @@ flowchart LR
 **Definition — Token embedding table, output head and tied embeddings.** The **token embedding table** $E \in \mathbb{R}^{V \times d}$ maps each token ID to a learned vector of width $d$, the model's **hidden size** ($d_\text{model}$). The **output head** (or unembedding, LM head) is a $d \times V$ matrix that turns the final hidden vector into $V$ logits, one per vocabulary entry. **Tied embeddings** reuse $E^\top$ as the output head, so the two share one set of parameters [Press and Wolf 2017].
 :::
 
-Embeddings work exactly as in §58.6: a lookup, not a multiply, with sparse gradients. The new piece is the output head, a genuine matrix multiply that must be computed for every *generated* token, followed by a softmax over the whole vocabulary. Larger vocabularies shorten sequences (§72.4.5) but enlarge both matrices.
+The embedding is a lookup (§58.6); the output head is a real matrix multiply plus a softmax over the vocabulary for every *generated* token. Larger vocabularies shorten sequences (§72.4.5) but enlarge both.
 
 **Figure 72.5 — Input embedding and output head, untied and tied.**
 
@@ -1042,7 +1040,7 @@ A key fact hides in step 6: the attention part of decode reads each sequence's o
 **Definition — KV cache.** The **KV cache** stores, for every sequence being generated, the key and value vectors of every past token in every layer and every KV head, so that each decode step computes K and V only for the new token and reuses the rest. Its size grows linearly with context length and with the number of concurrent sequences.
 :::
 
-Without the cache, generating token $t$ would recompute keys and values for all $t - 1$ earlier tokens in every layer: quadratic total work for a reply. With it, decode does constant linear-layer work per token. The cache is correct because, under the causal mask, earlier positions' keys and values never depend on later tokens, which the NumPy demo in §72.6 showed and the one below confirms against full recomputation. Queries are not cached: each is used once, by its own token.
+Without the cache, token $t$ would recompute keys and values for all earlier tokens in every layer. The cache is exact because, under the causal mask, earlier keys and values never depend on later tokens; the demo below confirms it against full recomputation. Queries are used once and not cached.
 
 ```python
 import numpy as np
@@ -1167,9 +1165,8 @@ model                        GPUs  KB/tok   4k seq  128k seq  fit@4k fit@128k
 
 What to notice:
 
-- The calculator assumes every sequence is at full length; real traffic has a distribution of lengths, and paged allocation (Chapter 73) lets the pool hold more sequences on average.
-- FP8 KV ($b = 1$) doubles every "fit" column; the 10% reserve is an assumption to replace with a measured value.
-- Chapter 73 extends this calculator with tensor parallelism, paging and prefix sharing.
+- It assumes every sequence at full length; with real length distributions and paged allocation (Chapter 73) the pool holds more on average.
+- FP8 KV ($b = 1$) doubles every "fit" column; the 10% reserve is an assumption to replace with a measurement.
 
 **Table 72.6 — KV-cache failure scenarios.**
 
@@ -1190,7 +1187,7 @@ What to notice:
 **Definition — Context window.** The **context window** is the maximum number of tokens (prompt plus generated output) a model can attend over in one sequence, set by the positions it was trained or extended to handle (§72.9). Tokens beyond it must be truncated, summarized or retrieved selectively (Chapter 75).
 :::
 
-A longer window lets the chatbot see a whole policy manual and a long conversation, but its cost grows on three axes: KV memory grows linearly with $t$ (§72.11); each decode step's attention work grows linearly; and prefill attention grows *quadratically* with prompt length.
+A longer window costs on three axes: KV memory and per-step decode attention grow linearly with $t$, and prefill attention grows *quadratically* with prompt length.
 
 ::: formula
 **Attention versus linear-layer FLOPs as context grows**
@@ -1359,7 +1356,7 @@ flowchart LR
 
 **Reading the diagram.** Each decode step runs this chain per sequence on the GPU. Penalties down-weight repeats; a grammar mask can force valid JSON (Chapter 76). Three **stop conditions** end generation: the end-of-sequence token, a stop string (checked on detokenized text, since it can span tokens), and the max-token limit, which must always be set. Failure point: without it, a looping model holds a slot for thousands of steps.
 
-**Beam search** keeps $W$ hypotheses and multiplies decode compute and KV cache by up to $W$ (the shared prompt prefix is stored once); it suits short, closed-form outputs such as translation, rarely chat. **Determinism**: greedy decoding with a fixed seed is reproducible on one machine with one batch composition, but production servers batch requests dynamically, and floating-point sums computed in different orders for different batch shapes can change a near-tied argmax, so identical requests can diverge. Treat bit-exact reproducibility as a feature you must engineer (fixed batch shapes, deterministic kernels), not a default.
+**Beam search** keeps $W$ hypotheses, multiplying decode work and KV cache by up to $W$; it suits short closed-form outputs such as translation, rarely chat. **Determinism**: servers batch dynamically, and floating-point sums reduced in different orders for different batch shapes can flip a near-tied argmax, so even greedy decoding of identical requests can diverge. Bit-exact reproducibility must be engineered (fixed batch shapes, deterministic kernels).
 
 ## 72.14 Mixture of experts
 
@@ -1367,7 +1364,7 @@ flowchart LR
 **Definition — Mixture-of-experts (MoE) layer.** An MoE layer replaces a transformer block's single MLP with $E$ expert MLPs and a learned **router** that sends each token to its top-$k$ experts and mixes their outputs with the router's softmax weights [Shazeer et al. 2017; Fedus et al. 2022]. **Total parameters** count every expert; **active parameters** count only those a token uses.
 :::
 
-§65.12.2 covered MoE training and expert parallelism; for serving, the key fact is that MoE separates memory from compute. Every expert must be resident (memory scales with total parameters), but each token does the arithmetic of only $k$ experts (FLOPs scale with active parameters). An auxiliary **load-balancing loss** keeps the router from sending most tokens to a few experts, which would overload their GPUs and waste the rest.
+§65.12.2 covered MoE training; for serving, MoE separates memory from compute: every expert must be resident (total parameters), but each token does the arithmetic of only $k$ experts (active parameters). A **load-balancing loss** keeps the router from overloading a few experts.
 
 **Figure 72.14 — An MoE block at inference.**
 
@@ -1461,7 +1458,7 @@ What to notice: an untrained, biased router sends 3,926 of 8,192 token-slots to 
 
 ## 72.15 FLOPs per token for inference and training
 
-§58.12 gave $2N$ per token for inference and $6N$ for training, counting one multiply–add per weight. Attention adds work that has no parameters, and the published conventions differ by a factor of 2 depending on whether the masked half of the score matrix is counted.
+§58.12 gave $2N$ per token for inference and $6N$ for training. Attention adds parameter-free work, and published conventions differ by 2× depending on whether the masked half of the score matrix is counted.
 
 ::: formula
 **FLOPs per token with the attention term**
