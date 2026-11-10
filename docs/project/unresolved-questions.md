@@ -341,3 +341,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-334 | 75 | Nogueira & Cho 2019 MS MARCO gain (qualitative); Liu et al. 2024 U-shaped effect for long-context models as worded | Open | |
 | UQ-335 | 75 | DoorDash 2024 RAG post: 90% hallucination / 99% compliance-issue reductions, authors, title; Xu et al. 2024 (LinkedIn) author list and ~6-month deployment | Open | |
 | UQ-336 | 75 | Edge et al. 2024 (GraphRAG) author list for cited arXiv version; OWASP LLM Top 10 2025 ranking prompt injection first | Open | |
+| UQ-337 | 71 | EU AI Act timeline after the July 2026 "Digital Omnibus on AI" (reported Regulation (EU) 2026/1744): Annex III → 2 Dec 2027, Annex I → 2 Aug 2028; Article 50 dates disputed — legal commentary only, not Official Journal | Open | Time-sensitive; not legal advice |
+| UQ-338 | 71 | Abadi et al. 2016 ε 1.26 vs 9.34 and MNIST 90/95/97% accuracies; Carlini et al. 2021 extracted-sequence count; McMahan et al. "10–100× fewer rounds" | Open | |
+| UQ-339 | 71 | Gboard FL eligibility rules and recall gains (Hard et al. 2018; Bonawitz et al. 2019); CJEU SCHUFA ruling (C-634/21); CFPB Circular 2022-03 scope | Open | |
