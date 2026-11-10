@@ -98,7 +98,7 @@ flowchart LR
   Y -.->|loss vs actual minutes| T["Training only:<br/>MSE loss"]
 ```
 
-**Reading the diagram.** Features for a batch of $B$ orders arrive from a feature store (Chapter 62) as a $B \times 512$ matrix. Two hidden layers of 1,024 ReLU neurons transform them; the last layer emits the predicted minutes. Solid arrows are the synchronous forward computation used in training and serving; the dotted loss path exists only in training, once actual delivery times arrive as labels. The storage boundary is the feature store; a stale or missing feature there is the most common production failure (training–serving skew). The model scales by batching requests into one matrix multiply (Chapter 66).
+**Reading the diagram.** Features for a batch of $B$ orders arrive from a feature store (Chapter 62) as a $B \times 512$ matrix. Two hidden layers of 1,024 ReLU neurons transform them; the last layer emits the predicted minutes. Solid arrows are the synchronous forward computation used in training and serving; the dotted loss path exists only in training, once actual delivery times arrive as labels. The storage boundary is the feature store; a stale or missing feature there is the most common production failure (training–serving skew). The model scales by batching requests into one matrix multiply (§66.6).
 
 #### Universal approximation and why depth helps
 
@@ -522,7 +522,7 @@ $$M_\text{emb} = V \times d \times s \qquad M_\text{train} \approx M_\text{emb} 
 
 **QuickBite version.** Assume 10 million registered customers (against about 4 million weekly active users, Chapter 57), 50,000 restaurants and 5 million dishes (50,000 × 100 menu items, §2.11), all at $d = 64$ in FP32: users 2.56 GB, restaurants 12.8 MB, dishes 1.28 GB. The whole model fits on one server; the 100M-user version does not fit on one accelerator for training.
 
-**Interpretation.** In large recommendation models the embedding tables are often more than 99% of the parameters but a tiny fraction of the FLOPs: a lookup reads 256 bytes and does almost no arithmetic. **Engineering implication.** Such models are **memory-capacity and bandwidth bound**. Tables are partitioned by rows across hosts, hot rows are cached, and values are compressed (FP16, INT8, hashing). Chapter 68 covers serving and Chapter 74 the vector search over the same vectors.
+**Interpretation.** In large recommendation models the embedding tables are often more than 99% of the parameters but a tiny fraction of the FLOPs: a lookup reads 256 bytes and does almost no arithmetic. **Engineering implication.** Such models are **memory-capacity and bandwidth bound**. Tables are partitioned by rows across hosts, hot rows are cached, and values are compressed (FP16, INT8, hashing). §68.8 covers serving and Chapter 74 the vector search over the same vectors.
 :::
 
 ::: industry
@@ -542,7 +542,7 @@ $$M_\text{emb} = V \times d \times s \qquad M_\text{train} \approx M_\text{emb} 
 | Hash collisions blur items | Hashing trick maps many IDs to one row | Quality drop on long-tail items | Increase $V$ or use multiple hashes | Size $V$ from the ID distribution |
 
 ::: mistake
-**"Embeddings are a kind of feature engineering you compute once."** Learned embeddings change every time the model is retrained, and vectors from two training runs live in different coordinate systems. Mixing a user vector from model v7 with item vectors from model v8 produces meaningless dot products. Treat the table, the ID index and the model as one versioned artifact (Chapter 69).
+**"Embeddings are a kind of feature engineering you compute once."** Learned embeddings change every time the model is retrained, and vectors from two training runs live in different coordinate systems. Mixing a user vector from model v7 with item vectors from model v8 produces meaningless dot products. Treat the table, the ID index and the model as one versioned artifact (§69.8).
 :::
 
 ## 58.7 Convolutional neural networks
@@ -855,7 +855,7 @@ flowchart TD
   GAP -->|no| OK([Healthy: compare to baseline])
 ```
 
-**Reading the diagram.** Start from the two curves every job should log, training and validation loss. The first decision catches divergence, which needs immediate action. If training loss is high, distinguish a plateau (flat, usually an optimization problem) from slow underfitting (capacity or data). If training loss is low, a growing gap to validation loss is overfitting. These are offline decisions by an engineer or automated monitor, using data from the experiment tracker (Chapter 69). Failure points: training loss alone hides overfitting, and a single run hides seed noise.
+**Reading the diagram.** Start from the two curves every job should log, training and validation loss. The first decision catches divergence, which needs immediate action. If training loss is high, distinguish a plateau (flat, usually an optimization problem) from slow underfitting (capacity or data). If training loss is low, a growing gap to validation loss is overfitting. These are offline decisions by an engineer or automated monitor, using data from the experiment tracker (§69.7). Failure points: training loss alone hides overfitting, and a single run hides seed noise.
 
 **Table 58.5 — Loss-curve symptoms and remedies.**
 
@@ -1115,9 +1115,9 @@ flowchart LR
   OPT -.->|export| ART[("Portable artifact:<br/>ONNX, StableHLO, AOT")]
 ```
 
-**Reading the diagram.** Eagerly, each operation becomes its own kernel launch. Compiled, a graph is captured once, optimized and lowered to fewer, larger kernels, cutting launch overhead and memory traffic. The dotted export path produces a framework-independent artifact for runtimes such as ONNX Runtime or TensorRT (Chapter 67), the storage boundary between training and serving. Failure points: graph breaks (uncapturable code falls back to eager), recompilation when shapes change, and numerical differences between compiled and eager versions. Compilation is a one-time cost per shape, paid at startup.
+**Reading the diagram.** Eagerly, each operation becomes its own kernel launch. Compiled, a graph is captured once, optimized and lowered to fewer, larger kernels, cutting launch overhead and memory traffic. The dotted export path produces a framework-independent artifact for runtimes such as ONNX Runtime or TensorRT (§67.10–§67.11), the storage boundary between training and serving. Failure points: graph breaks (uncapturable code falls back to eager), recompilation when shapes change, and numerical differences between compiled and eager versions. Compilation is a one-time cost per shape, paid at startup.
 
-What a system designer needs to know: (1) compile time is real, sometimes minutes, so warm models up before routing traffic to them and use a small set of fixed input shapes (padding or bucketing) to avoid recompiling; (2) the training framework need not be the serving runtime, so put export and **parity tests** (same input, same output within tolerance) in the deployment pipeline; (3) framework, CUDA driver and kernel library versions are part of the model artifact and must be pinned together (Chapter 69).
+What a system designer needs to know: (1) compile time is real, sometimes minutes, so warm models up before routing traffic to them and use a small set of fixed input shapes (padding or bucketing) to avoid recompiling; (2) the training framework need not be the serving runtime, so put export and **parity tests** (same input, same output within tolerance) in the deployment pipeline; (3) framework, CUDA driver and kernel library versions are part of the model artifact and must be pinned together (§69.4.5).
 
 ## 58.15 Summary and revision notes
 

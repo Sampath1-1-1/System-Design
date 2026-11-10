@@ -608,13 +608,13 @@ $$\mathbb{E}[\tau] \approx W - 1 \qquad V_\text{sparse} \approx 2 \cdot b \cdot 
 3. With 64 asynchronous workers, a gradient is on average about 63 updates stale, but each update touches only 0.02% of rows, so two workers rarely collide on the same row.
 4. QuickBite comparison: 10 million customers at $d = 64$ in FP32 is 2.56 GB (§58.6). It fits in one GPU, so QuickBite's recommender can use plain data parallelism today and needs sharded embeddings only if it grows two orders of magnitude.
 
-**Interpretation.** Staleness that would wreck a dense model is tolerable for sparse embeddings because updates rarely overlap. **Engineering implication.** Use all-reduce for dense layers and sharded, pull/push-style embedding tables for huge sparse ones: the hybrid that DLRM-style systems use (Chapter 68).
+**Interpretation.** Staleness that would wreck a dense model is tolerable for sparse embeddings because updates rarely overlap. **Engineering implication.** Use all-reduce for dense layers and sharded, pull/push-style embedding tables for huge sparse ones: the hybrid that DLRM-style systems use (§68.8).
 :::
 
 Asynchronous SGD was standard around 2012, when Google's DistBelief used "Downpour SGD" [Dean et al. 2012]. Dense deep learning moved back to synchronous all-reduce once bandwidth-optimal rings (§49.9.2) removed the central server bottleneck and stale gradients proved costly for dense models. **Stale synchronous parallel** is a middle ground: fast workers may run ahead by at most $s$ steps [Ho et al. 2013].
 
 ::: industry
-**Parameter servers in production recommenders.** Li et al. [2014] describe a third-generation parameter server for sparse models with billions of parameters. Meta's DLRM keeps the split, with model-parallel embedding tables and data-parallel MLPs [Naumov et al. 2019]; Chapter 68 covers its descendants.
+**Parameter servers in production recommenders.** Li et al. [2014] describe a third-generation parameter server for sparse models with billions of parameters. Meta's DLRM keeps the split, with model-parallel embedding tables and data-parallel MLPs [Naumov et al. 2019]; §68.7.3 and §68.8 cover its descendants.
 *Evidence: Primary* — [Li et al. 2014; Naumov et al. 2019]
 :::
 

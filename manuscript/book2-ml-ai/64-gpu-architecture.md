@@ -504,7 +504,7 @@ $$T_\text{mem} = \frac{b \cdot n \cdot (k_\text{in} + k_\text{out})}{B} \qquad T
 3. Speed-up $0.96 / 0.32 = 3\times$, with identical arithmetic.
 4. For a small tensor of $2^{20}$ elements (2 MB): fused memory time is $4 \text{ MB} / 3{,}350 \text{ GB/s} = 1.25$ µs, smaller than a ~5 µs launch overhead, so the unfused version is launch-bound: about $3 \times 5 = 15$ µs versus about 6 µs fused.
 
-**Interpretation.** Elementwise chains cost memory passes, not FLOPs; each extra kernel adds one read and one write of the whole tensor plus a launch. **Engineering implication.** Let a compiler fuse them (torch.compile/TorchInductor, XLA; Chapter 67), use fused library kernels (fused optimizers, fused layer norm), and capture small-kernel workloads such as LLM decoding in CUDA Graphs.
+**Interpretation.** Elementwise chains cost memory passes, not FLOPs; each extra kernel adds one read and one write of the whole tensor plus a launch. **Engineering implication.** Let a compiler fuse them (torch.compile/TorchInductor, XLA; §67.12), use fused library kernels (fused optimizers, fused layer norm), and capture small-kernel workloads such as LLM decoding in CUDA Graphs.
 :::
 
 ::: mistake
@@ -965,7 +965,7 @@ What to notice:
 
 ### 64.10.4 INT8, FP4 and microscaling formats
 
-**INT8** represents a real value as $x \approx s \cdot q$ with an integer $q \in [-128, 127]$ and a scale $s$ per tensor or per channel; it is the mature inference format (Chapter 67 owns quantization; Chapter 73 owns LLM-specific methods). Below 8 bits, one scale per tensor cannot cover the spread of values, so the **OCP Microscaling (MX) specification** defines block formats: each block of 32 elements shares one 8-bit power-of-two scale (E8M0), with elements in FP8 (MXFP8), FP6 (MXFP6), FP4 (MXFP4, E2M1) or INT8 (MXINT8) [OCP 2023; Rouhani et al. 2023]. MXFP4 thus stores $32 \times 4 + 8 = 136$ bits per 32 values, 4.25 bits per value. NVIDIA's Blackwell GPUs support MX formats and an NVIDIA-specific FP4 variant with smaller blocks and an FP8 scale [NVIDIA 2024].
+**INT8** represents a real value as $x \approx s \cdot q$ with an integer $q \in [-128, 127]$ and a scale $s$ per tensor or per channel; it is the mature inference format (Chapter 67 owns quantization, §67.4–§67.6; Chapter 73 owns LLM-specific methods). Below 8 bits, one scale per tensor cannot cover the spread of values, so the **OCP Microscaling (MX) specification** defines block formats: each block of 32 elements shares one 8-bit power-of-two scale (E8M0), with elements in FP8 (MXFP8), FP6 (MXFP6), FP4 (MXFP4, E2M1) or INT8 (MXINT8) [OCP 2023; Rouhani et al. 2023]. MXFP4 thus stores $32 \times 4 + 8 = 136$ bits per 32 values, 4.25 bits per value. NVIDIA's Blackwell GPUs support MX formats and an NVIDIA-specific FP4 variant with smaller blocks and an FP8 scale [NVIDIA 2024].
 
 ::: example
 **Worked example — Bytes for a 70B-parameter model's weights.**
@@ -1029,7 +1029,7 @@ $$\text{MFU} = \frac{X \cdot (6N + 12\,L\,h\,s)}{n \cdot F_\text{peak}} \qquad \
 :::
 
 ::: mistake
-**"nvidia-smi says 100%, so we need more GPUs."** It says a kernel was always resident. A data-loader-starved job can show 100% when kernels run back to back on tiny batches, and 20% MFU. Check MFU, tensor activity and step-time breakdown before buying capacity; Chapter 70 covers GPU monitoring in production.
+**"nvidia-smi says 100%, so we need more GPUs."** It says a kernel was always resident. A data-loader-starved job can show 100% when kernels run back to back on tiny batches, and 20% MFU. Check MFU, tensor activity and step-time breakdown before buying capacity; §70.12 covers GPU monitoring in production.
 :::
 
 ## 64.12 Compute-bound versus memory-bound workloads
@@ -1051,7 +1051,7 @@ flowchart TB
 
 **Reading the diagram.** Start from a profiler trace (PyTorch Profiler, Nsight Systems) of a steady-state step. Gaps in the GPU timeline mean the host, input pipeline or synchronization is the bottleneck. Otherwise rank kernels by time and place each on the roofline: high DRAM activity means memory-bound, high tensor activity compute-bound, neither latency-bound. Failure points: optimizing a kernel that is 2% of step time, or profiling a warm-up step. Repeat after each fix; removing one bottleneck exposes the next.
 
-**Batch size moves the bound.** A weight layer's intensity is roughly the number of rows sharing each weight read (§64.9.2). Growing the batch is nearly free until the ridge (about 300 rows on an H100 in BF16), then time grows linearly. Hence QuickBite's GPU-served ETA model needs batches of 64 (§60.11), and inference servers batch dynamically (Chapter 66).
+**Batch size moves the bound.** A weight layer's intensity is roughly the number of rows sharing each weight read (§64.9.2). Growing the batch is nearly free until the ridge (about 300 rows on an H100 in BF16), then time grows linearly. Hence QuickBite's GPU-served ETA model needs batches of 64 (§60.11), and inference servers batch dynamically (§66.6).
 
 **LLM prefill versus decode (preview of Chapter 73).** **Prefill** processes a 2,000-token prompt at once: intensity about 2,000, compute-bound. **Decode** generates one token per sequence per step: intensity about the batch size, memory-bound unless hundreds of sequences are batched, and burdened further by KV-cache reads. The phases want different settings, motivating continuous batching and disaggregated prefill/decode (Chapter 73).
 

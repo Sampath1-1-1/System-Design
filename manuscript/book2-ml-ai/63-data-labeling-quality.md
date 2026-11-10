@@ -1235,7 +1235,7 @@ stateDiagram-v2
   Deprecated --> [*]
 ```
 
-**Reading the diagram.** States are statuses of one dataset version in a registry; transitions are owned gates: pilot agreement (§63.6) before labeling, a noise audit (§63.10) and slice checks (Chapter 61) before validation, and a reviewed datasheet before release. Relabeling produces a new version; deprecation must notify every model trained on the dataset via registry lineage (Chapter 69). The failure point is a gate not enforced in tooling; at hundreds of datasets, gates must be automated metadata checks.
+**Reading the diagram.** States are statuses of one dataset version in a registry; transitions are owned gates: pilot agreement (§63.6) before labeling, a noise audit (§63.10) and slice checks (Chapter 61) before validation, and a reviewed datasheet before release. Relabeling produces a new version; deprecation must notify every model trained on the dataset via registry lineage (§69.8.3). The failure point is a gate not enforced in tooling; at hundreds of datasets, gates must be automated metadata checks.
 
 ::: industry
 **Data cards at Google.** Pushkarna, Zaldivar and Kjartansson describe designing data cards iteratively with dataset creators and consumers across product, research and policy teams at Google, and propose principles and a framework that adapt each section's depth to its readers.
@@ -1426,7 +1426,7 @@ $$c = c_{\text{llm}} + (1 - f)\,c_h + f\,s\,c_h \qquad A = f\,a_{\text{llm}} + (
 **Answer.** Versioned guideline piloted to κ ≥ 0.7; redaction before tasks; a queue with $r = 3$ for the seed set and audits, $r = 1$ plus dynamic redundancy in steady state; 10% gold questions; Dawid–Skene aggregation with adjudication below 0.8 confidence; active learning plus a random stream to choose what to label; label store with source, guideline and annotator provenance; per-class agreement and gold accuracy on a dashboard; datasheet per version.
 
 **Q4. Fraud chargebacks arrive over 90 days. How do you build training and evaluation sets?**
-**Answer.** Compute the delay CDF, choose a maturity window (60 days for 95%), and train and evaluate only on matured orders with a time-based split. Downsample negatives in training and correct probabilities. Cover the blind spot with faster proxy labels tagged by source and with label-free drift monitoring (Chapter 70); consider delayed-feedback models. Address blocked-order selection bias with analyst labels on a sample.
+**Answer.** Compute the delay CDF, choose a maturity window (60 days for 95%), and train and evaluate only on matured orders with a time-based split. Downsample negatives in training and correct probabilities. Cover the blind spot with faster proxy labels tagged by source and with label-free drift monitoring (§70.8.2); consider delayed-feedback models. Address blocked-order selection bias with analyst labels on a sample.
 
 ### Advanced
 

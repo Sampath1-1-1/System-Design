@@ -448,7 +448,7 @@ $$\text{PSI} = \sum_{i=1}^{B} (q_i - p_i)\,\ln\frac{q_i}{p_i}$$
 | PSI | Divergence between the two binned distributions | dimensionless |
 :::
 
-A common industry rule of thumb reads PSI below 0.1 as stable, 0.1–0.2 as a moderate shift and above 0.2 as a significant shift. Chapter 70 discusses PSI alongside the Kolmogorov–Smirnov test and Jensen–Shannon divergence, and when each is appropriate.
+A common industry rule of thumb reads PSI below 0.1 as stable, 0.1–0.2 as a moderate shift and above 0.2 as a significant shift. §70.5 discusses PSI alongside the Kolmogorov–Smirnov test and Jensen–Shannon divergence, and when each is appropriate.
 
 ::: example
 **Worked example — Two checks on a batch of 5,000 orders.**
@@ -666,7 +666,7 @@ flowchart LR
   EA -.->|candidate| TEST["Final check on<br/>test split, once"]
 ```
 
-**Reading the diagram.** Each iteration starts from a written hypothesis, changes one thing, trains on the training split and scores on the validation split. Every run, including failures, is recorded in an experiment tracker (Chapter 69 covers tools such as MLflow) with its data version, code commit, configuration and metrics. Improving runs go to error analysis, which generates the next hypothesis. The test split is touched once, at the end, by the chosen candidate; reusing it for decisions makes its estimate optimistic. Failure points: unlogged runs that cannot be reproduced, and "improvements" smaller than run-to-run noise. Scaling: runs are independent, so the loop parallelizes across machines; large models move training itself onto many GPUs (Chapter 65).
+**Reading the diagram.** Each iteration starts from a written hypothesis, changes one thing, trains on the training split and scores on the validation split. Every run, including failures, is recorded in an experiment tracker (§69.7 covers tools such as MLflow) with its data version, code commit, configuration and metrics. Improving runs go to error analysis, which generates the next hypothesis. The test split is touched once, at the end, by the chosen candidate; reusing it for decisions makes its estimate optimistic. Failure points: unlogged runs that cannot be reproduced, and "improvements" smaller than run-to-run noise. Scaling: runs are independent, so the loop parallelizes across machines; large models move training itself onto many GPUs (Chapter 65).
 
 ::: recommendation
 **Recommendation — Measure noise before celebrating.** Train the same configuration with three to five different seeds. If the spread of validation MAE is ±0.05 minutes, a 0.03-minute "gain" is noise.
@@ -939,7 +939,7 @@ flowchart LR
   CUST -.->|orders only<br/>where ETA is short| DATA
 ```
 
-**Reading the diagram.** Solid arrows are immediate effects; dotted arrows close the loop through data over days or weeks. A restaurant with a long predicted ETA ranks lower and receives fewer orders, so the training data holds fewer recent observations for it, its estimate stays stale and possibly long, and it stays ranked low. Separately, customers order mostly where ETAs are short, so the data over-represents fast restaurants. The loop is self-confirming: the model's error cannot be corrected by data the model prevents from existing. Mitigations: reserve a small randomized exploration share (Chapter 68), log what was shown so later analysis can correct for selection, and monitor coverage (orders per restaurant) as well as accuracy. §60.3.4 adds the direct loop through dispatch and propensity logging.
+**Reading the diagram.** Solid arrows are immediate effects; dotted arrows close the loop through data over days or weeks. A restaurant with a long predicted ETA ranks lower and receives fewer orders, so the training data holds fewer recent observations for it, its estimate stays stale and possibly long, and it stays ranked low. Separately, customers order mostly where ETAs are short, so the data over-represents fast restaurants. The loop is self-confirming: the model's error cannot be corrected by data the model prevents from existing. Mitigations: reserve a small randomized exploration share (§68.11), log what was shown so later analysis can correct for selection, and monitor coverage (orders per restaurant) as well as accuracy. §60.3.4 adds the direct loop through dispatch and propensity logging.
 
 ::: warning
 **Warning — Some feedback loops destroy labels.** A fraud model that blocks a transaction never learns whether it was fraud: the blocked case has no label. Retrained only on unblocked transactions, the model sees fewer and fewer examples of the patterns it blocks and can forget them. The standard remedy is a small, randomly selected holdout that is allowed through (or reviewed by humans) to keep unbiased labels flowing (Chapter 82).
@@ -982,7 +982,7 @@ flowchart LR
   EVAL --> DEP[Deployment<br/>canary 5 percent]
 ```
 
-**Reading the diagram.** Each arrow is a recorded "was used by" relationship, stored in an ML metadata store (Chapter 69). Read it backwards to debug: if model v8 misbehaves, you can find the exact snapshot, feature definitions, commit, configuration and image that produced it. Read it forwards for impact analysis: if the 1 March snapshot is corrupt, every downstream model and deployment is found in one query. The storage boundaries are the snapshot, feature table and registry, all immutable. The failure point is any artifact produced outside the pipeline (a notebook model uploaded by hand) that breaks the chain.
+**Reading the diagram.** Each arrow is a recorded "was used by" relationship, stored in an ML metadata store (§69.8, §69.10). Read it backwards to debug: if model v8 misbehaves, you can find the exact snapshot, feature definitions, commit, configuration and image that produced it. Read it forwards for impact analysis: if the 1 March snapshot is corrupt, every downstream model and deployment is found in one query. The storage boundaries are the snapshot, feature table and registry, all immutable. The failure point is any artifact produced outside the pipeline (a notebook model uploaded by hand) that breaks the chain.
 
 ### 59.14.2 What "reproducible" means in practice
 

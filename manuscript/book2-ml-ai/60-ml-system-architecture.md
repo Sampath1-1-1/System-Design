@@ -126,7 +126,7 @@ Two related effects follow:
 - **Correction cascades.** A team needs a slightly different prediction (ETAs for grocery orders) and trains a small model that takes the restaurant ETA model's output as input and corrects it. Now improving the base model can break the correction model, which learned the base model's old mistakes. Prefer adding the new case as a feature to the base model, or train a separate model from raw features.
 - **Undeclared consumers.** Other systems silently read a model's output from a log or table. They become coupled to it without the owner knowing (§60.14).
 
-Mitigations: isolate models by product surface where the cost is acceptable; monitor per-slice behavior (by city, restaurant type, time of day) after every change rather than only the global metric; and treat every model change as a release with a shadow or canary phase (Chapter 66).
+Mitigations: isolate models by product surface where the cost is acceptable; monitor per-slice behavior (by city, restaurant type, time of day) after every change rather than only the global metric; and treat every model change as a release with a shadow or canary phase (§66.12).
 
 ### 60.3.4 Feedback loops
 
@@ -150,7 +150,7 @@ flowchart LR
 
 **Reading the diagram.** Solid arrows are the synchronous request path: the ETA model quotes a time, the customer chooses a restaurant, the order service records the order and dispatch assigns a courier. Dotted arrows are asynchronous and slow: actual delivery times become labels in the training data, and a nightly job retrains the model. Two loops close here. First, the model only receives labels for restaurants customers chose, which are disproportionately those with short quoted ETAs; restaurants that were quoted long ETAs get fewer orders and therefore fewer labels, so the model learns least where it is most pessimistic. Second, dispatch reads ETAs to decide when to send couriers, so the model's predictions change the very delivery times it is trying to predict. Failure points: self-reinforcing bias and oscillation after retraining; scaling does not help, design does.
 
-Direct loops are managed with **exploration** (occasionally showing items or estimates the model would not choose, so you collect unbiased labels), by logging the **propensity** (the probability that the system showed what it showed, so training can reweight), and by keeping a small randomized holdout. Hidden loops are harder: document which systems consume each model's output and review interactions when either changes. §59.13.2 shows a hidden ETA loop through restaurant ranking and the fraud loop that destroys labels. Chapter 68 treats feedback loops in recommendation in depth.
+Direct loops are managed with **exploration** (occasionally showing items or estimates the model would not choose, so you collect unbiased labels), by logging the **propensity** (the probability that the system showed what it showed, so training can reweight), and by keeping a small randomized holdout. Hidden loops are harder: document which systems consume each model's output and review interactions when either changes. §59.13.2 shows a hidden ETA loop through restaurant ranking and the fraud loop that destroys labels. §68.12 treats feedback loops in recommendation in depth.
 
 ### 60.3.5 Testing differences
 
@@ -281,9 +281,9 @@ Models decay as the world changes, so they must be retrained regularly (§59.13)
 3. **Feature computation.** Apply the same transformation code that serving will use (normalization, bucketing, encodings, aggregates). Materialize the result as a versioned training dataset.
 4. **Training.** Fit the model on the training split with configuration (hyperparameters, seed, feature list) recorded. Large models need distributed training (Chapter 65).
 5. **Evaluation and validation.** Compute offline metrics on a holdout, overall and per slice (each city, each restaurant category, peak hours). Compare with the currently deployed model. Run behavioral tests (monotonicity in distance). Only a candidate that passes every gate is "blessed".
-6. **Registration.** Store the artifact with its lineage (data version, code commit, configuration, metrics) in a **model registry**, which deployment reads from (Chapter 69).
+6. **Registration.** Store the artifact with its lineage (data version, code commit, configuration, metrics) in a **model registry**, which deployment reads from (§69.8).
 
-An **orchestrator** (Airflow, Kubeflow Pipelines, Flyte and similar, Chapter 69) runs the steps as a directed acyclic graph, retries failures and records metadata. An **artifact store** (object storage) holds datasets and models; a **metadata store** holds lineage.
+An **orchestrator** (Airflow, Kubeflow Pipelines, Flyte and similar, §69.9) runs the steps as a directed acyclic graph, retries failures and records metadata. An **artifact store** (object storage) holds datasets and models; a **metadata store** holds lineage.
 
 **Figure 60.4 — Reference architecture of a training pipeline.**
 
@@ -772,12 +772,12 @@ $$N_{\text{cpu}} = \left\lceil \frac{\lambda_{\text{peak}} \, c}{k \, u} \right\
 
 **Per order.** About 720 search-page ETAs are served per order (§60.6.2). Option A: $720 \times 0.000154 / 1{,}000 = \$0.00011$; option B on CPU: \$0.00041. Both meet the \$0.001 requirement of Table 60.11.
 
-**Interpretation.** For a tree model, the redundancy floor, not compute, sets the fleet; the deep model costs 3.7 times as much and, at this scale, is cheaper on CPUs than on GPUs because the GPUs would sit mostly idle off-peak. **Engineering implication.** Compute $C_{1k}$ before choosing hardware. GPUs win when per-prediction compute is large enough to fill them with batches; Chapter 64 explains why, and Chapter 66 covers autoscaling, which would cut both options' off-peak cost.
+**Interpretation.** For a tree model, the redundancy floor, not compute, sets the fleet; the deep model costs 3.7 times as much and, at this scale, is cheaper on CPUs than on GPUs because the GPUs would sit mostly idle off-peak. **Engineering implication.** Compute $C_{1k}$ before choosing hardware. GPUs win when per-prediction compute is large enough to fill them with batches; Chapter 64 explains why, and §66.9 covers autoscaling, which would cut both options' off-peak cost.
 :::
 
 ### 60.11.2 Batching: a preview
 
-Accelerators are efficient only on batches: one GPU kernel over 64 rows costs little more than over 1 row. A server can wait a few milliseconds to fill a batch, trading latency for throughput ($T(B) = t_0 + B t_1$, §4.18.6; §23.8.1). Crankshaw et al.'s Clipper adapted the batch size per model to stay within the latency objective [Crankshaw et al. 2017]. Every millisecond of batching delay comes out of the model's 20 ms budget in Table 60.12; Chapter 66 covers dynamic batching.
+Accelerators are efficient only on batches: one GPU kernel over 64 rows costs little more than over 1 row. A server can wait a few milliseconds to fill a batch, trading latency for throughput ($T(B) = t_0 + B t_1$, §4.18.6; §23.8.1). Crankshaw et al.'s Clipper adapted the batch size per model to stay within the latency objective [Crankshaw et al. 2017]. Every millisecond of batching delay comes out of the model's 20 ms budget in Table 60.12; §66.6 covers dynamic batching.
 
 ## 60.12 Prediction quality as a system property
 
@@ -787,7 +787,7 @@ Accelerators are efficient only on batches: one GPU kernel over 64 rows costs li
 **Definition — Prediction-quality SLO.** A service-level objective on the correctness of predictions, measured as an indicator over a window once labels arrive (for example "≥ 80% of orders delivered within ±5 minutes of the checkout ETA, over 7 days"), together with proxy indicators available before labels arrive (prediction distribution, feature null rates, fallback rate).
 :::
 
-Availability and latency SLOs (§39.6) tell you whether the system answered; a quality SLO tells you whether the answer was good. Treat it like any SLO: it has an error budget (here 20% of orders may be outside ±5 minutes), a burn rate, an owner and a policy for what happens when it is exhausted (freeze model changes, roll back, retrain) [Huyen 2022]. Two differences from latency SLOs matter. Labels are **delayed** (35 minutes for ETA, up to 60–90 days for fraud chargebacks), so alerting relies on proxies; and quality varies by **slice**, so a global SLO must be backed by per-city indicators (Chapter 70).
+Availability and latency SLOs (§39.6) tell you whether the system answered; a quality SLO tells you whether the answer was good. Treat it like any SLO: it has an error budget (here 20% of orders may be outside ±5 minutes), a burn rate, an owner and a policy for what happens when it is exhausted (freeze model changes, roll back, retrain) [Huyen 2022]. Two differences from latency SLOs matter. Labels are **delayed** (35 minutes for ETA, up to 60–90 days for fraud chargebacks), so alerting relies on proxies; and quality varies by **slice**, so a global SLO must be backed by per-city indicators (§70.9.2).
 
 ### 60.12.2 Fallbacks and graceful degradation
 

@@ -196,7 +196,7 @@ A typed payload is declared in a schema language such as Apache Avro or Protocol
 What to notice:
 
 - `eta_shown_min` is a union with `null` and a default, so old events without it still decode (§61.4.4).
-- `ranking_model` records which model produced the list; without it, recommendation training cannot correct for the policy that chose what users saw (Chapter 68).
+- `ranking_model` records which model produced the list; without it, recommendation training cannot correct for the policy that chose what users saw (§68.12).
 - Logging impressions, not just clicks, records the denominators (§59.5.2): a model of click-through needs the restaurants that were shown and *not* tapped.
 
 **Client versus server tracking.** Events emitted by phones arrive late (offline devices), duplicated (retries) and occasionally forged. Events emitted by backend services are timely and trustworthy but miss pure-UI interactions. A common split: business facts (orders, payments, status changes) come from the server or CDC; interaction facts (impressions, scrolls) come from the client, through a **collector** service that validates, stamps `received_time` and writes to Kafka.
@@ -1164,7 +1164,7 @@ Governance is the set of rules and mechanisms that decide who may use which data
 
 ## 61.15 Orchestration
 
-An **orchestrator** runs pipelines as dependency graphs on schedules or events, retries failures, enforces SLAs and records history. Three styles are common (as of 2026; Chapter 69 covers ML-specific orchestration):
+An **orchestrator** runs pipelines as dependency graphs on schedules or events, retries failures, enforces SLAs and records history. Three styles are common (as of 2026; §69.9 covers ML-specific orchestration):
 
 - **Apache Airflow** defines **DAGs** of tasks in Python; a scheduler runs each task instance for a logical date, which maps naturally to daily partitions and backfills (`airflow dags backfill`) [Apache Airflow Docs].
 - **Dagster** centers on **software-defined assets**: you declare the tables and models to exist and how each is computed from others; the orchestrator derives the graph, tracks each asset partition's materialization, and can rerun only stale partitions [Dagster Docs].

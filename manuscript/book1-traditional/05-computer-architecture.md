@@ -1175,7 +1175,7 @@ Writing 100-byte records to a log, each write call has fixed cost $F = 50$ µs a
 3. $B = 1000$: $T = 50 + 100 = 150$ µs; $X = 1000 / 150 \text{ µs} \approx 6.67$ million records/s.
 4. Ceiling: $X_{max} = 1 / 0.1 \text{ µs} = 10$ million records/s.
 
-**Interpretation.** Batching 100 records multiplies throughput by about 84× while raising per-batch latency only from 50 µs to 60 µs; going to 1000 gains another 4× in throughput but per-batch latency rises 2.5×, plus the time spent *waiting* for the batch to fill. **Engineering implication.** Batch until the fixed cost is amortized (a few times $F/v$ items), then stop; bound the wait with a timer. Kafka producers (`linger.ms`, §31.6), group commit in databases (§13.5) and dynamic batching in model serving (Ch 66) all implement this curve.
+**Interpretation.** Batching 100 records multiplies throughput by about 84× while raising per-batch latency only from 50 µs to 60 µs; going to 1000 gains another 4× in throughput but per-batch latency rises 2.5×, plus the time spent *waiting* for the batch to fill. **Engineering implication.** Batch until the fixed cost is amortized (a few times $F/v$ items), then stop; bound the wait with a timer. Kafka producers (`linger.ms`, §31.6), group commit in databases (§13.5) and dynamic batching in model serving (§66.6) all implement this curve.
 :::
 
 ### 5.12.2 How hardware facts drive system design decisions
@@ -1199,7 +1199,7 @@ flowchart LR
 | Hardware fact (§) | Design decision | Examples in this book |
 |---|---|---|
 | Sequential ≫ random on HDD (~620×) and still better on SSD (§5.6) | Write sequentially; read in large chunks | Write-ahead logs (§13.5), LSM trees (§13.8), Kafka (§31.13) |
-| Fixed cost per operation (§5.7, §5.12) | Batch and pipeline | Kafka batching (§31.6), HTTP/2 multiplexing (§7.9), dynamic batching (Ch 66) |
+| Fixed cost per operation (§5.7, §5.12) | Batch and pipeline | Kafka batching (§31.6), HTTP/2 multiplexing (§7.9), dynamic batching (§66.6) |
 | Memory hierarchy steps of 3–1000× (§5.5) | Cache hot data close to its consumer | Buffer pools (§13.4), Redis (§20.6), CDNs (Ch 21) |
 | Cache lines, prefetching, NUMA (§5.4, §5.10) | Keep related data together and near the compute | Columnar storage (§13.13), data locality in Spark (§29.7) |
 | Devices need queue depth (§5.6.5) | Concurrency in the I/O path | io_uring and event loops (§6.13), connection pools (§7.16) |

@@ -6,7 +6,7 @@ On a Tuesday evening, QuickBite's delivery-time (ETA) service answered 40,000 re
 
 This is the problem this chapter solves. A traditional service fails loudly: it throws an exception, a health check fails, an error counter rises, and Chapter 40's observability stack pages someone. A machine learning (ML) model fails quietly: it keeps returning well-formed, confident answers that are wrong. **ML monitoring** is the discipline of detecting that kind of failure: watching the data a model consumes, the predictions it produces and, once they arrive, the outcomes it was trying to predict, and turning those observations into alerts that are timely, actionable and not drowned in noise.
 
-Chapter 59 introduced monitoring (§59.12) and PSI (§59.7.2); Chapter 40 owns metrics, logs, traces and alerting; Chapter 69 owns the continuous-training pipeline. This chapter owns drift detection and ML-specific monitoring, and ends with an end-to-end monitoring plan for QuickBite's ETA model.
+Chapter 59 introduced monitoring (§59.12) and PSI (§59.7.2); Chapter 40 owns metrics, logs, traces and alerting; Chapter 69 owns the continuous-training pipeline (§69.5), the promotion gate (§69.5.3) and rollback (§69.13). This chapter owns drift detection and ML-specific monitoring, and ends with an end-to-end monitoring plan for QuickBite's ETA model.
 
 ::: note
 **QuickBite assumptions used in this chapter.** Teaching assumptions reused from earlier chapters, not measurements of a real company. 500,000 orders per day; ETA predictions peak at 40,000 per second (2,000 search RPS × 20 restaurants), about 360 million per day (§60.6); 20 cities × 200 zones = 4,000 delivery zones (Ch 62). ETA quality SLO: at least 80% of orders delivered within ±5 minutes of the checkout ETA over a 7-day rolling window, and MAE at most 4.5 min (§60.12.1, Table 60.11); the current model delivers about 82% within ±5 min and an MAE of about 4.3 min. The ETA model is retrained nightly, so model age stays under 30 hours (§60.15). ETA labels arrive when orders are delivered: median 35 min, nearly all within 60 min (§59.12.2). Fraud rate 0.5% (2,500 frauds per day); chargebacks arrive 40% within 15 days, 75% within 30, 95% within 60 and 100% within 90 (§63.4.2). One retraining cycle costs about \$1,000 and each extra minute of ETA MAE costs about \$2,000 per day (§59.13.1). **New in this chapter:** the fraud model flags 0.7% of orders (3,500 per day) for review, with 50% precision and 70% recall when it shipped.
@@ -1035,18 +1035,18 @@ Monitor both as gauges with SLAs derived from measured decay. For QuickBite's ET
 
 ## 70.12 Operational metrics
 
-Models are services, and all of Chapter 40's operational monitoring applies: the four golden signals (latency, traffic, errors, saturation) per model version, with histograms for latency (§40.5.2). Chapter 66 covers serving-specific details; Table 70.6 lists what ML adds.
+Models are services, and all of Chapter 40's operational monitoring applies: the four golden signals (latency, traffic, errors, saturation) per model version, with histograms for latency (§40.5.2). §66.15 covers serving-specific details; Table 70.6 lists what ML adds.
 
 **Table 70.6 — Operational metrics specific to ML serving.**
 
 | Metric | Why it matters | QuickBite ETA value |
 |---|---|---|
 | Latency by stage (features, inference, post-processing) | Feature reads, not the model, usually dominate | p99 within the 100 ms budget (§60.10) |
-| Batch size and queue time | Dynamic batching trades latency for throughput (Chapter 66) | CPU tree model, no batching |
+| Batch size and queue time | Dynamic batching trades latency for throughput (§66.6) | CPU tree model, no batching |
 | GPU or CPU utilization, memory | Saturation and cost; low GPU utilization wastes money (Chapter 64) | 3-node CPU fleet (§60.11) |
 | Fallback rate by rung | Silent degradation (§60.12.2) | ~1% normally; ticket at 3%, page at 10% |
 | Model version mix | Canary and rollback state | One version except during canaries |
-| Cost per 1,000 predictions | Unit economics; detects runaway fleets | About \$0.0001 per order (§60.15) |
+| Cost per 1,000 predictions | Unit economics; detects runaway fleets | About \$0.00015 per 1,000, \$0.0001 per order (§60.11) |
 
 Cost per prediction is the metric most often missing: divide the fleet's hourly cost by predictions served, per model, and alert on step changes; a doubled cost at flat traffic means an autoscaler or batching regression (Chapters 73 and 79).
 
@@ -1112,7 +1112,7 @@ flowchart LR
 
 ### 70.14.1 Three kinds of trigger
 
-§59.13.1 derived a retraining cadence from the decay rate; Chapter 69 builds the continuous-training pipeline. This section decides what *starts* it. **Scheduled** retraining runs on a calendar; **drift-triggered** retraining when input drift crosses a threshold; **performance-triggered** retraining when measured or estimated quality degrades. Schedules waste compute and react slowly; drift triggers fire on harmless shift, sleep through concept drift and wake for bugs; performance triggers wait for labels and, unguarded, retrain on the corruption that caused the drop.
+§59.13.1 derived a retraining cadence from the decay rate; §69.5 builds the continuous-training pipeline and §69.12 its monitoring hooks. This section decides what *starts* it. **Scheduled** retraining runs on a calendar; **drift-triggered** retraining when input drift crosses a threshold; **performance-triggered** retraining when measured or estimated quality degrades. Schedules waste compute and react slowly; drift triggers fire on harmless shift, sleep through concept drift and wake for bugs; performance triggers wait for labels and, unguarded, retrain on the corruption that caused the drop.
 
 **Figure 70.11 — A guarded retraining trigger.**
 
@@ -1129,7 +1129,7 @@ stateDiagram-v2
   Canary --> Serving: promote or roll back
 ```
 
-**Reading the diagram.** A trigger moves the model from *Serving* to *Suspect*, not straight to training. If the training window fails schema, range or null checks, the state becomes *Blocked*, the data owner is paged, and the bad window is excluded from future training sets. A candidate must beat the current model on recent matured labels, then pass a canary (§43.6). Every exit returns to *Serving*, so a failed trigger costs compute, never quality. A cooldown on the *Suspect* transition prevents retraining storms.
+**Reading the diagram.** A trigger moves the model from *Serving* to *Suspect*, not straight to training. If the training window fails schema, range or null checks, the state becomes *Blocked*, the data owner is paged, and the bad window is excluded from future training sets. A candidate must beat the current model on recent matured labels (the promotion gate of §69.5.3), then pass a canary (§43.6, §66.12). Every exit returns to *Serving*, so a failed trigger costs compute, never quality. A cooldown on the *Suspect* transition prevents retraining storms.
 
 ### 70.14.2 Code example: scheduled versus triggered retraining
 
@@ -1246,7 +1246,7 @@ What to notice:
 
 1. Performance trigger with gate: $5 \times 1{,}000 = \$5$k retraining $+ \$64$k excess error $= \$69$k. Weekly: $\$15$k $+ \$62$k $= \$77$k. Daily with gate: $\$104$k $+ \$52$k $= \$156$k.
 2. Daily with gate has the lowest error but pays for 104 retrains, each including an engineer's review.
-3. If automated gates cut the retraining cost to \$100 (no human review), daily with gate costs $\$10.4$k $+ \$52$k $= \$62$k and becomes cheapest; the triggered policy costs $\$0.5$k $+ \$64$k $= \$64.5$k.
+3. If automated gates cut the retraining cost to \$100 (no human review; §69.5.2 estimates about \$48 for QuickBite's automated nightly run), daily with gate costs $\$10.4$k $+ \$52$k $= \$62$k and becomes cheapest; the triggered policy costs $\$0.5$k $+ \$64$k $= \$64.5$k.
 
 *Interpretation:* which policy wins depends on the cost of one retrain, exactly as $T^* = \sqrt{2C/(kr)}$ in §59.13.1 predicts. *Engineering implication:* combine them: a schedule as the default (cadence from §59.13.1), a performance trigger as the backstop for sudden concept drift, a cooldown against storms, and a data-validation gate in front of *every* path. Treat input drift as a reason to look, not to retrain.
 :::

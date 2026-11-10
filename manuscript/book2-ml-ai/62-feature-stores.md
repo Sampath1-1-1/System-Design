@@ -176,7 +176,7 @@ Long windows are cheap to serve but expensive to compute naively (summing 30 day
 
 ### 62.3.6 Cross features
 
-A **cross feature** combines two or more features into one, most commonly by taking the Cartesian product of categories (`city × hour_of_day`) or the product of numbers (`courier_load × is_peak`). Crosses let linear and shallow models represent interactions such as "rush hour in Lisbon is different from rush hour in Porto." Google's Wide & Deep model paired a wide linear part over crossed features with a deep network over embeddings [Cheng et al. 2016]. Crosses multiply cardinality: 20 cities × 24 hours is 480 values, but `customer × restaurant` is $10^7 \times 5 \times 10^4 = 5 \times 10^{11}$ possible pairs, of which only the observed ones can be stored. Such pair features become their own entity in the online store and are often its largest table (§62.11). Deep models learn many crosses implicitly; recommendation architectures that cross features explicitly are covered in Chapter 68.
+A **cross feature** combines two or more features into one, most commonly by taking the Cartesian product of categories (`city × hour_of_day`) or the product of numbers (`courier_load × is_peak`). Crosses let linear and shallow models represent interactions such as "rush hour in Lisbon is different from rush hour in Porto." Google's Wide & Deep model paired a wide linear part over crossed features with a deep network over embeddings [Cheng et al. 2016]. Crosses multiply cardinality: 20 cities × 24 hours is 480 values, but `customer × restaurant` is $10^7 \times 5 \times 10^4 = 5 \times 10^{11}$ possible pairs, of which only the observed ones can be stored. Such pair features become their own entity in the online store and are often its largest table (§62.11). Deep models learn many crosses implicitly; recommendation architectures that cross features explicitly are covered in §68.9.
 
 #### Common misconceptions
 
@@ -724,7 +724,7 @@ Training and serving are different programs, often in different languages, readi
 | Feature drift | Ratings inflate across the platform | Served equals recomputed, but differs from training |
 | Feedback loop | The model's ETAs change which restaurants get orders (§60.3.4) | Population shifts over weeks |
 
-The last two are not bugs in a pipeline: served and recomputed values agree, but the world has moved since training. Distinguishing **skew** (two computations disagree on the same input) from **drift** (one computation, changing inputs) is the first job of a detector, because the fixes differ: fix the code for skew, retrain or adapt for drift (Chapter 70 owns drift detection).
+The last two are not bugs in a pipeline: served and recomputed values agree, but the world has moved since training. Distinguishing **skew** (two computations disagree on the same input) from **drift** (one computation, changing inputs) is the first job of a detector, because the fixes differ: fix the code for skew, retrain or adapt for drift (Chapter 70 owns drift detection, §70.4–§70.7).
 
 ### 62.9.2 Detection: log, recompute, compare
 
@@ -752,14 +752,14 @@ flowchart LR
 ::: formula
 **Skew and shift statistics per feature**
 
-$$\text{mismatch}_f = \frac{1}{N} \sum_{i=1}^{N} \mathbb{1}\big[\, |s_{i,f} - r_{i,f}| > \tau_f \,\big] \qquad \text{PSI}_f = \sum_{b=1}^{B} (a_b - e_b) \ln \frac{a_b}{e_b}$$
+$$\text{mismatch}_f = \frac{1}{N} \sum_{i=1}^{N} \mathbb{1}\big[\, |s_{i,f} - r_{i,f}| > \tau_f \,\big] \qquad \text{PSI}_f = \sum_{b=1}^{B} (q_b - p_b) \ln \frac{q_b}{p_b}$$
 
 | Symbol | Meaning | Units |
 |---|---|---|
 | $s_{i,f}$, $r_{i,f}$ | Served and recomputed value of feature $f$ for logged request $i$ | feature units |
 | $\tau_f$ | Tolerance for numerical noise | feature units |
 | $N$ | Number of audited requests | count |
-| $e_b$, $a_b$ | Share of training and served values in bin $b$ | dimensionless |
+| $p_b$, $q_b$ | Share of training (reference) and served (current) values in bin $b$, as in §59.7.2 | dimensionless |
 | $B$ | Number of bins (often deciles of the training distribution) | count |
 :::
 

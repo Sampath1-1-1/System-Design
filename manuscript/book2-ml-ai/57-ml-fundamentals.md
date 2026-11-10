@@ -375,7 +375,7 @@ sequenceDiagram
 3. Orders from 60 days ago: $0.5\% \times 0.95 = 0.475\%$.
 4. A training set built from "the last 30 days" mixes these maturities; for orders spread evenly over 0–30 days the average observed rate is well under half of the true 0.5%.
 
-**Interpretation.** More than half of the recent fraud is labeled "legitimate". **Engineering implication.** Train and evaluate only on orders older than the label maturity window (here 90 days), or model the delay explicitly. Use faster proxy labels (analyst review, customer dispute tickets) for monitoring recent performance (Chapter 70).
+**Interpretation.** More than half of the recent fraud is labeled "legitimate". **Engineering implication.** Train and evaluate only on orders older than the label maturity window (here 90 days), or model the delay explicitly. Use faster proxy labels (analyst review, customer dispute tickets) for monitoring recent performance (§70.8).
 :::
 
 ### 57.6.3 Label leakage
@@ -1275,7 +1275,7 @@ flowchart LR
   AB -.->|metrics pipeline| WH[(Experiment warehouse)]
 ```
 
-**Reading the diagram.** A model moves left to right through gates of increasing cost and realism. Offline metrics are cheap but only approximate. **Shadow** deployment runs the new model on real requests without using its output, which tests latency and errors (Chapter 66). A **canary** exposes a small slice of users and protects against outright breakage (§43.6). The A/B test is the only gate that measures causal business impact. Metrics flow asynchronously to an experiment warehouse. Failure points are each gate's blind spots: offline cannot see feedback effects; a canary is too small to detect a 1% revenue change. The launch keeps a small long-term **holdout** to measure effects that accumulate over months.
+**Reading the diagram.** A model moves left to right through gates of increasing cost and realism. Offline metrics are cheap but only approximate. **Shadow** deployment runs the new model on real requests without using its output, which tests latency and errors (§66.12). A **canary** exposes a small slice of users and protects against outright breakage (§43.6). The A/B test is the only gate that measures causal business impact. Metrics flow asynchronously to an experiment warehouse. Failure points are each gate's blind spots: offline cannot see feedback effects; a canary is too small to detect a 1% revenue change. The launch keeps a small long-term **holdout** to measure effects that accumulate over months.
 
 ## 57.14 A/B testing statistics for ML launches
 

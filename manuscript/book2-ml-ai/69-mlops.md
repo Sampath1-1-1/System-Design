@@ -151,7 +151,7 @@ flowchart TB
   L1 --> L2[Data tests on fixtures<br/>schema, ranges, contracts]
   L2 --> L3[Pipeline smoke test<br/>1 percent sample, 1 epoch]
   L3 --> L4[Behavioral tests<br/>MFT, INV, DIR]
-  L4 --> L5[Training-serving parity<br/>same input, same output]
+  L4 --> L5[Training–serving parity<br/>same input, same output]
   L5 --> OK{All green?}
   OK -->|yes| MERGE[(Merge and publish<br/>images by digest)]
   OK -->|no| FIX([Block merge])
@@ -288,7 +288,7 @@ A bakery bakes bread every morning (a schedule), bakes an extra batch when a del
 |---|---|---|---|---|
 | Schedule | Cron time (nightly, weekly) | Predictable cost and load; easy to reason about | Wastes runs when nothing changed; slow on sudden shifts | ETA nightly; demand forecast weekly |
 | Data volume | $N$ new labeled examples since last run | Ties retraining to information gained | Bursty; needs label counting | Fraud: every 20,000 new chargeback labels |
-| Drift | Input or prediction distribution shifts beyond a threshold (Chapter 70) | Reacts before labels arrive | Drift is a proxy; may not hurt accuracy | Ranking after a menu redesign |
+| Drift | Input or prediction distribution shifts beyond a threshold (§70.5, §70.14) | Reacts before labels arrive | Drift is a proxy; may not hurt accuracy | Ranking after a menu redesign |
 | Performance | Labeled metric degrades beyond tolerance | Measures what matters | Waits for labels; may be too late | ETA city slice MAE up 0.5 min |
 
 Two rules keep triggers safe. First, **all triggers enter one queue** per model, with deduplication (a drift alert during a scheduled run does not start a second run) and a **rate limit** (for example, at most four runs a day), so an alert storm cannot become a training storm. Second, **triggers only start runs; they never promote**. Every candidate passes the same gate, however it was triggered.
@@ -347,7 +347,7 @@ $$B = k \cdot \Delta E \cdot H \qquad \text{retrain when } B > C \iff \Delta E >
 
 3. $\Delta E^{*} = 1{,}100 / (15{,}000 \times 7) = 0.0105$, so the run must catch about 1.05% more of fraud dollars.
 
-*Interpretation:* the ETA run is cheap because review is automated, so even small gains justify nightly runs. The fraud run is dominated by human review, so it pays only if new attack patterns have appeared. *Engineering implication:* the cheapest way to make continuous training pay is to automate the evidence a reviewer needs (gate reports, slice tables) so that $C$ shrinks; and for expensive models, let data-volume and drift triggers, not the calendar, decide when to run.
+*Interpretation:* the ETA run is cheap because review is automated, so even small gains justify nightly runs. §59.13.1 assumed \$1,000 per cycle because an engineer reviewed every evaluation report; at $C = \$48$ its optimal interval $T^{*} = \sqrt{2 \times 48 / (2{,}000 \times 0.05)} = 0.98$ days, which is why automation turns the twice-weekly cadence of §59.13.1 into a nightly one. The fraud run is dominated by human review, so it pays only if new attack patterns have appeared. *Engineering implication:* the cheapest way to make continuous training pay is to automate the evidence a reviewer needs (gate reports, slice tables) so that $C$ shrinks; and for expensive models, let data-volume and drift triggers, not the calendar, decide when to run.
 :::
 
 ### 69.5.3 Guardrails before promotion
@@ -1163,7 +1163,7 @@ $$\text{TCO} = E\,s + C\,(1 + p) + F \qquad C^{*} = \frac{(E_b - E_m)\,s + (F_b 
 2. $\text{TCO}_m = 2 \times 250{,}000 + 800{,}000 \times 1.30 + 150{,}000 = 500{,}000 + 1{,}040{,}000 + 150{,}000 = \$1{,}690{,}000$.
 3. Break-even: $C^{*} = (4 \times 250{,}000 + (50{,}000 - 150{,}000)) / 0.30 = 900{,}000 / 0.30 = \$3{,}000{,}000$ a year.
 
-*Interpretation:* managed is \$660,000 a year cheaper at QuickBite's spend; building wins only when compute exceeds about \$3 million a year, or when needs are unusual enough that managed services force workarounds. Four engineers' salaries equal a 30% premium on \$3 million. *Engineering implication:* revisit the decision as spend grows, and keep the exit cost low by owning the *interfaces* (registry contract, pipeline definitions, prediction-log schema) even when vendors run the implementation.
+*Interpretation:* managed is \$660,000 a year cheaper at QuickBite's spend; building wins only when compute exceeds about \$3 million a year, or when needs are unusual enough that managed services force workarounds. Four engineers' salaries, less the \$100,000 difference in fixed fees, equal a 30% premium on \$3 million. *Engineering implication:* revisit the decision as spend grows, and keep the exit cost low by owning the *interfaces* (registry contract, pipeline definitions, prediction-log schema) even when vendors run the implementation.
 :::
 
 **Table 69.9 — Build versus buy decision guide.**

@@ -143,7 +143,7 @@ The best ranker costs about 100 µs of CPU per candidate; applied to every deliv
 ```mermaid
 flowchart LR
   CAT[(5M dishes)] -->|geo + open now| EL["Eligible<br/>~120,000"]
-  EL -->|4 sources in parallel| CG["Candidates<br/>~1,000"]
+  EL -->|5 sources in parallel| CG["Candidates<br/>~1,000"]
   CG -->|rules| FI["Filtered<br/>~900"]
   FI -->|GBDT, ~5 µs each| LR["Light ranker<br/>keeps 300"]
   LR -->|multi-task net,<br/>~100 µs each| HR["Heavy ranker<br/>scores 300"]
@@ -429,7 +429,7 @@ Simple sources are among the most valuable. **Popular in your zone** (7-day orde
 ```mermaid
 flowchart LR
   REQ([Request: user, address, time]) --> ORCH[Orchestrator]
-  ORCH -->|user vector| TT["Two-tower ANN<br/>quota 400"]
+  ORCH -->|user vector| TT["Two-tower ANN<br/>quota 500"]
   ORCH -->|last 5 orders| I2I["Item-to-item table<br/>quota 200"]
   ORCH -->|zone id| POP["Zone popular and<br/>trending, quota 150"]
   ORCH -->|user id| FAV["Favorites and<br/>reorders, quota 100"]
@@ -645,7 +645,7 @@ flowchart LR
 :::
 
 ::: mistake
-**"Retrain the user tower more often; the item index can wait."** The towers form one space only within a training run. Retraining one tower without re-encoding the other drifts the two spaces apart, and recall collapses without any error. Version the two towers, the ID vocabulary and the index as one artifact (§58.6, Chapter 69).
+**"Retrain the user tower more often; the item index can wait."** The towers form one space only within a training run. Retraining one tower without re-encoding the other drifts the two spaces apart, and recall collapses without any error. Version the two towers, the ID vocabulary and the index as one artifact (§58.6, §69.8).
 :::
 
 ## 68.7 Ranking models
@@ -805,7 +805,7 @@ $$M = \sum_{t} V_t \, d_t \, s \,(1 + k) \qquad P_\text{collide} \approx 1 - e^{
 1. Weights: $10^8 \times 128 \times 4 = 5.12 \times 10^{10}$ bytes $= 51.2$ GB. FP16: 25.6 GB; INT8 with per-row scale: about 12.8 GB.
 2. Training with dense Adam: $51.2 \times 3 = 153.6$ GB, two 80 GB GPUs for one table. Row-wise Adagrad adds one value per row: $10^8 \times 4 = 0.4$ GB.
 3. Hashing QuickBite's 4 million weekly active customers into $m = 10^7$ rows instead of one row per registered customer: $P_\text{collide} \approx 1 - e^{-0.4} = 33\%$. Into $m = 4 \times 10^7$: $1 - e^{-0.1} = 9.5\%$.
-4. All-to-all for a sharded model with $b = 4{,}096$, $T = 40$, $d = 128$, FP16 ($s_c = 2$): $4{,}096 \times 40 \times 128 \times 2 = 41.9$ MB received per GPU per step, and the same again for gradients in backward; at 50 GB/s per GPU (Chapter 65 assumptions) about 0.84 ms each way.
+4. All-to-all for a sharded model with $b = 4{,}096$, $T = 40$, $d = 128$, FP16 ($s_c = 2$): $4{,}096 \times 40 \times 128 \times 2 = 41.9$ MB received per GPU per step, and the same again for gradients in backward; at 50 GB/s per GPU (one 400 Gb/s NIC per GPU, §65.6.2) about 0.84 ms each way.
 
 **Interpretation.** A single 100M-row table already exceeds one accelerator for training, and an industrial model has dozens of tables. Hashing trades memory for collisions, and the collision rate is set by *active* IDs, not registered ones. **Engineering implication.** QuickBite's tables (customers 2.56 GB, dishes 1.28 GB at $d = 64$, §58.6) fit on one GPU, so plain data parallelism suffices (§65.8); the sharding below is for catalogs and user bases one to two orders of magnitude larger.
 :::

@@ -24,7 +24,7 @@ After this chapter you should be able to:
 - Explain model sharding, multi-model serving, model multiplexing and GPU sharing with MIG and MPS.
 - Size an autoscaled inference fleet with headroom for reaction time, and estimate cold-start time from model size and storage bandwidth.
 - Design version routing and a safe rollout (shadow, canary, A/B, interleaving) with automated analysis and rollback.
-- Size a batch-scoring job and make its output writes idempotent.
+- Size a batch-inference job and make its output writes idempotent.
 - Apply timeouts, fallbacks, circuit breakers, load shedding and hedging to an inference service, and instrument it for observability.
 
 ## 66.2 Prerequisites
@@ -498,7 +498,7 @@ fit: t0 = 0.051 ms per batch, t1 = 4.66 us per row, ceiling 1/t1 = 214,761 rows/
 
 What to notice:
 
-- **The shape, not the numbers.** Cost per row falls about tenfold from batch 1 to 64, then flattens once fixed overhead (dispatch, operator launch, weight reads) is amortized. Expect the same shape anywhere, with the knee elsewhere.
+- **The shape, not the numbers.** Cost per row falls about eightfold from batch 1 to 64 in this run, then flattens once fixed overhead (dispatch, operator launch, weight reads) is amortized. Expect the same shape anywhere, with the knee elsewhere.
 - **CPU batching helps too.** Scoring 20 restaurants as one batch is several times cheaper than 20 calls; the ETA service scores a search page as one batch.
 - **Warm-up and medians.** The first calls are slower (memory allocation, kernel selection), so the program discards them and reports the median; benchmarking without warm-up overstates $t_0$ (§23.5.4, §66.10).
 - **A line is an approximation.** Some sizes (16 here) show steps from matrix tiling; GPUs show stronger steps (§64.4). Decide from measured points.
@@ -531,7 +531,7 @@ What to notice:
 **Definition — Cost per 1,000 predictions.** The fully loaded hourly price of the serving hardware divided by the predictions it serves per hour, times 1,000. It depends on the device's throughput at a batch size that meets the latency objective *and* on the utilization the fleet actually achieves, including idle redundancy.
 :::
 
-A GPU is a bus and a CPU core a taxi: the full bus is cheaper per passenger, the bus with three riders is not. GPUs pay off when each prediction needs much arithmetic (a CNN, not a tree walk), when traffic fills batches within the budget (§66.6), and when the redundancy floor does not leave them idle.
+A GPU is a bus and a CPU core a taxi: the full bus is cheaper per passenger, the bus with three riders is not. GPUs pay off when each prediction needs much arithmetic (a CNN, not a tree walk), when traffic fills batches within the budget (§66.6), and when the redundancy floor does not leave them idle. The formula below is the per-device form of §60.11's fleet cost.
 
 ::: formula
 **Cost per 1,000 predictions and the GPU break-even speedup**
@@ -594,7 +594,7 @@ flowchart TB
 **Definition — Model-parallel serving, multi-model serving and multiplexing.** **Model-parallel serving** splits one model's weights across several devices because they do not fit on one: **tensor parallelism** splits each layer's matrices, **pipeline parallelism** places consecutive layers on different devices, and **embedding sharding** places rows of large embedding tables on different hosts. **Multi-model serving** hosts many models in one server process or GPU. **Model multiplexing** routes each request for one of many models to a replica that already has that model loaded, loading it on demand and evicting the least recently used model when memory is full.
 :::
 
-A billion-user embedding table (10⁹ × 128 × 4 bytes = 512 GB, §58.6) cannot fit on an 80 GB GPU and must be split; QuickBite's 300 per-chain demand models are each small and mostly idle, and a replica each would pay the floor of §66.7 three hundred times.
+A billion-user embedding table (10⁹ × 128 × 4 bytes = 512 GB, §65.8) cannot fit on an 80 GB GPU and must be split; QuickBite's 300 per-chain demand models are each small and mostly idle, and a replica each would pay the floor of §66.7 three hundred times.
 
 **Large models.** Tensor parallelism inside one server keeps per-layer exchanges on NVLink (§64.14); pipeline parallelism adds a hop per stage and needs several requests in flight. Recommenders replicate dense layers and shard embeddings (Chapter 68); Chapter 73 owns LLM parallelism.
 
@@ -672,7 +672,7 @@ $$u_{\text{target}} = \frac{u_{\max}}{1 + g} \qquad g = \max\!\left(r\,T_{\text{
 
 1. Ramp: $r T_{\text{react}} = 0.02 \times 3.75 = 0.075$. Step: $s = 0.30$. So $g = 0.30$.
 2. $u_{\text{target}} = 0.75 / 1.30 = 0.577$; use 0.55.
-3. Peak: $N = \lceil 40{,}000 \times 0.002 / (16 \times 0.55) \rceil = \lceil 80 / 8.8 \rceil = \lceil 9.09 \rceil = 10$ nodes.
+3. Peak: $N = \lceil 40{,}000 \times 0.002 / (16 \times 0.55) \rceil = \lceil 80 / 8.8 \rceil = \lceil 9.09 \rceil = 10$ nodes (§60.11, at $u = 0.5$ with one redundancy node, sized 11).
 4. Check the step: 30% more load on 10 nodes is $52{,}000 \times 0.002 / 160 = 0.65 < 0.75$. Holds.
 5. Off-peak at 4,167/s: $\lceil 8.33 / 8.8 \rceil = 1$, but the floor of one node per zone keeps 3.
 6. Without the step allowance ($u_{\text{target}} = 0.75$): 7 nodes at peak, and the push would drive them to $104 / 112 = 0.93$, where p99 explodes (§4.10.3).
@@ -778,10 +778,10 @@ gantt
 ### 66.11.1 From registry to traffic
 
 ::: definition
-**Definition — Model version, alias and version pinning.** A **model version** is an immutable, numbered artifact in the model registry with its training data, code, metrics and signature. An **alias** (or stage) such as `production` or `challenger` is a movable pointer to one version. **Version pinning** means a deployment or client names an exact version (`eta:42`) rather than an alias, so what runs changes only through a reviewed deployment. **Traffic splitting** routes fractions of requests to different versions by weight, by user hash or by request header.
+**Definition — Model version, alias and version pinning.** A **model version** is an immutable, numbered artifact in the model registry with its training data, code, metrics and signature. An **alias** (or stage) such as `champion` or `challenger` (the QuickBite names of §69.6.2) is a movable pointer to one version. **Version pinning** means a deployment or client names an exact version (`eta:42`) rather than an alias, so what runs changes only through a reviewed deployment. **Traffic splitting** routes fractions of requests to different versions by weight, by user hash or by request header.
 :::
 
-The registry (Chapter 69) records *what exists*, the deployment *what runs*, the router *who gets which*. A GitOps manifest (§43.10) pins versions and weights (`eta:42` at 95%, `eta:43` at 5%); promotion in the registry opens a pull request rather than changing traffic directly, so every change is reviewed and revertible.
+The registry (§69.8) records *what exists*, the deployment *what runs*, the router *who gets which*. A GitOps manifest (§43.10) pins versions and weights (`eta:42` at 95%, `eta:43` at 5%); promotion in the registry opens a pull request rather than changing traffic directly, so every change is reviewed and revertible.
 
 **Figure 66.9 — From registry to version-aware routing.**
 
@@ -856,7 +856,7 @@ $$n_{\text{two-group}} = \frac{2\,(z_{1-\alpha} + z_{1-\beta})^2\,\sigma^2}{\del
 **Interpretation.** Comparing two models on the same orders removes the order-to-order variation that dominates $\sigma$, cutting the sample 32-fold. **Engineering implication.** Judge accuracy in shadow (paired), judge the system and guardrails in the canary within minutes using latency, error rate and prediction-distribution metrics (two-proportion tests, §43.6.4), and keep the slow two-group comparison for effects shadow cannot see, such as customers reacting to different ETAs.
 :::
 
-**Canary guardrails for ML.** Beyond latency and errors, compare the **prediction distribution** (quantiles, population stability index, Chapter 70), **fallback rate** and **feature-default rate**; they move within minutes, long before labels. A rollout controller (Argo Rollouts, Flagger, KServe's canary field) can shift weights in steps (1%, 5%, 25%, 50%, 100%) on these checks.
+**Canary guardrails for ML.** Beyond latency and errors, compare the **prediction distribution** (quantiles, population stability index, §70.5.1), **fallback rate** and **feature-default rate**; they move within minutes, long before labels. A rollout controller (Argo Rollouts, Flagger, KServe's canary field) can shift weights in steps (1%, 5%, 25%, 50%, 100%) on these checks.
 
 **Interleaving for rankers.** For a restaurant ranker, team-draft interleaving alternately lets each model pick its next-best restaurant not yet shown, builds one list, and records which model contributed each clicked item [Chapelle et al. 2012]. Because each user compares both rankers directly, user-to-user variance cancels and decisions need far fewer users than an A/B test; interleaving measures preference, though, not revenue, so it is a fast first filter before an A/B test.
 
@@ -878,7 +878,7 @@ $$n_{\text{two-group}} = \frac{2\,(z_{1-\alpha} + z_{1-\beta})^2\,\sigma^2}{\del
 With no latency objective, batches are as large as memory allows and spot capacity is fine because tasks retry (§51.6.2). In Spark, load the model once per executor and apply it over Arrow batches (`mapInPandas`), never per row (§29.5); in Ray Data, `map_batches` with an actor pool keeps one model per GPU actor while CPU tasks read and decode.
 
 ::: formula
-**Batch scoring job duration**
+**Batch inference job duration**
 
 $$T_{\text{job}} = T_{\text{start}} + \frac{N}{W \, X \, u}$$
 
@@ -903,7 +903,7 @@ $$T_{\text{job}} = T_{\text{start}} + \frac{N}{W \, X \, u}$$
 **Interpretation.** Eight hundred million predictions cost about \$0.00002 per 1,000, about an eighth of the online ETA fleet's \$0.000154 (§66.7). **Engineering implication.** Push every prediction whose inputs are known in advance into batch, and size $W$ from the deadline: a run that must finish in 30 minutes needs $\lceil 8 \times 10^8 / (1{,}500 \times 50{,}000 \times 0.8) \rceil = 14$ GPUs.
 :::
 
-**Figure 66.11 — An idempotent batch scoring pipeline.**
+**Figure 66.11 — An idempotent batch inference pipeline.**
 
 ```mermaid
 flowchart LR
@@ -1017,7 +1017,7 @@ flowchart LR
 1. Peak busy CPU: $2{,}000 \times 0.003 = 6$ vCPU. At $u_{\text{target}} = 0.5$: 12 vCPU = 3 pods.
 2. Zone failure: losing one of three zones leaves 8 vCPU at $6 / 8 = 0.75 = u_{\max}$. Acceptable, but with no room for a surge, so run a minimum of 6 pods (2 per zone), which also allows rolling deployments and gives $6 / 24 = 0.25$ at peak.
 3. HPA on RPS per pod, 6–24 pods; the 30% surge of §66.9 on 6 pods gives $7.8 / 24 = 0.33$.
-4. Cost: about 6 pods × 4 vCPU × \$0.048 = \$1.15/h, plus 2 shadow GPUs at \$5.00/h while a challenger is evaluated.
+4. Cost: about 6 pods × 4 vCPU × \$0.048 = \$1.15/h of pod capacity on nodes shared with other services (dedicated 16-vCPU nodes would set the three-node floor of §60.11, \$2.31/h, which Table 66.9's per-order cost assumes), plus 2 shadow GPUs at \$5.00/h while a challenger is evaluated.
 :::
 
 **Table 66.9 — How the design meets the requirements.**

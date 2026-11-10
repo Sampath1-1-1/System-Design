@@ -9,7 +9,7 @@ A trained model is a first draft: built to learn, in 32-bit or 16-bit floating p
 This chapter uses Chapter 64's roofline, precision formats and memory-bound analysis without re-deriving them. Chapter 66 serves the optimized model; Chapter 73 owns techniques specific to large language model (LLM) generation (KV cache, PagedAttention, speculative decoding, continuous batching). LLM *weight* quantization (GPTQ, AWQ) is a model-level technique and lives here.
 
 ::: note
-**Assumptions used in this chapter.** Units are SI (1 GB = 10⁹ bytes; 1 TB/s = 10¹² bytes/s); one multiply–add is 2 FLOPs (§58.12). The reference GPU is an NVIDIA H100 SXM: 80 GB HBM at 3.35 TB/s, 989 TFLOP/s dense BF16, 1,979 TFLOP/s dense FP8 and INT8 (Table 64.4, as of 2026). QuickBite numbers reuse earlier chapters: the deep ETA model is the 512–1,024–1,024–1 MLP of §58.12.2 ($N \approx 1.58$ million), served at 40,000 predictions/s peak and costing 2 ms of CPU per prediction on 16-vCPU nodes at \$0.77/hour (§60.11); the support chatbot is a 7B model with $h = 4{,}096$ and $L = 32$ (§58.11); the 70B shape has $h = 8{,}192$, $L = 80$ and 8 key–value heads (Llama-2-like, §65). New numbers are labeled as assumptions. Code timings are machine-dependent; sizes and accuracy figures are deterministic.
+**Assumptions used in this chapter.** Units are SI (1 GB = 10⁹ bytes; 1 TB/s = 10¹² bytes/s); one multiply–add is 2 FLOPs (§58.12). The reference GPU is an NVIDIA H100 SXM: 80 GB HBM at 3.35 TB/s, 989 TFLOP/s dense BF16, 1,979 TFLOP/s dense FP8 and INT8 (Table 64.4, as of 2026). QuickBite numbers reuse earlier chapters: the deep ETA model is the 512–1,024–1,024–1 MLP of §58.12.2 ($N \approx 1.58$ million), served at 40,000 predictions/s peak and costing 2 ms of CPU per prediction on 16-vCPU nodes at \$0.77/hour (§60.11); the support chatbot is a 7B model with $h = 4{,}096$ and $L = 32$ (§58.11); the 70B shape has $h = 8{,}192$, $L = 80$ and 8 key–value heads (Llama-2-like; the shape of §65.3 and §65.10). New numbers are labeled as assumptions. Code timings are machine-dependent; sizes and accuracy figures are deterministic.
 :::
 
 ## 67.1 Learning objectives
@@ -1111,7 +1111,7 @@ flowchart TB
 **Reading the diagram.** Every compiler here follows this funnel at compile time: capture a graph, rewrite operators, lower them to loops or tiles, emit kernels, and autotune parameters by timing them on the device. Compiled kernels are cached on disk, a storage boundary to warm before a replica takes traffic, because first compilation takes seconds to minutes. Failure points: graphs that cannot be captured whole (graph breaks) and recompilation when input shapes change.
 
 - **XLA** compiles graphs expressed in its HLO IR (now via StableHLO in OpenXLA) for CPUs, GPUs and TPUs; it is the compiler under JAX and TensorFlow and, through PyTorch/XLA, PyTorch on TPUs [OpenXLA docs].
-- **TorchInductor** is the default back-end of `torch.compile`. TorchDynamo captures FX graphs by analyzing Python bytecode, inserting **guards** that trigger recompilation when assumptions (shapes, types) change and **graph breaks** where it cannot trace; Inductor generates Triton kernels for GPUs and C++/OpenMP for CPUs [Ansel et al. 2024].
+- **TorchInductor** is the default back-end of `torch.compile`. TorchDynamo captures FX graphs by analyzing Python bytecode, inserting **guards** that trigger recompilation when assumptions (shapes, types) change and **graph breaks** where it cannot trace; Inductor generates GPU kernels in Triton (OpenAI's Python-embedded kernel language, unrelated to the Triton Inference Server of §66.5) for GPUs and C++/OpenMP for CPUs [Ansel et al. 2024].
 - **TVM** imports models from many frameworks and searches over loop schedules with a learned cost model to generate kernels for CPUs, GPUs and accelerators without hand-written libraries [Chen et al. 2018].
 - **MLIR** is not a compiler for one framework but infrastructure for building compilers from reusable **dialects** (IR layers) [Lattner et al. 2021]; StableHLO, the Triton compiler and several accelerator toolchains are built on it.
 
@@ -1274,7 +1274,7 @@ flowchart TB
 3. Fix: keep the first linear layer, which sees the raw distance features, in FP32 (**mixed-precision quantization**); two-thirds of the weights stay INT8, so much of the speed-up remains (measure it). The slice now rises 1.2%. Passes.
 4. Canary at 5% of traffic for 24 hours, comparing on-time-within-5-minutes rates once deliveries complete (35-minute label delay, §60.12), then roll out.
 
-**Interpretation.** The model that ships is partly quantized, and that is normal. **Engineering implication.** Make slice tolerances part of the model's release contract and automate them in the pipeline (Chapter 69).
+**Interpretation.** The model that ships is partly quantized, and that is normal. **Engineering implication.** Make slice tolerances part of the model's release contract and automate them in the pipeline's promotion gate (§69.5.3).
 :::
 
 **Table 67.7 — Failure scenarios in model optimization.**
