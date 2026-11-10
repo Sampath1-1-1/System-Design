@@ -346,3 +346,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-339 | 71 | Gboard FL eligibility rules and recall gains (Hard et al. 2018; Bonawitz et al. 2019); CJEU SCHUFA ruling (C-634/21); CFPB Circular 2022-03 scope | Open | |
 | UQ-340 | 72 | Llama 3 tokenizer compression (3.17 → 3.94 chars/token); Llama 3.1 staged 128K context extension; "1.3 tokens per English word" rule; Petrov et al. 2023 language-disparity range | Open | |
 | UQ-341 | 72 | Chinchilla fitted constants (§72.16); Pope et al. 2023 (29 ms/token, 76% MFU); Ainslie et al. ~5% uptraining compute for GQA; Mistral 7B 8× cache reduction at 32K; DeepSeek-V3 671B total / 37B active | Open | |
+| UQ-342 | 73 | TGI maintenance-mode date (Dec 2025, secondary reports) and reported 2026 repository archival | Open | Time-sensitive |
+| UQ-343 | 73 | Paper headline figures: Orca 36.9×; vLLM 20.4–38.2% / <4% waste / 2–4×; SGLang 6.4×; DistServe 7.4×/12.6×; Splitwise 1.4×/2.35×; Sarathi-Serve 2.6×/3.7×; Flash-Decoding 8×; FlashAttention-3, Medusa, EAGLE speedups | Open | |
+| UQ-344 | 73 | vLLM `gpu_memory_utilization` default 0.9 and per-engine default preemption modes; H100 228 KB shared memory per SM and 132 SMs | Open | Efficiency figures (80% bandwidth, 50% MFU, 2 ms step overhead) are stated modeling assumptions |
