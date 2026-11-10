@@ -2,16 +2,14 @@
 
 > **Level:** 3 · **Track:** B (ML/AI) · **Estimated reading time:** 5 h
 
-On a Tuesday evening, QuickBite's delivery-time (ETA) service answered 40,000 requests per second with a p99 latency of 31 ms and an error rate of zero. Every dashboard in the operations room was green. At the same time, in one city, a road-works program had quietly added three minutes to every rush-hour delivery, and the ETA model, trained on last month's traffic, kept promising times that couriers could not meet. Nothing crashed. Customers simply received their food late, contacted support, and some did not order again. The first person to notice was an analyst reading a weekly business review.
+On a Tuesday evening, QuickBite's delivery-time (ETA) service answered 40,000 requests per second with a p99 latency of 31 ms and zero errors. Meanwhile, in one city, a road-works program had quietly added three minutes to every rush-hour delivery, and the ETA model, trained on last month's traffic, kept promising times that couriers could not meet. Nothing crashed; customers got their food late, and the first person to notice was an analyst reading a weekly business review.
 
 This is the problem this chapter solves. A traditional service fails loudly: it throws an exception, a health check fails, an error counter rises, and Chapter 40's observability stack pages someone. A machine learning (ML) model fails quietly: it keeps returning well-formed, confident answers that are wrong. **ML monitoring** is the discipline of detecting that kind of failure: watching the data a model consumes, the predictions it produces and, once they arrive, the outcomes it was trying to predict, and turning those observations into alerts that are timely, actionable and not drowned in noise.
 
-You will learn to name the different ways the world can change underneath a model (covariate shift, label shift, concept drift and plain upstream bugs), and to measure change with the population stability index, the Kolmogorov–Smirnov test, the chi-square test, Kullback–Leibler and Jensen–Shannon divergence, the Wasserstein distance, domain classifiers and the maximum mean discrepancy. You will see why "statistically significant" means almost nothing at QuickBite's traffic volumes, how to monitor accuracy when labels arrive minutes or months late, how to design alerts that page only when users are hurt, and when monitoring should trigger retraining and when it must prevent it. The chapter ends with an end-to-end monitoring plan for QuickBite's ETA model.
-
-Chapter 59 introduced monitoring (§59.12) and the population stability index (§59.7.2); Chapter 40 owns the general machinery of metrics, logs, traces and alerting. This chapter owns drift detection and ML-specific monitoring, and cross-references the rest. Chapter 69 owns the continuous-training pipeline that a retraining trigger starts.
+Chapter 59 introduced monitoring (§59.12) and PSI (§59.7.2); Chapter 40 owns metrics, logs, traces and alerting; Chapter 69 owns the continuous-training pipeline. This chapter owns drift detection and ML-specific monitoring, and ends with an end-to-end monitoring plan for QuickBite's ETA model.
 
 ::: note
-**QuickBite assumptions used in this chapter.** These are teaching assumptions reused from earlier chapters, not measurements of any real company. 500,000 orders per day; ETA predictions peak at 40,000 per second (2,000 search RPS × 20 restaurants), about 360 million per day (§60.6); 20 cities × 200 zones = 4,000 delivery zones (Ch 62). ETA quality SLO: at least 80% of orders delivered within ±5 minutes of the checkout ETA over a 7-day rolling window, and MAE at most 4.5 min (§60.12.1, Table 60.11); the current model delivers about 82% within ±5 min and an MAE of about 4.3 min. The ETA model is retrained nightly, so model age stays under 30 hours (§60.15). ETA labels arrive when orders are delivered: median 35 min, nearly all within 60 min (§59.12.2). Fraud rate 0.5% (2,500 frauds per day); chargebacks arrive 40% within 15 days, 75% within 30, 95% within 60 and 100% within 90 (§63.4.2). One retraining cycle costs about \$1,000 and each extra minute of ETA MAE costs about \$2,000 per day (§59.13.1). **New in this chapter:** the fraud model flags 0.7% of orders (3,500 per day) for review, with 50% precision and 70% recall when it shipped.
+**QuickBite assumptions used in this chapter.** Teaching assumptions reused from earlier chapters, not measurements of a real company. 500,000 orders per day; ETA predictions peak at 40,000 per second (2,000 search RPS × 20 restaurants), about 360 million per day (§60.6); 20 cities × 200 zones = 4,000 delivery zones (Ch 62). ETA quality SLO: at least 80% of orders delivered within ±5 minutes of the checkout ETA over a 7-day rolling window, and MAE at most 4.5 min (§60.12.1, Table 60.11); the current model delivers about 82% within ±5 min and an MAE of about 4.3 min. The ETA model is retrained nightly, so model age stays under 30 hours (§60.15). ETA labels arrive when orders are delivered: median 35 min, nearly all within 60 min (§59.12.2). Fraud rate 0.5% (2,500 frauds per day); chargebacks arrive 40% within 15 days, 75% within 30, 95% within 60 and 100% within 90 (§63.4.2). One retraining cycle costs about \$1,000 and each extra minute of ETA MAE costs about \$2,000 per day (§59.13.1). **New in this chapter:** the fraud model flags 0.7% of orders (3,500 per day) for review, with 50% precision and 70% recall when it shipped.
 :::
 
 ## 70.1 Learning objectives
@@ -21,8 +19,8 @@ After this chapter you should be able to:
 - Explain why ML systems fail silently and list what to monitor at the infrastructure, data, model and business layers.
 - Distinguish covariate shift, label (prior) shift, concept drift, feature drift and prediction drift, and tell an upstream data bug from a genuine change in the world.
 - Compute PSI, the Kolmogorov–Smirnov statistic, the chi-square statistic, KL and Jensen–Shannon divergence and the Wasserstein distance by hand and in code, and choose among them.
-- Size monitoring windows, correct for multiple testing, handle seasonality, and explain why significance tests over-alert at large sample sizes.
-- Detect multivariate and embedding drift with a domain classifier and explain the maximum mean discrepancy.
+- Size windows, correct for multiple testing and seasonality, and explain why significance tests over-alert at large sample sizes.
+- Detect multivariate and embedding drift with a domain classifier and explain MMD.
 - Monitor model performance under label delay using proxies, confidence-based estimation, label-shift estimation and backfilled evaluation.
 - Monitor calibration, slices, data quality, feature freshness, model age and operational cost.
 - Design an alerting policy for ML that separates pages from tickets and applies burn-rate alerting to quality SLOs.
@@ -31,13 +29,11 @@ After this chapter you should be able to:
 
 ## 70.2 Prerequisites
 
-- Silent failures and quality SLOs — §60.3.2, §60.12 (this chapter turns them into concrete monitors).
-- PSI and the mean-shift z-score — §59.7.2; time to detect a shift under label delay — §59.12.2; retraining cadence — §59.13.1 (reused, not re-derived).
-- Training–serving skew and the log-recompute-compare detector — §62.9; feature freshness — §62.10 (skew is diagnosed there; drift here).
-- Label delay and label completeness $F(a)$ — §63.4.2 (performance monitoring builds on it).
-- Calibration and reliability diagrams — §57.10.3; hypothesis tests, p-values and power — §57.14.1, §57.14.2 (drift tests are two-sample tests).
-- SLIs, SLOs and burn-rate alerting — §39.6, §39.7.3; metrics, cardinality, alerting and runbooks — §40.5, §40.10 (this chapter applies them to model quality).
-- Stream windows — §29.8.2; Kafka — Chapter 31 (prediction logs travel through a log).
+- Silent failures and quality SLOs — §60.3.2, §60.12 (turned into concrete monitors here).
+- PSI — §59.7.2; time to detect decay under label delay — §59.12.2; retraining cadence — §59.13.1 (reused, not re-derived).
+- Training–serving skew — §62.9; feature freshness — §62.10; label completeness $F(a)$ — §63.4.2.
+- Calibration — §57.10.3; hypothesis tests and power — §57.14 (drift tests are two-sample tests).
+- SLOs and burn-rate alerting — §39.6, §39.7.3; metrics and alerting — §40.5, §40.10; Kafka — Chapter 31.
 
 ## 70.3 Why ML systems fail silently
 
@@ -49,7 +45,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a weather forecaster who has worked in the same town for years. If the town's weather station breaks and starts reporting 0 °C every hour, the forecaster still publishes a forecast every morning. It is neatly formatted and delivered on time. It is also wrong, and nobody finds out until people get rained on. A model is that forecaster: it always answers, and the format of the answer never reveals whether the inputs were nonsense or whether the climate has changed.
+Think of a weather forecaster whose station breaks and reports 0 °C every hour. She still publishes a neatly formatted forecast every morning; it is wrong, and nobody finds out until people get rained on. A model is that forecaster: the format of its answer never reveals whether the inputs were nonsense or the climate has changed.
 
 Traditional software has a **specification** written in code: if an input violates it, a check fails and an exception is raised. A model's specification is learned from data, so there is nothing to violate. A distance of 9,000 km, a preparation time of zero, or a city it has never seen all go through the same arithmetic and produce a number (§60.3.2).
 
@@ -57,9 +53,9 @@ Traditional software has a **specification** written in code: if an input violat
 
 Three properties of ML systems make silent failure the default:
 
-1. **Defaults hide missing data.** Feature pipelines replace nulls with a mean or zero so that serving never fails. The model receives a plausible value and predicts confidently.
-2. **The world changes after training.** A model encodes the relationships in its training window. When customers, couriers, traffic or fraudsters change, the encoded relationships become stale without any code change.
-3. **Correctness is only visible later.** Whether an ETA was right is known only when the food arrives; whether an order was fraud, only when a chargeback arrives weeks later (§63.4.2). Until then, there is nothing to compare against.
+1. **Defaults hide missing data.** Pipelines replace nulls with a mean or zero so serving never fails; the model predicts confidently from a plausible value.
+2. **The world changes after training.** When customers, couriers, traffic or fraudsters change, the relationships a model encoded become stale without any code change.
+3. **Correctness is only visible later:** when the food arrives, or when a chargeback arrives weeks later (§63.4.2).
 
 **Figure 70.1 — How a unit bug travels through the ETA system without raising an error.**
 
@@ -75,7 +71,7 @@ flowchart LR
   ETA -.->|prediction log| MON[ML monitoring]
 ```
 
-**Reading the diagram.** The failure starts outside the ML team: a tablet app update reports preparation time in seconds. The event travels asynchronously (dotted) through the kitchen stream into a nearline feature job, which writes a value 60 times too large into the online feature store (a storage boundary). The ETA service reads it synchronously, the model clamps or extrapolates, and the response is an ordinary HTTP 200 with an ETA 25 minutes too long (the example of §60.3.2). Every infrastructure metric stays green. The only places the failure is visible are the feature value itself (data monitoring), the distribution of predictions (model monitoring) and, much later, orders and support contacts (business monitoring). The prediction log, written asynchronously, is what makes the first two possible. Scaling the detector means sampling that log rather than touching the request path.
+**Reading the diagram.** The failure starts outside the ML team: a tablet app update reports preparation time in seconds. The event travels asynchronously (dotted) through the kitchen stream into a nearline feature job, which writes a value 60 times too large into the online feature store (a storage boundary). The ETA service reads it synchronously, the model clamps or extrapolates, and the response is an ordinary HTTP 200 with an ETA 25 minutes too long (the example of §60.3.2). Every infrastructure metric stays green. The failure is visible only in the feature value (data monitoring), the prediction distribution (model monitoring) and, much later, orders and contacts (business monitoring); the asynchronous prediction log makes the first two possible without touching the request path.
 
 ### 70.3.2 What to monitor at each layer
 
@@ -112,7 +108,7 @@ flowchart TB
   B1 -.->|validates SLOs| M2
 ```
 
-**Reading the diagram.** Read from bottom to top. Each layer assumes the one below it is healthy: input drift is meaningless if the service is returning errors, and accuracy is meaningless if a feature is null. Reaction time grows as you move up, from seconds for infrastructure to days for business outcomes, but relevance to users grows too. The dotted arrow is the slow feedback that keeps the model-layer SLOs honest: if business metrics degrade while model accuracy looks fine, the quality SLO is measuring the wrong thing. Failure points: teams that monitor only the bottom layer (the opening story) or only the top (learning of a broken feature from a quarterly review). Scaling: lower layers emit fixed-cardinality time series; upper layers need joins and batch jobs (§70.15).
+**Reading the diagram.** Read from bottom to top. Each layer assumes the one below it is healthy: input drift is meaningless if the service is returning errors, and accuracy is meaningless if a feature is null. Reaction time grows upward, from seconds to days, and so does relevance to users. The dotted arrow keeps the quality SLOs honest: if business metrics degrade while accuracy looks fine, the SLO measures the wrong thing. Failure points: monitoring only the bottom layer (the opening story) or only the top. Scaling: lower layers emit fixed-cardinality time series; upper layers need joins and batch jobs (§70.15).
 
 #### Real-world industry applications
 
@@ -122,7 +118,7 @@ flowchart TB
 :::
 
 ::: industry
-**Uber — Michelangelo's live accuracy measurement.** Uber's platform description lists "monitor predictions" as a step of the standard workflow: the platform logs a share of predictions and later joins them with the outcomes produced by data pipelines, giving continuous, live measurements of model accuracy that are published to dashboards and alerting.
+**Uber — Michelangelo's live accuracy measurement.** Uber's platform logs a share of predictions and later joins them with outcomes from its data pipelines, giving ongoing, live measurements of model accuracy.
 *Evidence: Primary* — [Hermann and Del Balso 2017]
 :::
 
@@ -146,7 +142,7 @@ Two practical terms describe what a monitor observes rather than what caused it.
 
 #### First-principles explanation
 
-Picture a tailor who has learned to estimate trouser length from a customer's height. If a basketball team walks in, the heights are unusual but the height-to-leg rule still holds: that is covariate shift, and the tailor is fine as long as he has seen tall people before. If the shop suddenly gets mostly children, the mix of sizes changes but a child still looks like a child: label shift. If fashion changes and everyone wants cropped trousers, the same height now needs a different length: concept drift, and no amount of staring at heights reveals it. Only measuring the finished trousers does.
+A tailor estimates trouser length from height. A basketball team walks in: unusual heights, same rule (covariate shift). Mostly children arrive: the mix of sizes changes, but each child looks like a child (label shift). Fashion moves to cropped trousers: the same height needs a different length (concept drift), and no amount of staring at heights reveals it.
 
 #### Why does this exist?
 
@@ -157,7 +153,7 @@ The distinction decides what a monitor can see and what the fix is. Covariate an
 | Type | What changes | QuickBite example | Visible without labels? | Typical response |
 |---|---|---|---|---|
 | Covariate shift | $P(X)$ | Suburbs launch: average distance rises from 3.2 to 4.0 km | Yes, input drift | Usually none if inside training range; retrain if new region of input space |
-| Label shift | $P(Y)$ | A fraud ring doubles the fraud rate; each fraud looks like past fraud | Partly: flag rate rises (§70.8.3) | Re-estimate priors, adjust thresholds |
+| Label shift | $P(Y)$ | A fraud ring doubles the fraud rate; each fraud looks like past fraud | Partly: flag rate rises (§70.8.2) | Re-estimate priors, adjust thresholds |
 | Concept drift | $P(Y \mid X)$ | Road works add 3 min to rush-hour trips at the same distance | No, only via labels | Retrain on recent labels |
 | Feature drift | One feature's marginal | Restaurant ratings inflate platform-wide | Yes | Investigate; may be any of the above |
 | Prediction drift | $P(\hat{Y})$ | Mean ETA rises from 33 to 36 min | Yes, immediately | Diagnose: inputs, model version or bug |
@@ -184,7 +180,7 @@ flowchart TB
   CON --> PERF[Labeled performance<br/>§70.8]
 ```
 
-**Reading the diagram.** The top split is the most important question in any drift investigation: did the data change, or did the pipe that carries it break? Bugs are caught by data-quality checks (schema, ranges, nulls), which are cheap and sharp. Genuine change divides by which factor of $P(X, Y)$ moved. Covariate shift is caught by input-drift tests; label shift shows up in the distribution of predictions and can be quantified without labels under assumptions; concept drift reaches only the labeled-performance monitor, after the label delay. The bottom row is therefore a detection-latency ladder: from minutes on the left to hours or weeks on the right. Failure point: treating every input-drift alert as a reason to retrain, which retrains on bugs and ignores concept drift that inputs do not reveal.
+**Reading the diagram.** The top split is the first question in any investigation: did the data change, or did the pipe break? Bugs are caught by cheap, sharp data-quality checks. Genuine change divides by which factor of $P(X, Y)$ moved: covariate shift reaches input-drift tests; label shift shows in the prediction distribution; concept drift reaches only the labeled-performance monitor, after the label delay. The bottom row is a detection-latency ladder, from minutes on the left to weeks on the right. Failure point: treating every input-drift alert as a reason to retrain, which retrains on bugs and ignores concept drift that inputs do not reveal.
 
 #### Mathematical foundations
 
@@ -233,7 +229,7 @@ flowchart TB
   PERF -->|yes| RT[Real drift that hurts:<br/>retrain or adapt §70.14]
 ```
 
-**Reading the diagram.** An alert enters at the top and is checked against progressively more expensive questions. Schema, null and range checks are definitive and fast; a hit means a bug, and the correct action is to fix the producer and keep the window out of training data. A sharp step aligned with a deployment (of the tablet app, the feature pipeline or the model itself) is the next most common cause; release logs answer it. Seasonal patterns are checked against the same hour last week. Only shifts that survive these checks are genuine world changes, and only those that hurt performance or its proxies justify retraining. The flow is synchronous human or automated triage; each exit routes to a different owner. Failure point: skipping straight to the bottom box, which is how teams end up retraining on corrupted data (§70.14.3).
+**Reading the diagram.** An alert enters at the top and is checked against progressively more expensive questions. Schema, null and range checks are definitive; a hit means a bug: fix the producer and keep the window out of training data. A sharp step aligned with a deployment (tablet app, feature pipeline, model) is the next most common cause. Seasonal patterns are checked against the same hour last week. Only shifts that survive are genuine change, and only those that hurt performance or its proxies justify retraining. Each exit routes to a different owner. Failure point: skipping to the bottom box, which is how teams retrain on corrupted data (§70.14.2).
 
 ::: mistake
 **"Drift means the model must be retrained."** Most covariate shift inside the training range is harmless (§70.6.3), and most sharp drift is a bug that retraining would bake into the next model. Retrain when performance, measured or credibly estimated, degrades.
@@ -351,7 +347,7 @@ $$\mathrm{JS}(P, Q) = \tfrac{1}{2}\,\mathrm{KL}(P \,\|\, M) + \tfrac{1}{2}\,\mat
 | $\mathrm{JS}$ | Symmetric, bounded divergence; $\sqrt{\mathrm{JS}}$ is a metric (the JS distance) | nats (bits if $\log_2$, bounded by 1) |
 :::
 
-KL divergence has two drawbacks for monitoring: it is asymmetric, and it is infinite whenever the current window has mass where the reference has none. PSI fixes the asymmetry by adding both directions; Jensen–Shannon fixes both problems by comparing each distribution with their average, which is never zero where either is positive. That is why JS is a common default for categorical drift in tools (§70.15.3). Check which variant a tool reports: some return the JS *distance* (the square root), some use base-2 logarithms.
+KL divergence has two drawbacks for monitoring: it is asymmetric, and it is infinite whenever the current window has mass where the reference has none. PSI fixes the asymmetry by adding both directions; Jensen–Shannon fixes both problems by comparing each distribution with their average, which is never zero where either is positive. That is why JS is a common default for categorical drift in tools (§70.15.2). Check which variant a tool reports: some return the JS *distance* (the square root), some use base-2 logarithms.
 
 ::: example
 **Worked example — KL and JS on §62.9.2's four bins.** Reference shares $p = (0.25, 0.25, 0.25, 0.25)$; current $q = (0.10, 0.20, 0.30, 0.40)$. §62.9.2 computed PSI $= 0.228$.
@@ -380,7 +376,7 @@ $$W_1(P, Q) = \int_{-\infty}^{\infty} \big|F_P(x) - F_Q(x)\big|\,dx \qquad W_1 =
 | $W_1$ | Average distance probability mass must move to turn one distribution into the other | feature units |
 :::
 
-Where KS asks "how far apart are the CDFs at their worst point?", Wasserstein asks "how much work does it take to move one pile of sand into the shape of the other?". It is measured in the feature's own units, so it says *how far* values moved, not only *that* they moved. A pure shift of every value by $\delta$ gives $W_1 = \delta$ exactly. Divide by the reference standard deviation to compare features with different units; Evidently, for example, uses this normed distance with a 0.1 threshold for large numerical columns (as of 2026, §70.15.3).
+Where KS asks "how far apart are the CDFs at their worst point?", Wasserstein asks "how much work does it take to move one pile of sand into the shape of the other?". It is measured in the feature's own units, so it says *how far* values moved, not only *that* they moved. A pure shift of every value by $\delta$ gives $W_1 = \delta$ exactly. Divide by the reference standard deviation to compare features with different units; Evidently, for example, uses this normed distance with a 0.1 threshold for large numerical columns (as of 2026, §70.15.2).
 
 ::: example
 **Worked example — Five orders.** Reference distances (km): 1, 2, 3, 4, 5. Current: 1.5, 2.5, 3.5, 4.5, 9.
@@ -469,11 +465,10 @@ vehicle counts [924, 688, 388]: chi2 = 31.8, p = 1.2e-07, PSI = 0.014, Cohen's w
 
 What to notice:
 
-- **A 12% mean shift is "stable" by PSI (0.022) and overwhelming by KS ($p = 4 \times 10^{-14}$).** The rule-of-thumb PSI bands need a shift of roughly 40% in the mean before they say "significant". KS at 5,000 rows notices almost anything.
-- **The unit bug looks like a mild drift to every binned statistic.** Values multiplied by 1,000 all land in the open top bin, so PSI, KL and JS see "5% more mass in bin 10", the same as a modest shift. Only Wasserstein (166 km, 74 standard deviations) shouts, because it measures distance moved. Range checks catch it more directly still (§70.10).
+- **A 12% mean shift is "stable" by PSI (0.022) and overwhelming by KS ($p = 4 \times 10^{-14}$).** PSI's bands need a 40% shift to say "significant".
+- **The unit bug looks like a mild drift to every binned statistic.** Inflated values all land in the open top bin, so binned statistics see "5% more mass in bin 10". Only Wasserstein (74 standard deviations) shouts; range checks catch it more directly still (§70.10).
 - **The spread change at the same mean** is caught by every statistic, which a mean-shift z-score (§59.7.2) would miss.
-- **PSI is exactly the sum of the two KL directions,** as the check line confirms.
-- The categorical result repeats §70.5.3: a tiny p-value with a small effect size.
+- **PSI equals the sum of the two KL directions** (check line); the categorical line repeats §70.5.3: tiny p-value, small effect.
 
 **Table 70.3 — Drift statistics compared.**
 
@@ -503,7 +498,7 @@ flowchart TB
   WD --> G
 ```
 
-**Reading the diagram.** The two questions are the feature's type and the window's size. Small windows need a test, because sampling noise is large and the p-value tells you whether the difference is real. Large windows make every test significant, so they need a magnitude with a threshold chosen for business relevance. Every path ends in the same box: distribution statistics are weak bug detectors (the unit bug in §70.5.6), so they never replace deterministic data-quality checks. The cut-off near 1,000 rows mirrors the default switch in Evidently's drift presets (as of 2026, §70.15.3); treat it as a starting point, not a law.
+**Reading the diagram.** The two questions are the feature's type and the window's size. Small windows need a test, because sampling noise is large and the p-value tells you whether the difference is real. Large windows make every test significant, so they need a magnitude with a threshold chosen for business relevance. Every path ends in the same box: distribution statistics are weak bug detectors (the unit bug in §70.5.6), so they never replace deterministic data-quality checks. The cut-off near 1,000 rows mirrors the default switch in Evidently's drift presets (as of 2026, §70.15.2); treat it as a starting point, not a law.
 
 ## 70.6 Practical drift detection
 
@@ -513,7 +508,7 @@ flowchart TB
 **Definition — Reference window.** The sample a monitor treats as "normal": the model's training data, a fixed known-good production period, a trailing window (for example the previous 7 days) or a seasonal window (the same hour on the previous four weeks). **Current window:** the recent sample being tested, either **tumbling** (consecutive, non-overlapping hours) or **sliding** (the last 60 minutes, recomputed every 5 minutes).
 :::
 
-Each reference answers a different question. *Training data* answers "is the model seeing what it was trained on?", the question that matters for accuracy, but it alarms permanently once the world has moved and the model has been retrained on newer data. *A trailing window* answers "did something change recently?", ideal for catching bugs, but it absorbs slow drift: a feature that moves 1% a day never differs much from last week. *A seasonal window* removes predictable cycles. Mature monitors run two references side by side: training data for slow drift and a seasonal trailing window for sudden change.
+*Training data* answers "is the model seeing what it was trained on?", the question that matters for accuracy. *A trailing window* answers "did something change recently?", ideal for bugs, but absorbs slow drift. *A seasonal window* removes predictable cycles. Mature monitors run two references: training data for slow drift and a seasonal window for sudden change.
 
 **Figure 70.6 — Reference and current windows for a Friday-dinner check.**
 
@@ -534,7 +529,7 @@ gantt
   Fri 10-30 18:00-20:00 :crit, c1, 2026-10-30 18:00, 2h
 ```
 
-**Reading the diagram.** The current window (red) is the last two hours of Friday dinner. It is compared against three references. The training reference is the 28 days the serving model learned from; drift against it predicts accuracy loss. The seasonal reference pools the same two hours on the three previous Fridays, so Friday's normal basket sizes and distances do not alarm. The trailing 7-day reference catches anything that changed this week but mixes lunch, dinner and weekends, so it needs looser thresholds. The storage boundary is the prediction log: all four windows are queries over it, which is why it must retain at least the training window's span. Failure point: a seasonal reference that contains last week's incident; exclude windows flagged as incidents from future references.
+**Reading the diagram.** The current window (red) is the last two hours of Friday dinner. It is compared against three references. Drift against the training reference predicts accuracy loss. The seasonal reference pools the same two hours on three previous Fridays, so Friday's normal baskets do not alarm. The trailing 7-day reference catches anything new this week but mixes lunch, dinner and weekends, so it needs looser thresholds. All windows are queries over the prediction log (the storage boundary), which must retain at least the training window's span. Failure point: a seasonal reference that contains last week's incident; exclude windows flagged as incidents from future references.
 
 ### 70.6.2 Sample size and the noise floor
 
@@ -613,7 +608,7 @@ B. A harmless 1% scale shift, tested with growing window sizes
 What to notice:
 
 - **Part A:** with 100 rows, 38% of windows with *no drift* exceed PSI 0.1; with 50 rows, 89% do, and the mean overshoots $9/n$ because some bins are empty. The approximation is good from a few hundred rows.
-- **Part B:** the same 1% shift goes from undetectable ($p = 0.54$) to overwhelming ($p = 5 \times 10^{-19}$) as $n$ grows, while PSI correctly stays near zero. At small $n$ the estimate of $D$ is mostly noise (0.025 at 1,000 rows versus about 0.005 at a million).
+- **Part B:** the same 1% shift goes from undetectable ($p = 0.54$) to overwhelming ($p = 5 \times 10^{-19}$) as $n$ grows, while PSI correctly stays near zero.
 - Read together: distances are biased at small $n$, tests are over-powered at large $n$. A monitor needs both a minimum sample size and an effect-size threshold.
 
 ### 70.6.3 "Statistically significant" is not "important"
@@ -675,11 +670,10 @@ Shankar et al.'s interview study of ML engineers reports alert fatigue from nois
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Hundreds of drift alerts a day, none acted on | Unadjusted tests at large $m$ and large $n$ | Alert precision < 10% | Mute; move drift to tickets | Effect thresholds, BH, fewer tests |
-| Slow drift never alarms | Trailing reference absorbs it | Accuracy decays while drift is "green" | Add training-data reference | Two references per feature |
-| Every Friday alarms | Non-seasonal reference | Alerts cluster by hour of week | Seasonal reference | Hour-of-week conditioning |
-| Small-city alarms are random | Windows below the noise floor | PSI noise ≈ threshold | Longer windows for small slices | Minimum $n$ per window |
-| Incident becomes "normal" | Incident window used as reference | Reference drifts after incidents | Rebuild reference | Exclude flagged windows |
+| Hundreds of ignored drift alerts | Unadjusted tests, large $m$ and $n$ | Alert precision < 10% | Move drift to tickets | Effect thresholds, BH |
+| Slow drift never alarms | Trailing reference absorbs it | Accuracy decays, drift "green" | Add training reference | Two references |
+| Small-city alarms are random | Windows below noise floor | PSI noise ≈ threshold | Longer windows | Minimum $n$ |
+| Incident becomes "normal" | Incident window used as reference | Reference shifts after incidents | Rebuild reference | Exclude flagged windows |
 
 ## 70.7 Multivariate and embedding drift
 
@@ -695,15 +689,14 @@ Per-feature tests look at one column at a time. They miss changes in the *relati
 
 #### First-principles explanation
 
-To check whether two bags of coins came from the same mint, you could measure every property separately. Or you could hire an expert, show her coins from both bags and ask her to guess which bag each came from. If she can do no better than a coin toss, the bags are indistinguishable by anything she can perceive. If she guesses right 70% of the time, they differ, and asking her *how* she tells them apart tells you what changed. The domain classifier is that expert, and feature importance is her explanation.
+To check whether two bags of coins came from the same mint, show an expert coins from both and ask her to guess which bag each came from. If she does no better than a coin toss, the bags are indistinguishable; if she is right 70% of the time, they differ, and *how* she tells them apart says what changed. The domain classifier is that expert, and feature importance is her explanation.
 
 #### How it works internally
 
-1. Sample a reference window and a current window of similar size (a few thousand rows each).
-2. Label reference 0 and current 1, concatenate and shuffle.
-3. Train a flexible classifier (gradient-boosted trees for tabular data; logistic regression or a small network on embeddings) with $k$-fold cross-validation so every row is scored by a model that never saw it.
-4. Compute the AUC of the out-of-fold scores and compare it with its null distribution.
-5. If drift is detected, use permutation importance to name the features responsible, and inspect the rows scored most "current-like" to see what kind of example is new.
+1. Sample reference and current windows of a few thousand rows; label them 0 and 1.
+2. Train a flexible classifier (trees for tabular data, logistic regression on embeddings) with $k$-fold cross-validation, so each row is scored by a model that never saw it.
+3. Compare the out-of-fold AUC with its null distribution.
+4. If drift is found, name the responsible features with permutation importance and read the most "current-like" rows.
 
 **Figure 70.7 — A domain-classifier drift detector.**
 
@@ -720,7 +713,7 @@ flowchart LR
   EXP --> TK([Drift ticket with<br/>features and examples])
 ```
 
-**Reading the diagram.** Both windows are sampled from the same prediction log (the storage boundary), so the comparison sees exactly what the model saw. The detector is a scheduled batch job, run hourly or daily, never on the request path. Cross-validation is essential: in-sample AUC of a flexible classifier is above 0.5 even with no drift. The decision box applies both a significance test and an effect-size floor (for example AUC above 0.55), for the reasons of §70.6.3. When it fires, the explanation step turns "something changed" into "distance and prep time changed jointly; here are 20 example orders", which is what makes the alert actionable. Failure points: leakage features such as timestamps or row IDs, which make the windows trivially separable (drop them before training), and windows too small for the classifier to learn anything (low power, a finding of Rabanser et al. for small samples). Scaling: cost grows with window size and classifier complexity; a few thousand rows per window trains in seconds.
+**Reading the diagram.** Both windows are sampled from the prediction log (the storage boundary), so the comparison sees exactly what the model saw. The detector is a scheduled batch job, never on the request path. Cross-validation is essential: in-sample AUC of a flexible classifier exceeds 0.5 even with no drift. The decision box applies a significance test and an effect floor (for example AUC above 0.55, §70.6.3). The explanation step turns "something changed" into "distance and prep time changed jointly; here are 20 example orders", which makes the ticket actionable. Failure points: identifiers or timestamps that make the windows trivially separable, and windows too small for the classifier to learn (low power, as Rabanser et al. found). Scaling: a few thousand rows per window trains in seconds.
 
 ::: formula
 **AUC under no drift**
@@ -775,7 +768,7 @@ $$\widehat{\text{MMD}}^2 = \frac{1}{n(n-1)}\sum_{i \ne j} k(x_i, x_j) + \frac{1}
 
 ### 70.7.4 Embedding drift for text and images
 
-For unstructured inputs, monitor in a representation space. Three representations are common: the embeddings of a fixed, pretrained encoder (stable across model retrains, so drift is comparable over time); the model's own penultimate layer; or the model's output probabilities. Rabanser et al. compared many combinations on image benchmarks and found that reducing dimension first, and in particular using a pretrained classifier's softmax outputs (**black-box shift detection**) followed by per-dimension KS tests with a Bonferroni correction, was among the strongest and simplest detectors; domain classifiers were less powerful at small sample sizes but most useful for characterizing *which* examples had shifted [Rabanser et al. 2019]. QuickBite's support chatbot and review moderation (Chapter 63) monitor the embeddings of incoming messages this way, and Chapter 75 applies the same idea to retrieval queries in RAG systems.
+For text and images, monitor in a representation space: a fixed pretrained encoder's embeddings (comparable across retrains), the model's penultimate layer, or its output probabilities. Rabanser et al. found that reducing dimension first, notably with a pretrained classifier's softmax outputs (**black-box shift detection**) followed by per-dimension KS tests with Bonferroni correction, was among the strongest and simplest detectors; domain classifiers were weaker at small samples but best at characterizing *which* examples shifted [Rabanser et al. 2019]. Chapter 75 applies the idea to RAG queries.
 
 ### 70.7.5 Code example: a domain-classifier drift detector
 
@@ -876,10 +869,9 @@ new-topic share: all current items 10%, top-300 by classifier score 80%
 What to notice:
 
 - **Per-feature KS sees nothing** in the joint-drift case (smallest $p = 0.36$), because every marginal is unchanged by construction. The domain classifier finds it with AUC 0.664 ($z = 25$), and MMD on just 500 rows per window also rejects ($p = 0.015$).
-- **The no-drift control gives AUC 0.500.** Out-of-fold scoring is what makes this honest; in-sample AUC would be optimistic.
-- **Permutation importance names the culprits:** shuffling `distance_km` or `prep_min` costs about 0.16 AUC each; the untouched features cost nothing. That is the content of the drift ticket.
-- **On embeddings both methods detect the new topic,** consistent with Rabanser et al.: per-dimension KS with Bonferroni is a strong baseline. The classifier's extra value is the last line: 80% of its 300 most "current-looking" reviews belong to the new topic (versus 10% overall), so a reviewer reading them sees immediately what is new.
-- Use a CPU-light classifier and a few thousand rows; the detector runs as a batch job, so seconds of training are acceptable.
+- **The no-drift control gives AUC 0.500**, thanks to out-of-fold scoring.
+- **Permutation importance names the culprits:** shuffling `distance_km` or `prep_min` costs about 0.16 AUC each; the untouched features cost nothing.
+- **On embeddings both methods detect the new topic,** consistent with Rabanser et al.: per-dimension KS with Bonferroni is a strong baseline. The classifier adds the last line: 80% of its 300 most "current-looking" reviews belong to the new topic (10% overall), so a reviewer sees at once what is new.
 
 ::: mistake
 **Leaving timestamps or IDs in the domain classifier.** An order ID that increases over time, a timestamp or a "days since launch" feature separates the windows perfectly and reports AUC near 1.0 every run. Drop identifiers and time features, or the detector measures the calendar.
@@ -932,14 +924,14 @@ sequenceDiagram
   Note over M: cohort marked matured at 60 days
 ```
 
-**Reading the diagram.** All writes into the prediction log are asynchronous (open arrowheads); the services never wait for monitoring. The log first receives the prediction with its features and model version, then partial information such as the ETA re-predicted at pickup, an early **partial label** that already reveals whether the kitchen was slow. The label join job (§63.4) attaches outcomes as they arrive: ETA labels within about an hour, chargebacks over 90 days. Metrics are stored per **prediction cohort** (the hour or day the prediction was made), and recomputed as labels arrive, a process called **backfilled evaluation**; each value carries its cohort age, and a cohort becomes final when it matures. Failure points: predictions without IDs (the join silently drops them; monitor the join rate) and log retention shorter than the label delay.
+**Reading the diagram.** All writes into the prediction log are asynchronous (open arrowheads); the services never wait for monitoring. The log first receives the prediction with features and model version, then the ETA re-predicted at pickup, an early **partial label** that already reveals a slow kitchen. The label join (§63.4) attaches outcomes as they arrive. Metrics are stored per **prediction cohort** (the hour or day of prediction) and recomputed as labels arrive (**backfilled evaluation**); each value carries its cohort age and becomes final when the cohort matures. Failure points: predictions without IDs (the join silently drops them; monitor the join rate) and log retention shorter than the label delay.
 
 ### 70.8.2 Proxies and estimation without labels
 
 While labels mature, three kinds of evidence stand in for them.
 
 1. **Proxy metrics:** prediction drift (§70.4), the fallback rate (§60.12.2), the ETA revision at pickup, customer contacts about lateness, early disputes for fraud. They move within minutes and correlate with quality, but not perfectly.
-2. **Confidence-based performance estimation (CBPE):** if a classifier is calibrated and only covariate shift has occurred, its own probabilities predict its confusion matrix. The NannyML library popularized the approach (as of 2026, §70.15.3).
+2. **Confidence-based performance estimation (CBPE):** if a classifier is calibrated and only covariate shift has occurred, its own probabilities predict its confusion matrix. The NannyML library popularized the approach (as of 2026, §70.15.2).
 3. **Label-shift estimation:** if only the prior $P(Y)$ moved, the change in the rate of positive predictions reveals the new prior [Saerens et al. 2002; Lipton et al. 2018].
 
 ::: formula
@@ -1015,7 +1007,7 @@ flowchart TB
   G3 -->|fires| RP[(Weekly zone report)]
 ```
 
-**Reading the diagram.** One table of labeled predictions feeds three levels with windows sized to their traffic: the platform hourly, each city every three hours (about 1,250 orders), each zone weekly (875 orders). Each level has its own gate: the platform uses the burn-rate rule; cities need a minimum sample and an effect floor; zones need both plus a Benjamini–Hochberg correction across 4,000 tests. Severity falls with level, from page to ticket to report, because a single zone rarely justifies waking someone. Failure point: a problem spread thinly across many zones, invisible at each; the city and platform levels catch it.
+**Reading the diagram.** One table of labeled predictions feeds three levels with windows sized to their traffic: the platform hourly, each city every three hours (about 1,250 orders), each zone weekly (875 orders). Gates tighten with level (burn rate; minimum sample and effect floor; plus Benjamini–Hochberg across 4,000 zones) and severity falls, from page to ticket to report. Failure point: a problem spread thinly across many zones, invisible at each; the city and platform levels catch it.
 
 ## 70.10 Data quality monitoring in production
 
@@ -1039,7 +1031,7 @@ Volume deserves a note: a sudden drop in predictions per minute is often the fir
 
 Two clocks run on every prediction. **Feature age** is the time since each feature value was computed, measured at read time (§62.10). **Model age** is the time since the training data's cutoff, not since deployment: a model deployed today but trained on data ending a week ago is a week old. Zinkevich's rules of ML advise knowing the freshness requirements of your system, that is, how much quality is lost per day of model age [Zinkevich n.d.], and the ML Test Score lists "models are not too stale" as a monitoring test [Breck et al. 2017].
 
-Monitor both as gauges with SLAs derived from measured decay. For QuickBite's ETA model, nightly retraining keeps model age under 30 hours (§60.15); an alert fires at 54 hours, meaning two nightly runs failed, which, at the decay rate of §59.13.1 (0.05 min of MAE per day), still costs only about 0.1 min of MAE but signals a broken pipeline. For the fraud model, model age is dominated by label maturity (§63.4.2): the freshest training example is 60 days old by design, so its staleness SLA concerns the *serving* model's age beyond that floor. Treat a model that silently stops being replaced as an incident: the pipeline failure is invisible to every metric except the age gauge.
+Monitor both as gauges with SLAs derived from measured decay. For QuickBite's ETA model, nightly retraining keeps model age under 30 hours (§60.15); an alert fires at 54 hours, meaning two nightly runs failed, which, at the decay rate of §59.13.1 (0.05 min of MAE per day), still costs only about 0.1 min of MAE but signals a broken pipeline. For the fraud model, label maturity (§63.4.2) puts a 60-day floor under model age, so its SLA covers only the age beyond that floor. A model that silently stops being replaced is an incident visible to no metric except the age gauge.
 
 ## 70.12 Operational metrics
 
@@ -1110,7 +1102,7 @@ flowchart LR
   R -->|retrain candidate| CT[Retraining trigger<br/>§70.14]
 ```
 
-**Reading the diagram.** Five signal families enter a router such as Alertmanager (§40.10.3). Drift and slice findings are first aggregated, corrected for multiple testing and deduplicated, so hundreds of raw tests become a handful of findings. The router sends urgent symptoms to the ML on-call with a runbook, data-quality violations to the owner of the failing feature (from the feature registry), and non-urgent findings to a ticket queue. One path goes to a machine rather than a person: findings that meet the retraining policy reach the trigger of §70.14, which applies its own guards. Inhibition rules suppress drift tickets while a data-quality incident is open on the same feature, since the drift is the bug. Failure point: routing everything to one channel, which recreates alert fatigue.
+**Reading the diagram.** Five signal families enter a router such as Alertmanager (§40.10.3). Drift and slice findings are first aggregated, corrected and deduplicated. Urgent symptoms page the ML on-call; data-quality violations go to the failing feature's owner (from the registry); the rest become tickets; findings meeting the retraining policy reach the guarded trigger of §70.14. Inhibition suppresses drift tickets while a data-quality incident is open on the same feature, since the drift is the bug. Failure point: routing everything to one channel, which recreates alert fatigue.
 
 ::: recommendation
 **Recommendation — Write the runbook before the alert.** Each ML runbook answers: what does this signal mean for users; which dashboard slices to open; how to tell a bug from real change (Figure 70.4); the safe mitigations (roll back to the previous model version, switch to the reduced model or heuristic rung of §60.12.2, pin a feature to its default); and who owns the upstream data. If no safe mitigation exists, the alert should be a ticket.
@@ -1137,7 +1129,7 @@ stateDiagram-v2
   Canary --> Serving: promote or roll back
 ```
 
-**Reading the diagram.** A trigger moves the model from *Serving* to *Suspect*, not straight to training. The first guard validates the data that would be used: if the window contains schema, range or null violations, the state becomes *Blocked*, the data owner is paged, and the bad window is excluded from all future training sets. Only valid data reaches *Training*. The candidate must beat the current model on recent, matured labels at the evaluation gate, then pass a canary (§43.6) before promotion. Every exit returns to *Serving*, so a failed trigger costs compute but never quality. A cooldown on the *Suspect* transition prevents retraining storms.
+**Reading the diagram.** A trigger moves the model from *Serving* to *Suspect*, not straight to training. If the training window fails schema, range or null checks, the state becomes *Blocked*, the data owner is paged, and the bad window is excluded from future training sets. A candidate must beat the current model on recent matured labels, then pass a canary (§43.6). Every exit returns to *Serving*, so a failed trigger costs compute, never quality. A cooldown on the *Suspect* transition prevents retraining storms.
 
 ### 70.14.2 Code example: scheduled versus triggered retraining
 
@@ -1244,10 +1236,10 @@ perf+gate new models from days: [60, 61, 62, 69, 100]
 
 What to notice:
 
-- **The drift trigger slept through the road works** (day 60: inputs unchanged, MAE 4.97 like the never-retrained model), ignored the harmless suburbs launch (PSI below 0.2), and fired only for the bug (new models on days 91 and 92), training on corrupted data and then staying bad until the end.
-- **The unguarded performance trigger caught the road works within a day** (new models on days 61 and 62) but then entered a **retraining storm**: 16 retrains on days 91–106, as long as the corrupted days sat inside its 14-day window, each producing a model that had learned to discount prep time.
+- **The drift trigger slept through the road works** (day 60: inputs unchanged, MAE 4.97 like the never-retrained model), ignored the harmless suburbs launch (PSI below 0.2), and fired only for the bug (new models on days 91 and 92), then stayed bad.
+- **The unguarded performance trigger caught the road works within a day** (new models on days 61 and 62) but then entered a **retraining storm**: 16 retrains on days 91–106, while the corrupted days sat in its 14-day window.
 - **Retraining on corrupted data looks helpful during the bug** (MAE 11.5 on days 90–91 versus 16 for gated policies, because the model "adapts" to the bug) and harmful afterward (5.04 versus 4.43 and 4.28 in the following week). Fix the pipe; do not learn it.
-- **The gate is the largest single improvement:** it turns 20 retrains into 5 for the performance trigger and cuts the post-bug week's MAE from 5.04 to 4.43.
+- **The gate is the largest single improvement:** 20 retrains become 5, and post-bug MAE falls from 5.04 to 4.43.
 
 ::: example
 **Worked example — Which policy is cheapest?** From the output, cost = retrains × \$1,000 + excess MAE cost.
@@ -1290,7 +1282,7 @@ flowchart LR
   MS --> DB
 ```
 
-**Reading the diagram.** *Serving:* the model service exposes operational metrics to Prometheus (pull, §40.8) and emits one prediction event per prediction (request ID, model version, features, output, fallback level) asynchronously to Kafka, never blocking the response. *Streaming:* a stream job computes cheap, fixed-cardinality statistics every few minutes (null rates, range violations, prediction mean and quantiles, volume) and writes them back as time series, so they can page quickly. *Batch:* the same events land in the lakehouse (the main storage boundary), where a label join attaches outcomes as they arrive and scheduled jobs compute what needs joins or large windows: drift tests, domain classifiers, slice metrics, calibration and backfilled cohorts. Both paths feed one alert router and one set of dashboards. Failure points: event loss between service and Kafka (monitor volume against the request counter), and a lakehouse partition missing for a day (treat a missing window as an alert, not as "no drift"). Scaling: the stream path scales with Kafka partitions; the batch path with sampling.
+**Reading the diagram.** *Serving:* the model service exposes operational metrics to Prometheus (pull, §40.8) and emits one prediction event per prediction (request ID, model version, features, output, fallback level) asynchronously to Kafka, never blocking the response. *Streaming:* a stream job computes cheap, fixed-cardinality statistics every few minutes (nulls, ranges, prediction quantiles, volume) as time series that can page quickly. *Batch:* the same events land in the lakehouse (the main storage boundary), where the label join and scheduled jobs compute drift tests, domain classifiers, slices, calibration and backfilled cohorts. Both paths feed one alert router and one set of dashboards. Failure points: event loss between service and Kafka (monitor volume against the request counter), and a lakehouse partition missing for a day (treat a missing window as an alert, not as "no drift"). Scaling: the stream path scales with Kafka partitions; the batch path with sampling.
 
 ::: example
 **Worked example — Sizing the ETA prediction log.** Each event is about 300 bytes (40 features plus metadata); 1 GB $= 10^9$ bytes.
@@ -1316,7 +1308,7 @@ flowchart LR
 | Vertex AI Model Monitoring | Managed (Google Cloud) | Training–serving skew and drift on features |
 | Azure Machine Learning model monitoring | Managed (Microsoft) | Data drift, quality and performance signals |
 
-The tools compute the statistics of §70.5–§70.9; none removes the design work in this chapter: choosing references, windows, thresholds and owners. Many teams start, as the open-source tools allow, by computing statistics in their existing batch jobs and sending them to the existing metrics and alerting stack (Chapter 40), which keeps one on-call workflow.
+The tools compute the statistics of §70.5–§70.9; none removes the design work in this chapter: choosing references, windows, thresholds and owners. Many teams compute the statistics in batch jobs and send them to their existing alerting stack (Chapter 40), keeping one on-call workflow.
 
 ## 70.16 QuickBite ETA monitoring plan
 
@@ -1353,6 +1345,112 @@ gantt
   Quality burn page :c2, 18:00, 75m
 ```
 
-**Reading the diagram.** Each row is an incident starting at 18:00. The unit bug is caught by the stream job's range check within one 5-minute window, before most affected customers have even ordered. The bridge closure changes $P(Y \mid X)$ in one city and is invisible to inputs; it surfaces only after labels arrive (about 60 minutes) and the city's 3-hour window accumulates enough orders, about three hours in all, matching §59.12.2. A total breakage moves the prediction distribution within 15 minutes and is confirmed by the quality burn-rate page after about 75 minutes. The timeline is the argument for layering: no single monitor catches all three in time.
+**Reading the diagram.** Each row is an incident starting at 18:00. The unit bug trips the stream range check within one 5-minute window. The bridge closure changes $P(Y \mid X)$ in one city and surfaces only after labels arrive and the city's 3-hour window fills, about three hours in all (§59.12.2). A total breakage moves the prediction distribution within 15 minutes; the quality burn-rate page confirms it after about 75. No single monitor catches all three in time.
 
-The plan follows the chapter's principles: every page is a symptom with a runbook; drift produces tickets with explanations; every slice window is larger than its noise floor; references are seasonal or training-based depending on the question; and every retraining path passes the data gate of Figure 70.11.
+## 70.17 Summary and revision notes
+
+::: summary
+- ML systems fail silently: well-formed, confident, wrong answers. Monitor four layers (infrastructure, data, model, business), which react in seconds, minutes, hours-to-weeks and days.
+- Covariate shift moves $P(X)$, label shift $P(Y)$, concept drift $P(Y \mid X)$. Only the first two are visible without labels; bugs in the pipe are the most common "drift" and must be triaged first.
+- PSI $= \mathrm{KL}(Q\|P) + \mathrm{KL}(P\|Q)$; its 0.1/0.2 bands are conventions. KS and chi-square are tests; JS and Wasserstein are magnitudes. Thresholds never transfer between statistics.
+- Distances are biased at small $n$ (PSI noise $\approx (B-1)/n$); tests are over-powered at large $n$. Use minimum window sizes, effect-size thresholds, seasonal references and multiple-testing control.
+- Domain classifiers and MMD detect joint and embedding drift that per-feature tests miss, and the classifier explains what changed.
+- Under label delay, report metrics per cohort with their age, correct for $F(a)$, and use proxies, CBPE and label-shift estimates until labels mature.
+- Monitor calibration per decision-relevant bin, slices above their noise floor, data quality, feature and model age, and cost per prediction.
+- Page on symptoms with runbooks; drift files tickets. Quality SLOs have baseline burn near 1 and a maximum burn of $1/(1-\text{SLO})$, so derive their thresholds rather than copying 14.4×.
+- Combine scheduled and performance-triggered retraining, put a data-validation gate in front of every path, and never retrain on corrupted data.
+:::
+
+## 70.18 Knowledge checkpoint
+
+1. Why does an ML failure rarely raise an error rate?
+2. Which kind of change is invisible to input-drift monitors, and what detects it?
+3. Show that PSI is a sum of two KL divergences.
+4. Why can a 1% distance shift be "significant" yet unimportant?
+5. What is the expected PSI with no drift for 10 bins and 300 rows?
+6. How many false alarms per day do 19,200 tests at $\alpha = 0.01$ produce?
+7. Why compare Friday dinner with previous Fridays?
+8. What does a domain-classifier AUC of 0.5 mean, and why must scores be out-of-fold?
+9. At cohort age 15 days, why is fraud precision biased but recall not?
+10. Why can't a quality SLO with a 20% budget use a 14.4× burn-rate page?
+11. Why did the drift trigger in §70.14.2 miss the road works?
+12. Why log every order-linked prediction but only a sample of search predictions?
+
+<details><summary>Answers</summary>
+
+1. Models always return well-formed outputs; defaults hide bad inputs and correctness is known only later.
+2. Concept drift; labeled performance after the label delay, sliced.
+3. $(q-p)\ln(q/p) = q\ln(q/p) + p\ln(p/q)$, summed over bins.
+4. At large $n$ the critical value shrinks as $1/\sqrt{n}$; the ETA effect is about 5 seconds.
+5. $9/300 = 0.03$.
+6. $19{,}200 \times 0.01 = 192$.
+7. Seasonal patterns otherwise look like drift (PSI 0.111 every week in §70.6.5).
+8. The windows are indistinguishable; in-sample scores are optimistic even with no drift.
+9. Only $F(a) = 40\%$ of true positives are labeled yet all flags count; positives and caught positives are both scaled by $F(a)$.
+10. Maximum burn is $1/0.2 = 5$; healthy burn is already 0.9.
+11. Concept drift left the inputs unchanged; PSI stayed low.
+12. Only ordered restaurants receive labels; drift needs only a random sample, and the order-linked set is a selected population.
+
+</details>
+
+## 70.19 Interview questions
+
+### Basic
+
+**Q1. How would you monitor a model whose labels arrive a month late?** **Answer.** Layer it: operational metrics; data-quality checks on inputs; prediction-distribution and input drift against seasonal and training references; label-free estimates (CBPE if calibrated, prior estimation from the flag rate); early partial labels; and cohort metrics backfilled as labels mature, corrected for label completeness.
+
+**Q2. What is the difference between data drift and concept drift?** **Answer.** Data (covariate) drift changes the input distribution while the input–output relationship holds; concept drift changes that relationship. The first is visible without labels and often harmless; the second needs labels and retraining.
+
+### Intermediate
+
+**Q3. Your drift dashboard shows 150 alerts a day and nobody looks. Fix it.** **Answer.** Reduce tests to important features and meaningful slices; set minimum window sizes; replace p-values with effect-size thresholds; use seasonal references; aggregate to "share of drifted features"; apply Benjamini–Hochberg; route drift to tickets, pages only on symptoms; track alert precision.
+
+**Q4. Accuracy fell 0.3 min of MAE platform-wide. How do you find out whether to retrain?** **Answer.** Rule out bugs (schema, nulls, ranges, recent releases). Decompose the change into mix and within-slice effects; a pure mix effect needs a product decision, a within-slice drop is concept drift. Check whether it is seasonal. If real, retrain on validated recent data through the gate and canary.
+
+### Advanced
+
+**Q5. Design monitoring for 40,000 ETA predictions per second.** **Answer.** Prometheus for operational SLIs; asynchronous prediction events to Kafka; a stream job for nulls, ranges, prediction quantiles and volume (pages); a lakehouse with purposeful sampling (100% of order-linked, 1% of search); label join and hourly batch jobs for quality, slices, drift and calibration; hierarchical slice alerting; quality burn-rate pages; runbooks with rollback and fallback rungs.
+
+**Q6. Should a drift alert retrain the model automatically?** **Answer.** No. Drift is a cause-based signal: it fires on harmless covariate shift, misses concept drift and fires on bugs, where retraining learns the corruption. Retrain on schedule plus performance triggers, behind data validation, a cooldown, an evaluation gate and a canary; the simulation in §70.14.2 quantifies the difference.
+
+## 70.20 Practical exercises
+
+1. Extend the §70.5.6 program with a 5% null-rate injection filled with the mean; which statistics notice, and which check should?
+2. Add Benjamini–Hochberg to a monitor of 40 features × 20 cities on drift-free data and report false alarms with and without it.
+3. Add a cooldown of 3 days to the performance trigger in §70.14.2 and measure retrains and MAE.
+
+## 70.21 Design challenges
+
+1. **Fraud monitoring.** Design monitoring for QuickBite's fraud model with 90-day chargebacks: proxies, label-free estimates, cohort backfill, calibration checks and a retraining policy robust to fraud waves and blocked-order selection bias.
+2. **Chatbot drift.** Monitor the support chatbot's incoming messages with embeddings: reference choice, detector, explanation of new topics and routing to the content team.
+
+## 70.22 References
+
+1. Benjamini, Y., Hochberg, Y. *Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing*. Journal of the Royal Statistical Society B 57(1), 1995.
+2. Breck, E., Cai, S., Nielsen, E., Salib, M., Sculley, D. *The ML Test Score: A Rubric for ML Production Readiness and Technical Debt Reduction*. IEEE International Conference on Big Data, 2017.
+3. Breck, E., Polyzotis, N., Roy, S., Whang, S. E., Zinkevich, M. *Data Validation for Machine Learning*. SysML (MLSys), 2019.
+4. Evidently AI. *Evidently documentation: data drift*. n.d. https://docs.evidentlyai.com
+5. Gama, J., Žliobaitė, I., Bifet, A., Pechenizkiy, M., Bouchachia, A. *A Survey on Concept Drift Adaptation*. ACM Computing Surveys 46(4), 2014.
+6. Gretton, A., Borgwardt, K. M., Rasch, M. J., Schölkopf, B., Smola, A. *A Kernel Two-Sample Test*. Journal of Machine Learning Research 13, 2012.
+7. Guo, C., Pleiss, G., Sun, Y., Weinberger, K. Q. *On Calibration of Modern Neural Networks*. ICML, 2017.
+8. Hermann, J., Del Balso, M. *Meet Michelangelo: Uber's Machine Learning Platform*. Uber Engineering Blog, 2017.
+9. Huyen, C. *Designing Machine Learning Systems*, ch. 8. O'Reilly, 2022.
+10. Lipton, Z. C., Wang, Y.-X., Smola, A. *Detecting and Correcting for Label Shift with Black Box Predictors*. ICML, 2018.
+11. Lopez-Paz, D., Oquab, M. *Revisiting Classifier Two-Sample Tests*. ICLR, 2017.
+12. Lu, J., Liu, A., Dong, F., Gu, F., Gama, J., Zhang, G. *Learning under Concept Drift: A Review*. IEEE Transactions on Knowledge and Data Engineering 31(12), 2019.
+13. Massey, F. J. *The Kolmogorov–Smirnov Test for Goodness of Fit*. Journal of the American Statistical Association 46(253), 1951.
+14. Quiñonero-Candela, J., Sugiyama, M., Schwaighofer, A., Lawrence, N. D. (eds.). *Dataset Shift in Machine Learning*. MIT Press, 2009.
+15. Rabanser, S., Günnemann, S., Lipton, Z. C. *Failing Loudly: An Empirical Study of Methods for Detecting Dataset Shift*. NeurIPS, 2019.
+16. Saerens, M., Latinne, P., Decaestecker, C. *Adjusting the Outputs of a Classifier to New a Priori Probabilities: A Simple Procedure*. Neural Computation 14(1), 2002.
+17. Shankar, S., Garcia, R., Hellerstein, J. M., Parameswaran, A. G. *Operationalizing Machine Learning: An Interview Study*. arXiv:2209.09125, 2022.
+18. Siddiqi, N. *Credit Risk Scorecards: Developing and Implementing Intelligent Credit Scoring*. Wiley, 2006.
+19. Zinkevich, M. *Rules of Machine Learning: Best Practices for ML Engineering*. Google for Developers, n.d. https://developers.google.com/machine-learning/guides/rules-of-ml
+20. Product documentation (as of 2026): NannyML; whylogs/WhyLabs; Arize; Amazon SageMaker Model Monitor; Vertex AI Model Monitoring; Azure Machine Learning model monitoring.
+
+## 70.23 Open verification items
+
+- Siddiqi (2006): exact PSI bands (0.1/0.25 versus 0.1/0.2) and page reference.
+- Evidently default drift methods and thresholds (KS/chi-square below 1,000 rows; normed Wasserstein and JS at 0.1; dataset drift at 50% of columns) as of 2026.
+- WhyLabs hosted-platform status in 2026; Vertex AI and SageMaker monitor feature names.
+- Shankar et al. (2022): wording of the alert-fatigue finding.
+- Breck et al. (2017): exact phrasing of the seven monitoring tests; Zinkevich rule number on freshness.
