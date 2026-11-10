@@ -221,7 +221,7 @@ sequenceDiagram
 
 ### 75.4.3 Unstructured and structured knowledge
 
-Not everything should be embedded. **Table 75.2** lists QuickBite's knowledge sources and how each reaches the model.
+Not everything should be embedded. Table 75.2 lists QuickBite's knowledge sources and how each reaches the model.
 
 **Table 75.2 — QuickBite knowledge sources and access paths.**
 
