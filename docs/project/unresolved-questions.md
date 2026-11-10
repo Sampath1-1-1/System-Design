@@ -327,3 +327,7 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-320 | 69 | Kreuzberger et al. (2023) MLOps definition (paraphrased) | Open | |
 | UQ-321 | 69 | FBLearner Flow figures (>25% of engineers, >1M models, >6M predictions/s) via secondary reports | Open | |
 | UQ-322 | 69 | Michelangelo multi-model serving container (models addressed by ID/tag); MLflow alias URI syntax (stages deprecated in 2.9 — confirmed); Airbnb Bighead component names/status; Netflix Metaflow announcement URL/date; KServe canaryTrafficPercent | Open | Version-dependent; merge with UQ-319 |
+| UQ-323 | 67 | PyTorch 2 headline speedups (2.27× inference, 1.41× training on A100, 180+ models) | Open | |
+| UQ-324 | 67 | GPTQ speedups (3.25× A100, 4.5× A6000) and ~4 GPU-hours for 175B | Open | |
+| UQ-325 | 67 | Release removing torch.ao.quantization in favor of torchao; TensorRT INT4 weight support and cross-GPU engine compatibility | Open | Version-dependent |
+| UQ-326 | 67 | ~5 µs kernel launch overhead and ~20 kernels per decoder layer are assumptions | Accepted | Labeled |
