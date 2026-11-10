@@ -57,8 +57,8 @@ Search answers a question the user can phrase. Most browsing is not like that: a
 
 Implicit and explicit feedback have different shapes, and the shape dictates the model.
 
-1. **Explicit ratings are sparse and biased.** QuickBite receives a written review on 4% of orders (Ch 63) and star ratings on perhaps a few times that. Users rate what they chose to order, and they rate more often when delighted or furious.
-2. **Implicit feedback is plentiful but positive-only.** An order says "I wanted this"; the absence of an order says almost nothing. The customer may dislike the dish, may never have seen it, or may have ordered it elsewhere. Unobserved does not mean negative.
+1. **Explicit ratings are sparse and biased.** Only 4% of QuickBite orders get a written review (Ch 63), and people rate more when delighted or furious.
+2. **Implicit feedback is plentiful but positive-only.** An order says "I wanted this"; no order says almost nothing (unseen, ordered elsewhere, not hungry).
 3. **Implicit signals have confidence, not grades.** Ordering from a restaurant ten times is stronger evidence than ordering once, and a 2-second menu glance is weaker than a 40-second read. Hu, Koren and Volinsky separate a binary **preference** from a real-valued **confidence** for exactly this reason (§68.5.2) [Hu et al. 2008].
 4. **Every signal is conditioned on exposure.** The user could only click what was shown, at the position it was shown. That is the root of the biases in §68.12.
 
@@ -226,13 +226,13 @@ A funnel is only as good as its weakest early stage. If retrieval misses the ite
 **Definition — Collaborative filtering (CF) and candidate generation.** **Collaborative filtering** predicts a user's interest in an item from the interactions of many users with many items, without needing to know what the items are. **Candidate generation** (retrieval) is the funnel stage that uses CF and other cheap methods to select, from the whole eligible catalog, the few hundred items worth ranking.
 :::
 
-The intuition is "customers like you also ordered". If you and another customer both ordered from the same five Thai and Vietnamese restaurants, the sixth one she loves is a good bet for you. **User-based** CF finds similar users and recommends what they liked; **item-based** CF finds items similar to the ones you liked. Both work from the **interaction matrix** $R$: one row per user, one column per item, an entry where they interacted. For QuickBite that matrix has $10^7 \times 5 \times 10^4 = 5 \times 10^{11}$ customer–restaurant cells, of which perhaps $2 \times 10^8$ are non-zero (20 restaurants per customer): 99.96% empty. Every CF method is a way of generalizing from that sparse 0.04%.
+The intuition is "customers like you also ordered". **User-based** CF finds similar users; **item-based** CF finds items similar to those you liked. Both work from the **interaction matrix** $R$ (users × items). For QuickBite that matrix has $10^7 \times 5 \times 10^4 = 5 \times 10^{11}$ customer–restaurant cells, of which perhaps $2 \times 10^8$ are non-zero (20 restaurants per customer): 99.96% empty. Every CF method is a way of generalizing from that sparse 0.04%.
 
 ### 68.5.2 Matrix factorization
 
 #### First-principles explanation
 
-Suppose every restaurant could be described by a few hidden "taste dials" (how spicy, how healthy, how cheap, how late-night) and every customer by how much they care about each dial. A customer's affinity for a restaurant would be the dials multiplied pairwise and summed. Matrix factorization learns both sets of dials from the interaction matrix alone; nobody names them, and they rarely line up with human words, but they capture the structure that makes some customers like some restaurants.
+Describe every restaurant by a few hidden "taste dials" (spicy, healthy, cheap, late-night) and every customer by how much each dial matters to her; affinity is the dials multiplied pairwise and summed. Matrix factorization learns both sets of dials from interactions alone, unnamed.
 
 ::: definition
 **Definition — Matrix factorization (MF).** A model that approximates the interaction matrix $R$ ($U \times I$) by the product of a user-factor matrix $X$ ($U \times k$) and an item-factor matrix $Y$ ($I \times k$), $R \approx XY^\top$, so that the predicted affinity is the dot product $\hat{r}_{ui} = \mathbf{x}_u^\top \mathbf{y}_i$ of two $k$-dimensional embeddings. Koren, Bell and Volinsky popularized it for recommendation after the Netflix Prize [Koren et al. 2009].
@@ -316,7 +316,7 @@ flowchart LR
   OUT -.->|nightly load| SERVE[Retrieval service]
 ```
 
-**Reading the diagram.** The input is the order-count matrix in the data lake; the output is two factor tables. Each "fix and solve" box is embarrassingly parallel: with $Y$ fixed, every user's vector is an independent least-squares problem, so a batch engine partitions users across workers and broadcasts $Y$ (small: 50,000 × 64 floats). The loop is synchronous within the batch job; the load into the retrieval service is asynchronous (dotted). Failure points are mostly silent: a bad $\alpha$ or $\lambda$ produces vectors that are valid numbers but recommend only popular restaurants, so the job must gate on an offline recall@K check before publishing. Scaling: users partition across workers; items rarely need partitioning at QuickBite's size.
+**Reading the diagram.** Input: the order-count matrix in the lake; output: two factor tables. Each half-step is embarrassingly parallel: with $Y$ fixed (and broadcast, 50,000 × 64 floats), every user is an independent least-squares problem. The loop is synchronous inside the batch job; loading into retrieval is asynchronous. Failures are silent: a bad $\alpha$ or $\lambda$ yields valid numbers that recommend only popular restaurants, so publishing is gated on an offline recall@K check. Scaling: partition users across workers.
 
 #### Code example
 
@@ -386,9 +386,9 @@ ALS (k=8)   recall@10: 0.241
 What to notice:
 
 - Popularity is a strong baseline (4.5 times random) because real demand is skewed; ALS beats it by 52% relative because it also captures taste. Always report the popularity baseline: a personalized model that cannot beat it is not worth serving.
-- Each user update solves a $k \times k$ system with a confidence-weighted Gram matrix. This dense version recomputes $Y^\top C^u Y$ in full; production implementations use the shared-Gram trick from the worked example so the cost scales with non-zeros.
+- This dense version recomputes $Y^\top C^u Y$ per user; production code uses the shared-Gram trick so cost scales with non-zeros.
 - Hyperparameters matter: in a sweep on this data, $\alpha = 40$ (the value from Hu et al.'s TV data) gave recall@10 of only 0.14, worse than popularity, while $\alpha = 2$ gave 0.24. Confidence scaling depends on what a count means in your domain.
-- Training items are masked at scoring time. Forgetting this inflates recall, because the model happily "recommends" what the customer already ordered.
+- Training items are masked at scoring time; otherwise recall is inflated by "recommending" past orders.
 
 ### 68.5.3 Item-to-item collaborative filtering
 
@@ -416,11 +416,11 @@ $$\text{sim}(i, j) = \frac{\lvert U_i \cap U_j \rvert}{\sqrt{\lvert U_i \rvert \
 **Interpretation.** Normalization removes most of the "everyone buys cola" effect, but not all of it. **Engineering implication.** Production item-to-item tables add a popularity penalty or use lift, require a minimum co-occurrence count (also a privacy safeguard, §56.5.16) and restrict pairs to the same restaurant for in-cart suggestions.
 :::
 
-The offline job is quadratic in the worst case, because a customer with $n$ items contributes $n(n-1)/2$ pairs. Linden et al. note that the actual cost is far lower because most customers have few items; in practice the job caps each customer's history (for example the last 50 items) and drops pairs below a count threshold, and a streaming job keeps the counts fresh between nightly rebuilds.
+A customer with $n$ items contributes $n(n-1)/2$ pairs, so the job caps each history (say, the last 50 items), drops rare pairs, and a streaming job refreshes counts between nightly rebuilds.
 
 ### 68.5.4 Popularity, trending and freshness sources
 
-Some of the most valuable candidates come from the simplest sources. **Popular in your zone** (orders in the last 7 days per delivery zone) is the backbone of cold start (§68.15). **Trending** is popularity with a short half-life (hours), which surfaces the new ramen shop everyone is trying this week. **Your favorites** returns restaurants the customer has ordered from repeatedly; in food delivery, repeat ordering is a large share of demand, so a model that never recommends the familiar is wrong. **New and nearby** guarantees fresh restaurants a path into the funnel, which no collaborative source can provide because they have no history. These sources are computed by streaming counters per zone (§61.6) with exponential decay (§68.13) and served as small in-memory lists.
+Simple sources are among the most valuable. **Popular in your zone** (7-day orders) anchors cold start (§68.15); **trending** is popularity with a half-life of hours; **your favorites** matters because repeat ordering is a large share of food demand; **new and nearby** gives fresh restaurants, which no collaborative source can surface, a path into the funnel. All are streaming per-zone counters with decay (§68.13), served as small in-memory lists.
 
 ### 68.5.5 Multiple sources and merging
 
@@ -442,12 +442,12 @@ flowchart LR
   MRG -->|~1,000 candidates| FIL[Filter and rank]
 ```
 
-**Reading the diagram.** The orchestrator fans out one synchronous request to five sources, each keyed by a different part of the request: the user's embedding, her recent orders, her zone, her ID. Each source returns a ranked list up to its **quota**. The merge interleaves the lists by rank rather than by score, because an ANN cosine and a co-occurrence count are not on a common scale, deduplicates, and records which source proposed each item (provenance), which is logged so each source's contribution to orders can be measured (§56.5.8 gives the code). Storage boundaries sit inside each source: an ANN index in memory, key–value tables for item-to-item and favorites, small per-zone lists. Failure points: any one source can time out and is dropped; a source that silently degrades shows up only in the per-source share of ordered items. Scaling: each source scales independently, and quotas cap the ranker's load regardless of how many sources are added.
+**Reading the diagram.** The orchestrator fans out synchronously to five sources keyed by different parts of the request (embedding, recent orders, zone, ID); each returns a ranked list up to its **quota**. The merge interleaves by rank, not score (scores are not comparable), deduplicates and logs provenance (code in §56.5.8). Storage lives inside each source: ANN index, key–value tables, per-zone lists. Failure points: a timed-out source is dropped; a silently degraded one shows only in its share of ordered items. Sources scale independently; quotas cap ranker load.
 
-Quotas are product decisions in disguise. The "new restaurants" quota of 50 guarantees exposure for supply that no learned model would surface. Measure each source by its **marginal recall**: the share of eventually ordered items that only this source retrieved. A source with near-zero marginal recall costs latency and can be removed; a source with high marginal recall but low quota is a candidate for a larger one.
+Quotas are product decisions in disguise. Measure each source by its **marginal recall**, the share of ordered items only it retrieved; near-zero means it can be removed.
 
 ::: industry
-**Item-to-item at Amazon.** Linden, Smith and York describe Amazon's item-to-item collaborative filtering: an offline table of similar items built from customers' purchases, with online recommendation cost depending only on the number of items in the customer's history, not on the number of customers or catalog size. They contrast it with user-based CF and clustering, which either scale with the customer base or lose quality.
+**Item-to-item at Amazon.** Linden, Smith and York describe an offline similar-items table built from purchases, whose online cost depends only on the number of items in the customer's history, not on customers or catalog size.
 *Evidence: Primary* — [Linden et al. 2003]
 :::
 
@@ -461,11 +461,11 @@ Quotas are product decisions in disguise. The "new restaurants" quota of 50 guar
 
 #### First-principles explanation
 
-Matrix factorization gives each customer and each dish a vector, but only from IDs. A two-tower model computes those vectors from *features* instead: the customer's recent orders, time of day and zone on one side; the dish's cuisine, price, photo and description embeddings on the other. It is like two translators who each turn a different language (people, dishes) into one shared language, where "this customer, tonight" and "this dish" land close together if she is likely to order it. Because the towers never look at each other until the end, every dish can be translated once in advance; at request time only the customer needs translating.
+Two translators turn different languages (people, dishes) into one shared language in which "this customer, tonight" lands near the dishes she is likely to order. Unlike MF, the vectors come from *features* (recent orders, hour, zone; cuisine, price, photo), and because the towers meet only at the end, every dish is translated once in advance.
 
 #### Why does this exist?
 
-Three limits of MF motivate it. Features generalize: a new dish with a known cuisine, price and photo gets a sensible vector on day one (§68.15). Context matters: the same customer wants coffee at 8 a.m. and pizza at 11 p.m., and a nightly user vector cannot know the time. And the separation is what makes retrieval over millions of items affordable: precomputed item vectors plus an ANN index turn "score every dish" into a sublinear search.
+Features give new dishes sensible vectors on day one (§68.15); context lets 8 a.m. differ from 11 p.m.; and precomputed item vectors plus an ANN index make retrieval over millions of items sublinear.
 
 #### How it works internally
 
@@ -493,7 +493,7 @@ flowchart TB
   DOT --> LOSS["Softmax over in-batch<br/>items, minus log q"]
 ```
 
-**Reading the diagram.** Two independent networks share no weights (they may share embedding tables for IDs that appear on both sides, such as dish IDs in the history). The user tower consumes request-time features; the item tower consumes catalog features. The only interaction is the dot product, divided by a **temperature** that sharpens the softmax. During training both towers run on every batch and the loss sits at the bottom; during serving the item tower runs offline in batch and the user tower runs online, so the diagram splits across the storage boundary of the ANN index (Figure 68.6). The failure point specific to this design is that anything requiring user–item interaction (for example, "this dish is cheaper than what she usually orders") cannot be expressed by a dot product of separately computed vectors; that is the ranker's job (§68.7). Scaling: the item tower's cost is per catalog change, the user tower's per request.
+**Reading the diagram.** The towers share no weights (except, optionally, ID tables used on both sides). Their only interaction is the dot product divided by a **temperature**. In training both run per batch; in serving the item tower runs offline and the user tower online, split by the ANN index (Figure 68.6). The design's blind spot: user–item comparisons ("cheaper than her usual") cannot be expressed by separately computed vectors, which is the ranker's job (§68.7). Item-tower cost scales with catalog changes, user-tower cost with requests.
 
 #### Mathematical foundations: in-batch negatives and sampling bias
 
@@ -524,7 +524,7 @@ $$s^c(u, j) = \frac{\mathbf{u}^\top \mathbf{v}_j}{\tau} - \log q_j \qquad \mathc
 **Interpretation.** Without correction the model is punished for scoring B highly simply because B shows up in many batches; it learns something closer to "how surprising is this pair" than "how likely is this order". **Engineering implication.** Estimate $q_j$ from the training stream; Yi et al. do it in streaming fashion by tracking the average gap between an item's appearances in a hashed array, so new items get estimates without a separate counting job.
 :::
 
-Two refinements are common. **Mixed negatives** add uniformly sampled items to the in-batch ones so that rare items are seen as negatives at all. **Hard negatives** (items the current model scores highly but the user did not engage with) sharpen the model, but too many of them teach it to separate near-identical items and hurt recall; they are used sparingly.
+**Mixed negatives** add uniformly sampled items so rare items appear as negatives at all; **hard negatives** (high-scoring but not engaged) sharpen the model but hurt recall in excess.
 
 #### Code example
 
@@ -612,9 +612,8 @@ oracle (true p)          recall@10 0.248  recall@50 0.512
 What to notice:
 
 - Without correction the model is *worse than popularity*: it has learned to demote exactly the popular dishes that the held-out orders, drawn from the true distribution, often are. With correction it recovers 78% of the oracle's recall@10 (0.193 of 0.248).
-- The oracle line is the ceiling: even knowing the true probabilities, only 25% of held-out orders are in the top 10, because real choices are noisy. Report recall against such a ceiling, or at least against popularity, never alone.
-- The diagonal of the $B \times B$ score matrix holds the positives; masking duplicates stops a popular dish that appears twice in a batch from being its own negative.
-- Recall@50 is the number that matters for a retrieval source with a quota of hundreds; recall@10 is shown for comparison with ranking metrics.
+- The oracle is the ceiling (noisy choices cap recall@10 at 0.25); report recall against it or popularity, never alone.
+- Positives sit on the diagonal of the $B \times B$ matrix; masking duplicates stops a dish appearing twice from being its own negative.
 
 ### 68.6.2 Serving: precomputed item embeddings and ANN retrieval
 
@@ -636,12 +635,12 @@ flowchart LR
   ANN -->|top 400 dish IDs| ORC[Orchestrator]
 ```
 
-**Reading the diagram.** Offline, a batch job runs the item tower over the catalog and builds an ANN index; new dishes arrive by stream and are encoded and inserted within minutes. The index is loaded asynchronously into the search service and swapped atomically. Online, the request fetches features, the user tower produces $\mathbf{u}$ synchronously, and the ANN search returns the top 400 dishes that satisfy the geographic filter. The storage boundaries are the feature store and the index. The critical failure point is a **version mismatch**: user vectors from model v13 searched against an index built by v12 are meaningless, because the two towers' spaces are only aligned with each other within one training run. Both carry the model version, and the orchestrator refuses mismatched pairs. Scaling: the ANN service replicates for throughput and shards by item for size.
+**Reading the diagram.** Offline, the item tower encodes the catalog into an ANN index; new dishes stream in within minutes; the index loads asynchronously and swaps atomically. Online, the user tower produces $\mathbf{u}$ and the search returns the top 400 dishes passing the geographic filter. Storage boundaries: feature store and index. The critical failure is a **version mismatch**: v13 user vectors against a v12 index are meaningless, so both carry the version and mismatches are refused. The ANN service replicates for throughput and shards by item for size.
 
-**ANN in one paragraph (preview of Chapter 74).** Exact search computes $\mathbf{u}^\top \mathbf{v}$ for every item. At QuickBite's 120,000 eligible dishes that is about 1.5 ms of CPU (§68.4), so exact search is a defensible choice; a pre-filter by deliverability is what makes it so. At tens of millions of items it is not, and ANN indexes trade a little recall for orders of magnitude less work: graph indexes such as HNSW walk a navigable small-world graph from a coarse layer to fine ones, and inverted-file indexes with product quantization (IVF-PQ) search only a few clusters of compressed vectors [Malkov and Yashunin 2020; Jégou et al. 2011]. Measure ANN quality as recall against exact search at the same K, and combine it with filters carefully: filtering after search can return too few eligible items, so geography is usually a partition key or a pre-filter.
+**ANN preview (Chapter 74).** Exact search over QuickBite's 120,000 eligible dishes costs about 1.5 ms (§68.4), a defensible choice. At tens of millions of items, ANN indexes trade a little recall for far less work: HNSW walks a layered proximity graph; IVF-PQ searches a few clusters of compressed vectors [Malkov and Yashunin 2020; Jégou et al. 2011]. Measure recall against exact search, and pre-filter by geography, because post-filtering can leave too few eligible items.
 
 ::: industry
-**YouTube's candidate generation.** Covington, Adams and Sargin frame candidate generation as extreme multiclass classification over millions of videos, trained with sampled softmax, with the user vector produced by a network over watch history, search tokens and demographics, and serving by nearest-neighbor search over the learned video vectors. Their "example age" feature lets the model learn the strong preference for fresh content. Yi et al. later described a two-tower model with streaming frequency estimation and logQ correction for YouTube recommendation.
+**YouTube's candidate generation.** Covington, Adams and Sargin frame candidate generation as extreme multiclass classification over millions of videos with sampled softmax, a user network over watch and search history, and nearest-neighbor serving. Yi et al. later described a two-tower model with streaming frequency estimation and logQ correction for YouTube.
 *Evidence: Primary* — [Covington et al. 2016; Yi et al. 2019]
 :::
 
@@ -671,7 +670,7 @@ Feed and ads rankers are mostly pointwise because they need **probabilities**: t
 
 ### 68.7.2 Gradient-boosted tree rankers
 
-A gradient-boosted decision tree (GBDT) ensemble with a LambdaMART objective (implemented in LightGBM and XGBoost [Ke et al. 2017; Chen and Guestrin 2016]) is the strongest first ranker for most teams: it consumes hand-built numeric features (distance, ETA, price relative to the user's usual spend, the restaurant's 7-day conversion rate, the user's order count in this cuisine) without normalization, trains in minutes on a CPU and scores a candidate in a few microseconds. Its limits are that it cannot learn from raw high-cardinality IDs or sequences, so every interaction must be engineered as a feature. A common production pattern combines both worlds: the GBDT is the light ranker, and a deep network with embeddings is the heavy one. Facebook's ads team described an earlier hybrid in which boosted trees transformed features for a logistic regression [He et al. 2014].
+A gradient-boosted decision tree (GBDT) with a LambdaMART objective (LightGBM, XGBoost [Ke et al. 2017; Chen and Guestrin 2016]) is the strongest first ranker for most teams: it uses hand-built features (distance, ETA, price versus the user's usual spend, 7-day conversion) without normalization, trains in minutes and scores in microseconds. It cannot learn from raw IDs or sequences, so it often becomes the light ranker while a deep network with embeddings is the heavy one.
 
 ### 68.7.3 Deep ranking: Wide & Deep and DLRM
 
@@ -696,7 +695,7 @@ flowchart TB
   TM --> OUT(["P(order)"])
 ```
 
-**Reading the diagram.** Data flows top to bottom for one candidate. Dense numeric features go through a small MLP to a vector of the embedding dimension; each sparse feature selects one row of its own embedding table (cylinders, because at scale they are distributed stores, §68.8). The interaction layer computes all pairwise dot products: with $n$ vectors, $n(n-1)/2$ scalars, for example 351 for 27 vectors. The top MLP turns these into a probability. Everything runs synchronously in the ranker. The failure points are the tables: a missing row (new restaurant) must map to a default or hashed row, and an ID mapping that differs between training and serving silently corrupts every score. Scaling: the MLPs are small and compute-bound; the tables are huge and memory-bound, which is why they are parallelized differently (Figure 68.9).
+**Reading the diagram.** Data flows top to bottom for one candidate. Dense features pass a bottom MLP; each sparse feature selects a row of its table (cylinders: at scale, distributed stores, §68.8). The interaction layer computes $n(n-1)/2$ pairwise dot products (351 for 27 vectors), and the top MLP outputs a probability, all synchronously. Failure points are the tables: unseen IDs need a default row, and a training–serving ID-mapping mismatch silently corrupts scores. MLPs are compute-bound, tables memory-bound, so they are parallelized differently (Figure 68.9).
 
 DCN and DCN-V2 replace the fixed pairwise dot product with learned cross layers that model higher-order interactions; §68.9 covers them.
 
@@ -730,7 +729,7 @@ flowchart TB
   H3 --> FUSE
 ```
 
-**Reading the diagram.** Each expert is a small MLP over the same input. Each task's gate is a softmax that weights the experts' outputs for that task, so the click head can lean on one expert and the rating head on another. Heads output calibrated probabilities. The shallow tower sees position and device and adds a bias to the click logit during training only; at serving it is dropped (all positions treated alike), so the main model learns relevance without position. Fusion combines the heads into one ranking score. All paths are synchronous within one forward pass. Failure points: one task with far more labels (clicks) can dominate the shared experts, which is monitored by per-task offline metrics; a head that becomes uncalibrated skews the fused score. Scaling: experts add compute linearly, gates are negligible.
+**Reading the diagram.** Experts are small MLPs over the same input; each task's softmax gate mixes them differently. The shallow tower adds a position bias to the click logit in training only and is dropped at serving, so the main model learns position-free relevance. Fusion combines the heads; everything is one synchronous forward pass. Failure points: the label-rich click task can dominate shared experts (watch per-task metrics), and an uncalibrated head skews fusion. Experts add compute linearly.
 
 ::: formula
 **Score fusion of multi-task predictions**
@@ -811,7 +810,7 @@ $$M = \sum_{t} V_t \, d_t \, s \,(1 + k) \qquad P_\text{collide} \approx 1 - e^{
 **Interpretation.** A single 100M-row table already exceeds one accelerator for training, and an industrial model has dozens of tables. Hashing trades memory for collisions, and the collision rate is set by *active* IDs, not registered ones. **Engineering implication.** QuickBite's tables (customers 2.56 GB, dishes 1.28 GB at $d = 64$, §58.6) fit on one GPU, so plain data parallelism suffices (§65.8); the sharding below is for catalogs and user bases one to two orders of magnitude larger.
 :::
 
-**Compression techniques.** Beyond lower precision and hashing: **frequency-aware sizing** gives popular IDs full rows and pools the long tail into hashed buckets; **mixed dimensions** use 128 dimensions for user IDs but 16 for a 50-value cuisine field; and **compositional embeddings** represent an ID as the combination of rows from two small tables indexed by quotient and remainder, which removes collisions between any two IDs at a fraction of the memory [Shi et al. 2020].
+**Compression.** Beyond precision and hashing: frequency-aware sizing (full rows for popular IDs, hashed buckets for the tail), mixed dimensions per field, and compositional embeddings that combine rows from two small tables indexed by quotient and remainder [Shi et al. 2020].
 
 **Table 68.6 — Sharding strategies for embedding tables.**
 
@@ -845,14 +844,14 @@ flowchart TB
   M1 <-.->|all-reduce MLP gradients| M2
 ```
 
-**Reading the diagram.** Each GPU owns a subset of tables (model parallelism) and a full copy of the MLPs (data parallelism). A step begins with each GPU holding a shard of the batch; an all-to-all routes each sparse ID to the GPU that owns its table, lookups and pooling happen there, and a second all-to-all returns each example's pooled vectors to the GPU that holds the example. The MLPs then run locally, and their gradients are all-reduced (dotted, overlapping backward, §65.6); embedding gradients travel back through the reverse all-to-all and update only touched rows. Storage boundaries are the table shards in GPU memory (or host memory for cold rows). Failure points: a hot table overloads its GPU (rebalance with row-wise sharding or replicate the hottest rows); the all-to-all is on the critical path and sensitive to network congestion. Scaling: tables scale with GPU memory, MLP throughput with GPU count.
+**Reading the diagram.** Each GPU owns some tables (model parallel) and a full MLP copy (data parallel). An all-to-all routes each sparse ID to its table's GPU; a second returns pooled vectors to the GPU holding the example; MLPs run locally and all-reduce gradients (dotted, overlapped with backward, §65.6), while embedding gradients return by the reverse all-to-all. Storage: table shards in GPU or host memory. Failure points: a hot table overloads its GPU (row-wise shard or replicate hot rows); the all-to-all is on the critical path. Tables scale with GPU memory, MLP throughput with GPU count.
 
 ::: industry
 **DLRM and its training systems.** Naumov et al. published DLRM with exactly this hybrid: model parallelism for embedding tables, data parallelism for MLPs, connected by all-to-all ("butterfly shuffle") communication. Mudigere et al. later described Meta's hardware–software co-design for training such models, including sharding of tables up to terabytes across GPUs and the role of the all-to-all.
 *Evidence: Primary* — [Naumov et al. 2019; Mudigere et al. 2022]
 :::
 
-At serving time the same split reappears in miniature. Rankers keep small and hot tables in process memory; very large user tables live in a sharded key–value or embedding service, fetched once per request (one user, not one per candidate); item rows for the hot head are cached in each ranker (§56.5.8). Version the tables with the model: a ranker reading v12 weights with a v13 ID mapping returns plausible-looking garbage.
+At serving, rankers keep small and hot tables in memory and fetch large user rows once per request from a sharded embedding service (§56.5.8), with tables versioned with the model.
 
 ## 68.9 Feature crossing and context features
 
@@ -904,7 +903,7 @@ Context answers "what does this customer want *now*". For food delivery it is un
 | Supply state | Restaurant ETA now, kitchen backlog, courier availability | Nearline, under a minute (§60.7) |
 | Device and entry point | iOS, push notification, banner | Request |
 
-Two features deserve special mention. **ETA** (Chapter 60's model) is both a feature and a constraint: a 55-minute delivery estimate should lower a restaurant's rank whatever the taste match. **Example age** handles time-dependent popularity: Covington et al. feed the age of the training example during training and set it to zero at serving, which lets the model learn that fresh content is preferred instead of averaging over the training window [Covington et al. 2016].
+**ETA** (Chapter 60) is both feature and constraint. **Example age**, fed in training and set to zero at serving, lets a model learn the preference for fresh content instead of averaging over the training window [Covington et al. 2016].
 
 ## 68.10 Re-ranking and business logic
 
@@ -957,9 +956,9 @@ flowchart LR
   CFG -.-> SL
 ```
 
-**Reading the diagram.** The stage runs synchronously in the orchestrator. Hard filters remove items that must never appear (policy violations, duplicates, restaurants above a backlog cutoff). Reserved slots are filled first by their own rules. MMR fills the remaining positions greedily, subject to caps; a violated cap sends the pass back to choose the next-best item. The output carries positions and **reason codes** (which rule placed each item), which are logged for debugging and for bias correction. The rule configuration is a versioned store pushed asynchronously. Failure points: conflicting rules that leave fewer than 20 items (fall back to relevance order and alert), and rule changes deployed without an experiment, which change what users see as much as a new model does. Scaling: cost is linear in candidates and negligible next to ranking.
+**Reading the diagram.** The stage runs synchronously in the orchestrator: hard filters, then reserved slots, then greedy MMR under caps (a violated cap retries with the next item). Output carries positions and logged **reason codes**. Rules come asynchronously from a versioned config store. Failure points: conflicting rules leaving fewer than 20 items (fall back to relevance order and alert), and unexperimented rule changes. Cost is linear in candidates and negligible.
 
-Greedy MMR is the workhorse; determinantal point processes select a whole set at once and have been used for feed diversity, at more complexity. Whatever the method, treat re-ranking rules like a model: version them, A/B test them, and log their decisions.
+Treat re-ranking rules like a model: version them, A/B test them and log their decisions.
 
 ## 68.11 Exploration versus exploitation
 
@@ -1058,13 +1057,13 @@ thompson   regret @1k    29.1  @10k   118.0  @100k   192.6   best-arm share 0.94
 What to notice:
 
 - **Greedy locks in early:** after one impression per arm most arms show zero orders, and it keeps choosing whichever got lucky; regret grows linearly at about 0.046 per impression, and the best restaurant gets 7% of impressions.
-- **ε-greedy** loses 0.0047 per impression between 10k and 100k, close to the 0.0036 exploration floor plus occasional wrong exploitation.
+- **ε-greedy** loses 0.0047 per impression after 10k, near the 0.0036 floor.
 - **UCB1's bonus** $\sqrt{2\ln t/n}$ assumes rewards anywhere in [0, 1]; with order rates near 5% it is far too wide, so it keeps exploring. UCB1-Tuned scales the bonus by the observed variance [Auer et al. 2002] and cuts regret by 78%. Use variance-aware bonuses for low rates.
 - **Thompson sampling** has the lowest regret at every horizon and gives the best arm 94% of impressions, which is why it is the default in production bandits; its posteriors are also natural priors for cold start (§68.15).
 
 ### 68.11.2 Contextual bandits in production
 
-Li et al. applied LinUCB to Yahoo!'s front-page news module: each article's expected click rate is a ridge regression on user and article features, and the bonus is the regression's predictive uncertainty, so exploration concentrates where the model is ignorant for *this kind of user* [Li et al. 2010]. In a full recommender, exploration is rarely a separate system choosing the whole page; it is a small budget inside the funnel.
+Li et al. applied LinUCB to Yahoo!'s news module: each article's click rate is a ridge regression on features, and the bonus is its predictive uncertainty, so exploration targets ignorance about *this kind of user* [Li et al. 2010]. In a full recommender, exploration is a small budget inside the funnel.
 
 **Figure 68.11 — Exploration inside the funnel, with propensity logging.**
 
@@ -1079,9 +1078,9 @@ flowchart LR
   LOG -.->|"IPS-weighted training"| TR[Training]
 ```
 
-**Reading the diagram.** The ranker produces scores and an uncertainty estimate (for example from an ensemble or the posterior of a Beta prior). The exploration policy, running synchronously in the re-ranker, fills most slots by exploitation and a few by sampling among uncertain candidates. Crucially, it logs the **propensity**, the probability with which each item was placed in its slot, asynchronously with the impression. Outcomes join the log, and training uses the propensities to correct for the policy's choices (§68.12). Failure points: a policy that does not log propensities produces data no one can debias later; an exploration budget that is too large costs orders measurably. Scaling: exploration adds no meaningful compute.
+**Reading the diagram.** The ranker supplies scores and uncertainty (ensemble or Beta posterior). The policy, synchronous in the re-ranker, exploits most slots and samples a few, and asynchronously logs each item's **propensity**, the probability of its placement, which training uses to correct for the policy (§68.12). Failure points: missing propensities make data impossible to debias; an oversized budget costs orders. Compute cost is negligible.
 
-Three production details matter more than the algorithm. Rewards are **delayed** (an order arrives minutes after the impression), so posteriors update in batches. Rates are **non-stationary** (lunch differs from dinner), so old evidence is discounted. And exploration has a **business cost** that must be budgeted and reported, like any other experiment.
+In production, rewards are **delayed** (posteriors update in batches), rates are **non-stationary** (discount old evidence), and exploration has a **business cost** to budget and report.
 
 ## 68.12 Feedback loops and biases
 
@@ -1099,7 +1098,7 @@ flowchart LR
   M2 -.->|next cycle| M
 ```
 
-**Reading the diagram.** The model's ranking decides exposure (solid, synchronous at serving time). Exposure produces engagement, which is logged as positive labels (dotted, asynchronous); items never shown produce no labels at all. Training on this data yields a model that is more confident in what was already shown, and the cycle repeats daily. The storage boundary is the training data, where the bias becomes permanent. The failure is gradual: catalog coverage shrinks, new restaurants starve, and offline metrics *improve*, because the test set is drawn from the same biased logs. Mitigations act at three points: exploration widens exposure, propensity logging records the bias, and IPS-weighted training removes it.
+**Reading the diagram.** Ranking decides exposure (solid, at serving); exposure yields logged positives (dotted); unshown items yield no labels. Retraining makes the model more confident in what it already showed, daily. The bias becomes permanent at the training-data boundary. The failure is gradual: coverage shrinks, new restaurants starve, and offline metrics *improve* because test data shares the bias. Exploration widens exposure, propensity logging records the bias, IPS removes it.
 
 Four biases recur:
 
@@ -1179,7 +1178,7 @@ flowchart LR
   SJ -.->|bot and spike filters| ALERT{{Alerting}}
 ```
 
-**Reading the diagram.** Events flow asynchronously from the app to Kafka and a stream job (§29.8), which updates decayed counters in a low-latency store within seconds. The feed request reads them synchronously, once per request, and passes them to the rankers as ordinary features. The storage boundary is the real-time store, with a TTL so idle sessions expire. Failure points: stream lag makes features stale (the ranker still works, slightly worse, so lag is monitored as freshness), and a bot generating thousands of events per minute can distort counters, so the job filters and rate-limits per user. Scaling: partition events by user so each user's counters live on one worker.
+**Reading the diagram.** Events flow asynchronously through Kafka to a stream job (§29.8) that updates decayed counters in a TTL'd real-time store within seconds; the feed request reads them synchronously once and passes them to the rankers as features. Failure points: stream lag (monitored as freshness; ranking degrades gracefully) and bots distorting counters (filter and rate-limit per user). Partition events by user.
 
 ## 68.14 Evaluation
 
@@ -1264,7 +1263,7 @@ flowchart LR
   REG -.-> RK
 ```
 
-**Reading the diagram.** The synchronous path (solid) runs inside the serving boundary: the orchestrator computes the user vector, queries the ANN index and key–value sources in parallel, reads user, session and supply features, calls the rankers with about 900 candidates, and re-ranks to 20, within the 120 ms budget of Table 68.3. The nearline boundary turns app events into session counters, trending lists and item-to-item updates within seconds to minutes. The offline boundary trains every model daily from the lake, where impressions with features and propensities have been joined with outcomes. Models, ID vocabularies and the ANN index are published together through the registry and rolled out by canary (§66.12). Failure points and fallbacks: a source times out (merge without it), the heavy ranker overloads (light-ranker order), the whole stack fails (zone popularity list from cache). Scaling: rankers scale with traffic; the index scales with catalog; logging scales with impressions.
+**Reading the diagram.** The synchronous path (solid) stays inside the serving boundary: user vector, parallel ANN and key–value sources, features, rankers on about 900 candidates, re-ranking to 20, within Table 68.3's 120 ms. Nearline jobs turn events into session counters, trending lists and item-to-item updates. Offline, every model trains daily from joined impressions, features, propensities and outcomes; models, ID vocabularies and the index publish together through the registry and roll out by canary (§66.12). Fallbacks: drop a late source, light-ranker order, then cached zone popularity. Rankers scale with traffic, the index with catalog, logging with impressions.
 
 **Table 68.8 — QuickBite recommendation components.**
 

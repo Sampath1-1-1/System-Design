@@ -331,3 +331,4 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-324 | 67 | GPTQ speedups (3.25× A100, 4.5× A6000) and ~4 GPU-hours for 175B | Open | |
 | UQ-325 | 67 | Release removing torch.ao.quantization in favor of torchao; TensorRT INT4 weight support and cross-GPU engine compatibility | Open | Version-dependent |
 | UQ-326 | 67 | ~5 µs kernel launch overhead and ~20 kernels per decoder layer are assumptions | Accepted | Labeled |
+| UQ-327 | 68 | Mudigere et al. ISCA 2022 "embedding tables up to terabytes"; Chapelle et al. 2012 interleaving agreement with A/B at lower traffic (qualitative); Hohnhold et al. KDD 2015 long-term holdout scope; DCN-V2 production deployment (Wang et al. 2021) | Open | |
