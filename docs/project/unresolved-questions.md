@@ -338,3 +338,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-331 | 74 | Qdrant query planner and filter-aware HNSW (secondary summaries); Weaviate flat-search cutoff default and ACORN default version; Elasticsearch default dense_vector index type by version; OpenSearch k-NN docs URL | Open | Version-dependent |
 | UQ-332 | 74 | Kusupati et al. 2022 "up to 14×" claims wording | Open | |
 | UQ-333 | 74 | DiskANN I/O budget example and QuickBite vector-search costs (1 ms CPU/query, 5 ms query encode, 2,000 texts/s re-embedding) are illustrative assumptions | Accepted | Labeled |
+| UQ-334 | 75 | Nogueira & Cho 2019 MS MARCO gain (qualitative); Liu et al. 2024 U-shaped effect for long-context models as worded | Open | |
+| UQ-335 | 75 | DoorDash 2024 RAG post: 90% hallucination / 99% compliance-issue reductions, authors, title; Xu et al. 2024 (LinkedIn) author list and ~6-month deployment | Open | |
+| UQ-336 | 75 | Edge et al. 2024 (GraphRAG) author list for cited arXiv version; OWASP LLM Top 10 2025 ranking prompt injection first | Open | |
