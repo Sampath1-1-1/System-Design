@@ -48,7 +48,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a city that plans its bus routes from smartphone trip data. Neighborhoods where fewer people own smartphones look as if nobody travels, so they get fewer buses (allocation); the buses they do get are scheduled less accurately (quality of service); and the official map labels them "low demand," which shapes how planners and residents think about them (representation). No one intended any of it; the data and the objective did it.
+Think of a city that plans bus routes from smartphone trip data. Neighborhoods where fewer people own smartphones look as if nobody travels, so they get fewer buses (allocation), less accurate schedules (quality of service), and a "low demand" label on the official map (representation). No one intended it; the data did it.
 
 The allocation/representation distinction was popularized by Crawford's 2017 NeurIPS keynote, and the Fairlearn toolkit's documentation adds quality-of-service harms [Crawford 2017; Fairlearn n.d.]. The canonical quality-of-service study is Gender Shades: commercial gender classifiers had error rates up to 34.7% for darker-skinned women against at most 0.8% for lighter-skinned men [Buolamwini & Gebru 2018].
 
@@ -235,7 +235,7 @@ flowchart TB
   IND --> REP
 ```
 
-**Reading the diagram.** The flow is a sequence of design questions, top to bottom, asked during the review in §71.14 rather than computed at runtime. First decide whether the positive prediction is a benefit (a loan) or a burden (a fraud hold), because that determines which error rate matters. If labels are themselves biased (chargebacks filed less often in some zones, arrests rather than crimes), separation and sufficiency inherit the bias, and independence plus a label audit is the safer target. If labels are sound, ask who bears the errors: affected individuals point to separation; downstream decision makers who interpret scores, such as review analysts, point to sufficiency. The failure point is choosing a single metric and reporting only it; every path ends by reporting all three.
+**Reading the diagram.** The flow is a sequence of design questions asked during the review in §71.14, not computed at runtime. Whether the positive prediction is a benefit (a loan) or a burden (a fraud hold) determines which error rate matters. If labels are biased (chargebacks filed less often in some zones), separation and sufficiency inherit the bias, so independence plus a label audit is safer. Otherwise, affected individuals point to separation and decision makers who interpret scores, such as review analysts, to sufficiency. The failure point is choosing a single metric and reporting only it; every path ends by reporting all three.
 
 ### 71.4.4 Impossibility results
 
@@ -337,7 +337,7 @@ flowchart LR
   GATE -->|no| TK([Ticket to owner<br/>and reviewer])
 ```
 
-**Reading the diagram.** The prediction log and matured labels (cylinders) are the same tables Chapter 70 monitors. Group attributes, whether self-reported or inferred proxy probabilities, sit in a restricted zone with separate access control; the join and the aggregation run inside it, and only aggregated counts above a minimum cell size leave it, so a dashboard user cannot recover any individual's group. All paths are batch jobs (asynchronous with respect to serving); scoring never reads the attribute store, which keeps protected attributes out of the model (§60.9.1). The gate compares results with the tolerance recorded in the model card and opens a ticket, not a page. Failure points: a join key mismatch that silently drops one group, and cells so small that intervals span the whole range. The job scales with orders per day, not with model traffic.
+**Reading the diagram.** The prediction log and matured labels are the tables Chapter 70 monitors. Group attributes, self-reported or inferred, sit in a restricted zone with separate access control; the join and aggregation run inside it, and only counts above a minimum cell size leave it. All paths are batch jobs (asynchronous with respect to serving); scoring never reads the attribute store, which keeps protected attributes out of the model (§60.9.1). The gate compares results with the tolerance recorded in the model card and opens a ticket, not a page. Failure points: a join key mismatch that silently drops one group, and cells so small that intervals span the whole range. The job scales with orders per day, not with model traffic.
 
 ::: formula
 **Wilson score interval and sample size for a rate**
@@ -370,7 +370,7 @@ $$\tilde{p} \pm h, \quad \tilde{p} = \frac{\hat{p} + \frac{z^2}{2n}}{1 + \frac{z
 
 QuickBite, like most companies outside regulated lending and hiring, does not collect race or ethnicity, and GDPR treats such data as a special category whose processing needs an explicit legal basis (Article 9). You cannot measure disparities for groups you cannot see, so teams use one of four approaches:
 
-1. **Geography as a coarse proxy.** Join zone-level census statistics (median income, demographic composition) and compare groups of zones. Cheap and privacy-preserving, but it measures neighborhoods, not people.
+1. **Geography as a coarse proxy.** Compare groups of zones by census statistics such as median income. Cheap and private, but it measures neighborhoods, not people.
 2. **Probabilistic proxies.** Bayesian Improved Surname Geocoding (BISG) combines surname and address to estimate race and ethnicity probabilities; it was developed for health-care disparity research [Elliott et al. 2009] and is used by the US Consumer Financial Protection Bureau in fair-lending analysis [CFPB 2014]. Proxy-based disparity estimates can be biased in either direction, because proxy errors correlate with outcomes [Chen et al. 2019].
 3. **Voluntary, purpose-limited self-report** collected for auditing only, stored in the restricted zone of Figure 71.5. The EU AI Act explicitly permits processing special categories of data for bias detection in high-risk systems under strict safeguards (Article 10(5)) [EU 2024].
 4. **External audits** by a party that holds the attributes and receives model outputs, so the company never holds both.
@@ -668,7 +668,6 @@ What to notice:
 | Row | Pre-processing (reweighing) | In-processing (constraints) | Post-processing (thresholds) |
 |---|---|---|---|
 | Needs group at | Training | Training | Decision time |
-| Model change | Weights only | New objective | None |
 | Criteria supported | Mainly independence | Most, tunable | Separation, independence |
 | Accuracy cost | Low to moderate | Lowest for a given disparity | Moderate |
 | Operational complexity | Low | High (every retrain) | Low, but a lookup online |
@@ -1050,7 +1049,7 @@ flowchart LR
   ACC -.->|epsilon so far,<br/>stop at budget| UP
 ```
 
-**Reading the diagram.** The solid path is one synchronous training step on an accelerator: sample, per-example gradients, clip, sum, add noise once per batch, average, update. The dotted path is bookkeeping: the accountant needs only the sampling rate, noise multiplier and step count, never the data, and halts training at the budget. The storage boundary that matters is the checkpoint: only parameters produced by this path inherit the guarantee, so intermediate non-private debugging runs on the same data spend budget too. Failure points: computing batch-averaged gradients before clipping (no per-example bound, no guarantee), fixed-size shuffled batches analyzed as if Poisson-sampled, and tuning hyperparameters on private data without counting it. Per-example gradients raise memory and compute, typically severalfold.
+**Reading the diagram.** The solid path is one synchronous training step on an accelerator: sample, per-example gradients, clip, sum, add noise once per batch, average, update. The dotted path is bookkeeping: the accountant needs only the sampling rate, noise multiplier and step count, never the data, and halts training at the budget. Only checkpoints produced by this path inherit the guarantee. Failure points: clipping the batch-averaged gradient (no per-example bound), shuffled fixed-size batches analyzed as if Poisson-sampled, and uncounted hyperparameter tuning on private data. Per-example gradients multiply memory and compute.
 
 ::: formula
 **Clipping and noise in DP-SGD**
@@ -1378,9 +1377,9 @@ What to notice:
 Documentation turns the measurements of this chapter into evidence. Four artifacts, each generated as far as possible from pipelines (§63.13):
 
 - **Datasheet** for each training and evaluation dataset: motivation, composition, collection, labeling, and known gaps (§63.13) [Gebru et al. 2021].
-- **Model card** for each model version (§59.10.3) [Mitchell et al. 2019], with a fairness section that states the chosen criterion and why, the groups and how they were derived (self-report, geography, proxy), per-group metrics with intervals, the impossibility trade-off accepted (§71.4.4), mitigations applied and their cost, explanation method and background, and privacy parameters $(\varepsilon, \delta, q, \sigma, T)$ with the accountant.
+- **Model card** for each model version (§59.10.3) [Mitchell et al. 2019], with a fairness section (criterion and why, how groups were derived, per-group metrics with intervals, the trade-off accepted in §71.4.4, mitigations and their cost), the explanation method and background, and privacy parameters $(\varepsilon, \delta, q, \sigma, T)$ with the accountant.
 - **System card** for a product that combines several models and rules. A fraud *decision* involves the model, thresholds, review policy and appeals, so its harms belong to the system; OpenAI's GPT-4 system card is an example of the genre for a generative system [OpenAI 2023].
-- **Audit log** of decisions: for each consequential decision, the input features (or a pointer to them), model and threshold versions, score, decision, reason codes, reviewer action and appeal outcome, append-only and retained for the regulatory period (§69.11.1, §40.4).
+- **Audit log** of decisions: features (or a pointer), model and threshold versions, score, decision, reason codes, reviewer action and appeal outcome, append-only (§69.11.1, §40.4).
 
 **Table 71.4 — What each artifact answers.**
 
@@ -1393,7 +1392,7 @@ Documentation turns the measurements of this chapter into evidence. Four artifac
 
 ## 71.13 Regulation overview
 
-This section is an engineer's map, as of 2026, not legal advice; obligations depend on jurisdiction, role and facts, and some dates have moved.
+This is an engineer's map as of 2026, not legal advice.
 
 ### 71.13.1 The EU AI Act
 
@@ -1412,7 +1411,7 @@ flowchart TB
   T -->|no: ETA, fraud detection| MIN[Minimal risk:<br/>voluntary codes]
 ```
 
-**Reading the diagram.** The questions run top to bottom, once per system and on material change (§71.14). Article 5 practices (social scoring, exploiting vulnerabilities, untargeted facial-image scraping and others) are banned. High-risk systems are safety components of regulated products (Annex I) or listed uses (Annex III), including employment and worker management, such as allocating tasks or monitoring performance, which plausibly covers courier dispatch, and creditworthiness assessment, which explicitly excludes systems used to detect financial fraud. High-risk providers need risk management (Art. 9), data governance including bias examination (Art. 10), technical documentation (Art. 11), automatic logging (Art. 12), information for deployers (Art. 13), human oversight (Art. 14), and accuracy, robustness and cybersecurity (Art. 15), plus conformity assessment and post-market monitoring. A chatbot must tell users they are talking to an AI. The failure point is classification itself: a fraud model that starts setting credit limits changes tier.
+**Reading the diagram.** The questions run top to bottom, once per system and on material change (§71.14). Article 5 practices (social scoring, exploiting vulnerabilities, untargeted facial-image scraping and others) are banned. High-risk systems are safety components of regulated products (Annex I) or listed uses (Annex III), including employment and worker management, such as allocating tasks or monitoring performance, which plausibly covers courier dispatch, and creditworthiness assessment, which explicitly excludes systems used to detect financial fraud. High-risk providers need risk management, data governance including bias examination, technical documentation, automatic logging, information for deployers, human oversight, and accuracy, robustness and cybersecurity (Arts. 9–15), plus conformity assessment and post-market monitoring. A chatbot must tell users they are talking to an AI. The failure point is classification itself: a fraud model that starts setting credit limits changes tier.
 
 ### 71.13.2 GDPR and US sectoral rules
 
@@ -1425,7 +1424,6 @@ flowchart TB
 | ECOA and Regulation B (US) | Credit decisions | Adverse-action notices must state specific principal reasons; the CFPB says complex models are no exception [CFPB 2022] |
 | FCRA (US) | Decisions using consumer reports | Adverse-action notices with key factors of credit scores |
 | Title VII, four-fifths rule (US) | Employment selection | Disparate-impact screening at selection ratio 0.8 [EEOC 1978] |
-| NYC Local Law 144 | Automated employment decision tools in New York City | Annual independent bias audit and candidate notice |
 
 For QuickBite, the fraud hold is not a credit decision, but a hold that blocks a customer's orders can be "similarly significant," so manual review with a contest path keeps it from being "solely" automated. Reason codes (§71.8) are the shared mechanism behind Art. 22 information, adverse-action notices and support conversations.
 
@@ -1529,7 +1527,7 @@ stateDiagram-v2
 
 **Q5. Design training of a model on customer order histories with a formal privacy guarantee.** **Answer.** User-level DP: bound orders per user, sample users with probability $q$, clip per-user updates, add Gaussian noise, account with RDP, pre-train on public or synthetic data and fine-tune few parameters; set ε by policy, audit empirically with membership attacks, and document $(q, \sigma, T, \delta)$ in the model card.
 
-**Q6. Design federated learning for 50,000 courier phones.** **Answer.** Eligibility rules (charging, Wi-Fi), over-selection and deadlines, FedAvg with small $E$ for non-IID data, compressed updates, secure aggregation in cohorts, client-level DP and update-norm clipping against poisoning, a federated evaluation set, and participation monitoring by phone type and city to avoid biased training populations.
+**Q6. Design federated learning for 50,000 courier phones.** **Answer.** Eligibility rules (charging, Wi-Fi), over-selection and deadlines, FedAvg with small $E$ for non-IID data, compressed updates, secure aggregation, client-level DP and update clipping against poisoning, and participation monitoring by phone type and city.
 
 ## 71.18 Practical exercises
 

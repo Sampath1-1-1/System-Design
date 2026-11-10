@@ -76,11 +76,9 @@ The chain rule of probability makes the first equation exact for *any* distribut
 
 #### How a generation call works
 
-1. **Tokenize** the prompt into IDs (§72.4).
-2. **Embed** each ID as a vector of $d$ numbers (§72.5).
-3. Pass the vectors through $L$ **transformer blocks** (§72.6–§72.9), each mixing information across positions (attention) and transforming each position (MLP).
-4. Project the last position's vector onto the vocabulary to get $V$ scores (**logits**) and turn them into probabilities (§72.5).
-5. **Sample** one token (§72.13), append it, and repeat from step 2 for the new token only, reusing cached keys and values for the old ones (§72.11), until a stop condition.
+1. **Tokenize** the prompt (§72.4) and **embed** each ID as $d$ numbers (§72.5).
+2. Pass the vectors through $L$ **transformer blocks** (§72.6–§72.9) that mix positions (attention) and transform each one (MLP).
+3. Project the last position onto the vocabulary as $V$ **logits** (§72.5), **sample** a token (§72.13), and repeat for the new token only, reusing cached keys and values (§72.11), until a stop condition.
 
 **Figure 72.1 — An LLM generation call, end to end.**
 
@@ -121,7 +119,7 @@ flowchart LR
 **Reading the diagram.** Data stores (cylinders) feed training stages; each stage reads a checkpoint and writes a new one. Pre-training costs thousands to millions of GPU-hours ($6ND$, §65.4), so QuickBite starts from an open base model and runs only continued pre-training, tuning and an evaluation gate; failure loops back (dotted, asynchronous), success registers the weights for serving. Failure points: evaluation-set contamination, and a tokenizer change between stages, which invalidates every downstream checkpoint (§72.4.6). Scaling: Chapter 65's distributed training.
 
 ::: mistake
-**"The model knows facts; it looks things up."** A base LLM stores statistical associations in its weights, not records with keys. It produces the most plausible continuation, which is often correct and sometimes confidently wrong. For order status, refunds and policies, QuickBite's chatbot must be given the facts in its context at request time (retrieval and tool calls, Chapters 75 and 77), not trusted to remember them.
+**"The model looks facts up."** Weights hold statistical associations, not keyed records; the model produces the most plausible continuation, sometimes confidently wrong. Order status and policies must be supplied in context at request time (Chapters 75 and 77).
 :::
 
 ## 72.4 Tokenization
@@ -364,7 +362,7 @@ $$n_\text{tok} = r \cdot n_\text{words} \qquad C_\text{day} = R_\text{conv} \lef
 4. Per day: $10{,}000 \times 9{,}063 = 90.6$ million input tokens and 4.7 million output tokens.
 5. The same conversation in a language with $r = 2.6$ (twice English, an assumption within the range Petrov et al. report) for the customer and reply text, with the system prompt unchanged: exchange 222 tokens, input $6 \times 1{,}266 + 222 \times 15 = 10{,}926$ tokens (+21%), output 936 tokens (+100%).
 
-**Interpretation.** The input side is dominated by the fixed system prompt re-sent every turn, 79% of input tokens here; output tokens are 5% of the total but, as §72.10 shows, they take most of the wall-clock time, because each one is a full sequential pass. Doubling tokens per word doubles reply latency and output cost for those users. **Engineering implication.** Plan capacity in tokens, measured with the production tokenizer on real traffic per language; cache the shared system-prompt prefix rather than recomputing it every turn (prefix caching, Chapter 73); and check per-language latency as a fairness metric (Chapter 71).
+**Interpretation.** The re-sent system prompt is 79% of input tokens; output is 5% of tokens but most of the wall-clock time, since each output token is a sequential pass (§72.10). Doubling tokens per word doubles reply latency for those users. **Engineering implication.** Plan in tokens measured with the production tokenizer per language, cache the shared prefix (Chapter 73), and track per-language latency as a fairness metric (Chapter 71).
 :::
 
 ### 72.4.6 The tokenizer in the serving path
@@ -644,7 +642,7 @@ $$P_\text{attn} = \underbrace{d \cdot h d_h}_{W_Q} + \underbrace{2\, d \cdot g\,
 4. Over 32 layers: 524 KB, 131 KB and 16 KB per token. A QuickBite conversation at its final 1,866 tokens (§72.4.5) pins 0.98 GB, 0.24 GB or 0.03 GB of KV cache.
 5. At 200 concurrent conversations: 196 GB with MHA, more than two 80 GB GPUs for cache alone; 49 GB with GQA-8; 6 GB with MQA.
 
-**Interpretation.** GQA-8 saves 38% of attention parameters (about 6% of the whole model) but 75% of KV memory. **Engineering implication.** When choosing an open model to serve, the number of KV heads matters as much as the parameter count: it sets how many concurrent conversations fit on a GPU and how many bytes each decode step reads.
+**Interpretation.** GQA-8 saves 38% of attention parameters but 75% of KV memory. **Engineering implication.** When choosing a model to serve, KV heads matter as much as parameter count: they set concurrency per GPU and bytes per decode step.
 :::
 
 **Table 72.3 — MHA, GQA and MQA compared (32 query heads, $d = 4{,}096$, 32 layers, BF16).**
@@ -661,7 +659,7 @@ $$P_\text{attn} = \underbrace{d \cdot h d_h}_{W_Q} + \underbrace{2\, d \cdot g\,
 | Choose when | Small models, short context | Default for serving-oriented models | Extreme memory pressure |
 
 ::: industry
-**Llama 2 and Llama 3 adopt GQA.** Touvron et al. [2023] used GQA with 8 KV heads for Llama 2's 34B and 70B models, citing inference scalability, while the 7B and 13B models kept MHA. Llama 3 uses GQA with 8 KV heads at every size, including the 8B model [Dubey et al. 2024]. PaLM used multi-query attention, and Pope et al. [2023] showed that its small KV cache allowed much longer contexts and larger decode batches on TPU v4.
+**Llama 2 and Llama 3 adopt GQA.** Llama 2 used GQA with 8 KV heads for its 34B and 70B models, citing inference scalability, and kept MHA at 7B and 13B [Touvron et al. 2023]; Llama 3 uses 8 KV heads at every size [Dubey et al. 2024]. PaLM used MQA, whose small cache Pope et al. [2023] exploit for long contexts and large decode batches.
 *Evidence: Primary* — [Touvron et al. 2023; Dubey et al. 2024; Chowdhery et al. 2022; Pope et al. 2023]
 :::
 
@@ -919,7 +917,7 @@ $$\theta_i = \beta^{-2i/d_h}, \quad i = 0, \ldots, \tfrac{d_h}{2} - 1 \qquad \be
 
 ### 72.9.2 Extending the context window
 
-Training at full length from the start is expensive because attention cost is quadratic (§72.12), so most models pre-train at 4K–8K tokens and extend later. **Position interpolation** compresses positions linearly into the trained range and needs a short fine-tune [Chen et al. 2023]. **NTK-aware scaling** and **YaRN** rescale the RoPE frequencies non-uniformly, stretching slow pairs more than fast ones so that local resolution is preserved [Peng et al. 2024]. **Raising the base** and continuing pre-training on progressively longer documents is the approach Llama 3.1 took to reach 128K [Dubey et al. 2024]. **ALiBi** was designed to extrapolate past its training length without any change [Press et al. 2022]. All of these extend the *positions* the model can represent; none removes the memory and compute cost of long contexts, which §72.11–§72.12 quantify.
+Because attention is quadratic (§72.12), most models pre-train at 4K–8K tokens and extend later. **Position interpolation** compresses positions linearly, with a short fine-tune [Chen et al. 2023]; **NTK-aware scaling** and **YaRN** stretch slow RoPE pairs more than fast ones to keep local resolution [Peng et al. 2024]; Llama 3.1 raised the base and continued pre-training on progressively longer documents to reach 128K [Dubey et al. 2024]; **ALiBi** extrapolates by design [Press et al. 2022]. None removes the memory and compute cost of long contexts (§72.11–§72.12).
 
 **Figure 72.9 — Choosing a positional scheme and extending context.**
 
@@ -1013,7 +1011,7 @@ $$I_\text{prefill} \approx \frac{2 N_m s}{b_w N} \approx s \qquad I_\text{decode
 **Interpretation.** One prefill token costs about $47.5/2{,}048 = 0.023$ ms of GPU time; one decode token at batch 1 costs 4.3 ms, about 190 times more. Batching raises decode throughput 10× before the KV cache takes over; beyond that only a smaller cache (GQA, FP8 KV) or more bandwidth helps. **Engineering implication.** Plan TTFT from FLOPs and TPOT from bytes. Prefill wants large token batches; decode wants many concurrent sequences and a small KV cache. Chapter 73 builds continuous batching, chunked prefill and disaggregation on these two bounds; Chapter 64's §64.9.2 rounded the batch-1 bound to 4.2 ms with 14 GB.
 :::
 
-A key fact hides in step 6: the attention part of decode reads each sequence's own KV cache for only that sequence's query, so its intensity is about $h/g$ FLOPs per byte (1 for MHA, 4 for GQA-8) *regardless of batch size*. Batching amortizes weight reads, never cache reads. Pope et al. [2023] derive the same conclusion and use it to choose partitioning layouts for PaLM inference.
+Step 6 hides a key fact: decode attention reads each sequence's cache for that sequence's query only, so its intensity is about $h/g$ FLOPs per byte (1 for MHA, 4 for GQA-8) *regardless of batch size*. Batching amortizes weight reads, never cache reads [Pope et al. 2023].
 
 **Table 72.5 — Prefill versus decode.**
 
@@ -1028,7 +1026,7 @@ A key fact hides in step 6: the attention part of decode reads each sequence's o
 | Main levers | FP8 compute, prefix caching, chunking | Batching, GQA/MQA, KV quantization, speculative decoding |
 
 ::: industry
-**PaLM inference partitioning.** Pope et al. [2023] model prefill and decode separately and pick different partitioning layouts for each on TPU v4. Using multi-query attention and INT8 weights they report a 29 ms per-token decode latency at low batch for the 540B PaLM model and 76% model FLOPs utilization for large-batch prefill, with a 2,048-token context: the same split between a bandwidth-bound and a compute-bound phase as the example above.
+**PaLM inference partitioning.** Pope et al. [2023] choose different partitioning layouts for prefill and decode on TPU v4. With multi-query attention and INT8 weights they report 29 ms per token at low batch for 540B PaLM and 76% MFU for large-batch prefill at 2,048 tokens of context: a bandwidth-bound and a compute-bound phase, as above.
 *Evidence: Primary* — [Pope et al. 2023]
 :::
 
@@ -1174,7 +1172,6 @@ What to notice:
 |---|---|---|---|---|
 | Out-of-memory under load | Concurrency × context exceeds the pool | KV pool utilization metric | Preempt and recompute lowest-priority sequences | Admission control in tokens, not requests |
 | Throughput collapses on long prompts | Few long sequences consume the pool | Batch size versus context histogram | Separate long-context pool | Per-tier context limits |
-| TPOT grows during a long reply | Each step reads a larger cache | TPOT by output position | Cap output length | GQA model, FP8 KV |
 | Wrong or mixed-up output | Cache reused across mismatched prefixes or model versions | Golden-prompt checks | Flush the cache | Key prefix caches by model version and exact token prefix |
 
 ::: mistake
@@ -1219,7 +1216,7 @@ $$\frac{C_\text{attn}}{C_\text{lin}}\Big|_\text{decode at } t = \frac{4 t d}{24 
 2. Crossovers: in decode, attention equals linear work at $t = 6d = 24{,}576$ tokens; in prefill at $s = 12d = 49{,}152$.
 3. Score matrix column: $s^2 \times 2$ bytes; at 128K, 34 GB *per head per layer* if materialized, which is why fused attention kernels never write it to HBM (§64.13).
 
-**Interpretation.** Below about 10K tokens attention is a minor cost and the model behaves like its $2N$ estimate; at 128K attention dominates and TTFT is ten seconds on one GPU before any queueing. **Engineering implication.** Price long context separately, budget prompts in tokens per section (system, history, retrieved documents, output reserve), and prefer retrieving the relevant 2K tokens over sending 100K (Chapter 75). Long prompts also need chunked prefill so they do not stall other users' decode steps (Chapter 73).
+**Interpretation.** Below about 10K tokens the $2N$ estimate holds; at 128K attention dominates and TTFT is ten seconds on one GPU. **Engineering implication.** Price long context separately, budget prompts in tokens per section, prefer retrieving the relevant 2K tokens over sending 100K (Chapter 75), and chunk long prefills (Chapter 73).
 :::
 
 **Figure 72.12 — Budgeting the chatbot's 4,096-token window.**
@@ -1487,9 +1484,9 @@ $$C_\text{decode}(t) \approx 2N_m + 4 L d t \qquad C_\text{prefill/token} \appro
 
 ## 72.16 Model families and scaling at a high level
 
-Three transformer families matter. **Decoder-only** models (GPT, Llama, Mistral) generate text and dominate LLM serving. **Encoder-only** models (BERT) read the whole input bidirectionally and are used for classification and the embedding models of Chapter 74 [Devlin et al. 2019]. **Encoder–decoder** models (T5) suit translation and summarization [Raffel et al. 2020]. Orthogonally, each can be **dense** or **MoE** (§72.14).
+**Decoder-only** models (GPT, Llama, Mistral) dominate generation; **encoder-only** models (BERT) serve classification and embeddings (Chapter 74) [Devlin et al. 2019]; **encoder–decoder** models (T5) suit translation [Raffel et al. 2020]. Each can be **dense** or **MoE**.
 
-**Scaling laws** (§65.4) make loss a predictable function of parameters $N$ and training tokens $D$. Hoffmann et al. [2022] fit $L(N, D) = E + A/N^{\alpha} + B/D^{\beta}$ with $E = 1.69$, $A = 406.4$, $B = 410.7$, $\alpha = 0.34$, $\beta = 0.28$; compute-optimal training uses about 20 tokens per parameter. With those constants, 7B on 2T tokens gives 2.02; 7B on 15T tokens 1.96; 70B on 2T 1.92. Training the small model much longer closes most of the gap to a 10× larger one while serving it at a tenth of the cost, which is why Llama 3 8B saw about 15 trillion tokens, nearly 1,900 per parameter [Dubey et al. 2024]. The exact values apply to Chinchilla's data and tokenizer; the shape of the trade-off is what transfers.
+**Scaling laws** (§65.4) make loss a predictable function of parameters $N$ and training tokens $D$. Hoffmann et al. [2022] fit $L(N, D) = E + A/N^{\alpha} + B/D^{\beta}$ with $E = 1.69$, $A = 406.4$, $B = 410.7$, $\alpha = 0.34$, $\beta = 0.28$; compute-optimal training uses about 20 tokens per parameter. With those constants, 7B on 2T tokens gives 2.02; 7B on 15T tokens 1.96; 70B on 2T 1.92. Training the small model longer closes most of the gap to one 10× larger that costs ten times as much to serve; hence Llama 3 8B's roughly 15 trillion tokens, nearly 1,900 per parameter [Dubey et al. 2024]. The constants are specific to Chinchilla's data; the shape of the trade-off transfers.
 
 **Table 72.8 — What model properties mean for system design.**
 
@@ -1588,7 +1585,7 @@ flowchart TB
 **Answer.** Weights ($N b_w$) plus $500 \times 2Lg d_h b \times 8{,}192$ of KV plus a reserve, divided by usable HBM per GPU; then check TPOT from bytes per step and TTFT from prefill FLOPs against the SLO. Prefer GQA and FP8 KV; load-test with real lengths (Chapter 73).
 
 **Q4. Why does an MoE model with 13B active parameters not decode as fast as a 13B dense model?**
-**Answer.** At batch sizes above a few tokens the router touches nearly every expert each step, so the step reads all experts' weights (47B for Mixtral), and expert-parallel serving adds all-to-all latency. MoE saves FLOPs, which helps prefill and large batches, not bytes at small batches.
+**Answer.** Above a few tokens per batch the router touches nearly every expert, so each step reads all 47B parameters (Mixtral), plus all-to-all latency across GPUs. MoE saves FLOPs, not bytes.
 
 ### Advanced
 

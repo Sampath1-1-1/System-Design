@@ -403,27 +403,29 @@ Output lengths vary by an order of magnitude. With request-level batching a batc
 3. Run one forward pass over the mixed batch: newly admitted prompts (prefill tokens) plus one token for each running sequence.
 4. Sample, stream, and repeat. Requests never wait for others to finish.
 
-**Figure 73.5 — Four requests under static batching (top) and continuous batching (bottom), in decode steps.**
+**Figure 73.5 — Four requests under static batching (top) and continuous batching (bottom).**
 
 ```mermaid
 gantt
-  title Slots over time in decode steps
+  title Two batch slots, in units of 10 decode steps
   dateFormat X
   axisFormat %S
   section Static
-  R1 50 tokens          :s1, 0, 50
-  R1 slot idle          :crit, 50, 100
-  R2 100 tokens         :s2, 0, 100
-  R3 and R4 wait        :crit, 0, 100
-  R3 then R4            :s3, 100, 160
+  R1 50 tokens          :s1, 0, 5
+  R1 slot idle          :crit, 5, 10
+  R2 100 tokens         :s2, 0, 10
+  R3 and R4 wait        :crit, 0, 10
+  R3 40 tokens          :s3, 10, 14
+  R4 20 tokens          :s4, 10, 12
+  R4 slot idle          :crit, 12, 14
   section Continuous
-  R1 50 tokens          :c1, 0, 50
-  R3 joins slot 1       :c3, 50, 90
-  R2 100 tokens         :c2, 0, 100
-  R4 joins slot 2       :c4, 100, 120
+  R1 50 tokens          :c1, 0, 5
+  R3 joins slot 1       :c3, 5, 9
+  R2 100 tokens         :c2, 0, 10
+  R4 joins slot 2       :c4, 10, 12
 ```
 
-**Reading the diagram.** The axis is decode steps on one GPU with two batch slots. Under static batching, R1 finishes at step 50 but its slot idles (red) until R2 ends at step 100, while R3 and R4 wait. Under continuous batching R3 takes R1's slot at step 50 and R4 takes R2's at step 100, so all four finish by step 120 instead of 160. The state boundary is each slot's KV cache, freed and reused per step. Failure point: each joining request's prefill lengthens the step it joins (§73.14). Scaling: more slots need more KV memory (§73.5, §73.7).
+**Reading the diagram.** The axis counts tens of decode steps on one GPU with two batch slots. Under static batching, R1 finishes at step 50 but its slot idles (red) until R2 ends at step 100 while R3 and R4 wait; their own batch then idles a slot after R4 ends. Under continuous batching R3 takes R1's slot at step 50 and R4 takes R2's at step 100, so all four finish by step 120 instead of 140, and R3 finishes at step 90 instead of 140. The state boundary is each slot's KV cache, freed and reused per step. Failure point: each joining request's prefill lengthens the step it joins (§73.14). Scaling: more slots need more KV memory (§73.5, §73.7).
 
 **Figure 73.6 — The continuous-batching scheduler loop.**
 
@@ -908,7 +910,7 @@ sequenceDiagram
   D->>T: context + d1..d4
   T->>T: one forward pass, scores 5 positions
   T->>S: target distributions p1..p5
-  S->>S: accept d1, d2; reject d3
+  S->>S: accept d1 and d2, reject d3
   S->>S: sample replacement for d3 from residual
   S-->>D: commit d1, d2, d3', roll back d4
 ```
