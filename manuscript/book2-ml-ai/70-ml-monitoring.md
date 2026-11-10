@@ -47,7 +47,7 @@ After this chapter you should be able to:
 
 Think of a weather forecaster whose station breaks and reports 0 °C every hour. She still publishes a neatly formatted forecast every morning; it is wrong, and nobody finds out until people get rained on. A model is that forecaster: the format of its answer never reveals whether the inputs were nonsense or the climate has changed.
 
-Traditional software has a **specification** written in code: if an input violates it, a check fails and an exception is raised. A model's specification is learned from data, so there is nothing to violate. A distance of 9,000 km, a preparation time of zero, or a city it has never seen all go through the same arithmetic and produce a number (§60.3.2).
+Traditional software has a **specification** in code that inputs can violate. A model's specification is learned from data, so a distance of 9,000 km or an unseen city goes through the same arithmetic and produces a number (§60.3.2).
 
 #### Why does this exist?
 
@@ -113,7 +113,7 @@ flowchart TB
 #### Real-world industry applications
 
 ::: industry
-**Google — The ML Test Score's monitoring tests.** Breck et al. turn production-readiness into a rubric of 28 tests, seven of which concern monitoring: notification of dependency changes, data invariants holding in training and serving inputs, training and serving computing the same feature values, models not being too stale, numerical stability (no NaNs or infinities), no regression in training speed, serving latency, throughput or memory, and no regression in prediction quality on served data. The list maps directly onto the data, model and infrastructure layers of Table 70.1.
+**Google — The ML Test Score's monitoring tests.** Breck et al.'s production-readiness rubric includes seven monitoring tests: dependency-change notification, data invariants in serving inputs, training and serving computing the same features, model staleness, numerical stability, no regression in speed, latency, throughput or memory, and no regression in prediction quality on served data. They map onto Table 70.1's layers.
 *Evidence: Primary* — [Breck et al. 2017]
 :::
 
@@ -123,7 +123,7 @@ flowchart TB
 :::
 
 ::: mistake
-**"Our service has 99.99% availability, so the model is healthy."** Availability counts answers, not correct answers. An ETA model that returns the training-set mean for every request has perfect availability and is useless. Every model needs at least one quality indicator (§60.12.1) next to its availability and latency SLIs.
+**"Our service has 99.99% availability, so the model is healthy."** Availability counts answers, not correct answers. Every model needs at least one quality indicator (§60.12.1) next to its availability and latency SLIs.
 :::
 
 ## 70.4 Types of change
@@ -146,7 +146,7 @@ A tailor estimates trouser length from height. A basketball team walks in: unusu
 
 #### Why does this exist?
 
-The distinction decides what a monitor can see and what the fix is. Covariate and label shift change the inputs or outputs a monitor can observe without labels; concept drift can be invisible in the inputs and only shows up in performance. Covariate shift within the training data's range often needs no action; concept drift always needs new labels and retraining.
+The distinction decides what a monitor can see and what the fix is. Covariate and label shift are observable without labels; concept drift can be invisible in the inputs. Covariate shift within the training range often needs no action; concept drift always needs new labels and retraining.
 
 **Table 70.2 — Types of change with QuickBite examples.**
 
@@ -161,7 +161,7 @@ The distinction decides what a monitor can see and what the fix is. Covariate an
 
 ### 70.4.2 How concept drift unfolds in time
 
-Gama et al. and Lu et al. classify concept drift by its time profile [Gama et al. 2014; Lu et al. 2019]. **Sudden** drift switches at a moment (the bridge closes). **Gradual** drift alternates between old and new concepts with the new one becoming more frequent (couriers move to e-bikes one by one). **Incremental** drift moves continuously through intermediate states (congestion grows a little every week). **Recurring** drift returns to earlier concepts (rain, holidays, Friday dinner). The profile matters for the detector: sudden drift favors short windows and change-point tests; incremental drift favors comparing against a fixed reference; recurring drift requires a seasonal reference so that the monitor does not alarm every Friday (§70.6.4).
+Gama et al. and Lu et al. classify concept drift by its time profile [Gama et al. 2014; Lu et al. 2019]. **Sudden** drift switches at a moment (the bridge closes). **Gradual** drift alternates between old and new concepts with the new one becoming more frequent (couriers move to e-bikes one by one). **Incremental** drift moves continuously through intermediate states (congestion grows a little every week). **Recurring** drift returns to earlier concepts (rain, holidays, Friday dinner). Sudden drift favors short windows; incremental drift a fixed reference; recurring drift a seasonal reference (§70.6.5).
 
 **Figure 70.3 — A taxonomy of change and where each kind can be detected.**
 
@@ -212,7 +212,7 @@ $$E = \sum_{s} w_s\, e_s \qquad \Delta E = \underbrace{\sum_{s} (w'_s - w_s)\, e
 
 ### 70.4.3 Bugs versus genuine change
 
-Breck et al. note that many "drifts" in production are not changes in the world at all but changes in the pipes: a renamed field, a unit change, a default value, a stalled job [Breck et al. 2019]. The two have different fingerprints.
+Many production "drifts" are changes in the pipes, not the world: a renamed field, a unit change, a default value, a stalled job [Breck et al. 2019].
 
 **Figure 70.4 — Triage flow for a drift alert.**
 
@@ -237,7 +237,7 @@ flowchart TB
 
 ## 70.5 Statistical tests and distances
 
-Every drift detector answers the same question: are these two samples, a **reference window** (usually training data or a known-good period) and a **current window** (recent production traffic), drawn from the same distribution? Two families of tools answer it. **Two-sample tests** (Kolmogorov–Smirnov, chi-square) return a p-value: how surprising the difference would be if nothing had changed. **Distances and divergences** (PSI, KL, Jensen–Shannon, Wasserstein) return a magnitude: how much changed. The distinction matters more than any single formula, as §70.6.3 shows.
+Every drift detector answers the same question: are these two samples, a **reference window** (usually training data or a known-good period) and a **current window** (recent production traffic), drawn from the same distribution? **Two-sample tests** (Kolmogorov–Smirnov, chi-square) return a p-value: how surprising the difference would be if nothing had changed. **Distances and divergences** (PSI, KL, Jensen–Shannon, Wasserstein) return a magnitude: how much changed. The distinction matters more than any formula (§70.6.3).
 
 Throughout, $p_i$ is the reference share of bin $i$ and $q_i$ the current share, matching the PSI notation of §59.7.2.
 
@@ -514,7 +514,7 @@ flowchart TB
 
 ```mermaid
 gantt
-  title Windows for a check run on Fri 2026-10-30 at 20:00
+  title Windows for a check run on Fri 2026-10-30, 8 pm
   dateFormat YYYY-MM-DD HH:mm
   axisFormat %m-%d
   section Training reference
@@ -526,7 +526,7 @@ gantt
   section Trailing reference
   Previous 7 days :r1, 2026-10-23 00:00, 7d
   section Current window
-  Fri 10-30 18:00-20:00 :crit, c1, 2026-10-30 18:00, 2h
+  Fri 10-30 dinner :crit, c1, 2026-10-30 18:00, 2h
 ```
 
 **Reading the diagram.** The current window (red) is the last two hours of Friday dinner. It is compared against three references. Drift against the training reference predicts accuracy loss. The seasonal reference pools the same two hours on three previous Fridays, so Friday's normal baskets do not alarm. The trailing 7-day reference catches anything new this week but mixes lunch, dinner and weekends, so it needs looser thresholds. All windows are queries over the prediction log (the storage boundary), which must retain at least the training window's span. Failure point: a seasonal reference that contains last week's incident; exclude windows flagged as incidents from future references.
@@ -547,7 +547,7 @@ $$\mathbb{E}[\text{PSI} \mid \text{no drift}] \approx (B - 1)\left(\frac{1}{n} +
 | $m$ | Reference window size | rows |
 :::
 
-The approximation comes from expanding PSI to second order: $\text{PSI} \approx \sum_i (q_i - p_i)^2 / p_i$, which is a chi-square statistic divided by the effective sample size, and a chi-square statistic with $B - 1$ degrees of freedom has expectation $B - 1$. It holds when every bin has comfortably more than a handful of rows; with near-empty bins the $\varepsilon$ floor of §70.5.1 makes PSI larger still.
+The approximation comes from expanding PSI to second order: $\text{PSI} \approx \sum_i (q_i - p_i)^2 / p_i$, which is a chi-square statistic divided by the effective sample size, and a chi-square statistic with $B - 1$ degrees of freedom has expectation $B - 1$. With near-empty bins the $\varepsilon$ floor of §70.5.1 makes PSI larger still.
 
 ::: example
 **Worked example — How small can a city-hour window be?** Ten bins, a large reference ($1/m \approx 0$).
@@ -649,7 +649,7 @@ $$\mathbb{E}[\text{false alarms}] = m\,\alpha \qquad P(\ge 1 \text{ false alarm}
 *Interpretation:* an unadjusted monitor that tests everything everywhere is a random alert generator. *Engineering implication:* reduce $m$ first (monitor the top 10 features by importance per city, the rest platform-wide), aggregate (one "share of drifted features" statistic per city, as Evidently's dataset-drift preset does), then adjust what remains with BH, and route drift findings to tickets and dashboards rather than pages (§70.13).
 :::
 
-Shankar et al.'s interview study of ML engineers reports alert fatigue from noisy data-quality and drift alerts as a recurring pain point, with practitioners favoring fewer, more actionable alerts [Shankar et al. 2022]. The arithmetic above is one reason.
+Shankar et al.'s interview study of ML engineers reports alert fatigue from noisy data-quality and drift alerts as a recurring pain point, with practitioners favoring fewer, more actionable alerts [Shankar et al. 2022].
 
 ### 70.6.5 Seasonality
 
@@ -679,7 +679,7 @@ Shankar et al.'s interview study of ML engineers reports alert fatigue from nois
 
 ### 70.7.1 Why per-feature tests are not enough
 
-Per-feature tests look at one column at a time. They miss changes in the *relationships* between features. Suppose a ranking change starts sending customers to faraway restaurants that are also slow to cook: distance and preparation time become correlated, yet each feature's histogram is exactly what it was. An ETA model that never saw long distances combined with long prep times may extrapolate badly on exactly those orders. High-dimensional inputs such as text and image embeddings make the problem worse: a 768-dimensional embedding has 768 marginals, none of which means anything on its own.
+Per-feature tests miss changes in the *relationships* between features. If a ranking change sends customers to faraway restaurants that are also slow to cook, distance and preparation time become correlated while each histogram stays the same, and an ETA model that never saw that combination may extrapolate badly. Embeddings make it worse: a 768-dimensional embedding has 768 marginals, none meaningful alone.
 
 ### 70.7.2 The domain classifier
 
@@ -881,7 +881,7 @@ What to notice:
 
 ### 70.8.1 What you can measure, and when
 
-Drift monitors are proxies; the quantity users care about is accuracy, and accuracy needs labels. §59.12.2 showed that the earliest time to detect an ETA error shift is the label delay plus the time to collect enough labeled orders (about 63 minutes platform-wide, 3.7 hours for a small city). For fraud, labels follow the chargeback curve $F(a)$ of §63.4.2 and take up to 90 days. Measuring on immature labels is not just slow; it is biased.
+Accuracy needs labels. §59.12.2 showed that the earliest time to detect an ETA error shift is the label delay plus the time to collect enough labeled orders (about 63 minutes platform-wide, 3.7 hours for a small city). For fraud, labels follow the chargeback curve $F(a)$ of §63.4.2 and take up to 90 days. Measuring on immature labels is not just slow; it is biased.
 
 ::: formula
 **Observed precision and recall on immature labels**
@@ -962,7 +962,7 @@ $$\widehat{\text{Prec}} = \frac{1}{|F|}\sum_{i \in F} \hat{p}_i \qquad \widehat{
 
 ### 70.9.1 Calibration drift
 
-A model can keep its ranking quality (AUC) while its probabilities drift: a fraud score of 0.7 that once meant 70% fraud now means 40%. Every downstream threshold, expected-loss calculation and CBPE estimate silently breaks. Calibration is monitored with the reliability diagram of §57.10.3, summarized by the **expected calibration error** (ECE) [Guo et al. 2017]. For regression with prediction intervals, the analog is **coverage**: the fraction of deliveries finishing before the p90 ETA should be 90%.
+A model can keep its ranking quality (AUC) while its probabilities drift: a fraud score of 0.7 that once meant 70% fraud now means 40%. Thresholds and CBPE estimates silently break. Calibration is monitored with the reliability diagram of §57.10.3, summarized by the **expected calibration error** (ECE) [Guo et al. 2017]. For regression with prediction intervals, the analog is **coverage**: the fraction of deliveries finishing before the p90 ETA should be 90%.
 
 ::: formula
 **Expected calibration error and the standard error of a slice rate**
@@ -990,7 +990,7 @@ $$\text{ECE} = \sum_{b=1}^{B} \frac{n_b}{N}\,\big|\bar{y}_b - \bar{p}_b\big| \qq
 
 ### 70.9.2 Slice-level metrics and segment alerts
 
-Aggregate accuracy hides slices: a 10-point drop in one city of 20 moves the platform metric by half a point. Monitor the slices that matter to users and to fairness (Chapter 71): city, zone, hour, restaurant tier, vehicle type, new versus returning customers. Two constraints shape the design: sample size (above) and metric cardinality (§40.5.3: 4,000 zones × 24 hours × 10 metrics is too many time series for a metrics system, so slice metrics live in the lakehouse and only alerts become time series).
+Aggregate accuracy hides slices: a 10-point drop in one city of 20 moves the platform metric by half a point. Monitor the slices that matter to users and to fairness (Chapter 71): city, zone, hour, restaurant tier, new versus returning customers. Sample size (above) and metric cardinality (§40.5.3) constrain the design: zone-level metrics live in the lakehouse, and only alerts become time series.
 
 **Figure 70.9 — Hierarchical slice alerting.**
 
@@ -1011,7 +1011,7 @@ flowchart TB
 
 ## 70.10 Data quality monitoring in production
 
-Chapter 59 (§59.7) validates batches before training; production needs the same checks continuously on served features, because serving reads data that training never validated. They are the cheapest, sharpest monitors in this chapter and should fire before any drift statistic does.
+Chapter 59 (§59.7) validates batches before training; production needs the same checks continuously on served features, because serving reads data that training never validated. They are the cheapest, sharpest monitors here.
 
 **Table 70.5 — Production data-quality checks.**
 
@@ -1025,7 +1025,7 @@ Chapter 59 (§59.7) validates batches before training; production needs the same
 | Volume | Prediction log | Hourly count within ±30% of seasonal norm | Lost traffic, logging gaps | Ticket |
 | Join rate | Label join | > 99% of orders matched | Missing prediction IDs | Ticket |
 
-Volume deserves a note: a sudden drop in predictions per minute is often the first sign that a client stopped calling the model and fell back to a default, which no model-side metric can see. Compare volume with the same hour last week, not with a fixed number.
+A sudden drop in prediction volume often means a client stopped calling the model and fell back to a default, which no model-side metric can see.
 
 ## 70.11 Model freshness and staleness
 
@@ -1048,13 +1048,13 @@ Models are services, and all of Chapter 40's operational monitoring applies: the
 | Model version mix | Canary and rollback state | One version except during canaries |
 | Cost per 1,000 predictions | Unit economics; detects runaway fleets | About \$0.0001 per order (§60.15) |
 
-Cost per prediction is the operational metric most often missing. Divide the fleet's hourly cost by predictions served in that hour, per model, and alert on step changes: a doubled cost per prediction with flat traffic means an autoscaler or batching regression, and for large models it is usually the largest line in the ML budget (Chapters 73 and 79).
+Cost per prediction is the metric most often missing: divide the fleet's hourly cost by predictions served, per model, and alert on step changes; a doubled cost at flat traffic means an autoscaler or batching regression (Chapters 73 and 79).
 
 ## 70.13 Alerting design for ML
 
 ### 70.13.1 What pages and what files a ticket
 
-Chapter 40's rules apply unchanged: page on user-visible symptoms that need urgent human action, file tickets for everything else, and give every alert a runbook (§40.10.1, §40.10.4). For ML they translate into a short list of pages and a longer list of tickets.
+Chapter 40's rules apply unchanged: page on user-visible symptoms that need urgent human action, file tickets for everything else, and give every alert a runbook (§40.10.1, §40.10.4).
 
 **Table 70.7 — Alert severity for an ML service.**
 
@@ -1105,14 +1105,14 @@ flowchart LR
 **Reading the diagram.** Five signal families enter a router such as Alertmanager (§40.10.3). Drift and slice findings are first aggregated, corrected and deduplicated. Urgent symptoms page the ML on-call; data-quality violations go to the failing feature's owner (from the registry); the rest become tickets; findings meeting the retraining policy reach the guarded trigger of §70.14. Inhibition suppresses drift tickets while a data-quality incident is open on the same feature, since the drift is the bug. Failure point: routing everything to one channel, which recreates alert fatigue.
 
 ::: recommendation
-**Recommendation — Write the runbook before the alert.** Each ML runbook answers: what does this signal mean for users; which dashboard slices to open; how to tell a bug from real change (Figure 70.4); the safe mitigations (roll back to the previous model version, switch to the reduced model or heuristic rung of §60.12.2, pin a feature to its default); and who owns the upstream data. If no safe mitigation exists, the alert should be a ticket.
+**Recommendation — Write the runbook before the alert.** Each ML runbook states the user impact, the slices to open, how to tell a bug from real change (Figure 70.4), the safe mitigations (roll back the model, drop to a fallback rung of §60.12.2, pin a feature to its default) and the upstream owner. With no safe mitigation, the alert should be a ticket.
 :::
 
 ## 70.14 Retraining triggers
 
 ### 70.14.1 Three kinds of trigger
 
-§59.13.1 derived a retraining cadence from the decay rate; Chapter 69 builds the continuous-training pipeline. This section decides what should *start* that pipeline. **Scheduled** retraining runs on a calendar. **Drift-triggered** retraining runs when input drift crosses a threshold. **Performance-triggered** retraining runs when measured (or estimated) quality degrades. Each has a characteristic failure: schedules waste compute and react slowly to sudden change; drift triggers fire on harmless shift, sleep through concept drift (inputs unchanged) and wake up for bugs; performance triggers react only after labels arrive and, unguarded, retrain on the very corruption that degraded performance.
+§59.13.1 derived a retraining cadence from the decay rate; Chapter 69 builds the continuous-training pipeline. This section decides what *starts* it. **Scheduled** retraining runs on a calendar; **drift-triggered** retraining when input drift crosses a threshold; **performance-triggered** retraining when measured or estimated quality degrades. Schedules waste compute and react slowly; drift triggers fire on harmless shift, sleep through concept drift and wake for bugs; performance triggers wait for labels and, unguarded, retrain on the corruption that caused the drop.
 
 **Figure 70.11 — A guarded retraining trigger.**
 
@@ -1287,11 +1287,11 @@ flowchart LR
 ::: example
 **Worked example — Sizing the ETA prediction log.** Each event is about 300 bytes (40 features plus metadata); 1 GB $= 10^9$ bytes.
 
-1. Logging every prediction: $360 \times 10^6 \times 300 = 108$ GB a day, 3.2 TB per 30 days, mostly for restaurants that were never ordered from and so will never be labeled.
+1. Logging every prediction: $360 \times 10^6 \times 300 = 108$ GB a day, 3.2 TB per 30 days, mostly never labeled.
 2. Log 100% of order-linked predictions (500,000 a day, 150 MB) for accuracy, plus a 1% random sample of search-time predictions (3.6 million, 1.08 GB) for drift.
 3. Total about 1.2 GB a day, 37 GB over a 30-day reference period: a 90-fold reduction.
 
-*Interpretation:* labeled monitoring needs only predictions that can receive labels; drift needs only a random sample. *Engineering implication:* sample by purpose, record the sampling rate in each event, and keep the random sample truly random, because labeled orders are a selected population (customers choose restaurants with shorter ETAs), so their inputs differ from search traffic by design.
+*Interpretation:* accuracy needs only predictions that can be labeled; drift needs only a random sample. *Engineering implication:* sample by purpose, record the sampling rate in each event, and keep a truly random sample, because labeled orders are a selected population (customers pick shorter ETAs).
 :::
 
 ### 70.15.2 Tools as of 2026
@@ -1332,7 +1332,7 @@ The tools compute the statistics of §70.5–§70.9; none removes the design wor
 
 ```mermaid
 gantt
-  title Time from onset to alert, minutes after 18:00
+  title Time from onset at 6 pm to alert
   dateFormat HH:mm
   axisFormat %H:%M
   section Prep-time unit bug
@@ -1403,13 +1403,13 @@ gantt
 
 ### Intermediate
 
-**Q3. Your drift dashboard shows 150 alerts a day and nobody looks. Fix it.** **Answer.** Reduce tests to important features and meaningful slices; set minimum window sizes; replace p-values with effect-size thresholds; use seasonal references; aggregate to "share of drifted features"; apply Benjamini–Hochberg; route drift to tickets, pages only on symptoms; track alert precision.
+**Q3. Your drift dashboard shows 150 alerts a day and nobody looks. Fix it.** **Answer.** Test fewer, important features; set minimum windows; use effect-size thresholds and seasonal references; aggregate; apply Benjamini–Hochberg; route drift to tickets and page only on symptoms; track alert precision.
 
 **Q4. Accuracy fell 0.3 min of MAE platform-wide. How do you find out whether to retrain?** **Answer.** Rule out bugs (schema, nulls, ranges, recent releases). Decompose the change into mix and within-slice effects; a pure mix effect needs a product decision, a within-slice drop is concept drift. Check whether it is seasonal. If real, retrain on validated recent data through the gate and canary.
 
 ### Advanced
 
-**Q5. Design monitoring for 40,000 ETA predictions per second.** **Answer.** Prometheus for operational SLIs; asynchronous prediction events to Kafka; a stream job for nulls, ranges, prediction quantiles and volume (pages); a lakehouse with purposeful sampling (100% of order-linked, 1% of search); label join and hourly batch jobs for quality, slices, drift and calibration; hierarchical slice alerting; quality burn-rate pages; runbooks with rollback and fallback rungs.
+**Q5. Design monitoring for 40,000 ETA predictions per second.** **Answer.** Prometheus for operational SLIs; asynchronous prediction events to Kafka; a stream job for nulls, ranges, prediction quantiles and volume; a lakehouse sampled by purpose (all order-linked, 1% of search); label join and batch jobs for quality, slices, drift and calibration; hierarchical slice alerts, quality burn-rate pages and runbooks (Figure 70.12).
 
 **Q6. Should a drift alert retrain the model automatically?** **Answer.** No. Drift is a cause-based signal: it fires on harmless covariate shift, misses concept drift and fires on bugs, where retraining learns the corruption. Retrain on schedule plus performance triggers, behind data validation, a cooldown, an evaluation gate and a canary; the simulation in §70.14.2 quantifies the difference.
 

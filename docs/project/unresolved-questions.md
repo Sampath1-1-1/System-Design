@@ -332,3 +332,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-325 | 67 | Release removing torch.ao.quantization in favor of torchao; TensorRT INT4 weight support and cross-GPU engine compatibility | Open | Version-dependent |
 | UQ-326 | 67 | ~5 µs kernel launch overhead and ~20 kernels per decoder layer are assumptions | Accepted | Labeled |
 | UQ-327 | 68 | Mudigere et al. ISCA 2022 "embedding tables up to terabytes"; Chapelle et al. 2012 interleaving agreement with A/B at lower traffic (qualitative); Hohnhold et al. KDD 2015 long-term holdout scope; DCN-V2 production deployment (Wang et al. 2021) | Open | |
+| UQ-328 | 70 | Siddiqi (2006) PSI bands (0.1/0.25 vs 0.1/0.2) and page reference | Open | |
+| UQ-329 | 70 | Evidently default drift methods/thresholds (2026); WhyLabs hosted platform status (2026); Vertex AI and SageMaker model-monitoring feature names | Open | Time-sensitive |
+| UQ-330 | 70 | Shankar et al. 2022 alert-fatigue wording; Breck et al. 2017 seven monitoring tests phrasing; Zinkevich freshness rule number | Open | Merge with UQ-305 |
