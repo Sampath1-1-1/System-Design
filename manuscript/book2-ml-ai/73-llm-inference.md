@@ -715,19 +715,19 @@ The alternatives are contiguous reservation with copying when a sequence grows, 
 
 #### First-principles explanation
 
-Every QuickBite chatbot call starts with the same 1,200-token instruction manual. Recomputing its keys and values for each call is like a new support agent rereading the whole manual before every customer. Prefix caching lets the agent keep the manual open. In a multi-turn chat, it also keeps the conversation so far open, so turn 5 reads only the customer's newest message.
+Every chatbot call starts with the same 1,200-token instruction manual. Recomputing its keys and values each time is like a support agent rereading the manual before every customer; prefix caching keeps it open, and in multi-turn chat keeps the conversation so far open too.
 
 #### Why does this exist?
 
-Real traffic is full of shared prefixes: system prompts, tool definitions, few-shot examples, retrieved documents reused across questions (Chapter 75), the history of multi-turn chats, and agent loops that resend a growing transcript (Chapter 77). Without reuse, prefill cost and TTFT grow with conversation length, and every concurrent sequence stores its own copy of the same prefix.
+Real traffic is full of shared prefixes: system prompts, tool definitions, few-shot examples, retrieved documents (Chapter 75), multi-turn histories and agent transcripts (Chapter 77). Without reuse, prefill cost and TTFT grow with conversation length and every sequence stores its own copy of the prefix.
 
 #### How it works internally
 
-1. **Lookup.** On admission, hash the prompt block by block (or walk the radix tree) to find the longest cached prefix.
-2. **Share.** Point the new sequence's block table at the cached blocks and increment their reference counts (§73.7).
-3. **Compute the rest.** Prefill only the uncached suffix, attending to the cached keys and values.
-4. **Retain.** When a sequence finishes, its blocks stay in the cache with reference count 0, evictable in LRU order when memory is needed.
-5. **Route.** With many replicas, send requests sharing a prefix to the replica that has it (Figure 73.10), or the hit rate collapses to roughly $1/R$ of the single-replica rate for $R$ replicas under random routing.
+1. **Lookup.** Hash the prompt block by block (or walk the radix tree) to find the longest cached prefix.
+2. **Share.** Point the new block table at those blocks and increment their reference counts (§73.7).
+3. **Compute the rest.** Prefill only the uncached suffix.
+4. **Retain.** Finished sequences' blocks stay cached at reference count 0, evicted in LRU order.
+5. **Route.** Send requests sharing a prefix to the replica holding it (Figure 73.10); random routing over $R$ replicas cuts the hit rate roughly $R$-fold.
 
 **Figure 73.9 — A radix tree of cached prefixes for the chatbot.**
 
@@ -742,7 +742,7 @@ flowchart TB
   ROOT --> OLD["System prompt v11<br/>no requests, evict first"]
 ```
 
-**Reading the diagram.** Each edge carries a run of tokens, each node the KV blocks for that run. All current conversations share the system-prompt node; each order's context and turns hang below it, so turn 3 of order 8812 reuses everything above it and prefills only its new message. Leaves no running request uses (the finished conversation, the retired prompt version) are evicted first. The tree lives in CPU memory; the blocks it references live in GPU memory, and some engines spill cold blocks to CPU memory or disk. Failure points: a single changed early token (a timestamp in the system prompt) creates a new branch and destroys reuse; eviction under memory pressure lowers the hit rate exactly at peak. Scaling: per-replica trees plus prefix-aware routing.
+**Reading the diagram.** Each node holds the KV blocks for a run of tokens. All conversations share the system-prompt node; turn 3 of order 8812 reuses everything above it and prefills only its new message. Unused leaves (a finished conversation, a retired prompt version) are evicted first. The tree lives in CPU memory and references blocks in GPU memory; some engines spill cold blocks to CPU memory or disk. Failure points: one changed early token (a timestamp in the system prompt) creates a new branch and destroys reuse; eviction under pressure lowers hit rates at peak. Scaling: per-replica trees plus prefix-aware routing.
 
 **Figure 73.10 — Prefix-aware routing across engine replicas.**
 
@@ -757,7 +757,7 @@ flowchart LR
   E3 -.->|load and cache reports| R
 ```
 
-**Reading the diagram.** The router hashes a prompt prefix (or a conversation ID) and sends the request to the replica most likely to hold its KV blocks, similar to consistent hashing with bounded loads (§14.8). Replicas report load and cache contents asynchronously (dotted). When the preferred replica is overloaded, the router spills to another and accepts a recomputation. Failure points: pure affinity creates hot replicas for popular prefixes; pure load balancing destroys reuse. Scaling: adding a replica remaps only part of the hash space.
+**Reading the diagram.** The router hashes a prefix or conversation ID and sends the request to the replica likely to hold its blocks, like consistent hashing with bounded loads (§14.8); replicas report load and cache contents asynchronously (dotted). An overloaded preferred replica spills to another, accepting recomputation. Failure points: pure affinity creates hot replicas; pure load balancing destroys reuse.
 
 #### Mathematical foundations
 
@@ -784,7 +784,7 @@ $$T'_\text{prefill} = (1 - h)\,T_\text{prefill} \qquad S'_\text{max} = \left\lfl
 4. *But decode reads:* each sequence still attends over all 2,100 tokens; with a standard kernel, $t_\text{step}(101) = 2 + (14 + 101 \times 2{,}100 \times 524{,}288 \times 10^{-9})/2.68 = 2 + 125.2/2.68 = 48.7$ ms, close to a 50 ms TPOT SLO; 2,074 tokens/s, +18%. A kernel that reads the shared 1,200 tokens once per step needs $14 + 0.63 + 101 \times 900 \times 524{,}288 \times 10^{-9} = 62.3$ GB: 25.2 ms and about 4,000 tokens/s.
 5. *Money:* compute saved per day at $h = 0.6$: $60{,}000 \times 1{,}200 \times 28.3\ \mu\text{s} = 2{,}038$ GPU-s $= 0.57$ GPU-hours $\approx \$1.40$.
 
-**Interpretation.** At QuickBite's volume the dollar saving on prefill is small; the real wins are TTFT, more than double the concurrency, and the option to use a kernel that exploits the shared prefix. At a large API provider the same fraction of prompt tokens is a major cost line, which is why several providers price cached input tokens at a discount (as of 2026). **Engineering implication.** Put stable content first (system prompt, tools, documents) and variable content last; version system prompts deliberately; route by conversation.
+**Interpretation.** At QuickBite's volume the dollar saving is small; the wins are TTFT, more than double the concurrency, and the option of a shared-prefix kernel. At large API providers prompt tokens are a major cost line, which is why several price cached input tokens at a discount (as of 2026). **Engineering implication.** Put stable content first and variable content last, version system prompts deliberately, route by conversation.
 :::
 
 ::: industry
@@ -796,9 +796,6 @@ $$T'_\text{prefill} = (1 - h)\,T_\text{prefill} \qquad S'_\text{max} = \left\lfl
 **Prefix caches are shared state.** Whether a prefix is cached changes TTFT, which a malicious tenant could use as a timing side channel to infer another tenant's prompts. In multi-tenant deployments scope cache keys per tenant (or salt them) and never share caches across trust boundaries (§47.12).
 :::
 
-::: mistake
-**"A 90% cache hit ratio means 90% less prefill."** Hit ratios are often reported per *request* (any prefix matched) rather than per *token*. A request that matches 100 of 2,000 tokens counts as a hit but saves 5%. Measure $h$ as cached tokens over prompt tokens.
-:::
 
 ## 73.9 Attention kernels
 
@@ -810,15 +807,15 @@ $$T'_\text{prefill} = (1 - h)\,T_\text{prefill} \qquad S'_\text{max} = \left\lfl
 
 #### First-principles explanation
 
-Attention is a giant comparison of every query with every key. A naive implementation writes the whole comparison table to slow memory and reads it back, like photocopying every page of a book to look up one word. FlashAttention reads a chapter at a time into a small desk, keeps a running summary, and never writes the full table. In decode, the problem flips: there is one query and a long book; the issue is getting enough readers to read different chapters at once.
+Naive attention writes the whole query–key comparison table to slow memory and reads it back; FlashAttention reads a chapter at a time onto a small desk and keeps a running summary. In decode there is one query and a long book, and the problem is getting enough readers to read different chapters at once.
 
 #### How it works internally
 
 Chapter 64 (§64.13) explained FlashAttention's tiling. For serving, three points matter:
 
-1. **Prefill** attention is compute-heavy; FlashAttention removes the quadratic memory traffic and memory footprint, making long prompts feasible. FlashAttention-2 roughly doubles FlashAttention's speed, reaching 50–73% of A100 peak [Dao 2024]; FlashAttention-3 reports 1.5–2.0× over FlashAttention-2 on H100 with BF16 at up to 75% utilization [Shah et al. 2024].
-2. **Decode** attention reads every cached key and value once per step and does about $g$ FLOPs per byte, where $g$ is query heads per KV head: memory-bound for every common shape.
-3. With small batches and long contexts, one thread block per (sequence, head) leaves most streaming multiprocessors (SMs) idle. Flash-Decoding adds a split over the sequence, then a small reduction rescales and sums partial outputs with their log-sum-exp statistics. Paged variants follow block tables (§73.7).
+1. **Prefill:** FlashAttention removes the quadratic memory traffic and footprint. FlashAttention-2 roughly doubles its speed, reaching 50–73% of A100 peak [Dao 2024]; FlashAttention-3 reports 1.5–2.0× over FlashAttention-2 on H100 in BF16, up to 75% utilization [Shah et al. 2024].
+2. **Decode** attention reads every cached key and value once per step at about $g$ FLOPs per byte ($g$ = query heads per KV head): memory-bound.
+3. With small batches and long contexts, one thread block per (sequence, head) leaves most SMs idle; Flash-Decoding splits the sequence and merges partial outputs with their log-sum-exp statistics. Paged variants follow block tables (§73.7).
 
 **Figure 73.11 — Flash-Decoding: split the KV sequence, compute partial attention in parallel, merge.**
 
@@ -836,7 +833,7 @@ flowchart LR
   R --> O(["Exact attention output"])
 ```
 
-**Reading the diagram.** One query vector meets a 32,768-token cache split into 16 chunks, each handled by a separate thread block that reads its blocks from the paged cache in HBM (the storage boundary) via the block table. Each chunk returns a partial output plus its softmax maximum and sum; the reduction rescales and combines them so the result is exact. All steps are synchronous within one kernel launch (or two). Failure point: for short contexts, splitting adds reduction overhead with no benefit, so kernels choose the split count by heuristics. Scaling: splits multiply the parallel work units available to fill the GPU.
+**Reading the diagram.** One query meets a 32,768-token cache split into 16 chunks, each read from the paged HBM cache by its own thread block via the block table. Each chunk returns a partial output plus softmax maximum and sum; the reduction rescales and combines them exactly, within one or two synchronous kernel launches. Failure point: for short contexts the reduction is pure overhead, so kernels pick splits heuristically. Scaling: splits multiply the parallel work available.
 
 #### Mathematical foundations
 
@@ -863,7 +860,7 @@ $$Q_\text{std} = \Theta(n\,d + n^2) \qquad Q_\text{flash} = \Theta\!\left(\frac{
 2. *Decode intensity.* MHA, FP16: $I = 2 \times 1/2 = 1$ FLOP/byte; 70B GQA ($g = 8$): 8 FLOP/byte. The H100 ridge point is $989/3.35 \approx 295$ FLOP/byte (§64.9): both are memory-bound by a wide margin.
 3. *Decode parallelism.* Batch 1, 32 heads, context 32,768: one block per head gives 32 blocks for 132 SMs, at most 24% of SMs busy. With 16 splits: 512 blocks, about 3.9 per SM.
 
-**Interpretation.** FlashAttention makes prefill attention fast and memory-light; decode attention is pure bandwidth, so its kernel goal is to keep every SM streaming KV bytes. **Engineering implication.** Long-context, small-batch workloads (document chat, agents) need split-KV decode kernels; large-batch, short-context workloads already have enough parallelism. Engines choose among kernel libraries per hardware; verify which one is active when profiling.
+**Interpretation.** Prefill attention needs FlashAttention's tiling; decode attention is pure bandwidth, and its kernel must keep every SM streaming KV bytes. **Engineering implication.** Long-context, small-batch workloads need split-KV decode kernels; verify which kernel library is active when profiling.
 :::
 
 ::: industry
@@ -885,19 +882,19 @@ $$Q_\text{std} = \Theta(n\,d + n^2) \qquad Q_\text{flash} = \Theta\!\left(\frac{
 
 #### First-principles explanation
 
-A senior editor is slow to write but can check a paragraph in the time it takes to write one word, because checking is parallel. A junior writer drafts four words; the editor reads all four at once, keeps the ones they would have written, fixes the first wrong one, and the junior starts again from there. When the junior guesses well, the pair writes several words per editor-turn.
+A senior editor writes slowly but checks a paragraph in the time it takes to write one word. A junior drafts four words; the editor checks all four at once, keeps the good prefix, fixes the first wrong word, and the junior restarts from there.
 
 #### Why does this exist?
 
-Decode is memory-bound: a step that verifies 5 tokens per sequence reads the same weights as a step that produces 1 (§73.3). Spare compute is free if it can be turned into accepted tokens. Speculative decoding converts it into lower TPOT without changing outputs.
+Decode is memory-bound: verifying 5 tokens per sequence reads the same weights as producing 1 (§73.3). Speculation turns that spare compute into lower TPOT without changing outputs.
 
 #### How it works internally
 
-1. The draft model generates $\gamma$ tokens autoregressively (cheap: small model, extra heads or n-gram lookup).
-2. The target runs one forward pass over the context plus the $\gamma$ draft tokens, producing its distributions $p$ at each position.
+1. The draft proposes $\gamma$ tokens (small model, extra heads or n-gram lookup).
+2. The target scores context plus drafts in one pass, giving distributions $p$.
 3. For each draft token $x$ in order, accept with probability $\min(1, p(x)/q(x))$, where $q$ is the draft's distribution.
 4. At the first rejection, sample a replacement from the normalized residual $\max(0, p - q)$ and stop; if all $\gamma$ are accepted, sample one bonus token from $p$.
-5. Discard KV entries of rejected tokens and repeat.
+5. Roll back KV entries of rejected tokens and repeat.
 
 **Figure 73.12 — One speculative iteration with $\gamma = 4$.**
 
@@ -915,7 +912,7 @@ sequenceDiagram
   S-->>D: commit d1, d2, d3', roll back d4
 ```
 
-**Reading the diagram.** The draft proposes four tokens sequentially; the target verifies them in a single parallel pass (synchronous). The sampler accepts the first two, rejects the third and resamples it from the residual distribution, so three tokens are committed for one target pass; the draft's fourth token and the KV entries beyond the commit point are discarded. State lives in two KV caches (draft and target), both rolled back. Failure points: low acceptance wastes the draft's work; at large batch the verification pass is no longer free. Scaling: tree-structured drafts verify several candidate continuations in one pass.
+**Reading the diagram.** The draft proposes four tokens sequentially; the target verifies them in one synchronous pass; the sampler accepts two, resamples the third from the residual, and commits three tokens for one target pass, rolling back both KV caches beyond the commit point. Failure points: low acceptance wastes draft work; at large batch verification is no longer free. Scaling: tree-structured drafts verify several candidates per pass.
 
 #### Mathematical foundations
 
@@ -1028,8 +1025,8 @@ sampled freq : [0.499 0.201 0.149 0.1   0.05 ]
 What to notice:
 
 - The Monte Carlo agrees with the closed form to three decimals, confirming the formula under its i.i.d. acceptance assumption.
-- The best $\gamma$ grows with $\alpha$ (4 at 0.6, 8 at 0.8), but the curve is flat near the optimum: $\gamma = 4$ at $\alpha = 0.8$ already gives 2.80 versus 3.09.
-- The toy run uses the real accept/reject rule: acceptance equals $\sum \min(p, q) = 0.85$, and the sampled token frequencies match the *target* distribution $p$, not the draft's $q$. Speculation is lossless.
+- The best $\gamma$ grows with $\alpha$ but the optimum is flat: $\gamma = 4$ at $\alpha = 0.8$ gives 2.80 versus 3.09.
+- The toy run uses the real accept/reject rule: acceptance equals $\sum \min(p, q) = 0.85$ and token frequencies match the *target* $p$. Speculation is lossless.
 
 #### When it hurts
 
@@ -1043,19 +1040,15 @@ What to notice:
 **Interpretation.** Speculation spends spare compute; at large batch there is none left. **Engineering implication.** Enable speculation for latency-sensitive, small-to-medium-batch serving, and let the engine reduce $\gamma$ or disable it as the batch grows. Count the draft's own KV cache and weights in the memory budget.
 :::
 
-**Table 73.7 — Speculative decoding variants.**
+**Table 73.6 — Speculative decoding variants (speed-ups as reported by the authors, at small batch).**
 
 | Variant | Draft source | Strength | Watch out for |
 |---|---|---|---|
-| Draft model [Leviathan et al. 2023; Chen et al. 2023] | Small model of the same family | General; 2–3× reported | Needs a matched tokenizer; extra memory |
+| Draft model [Leviathan et al. 2023; Chen et al. 2023] | Small model of the same family | 2–3× (T5-XXL), 2–2.5× (Chinchilla 70B) reported | Needs a matched tokenizer; extra memory |
 | Medusa [Cai et al. 2024] | Extra decoding heads on the target, tree verification | No separate model; 2.2–3.6× reported | Heads must be trained per model |
 | EAGLE [Li et al. 2024] | Light head predicting next *features* | High acceptance; 2.7–3.5× on LLaMA2-Chat 70B reported | Per-model training |
 | N-gram / prompt lookup | Copy spans from the prompt or history | Free; strong for RAG, editing, code | Useless for novel text |
 
-::: industry
-**Reported speed-ups.** Leviathan et al. reported 2–3× faster T5-XXL inference with identical outputs; Chen et al. reported 2–2.5× decoding speed-up for Chinchilla 70B in a distributed setup; Medusa reported over 2.2× (Medusa-1) and 2.3–3.6× (Medusa-2); EAGLE reported 2.7–3.5× latency speed-up on LLaMA2-Chat 70B. All are batch-1 or small-batch measurements.
-*Evidence: Primary* — [Leviathan et al. 2023; Chen et al. 2023; Cai et al. 2024; Li et al. 2024]
-:::
 
 ::: mistake
 **"Speculative decoding trades quality for speed."** With the rejection-sampling rule, outputs follow the target distribution exactly (greedy decoding gives identical tokens). Quality changes only if an engine uses a relaxed, lossy acceptance rule, which should be an explicit choice.
@@ -1071,14 +1064,14 @@ What to notice:
 
 #### First-principles explanation
 
-Training parallelism (Chapter 65) optimizes throughput over hours. Serving must also hit a per-token deadline every 20–50 ms, so communication on the critical path of *each token* matters. TP cuts per-token latency (each GPU reads a quarter of the weights) but talks four times per layer pair; PP talks once per stage but adds a hop to every token; EP lets a model with hundreds of billions of parameters run while each token touches only a few experts.
+Training parallelism (Chapter 65) optimizes throughput over hours; serving must also meet a 20–50 ms deadline per token, so communication on each token's critical path matters. TP cuts per-token latency but talks twice per layer; PP talks once per stage but adds a hop; EP lets a huge MoE model run while each token touches a few experts.
 
 #### How it works internally
 
-1. **Fit the weights and KV cache** (§73.5): choose the smallest TP degree within one NVLink domain that leaves room for the target concurrency.
-2. **Cross nodes with PP, not TP,** when one node is too small: one activation transfer per stage per step, tolerable on InfiniBand. Keep multiple micro-batches in flight or later stages idle.
-3. **MoE models:** shard experts with EP (often combined with data-parallel attention), because each token's all-to-all moves only its hidden vector to $k$ experts.
-4. **Replicate** the resulting unit for throughput.
+1. **Fit weights and KV cache** (§73.5) with the smallest TP degree inside one NVLink domain that leaves room for the target concurrency.
+2. **Cross nodes with PP, not TP:** one activation transfer per stage per step, with several micro-batches in flight.
+3. **MoE models:** shard experts with EP, often with data-parallel attention.
+4. **Replicate** the unit for throughput.
 
 **Figure 73.13 — A 70B replica: TP within each node, PP across two nodes.**
 
@@ -1099,7 +1092,7 @@ flowchart LR
   N2 --> OUT(["Logits, sample"])
 ```
 
-**Reading the diagram.** Each node holds half of the 80 layers, split four ways by TP; the four GPUs all-reduce twice per layer over NVLink (synchronous, on the critical path). Between nodes only one activation tensor per step crosses InfiniBand. Weights and KV shards stay in each GPU's HBM. Failure points: any one GPU failing stalls the whole replica (eight GPUs share fate); a straggler GPU sets the pace of every all-reduce. Scaling: this layout serves the FP16 model with room for a large KV cache when one 4-GPU group is not enough; on an 8-GPU node, TP=8 avoids the cross-node hop entirely.
+**Reading the diagram.** Each node holds half the 80 layers split four ways; its GPUs all-reduce twice per layer over NVLink, synchronously on the critical path, while only one activation tensor per step crosses InfiniBand. Weights and KV shards stay in each GPU's HBM. Failure points: one GPU failing stalls the replica (eight GPUs share fate); a straggler sets every all-reduce's pace. Scaling: on an 8-GPU node, TP=8 avoids the cross-node hop.
 
 #### Mathematical foundations
 
@@ -1127,7 +1120,7 @@ $$V_\text{TP} = 2 L \cdot 2\,\frac{t - 1}{t} \cdot h\,b_\text{a} \qquad V_\text{
 4. *PP instead across 2 nodes:* $V_\text{PP} = 1 \times 8{,}192 \times 2 = 16$ kB per token; a 183-token decode step sends 3 MB, 75 µs at 40 GB/s.
 5. *MoE (Mixtral-8×7B-like:* $h = 4{,}096$, 32 MoE layers, top-2): $V_\text{EP} = 2 \times 2 \times 4{,}096 \times 2 = 32.8$ kB per layer, 1.05 MB per token.
 
-**Interpretation.** TP moves megabytes per token and must stay on NVLink; PP moves kilobytes per token and tolerates the network; EP sits between and needs a fast all-to-all. **Engineering implication.** TP inside the node for latency, PP or EP across nodes for capacity, replicas for throughput. Note that the 4-GPU TP decode step still costs 3.3 ms of communication that a single-GPU (quantized) deployment avoids (§73.13).
+**Interpretation.** TP moves megabytes per token and must stay on NVLink; PP moves kilobytes and tolerates the network; EP sits between. **Engineering implication.** TP inside the node for latency, PP or EP across nodes for capacity, replicas for throughput; a quantized single-GPU deployment avoids TP's 3.3 ms entirely (§73.13).
 :::
 
 **Figure 73.14 — Expert parallelism: tokens dispatched to experts on other GPUs and combined back.**
@@ -1147,7 +1140,7 @@ flowchart LR
   E1 -->|all-to-all combine| C
 ```
 
-**Reading the diagram.** After attention, a router picks two experts per token; an all-to-all sends each token's hidden vector to the GPUs holding those experts, the experts compute, and a second all-to-all returns results to be combined. Both exchanges are synchronous within the layer. Each GPU stores only its experts' weights. Failure points: unbalanced routing overloads one GPU (hot experts) and stalls the layer; a slow link slows every MoE layer. Scaling: more GPUs hold more experts; large decode deployments spread experts over many nodes so each GPU serves few experts with large batches.
+**Reading the diagram.** A router picks two experts per token; an all-to-all sends each hidden vector to the GPUs holding those experts, and a second returns the results, both synchronous within the layer. Each GPU stores only its experts. Failure points: hot experts overload one GPU and stall the layer. Scaling: large decode deployments spread experts across many nodes so each GPU serves few experts with large batches.
 
 **Table 73.8 — Inference parallelism compared.**
 
@@ -1164,9 +1157,6 @@ flowchart LR
 *Evidence: Primary* — [Pope et al. 2023]
 :::
 
-::: mistake
-**"More GPUs per replica always lower latency."** Beyond the point where weight reads stop dominating, TP adds all-reduce latency per layer (160 per step for 80 layers) and reduces each GPU's matrix sizes below efficient shapes. Measure TPOT at $t = 2, 4, 8$ before choosing.
-:::
 
 ## 73.12 Disaggregated prefill and decode
 
@@ -1178,11 +1168,11 @@ flowchart LR
 
 #### First-principles explanation
 
-A restaurant can make one cook alternate between slow-roasting meat and plating desserts, or give each task its own station and pass trays between them. Separate stations stop the roast from delaying the desserts, at the cost of carrying trays.
+One cook alternating between slow roasts and plating desserts delays the desserts; separate stations fix that at the cost of carrying trays.
 
 #### Why does this exist?
 
-Colocated phases interfere: a long prefill stalls every decode stream (ITL spikes, §73.6); keeping decode smooth forces small prefill chunks that raise TTFT. The phases also want different things: prefill is compute-bound and benefits from more TP for long prompts; decode is memory-bound and wants large batches. DistServe framed the goal as maximizing per-GPU goodput under separate TTFT and TPOT SLOs; Splitwise added that phases can even use different GPU generations, matching compute-rich hardware to prefill and memory-bandwidth-rich (or cheaper, lower-power) hardware to decode.
+Colocated phases interfere: a long prefill stalls every decode stream (§73.6), and keeping decode smooth forces small chunks that raise TTFT. The phases also want different parallelism and batch sizes. DistServe framed the goal as per-GPU goodput under separate TTFT and TPOT SLOs; Splitwise added that phases can use different GPU generations, compute-rich for prefill and bandwidth-rich or cheaper for decode.
 
 **Figure 73.15 — Disaggregated serving with KV transfer.**
 
@@ -1198,7 +1188,7 @@ flowchart LR
   KVS -.-> D1
 ```
 
-**Reading the diagram.** The router sends each prompt to a prefill instance, which computes the KV cache and first token and ships the cache to a decode instance over RDMA (InfiniBand or RoCE) or NVLink within a node. The decode instance streams the rest. Both pools report load asynchronously so the scheduler can pair them. An optional KV store tier also serves prefix caching across instances. Failure points: KV transfer bandwidth becomes a bottleneck; a decode instance with no free blocks blocks the hand-off; losing a decode instance loses every KV cache it holds. Scaling: each pool scales on its own metric (prompt tokens/s and concurrent sequences).
+**Reading the diagram.** The router sends each prompt to a prefill instance, which computes the KV cache and first token and ships the cache over RDMA or NVLink to a decode instance that streams the rest. Both pools report load asynchronously; an optional KV tier also serves cross-instance prefix caching. Failure points: transfer bandwidth; a decode pool with no free blocks blocks the hand-off; losing a decode instance loses its KV caches. Scaling: each pool scales on its own metric.
 
 #### Mathematical foundations
 
@@ -1223,7 +1213,7 @@ $$T_\text{KV} = \frac{n_\text{in}\,k}{W_\text{link}} \qquad R = \frac{T_\text{KV
 3. *Pool ratio for the 7B chatbot:* GPU-seconds per request are 0.0566 for prefill and $200 \times 26.1/46 = 113.5$ ms for decode (§73.15), so about one prefill GPU per two decode GPUs.
 4. QuickBite's peak needs about 1.2 busy GPUs in total (§73.15): splitting into pools with redundancy in each would need at least four GPUs instead of three.
 
-**Interpretation.** Transfer is cheap for large GQA models and noticeable for small MHA models; it can overlap with prefill layer by layer. **Engineering implication.** Disaggregation pays at scale (many GPUs per pool), with tight TPOT SLOs and long prompts; for a three-GPU chatbot, chunked prefill (§73.14) gets most of the benefit with no transfer.
+**Interpretation.** Transfer is cheap for large GQA models, noticeable for small MHA ones, and can overlap layer by layer. **Engineering implication.** Disaggregation pays at scale, with tight TPOT SLOs and long prompts; for a three-GPU chatbot, chunked prefill (§73.14) gets most of the benefit.
 :::
 
 ::: industry
@@ -1241,14 +1231,14 @@ $$T_\text{KV} = \frac{n_\text{in}\,k}{W_\text{link}} \qquad R = \frac{T_\text{KV
 
 #### Why does this exist?
 
-§73.3 showed that at full batch the 7B chatbot reads 50.6 GB of KV cache per step against 14 GB of weights. Weight quantization shrinks the fixed cost and frees memory; KV quantization halves the dominant, per-sequence cost and doubles concurrency.
+At full batch the 7B chatbot reads 50.6 GB of KV cache per step against 14 GB of weights (§73.3): KV quantization halves the dominant cost.
 
 #### How it works internally
 
-1. **Weights:** W4A16 (AWQ, GPTQ) or FP8 W8A8 loaded once; kernels dequantize in registers (§67.6).
-2. **KV write:** after each layer computes keys and values, the kernel scales and rounds them into FP8 or INT8 blocks.
-3. **KV read:** the attention kernel loads low-bit blocks and dequantizes on chip; bytes read per step fall in proportion.
-4. **Validate:** quality on long-context and task evaluations (Chapter 78), since key outliers can hurt at low bits; methods such as KIVI quantize keys per channel and values per token to reach 2 bits [Liu et al. 2024].
+1. **Weights:** W4A16 (AWQ, GPTQ) or FP8 W8A8, dequantized in registers (§67.6).
+2. **KV write:** keys and values are scaled and rounded into FP8 or INT8 blocks.
+3. **KV read:** the attention kernel dequantizes on chip.
+4. **Validate** on long-context and task evaluations (Chapter 78); KIVI reaches 2 bits by quantizing keys per channel and values per token [Liu et al. 2024].
 
 #### Mathematical foundations
 
@@ -1297,11 +1287,11 @@ The memory-budget and step-time formulas of §73.3 and §73.5 apply with $M_\tex
 
 #### How it works internally
 
-1. Each step has a **token budget** (for example 512–8,192 tokens): running decodes take one token each; the remainder goes to prefill chunks, oldest or highest-priority first.
+1. Each step has a **token budget**: one token per running decode, the rest for prefill chunks by priority.
 2. Admission requires free KV blocks above a **watermark** so running sequences can grow.
-3. If a running sequence cannot get a block, the scheduler preempts the most recently admitted (or lowest-priority) sequence; it later resumes by swap-in or recomputation, often helped by prefix caching.
-4. **Fairness:** first-come-first-served lets one tenant's flood of long prompts delay everyone; fair schedulers count tokens served per client and favor the least served, as in the Virtual Token Counter [Sheng et al. 2024].
-5. **Overload:** when predicted TTFT exceeds the SLO, reject early with a retryable error (§22.9) rather than queue unboundedly; rate-limit by tokens at the gateway.
+3. When blocks run out, the most recently admitted or lowest-priority sequence is preempted, resuming later by swap-in or recomputation.
+4. **Fairness:** count tokens served per client and favor the least served, as in the Virtual Token Counter [Sheng et al. 2024].
+5. **Overload:** reject early when predicted TTFT exceeds the SLO (§22.9); rate-limit by tokens at the gateway.
 
 **Figure 73.16 — States of a request in an engine with preemption.**
 
@@ -1320,7 +1310,7 @@ stateDiagram-v2
   Rejected --> [*]
 ```
 
-**Reading the diagram.** A request waits until blocks and budget allow its prefill, which may span several steps (chunks). Decoding loops one token per step. Under memory pressure it is preempted either to the swapped state (KV in CPU memory over PCIe) or back to waiting (KV discarded, to be recomputed). Admission control can reject before any GPU work. Transitions happen synchronously between steps. Failure points: preemption storms at peak cause ITL spikes and wasted compute; swapped sequences hold CPU memory. Scaling: rejected and preempted counts are the signals for adding replicas (§73.15).
+**Reading the diagram.** A request waits for blocks and budget, prefills (possibly over several chunks), then decodes one token per step. Under memory pressure it is swapped (KV copied to CPU memory over PCIe) or sent back to waiting (KV dropped for recomputation); admission control can reject it before any GPU work. Transitions happen synchronously between steps. Failure points: preemption storms at peak cause ITL spikes and wasted compute. Scaling: rejection and preemption counts drive autoscaling (§73.15).
 
 #### Mathematical foundations
 
@@ -1354,9 +1344,6 @@ $$T_\text{swap} = \frac{2\,n\,k}{W_\text{PCIe}\; t} \qquad T_\text{recomp} = \fr
 *Evidence: Primary* — [Agrawal et al. 2024]
 :::
 
-::: mistake
-**"A deeper queue is safer than rejecting."** Beyond the goodput point, every queued request waits longer than its SLO and many users retry, adding load. Bound the queue by predicted TTFT, shed early, and return `Retry-After` (§22.9, §22.12).
-:::
 
 ## 73.15 Autoscaling and capacity planning
 
@@ -1471,7 +1458,7 @@ requests/day 60,000; peak 6.9 req/s; tokens/day 132 M
 
 What to notice:
 
-- `plan` implements §73.5 (memory) and §73.3 (step time) and runs each configuration at its memory-limited batch, which here also meets a 50 ms TPOT SLO. TP communication is ignored (add about 3 ms per 70B step, §73.11).
+- `plan` combines §73.5 and §73.3 at the memory-limited batch, which here also meets a 50 ms TPOT SLO; TP communication is ignored (about 3 ms per 70B step, §73.11).
 - The 70B model's per-GPU output rate matches the 7B's, but its GPU-seconds per request are 4×, dominated by prefill (0.57 of 0.68 GPU-s): input-heavy chat makes big models expensive.
 - The 100%-busy floor is 19× below the actual blended cost: at QuickBite's volume, cost is set by always-on redundancy, not by tokens.
 
@@ -1504,17 +1491,17 @@ flowchart LR
   RT --> ENG
 ```
 
-**Reading the diagram.** Replicas export LLM-specific signals asynchronously; the autoscaler compares them with targets. Scale-out is a synchronous chain (node, image, weights, warm-up) that takes minutes, after which a readiness probe lets the router send traffic. Scale-in drains first so streams finish rather than break. Failure points: scaling on GPU utilization never scales in; cold start longer than a traffic ramp causes SLO breaches, so keep warm headroom; draining too slowly holds expensive GPUs. Scaling: pre-scale on schedule for known peaks (QuickBite's lunch and dinner).
+**Reading the diagram.** Replicas export LLM signals asynchronously to the autoscaler. Scale-out is a synchronous chain (node, image, weights, warm-up) taking minutes before a readiness probe admits traffic; scale-in drains streams first. Failure points: scaling on GPU utilization never scales in; cold start slower than a traffic ramp breaches SLOs. Scaling: pre-scale on schedule for known peaks such as lunch and dinner.
 
 ## 73.16 Inference engines compared
 
 As of 2026, five open-source engines cover most self-hosted LLM serving:
 
-- **vLLM** [Kwon et al. 2023; vLLM Docs]: the PagedAttention engine from UC Berkeley, now a broad community project with an OpenAI-compatible server, continuous batching, automatic prefix caching, chunked prefill, speculative decoding, many quantization formats, TP/PP/EP and support for several accelerator vendors.
-- **TensorRT-LLM** [NVIDIA TensorRT-LLM Docs]: NVIDIA's library with optimized kernels for its GPUs, in-flight batching, paged KV cache, FP8 and FP4 formats and speculative decoding, typically deployed behind Triton or NVIDIA Dynamo (§66.5).
-- **SGLang** [Zheng et al. 2024; SGLang Docs]: RadixAttention prefix caching, a low-overhead scheduler, fast structured (constrained) output, and strong support for large MoE deployments with expert parallelism and prefill–decode disaggregation.
-- **Hugging Face TGI** [Hugging Face TGI Docs]: a Rust router with Python model servers, continuous batching and paged attention. Its documentation states that TGI entered **maintenance mode** (from December 2025) and recommends vLLM or SGLang for new deployments; only minor fixes are accepted.
-- **llama.cpp** [llama.cpp Docs]: a C/C++ engine for CPUs, Apple silicon and consumer GPUs using the GGUF file format and many low-bit quantization types, with a built-in HTTP server that handles parallel slots.
+- **vLLM** [Kwon et al. 2023; vLLM Docs]: the PagedAttention engine from UC Berkeley, now a broad community project with an OpenAI-compatible server and support for several accelerator vendors.
+- **TensorRT-LLM** [NVIDIA TensorRT-LLM Docs]: NVIDIA's library of optimized kernels with in-flight batching, paged KV cache and FP8/FP4, usually behind Triton or Dynamo (§66.5).
+- **SGLang** [Zheng et al. 2024; SGLang Docs]: RadixAttention, a low-overhead scheduler, fast constrained decoding, and large-MoE support with expert parallelism and disaggregation.
+- **Hugging Face TGI** [Hugging Face TGI Docs]: a Rust router with Python model servers. Its documentation states it has been in **maintenance mode** since December 2025, accepting only minor fixes, and recommends vLLM or SGLang for new deployments.
+- **llama.cpp** [llama.cpp Docs]: C/C++ inference on CPUs, Apple silicon and consumer GPUs with the GGUF format, many low-bit quantization types and a built-in multi-slot HTTP server.
 
 **Table 73.11 — LLM inference engines compared (as of 2026).**
 
@@ -1545,7 +1532,7 @@ flowchart TB
   VL --> B
 ```
 
-**Reading the diagram.** The first question is hardware: without data-center GPUs, llama.cpp is the practical choice. With GPUs, heavy prefix sharing or large MoE models favor SGLang; an NVIDIA-only fleet chasing peak efficiency favors TensorRT-LLM; otherwise vLLM is the broad default. Every branch ends in the same gate: benchmark goodput on your prompts, output lengths and SLOs, because rankings change between releases. Failure point: choosing from a public benchmark run on a different workload.
+**Reading the diagram.** Without data-center GPUs, llama.cpp is the practical choice. With GPUs, heavy prefix sharing or large MoE favors SGLang, an NVIDIA-only fleet chasing peak efficiency TensorRT-LLM, and otherwise vLLM. Every branch ends at the same gate: benchmark goodput on your own traffic and SLOs, because rankings change between releases. Failure point: choosing from a benchmark of a different workload.
 
 ## 73.17 Cost optimization
 
@@ -1588,3 +1575,127 @@ $$B_\text{SLO} = \frac{(S_\text{TPOT} - t_0)\,W_\text{eff} - M_\text{w}}{\bar{c}
 | Consolidation, scheduled scaling | Idle provisioned hours | Approaches the busy floor | Cold-start lag |
 
 Spot capacity suits offline batch generation (summaries, evaluation runs, synthetic data) where a preempted job retries idempotently (§66.13); for interactive chat, keep an on-demand base sized for the SLO and add spot replicas only above it, with draining on interruption notice.
+
+## 73.18 Summary and revision notes
+
+::: summary
+- LLM serving differs from classic serving: unknown output lengths, a per-request KV cache that grows every step, compute-bound prefill versus memory-bound decode, and streamed tokens.
+- Step time ≈ $t_0 + (M_\text{w} + B\bar{c}k)/W_\text{eff}$; prefill ≈ $2Nn_\text{in}/F_\text{eff}$. Batching shares the weight read; KV reads grow with batch and context.
+- Measure TTFT, TPOT, ITL p99 and end-to-end separately; size fleets on goodput (rate meeting both SLOs), not peak throughput.
+- KV bytes per token $k = 2Ln_\text{kv}d_\text{head}b_\text{kv}$: 0.52 MB for the 7B MHA chatbot, 0.33 MB for 70B GQA. One H100 holds about 103,000 tokens, 46 chatbot sequences; a 70B TP=4 replica holds 183.
+- Continuous batching re-forms the batch every step; the simulator shows about 3.4× static's throughput ceiling, and chunked prefill removes the ITL stalls.
+- PagedAttention cuts KV waste from tens of percent to under 1% and enables copy-on-write sharing; prefix caching and RadixAttention skip shared prefill and store shared prefixes once.
+- FlashAttention tiles prefill attention on chip; split-KV decode kernels keep SMs busy at long context.
+- Speculative decoding: $E = (1 - \alpha^{\gamma+1})/(1 - \alpha)$, speed-up $E/(\gamma c + 1)$; lossless, strong at small batch, weak when verification becomes compute-bound.
+- TP inside NVLink domains (≈3.9 MB per token per GPU for 70B, $t = 4$), PP or EP across nodes; disaggregation pays at scale, KV transfer ratio $R = kF_\text{eff}/(2NW_\text{link})$.
+- Quantize what dominates bytes: FP8 KV doubles the 7B chatbot's throughput; INT4 weights plus FP8 KV give 2.4×.
+- Capacity: $g_\text{req} = t(T_\text{prefill} + n_\text{out}t_\text{step}/B)$; QuickBite's chatbot needs 3 GPUs at \$1.02 per million tokens against a \$0.054 busy floor: at small scale, idle redundancy dominates cost.
+:::
+
+## 73.19 Knowledge checkpoint
+
+1. Why is LLM decode memory-bound at batch 1 on an H100?
+2. A reply has TTFT 0.4 s, 300 tokens and end-to-end 9.37 s. What is TPOT?
+3. Compute KV bytes per token for 40 layers, 8 KV heads of 128 dimensions, FP8.
+4. Why can a 70B GQA model hold more tokens per GPU than a 7B MHA model?
+5. Batch of replies of 20, 40, 60 and 400 tokens under static batching: slot utilization?
+6. What does selective batching batch, and what does it not?
+7. With 32-token blocks, what is the expected paged waste for a 1,600-token sequence?
+8. Why does copy-on-write copy only the last block?
+9. Why must prefix-cache hit rates be measured per token?
+10. Compute $E[\text{tokens}]$ and speed-up for $\alpha = 0.7$, $\gamma = 3$, $c = 0.1$.
+11. Why does speculative decoding help less at large batch?
+12. Why keep tensor parallelism inside a node?
+13. When is swapping preferable to recomputation?
+14. Why is GPU utilization a poor autoscaling signal for LLM engines?
+
+<details><summary>Answers</summary>
+
+1. Each step reads all 14 GB of weights for about $2N$ FLOPs, roughly 1 FLOP per byte, far below the ~295 FLOP/byte ridge.
+2. $(9.37 - 0.4)/299 = 30$ ms.
+3. $2 \times 40 \times 8 \times 128 \times 1 = 81{,}920$ bytes.
+4. Its 8 KV heads versus 32 make $k$ smaller (0.33 MB versus 0.52 MB per token), and TP spreads KV heads across GPUs.
+5. $520/(4 \times 400) = 32.5\%$.
+6. It batches the weight matrix multiplies across sequences and runs attention per sequence, since each has its own KV cache and length.
+7. $15.5/1{,}600 \approx 1\%$.
+8. Full shared blocks are never written again; only the partially filled tail receives new tokens.
+9. A request can match a short prefix and count as a hit while saving little prefill.
+10. $E = (1 - 0.7^4)/0.3 = 0.7599/0.3 = 2.53$; speed-up $2.53/1.3 = 1.95$.
+11. Verifying $\gamma + 1$ tokens per sequence turns the memory-bound step compute-bound, so verification stops being free.
+12. TP all-reduces activations twice per layer on the critical path, megabytes per token, which only NVLink-class bandwidth hides.
+13. When KV per token is small relative to compute per token (large GQA models), so moving KV over PCIe costs less than re-running prefill.
+14. It reads near 100% whenever any request runs; queue length, KV usage and TTFT p95 reflect real load.
+
+</details>
+
+## 73.20 Interview questions
+
+### Basic
+
+**Q1. Explain TTFT and TPOT and what affects each.**
+**Answer.** TTFT is the wait for the first token: network, queueing and prefill, improved by more replicas, prefix caching and chunked prefill. TPOT is the average gap between later tokens, set by decode step time, which grows with batch and context and falls with quantization and speculation. Chat SLOs use both.
+
+**Q2. Why does continuous batching beat dynamic batching for LLMs?**
+**Answer.** Output lengths vary widely; request-level batches run as long as their longest member, wasting slots and making new requests wait. Iteration-level scheduling refills freed slots every step, raising throughput severalfold and cutting TTFT.
+
+### Intermediate
+
+**Q3. Your 7B service's throughput is half the plan, and KV usage is at 100% with batch 20. What do you check?**
+**Answer.** Whether $k$ was computed for the real attention type (MHA versus GQA), the real prompt lengths (p95, not mean), contiguous reservation, and the memory fraction. Fixes: paged KV, FP8 KV, prefix caching, chunked prefill, admission by memory watermark.
+
+**Q4. When would you disaggregate prefill and decode?**
+**Answer.** At scale, with long prompts and a tight TPOT SLO, when interference shows as ITL spikes or forces tiny chunks. Check the KV transfer ratio $R$ and network, size pools by GPU-seconds per phase, and compare with chunked prefill first.
+
+### Advanced
+
+**Q5. Design serving for a 70B chat model on H100s at the lowest cost per token with TTFT p95 under 1 s and TPOT p95 under 50 ms.**
+**Answer.** Compare FP16 TP=4 (183 sequences per replica), FP8 TP=2 and INT4 on one GPU, by goodput per GPU under the SLO on production prompts. Use continuous batching with chunked prefill, paged KV with FP8, prefix caching with prefix-aware routing, speculative decoding only while batches are small. Autoscale on queue, KV usage and TTFT p95 with warm headroom; validate quantization on task evaluations.
+
+**Q6. How would you reduce QuickBite's \$1.02 per million tokens?**
+**Answer.** Its cost is idle redundancy, 19× the busy floor. Consolidate onto a shared multi-model platform, scale to two replicas off-peak or one with a fallback API, quantize to raise per-GPU capacity, route simple intents to templates or a smaller model, and cap output length.
+
+## 73.21 Practical exercises
+
+1. Add a TPOT SLO to the batching simulator: cap the running batch so step time stays under 40 ms, and report goodput at 99% attainment for each policy.
+2. Extend the simulator with prefix caching: skip 1,200 prompt tokens for 90% of requests and compare TTFT and throughput.
+3. Make `monte_carlo` draw $\alpha$ per request from a Beta distribution with mean 0.7 and compare with the formula at the mean.
+4. Use the calculator to find the cheapest of FP16 TP=4, FP8 TP=2 and INT4 TP=1 for the 70B model, assuming the same MFU and bandwidth efficiency.
+
+## 73.22 Design challenges
+
+1. **QuickBite chatbot at 10× volume.** Support moves fully to the chatbot and volume grows to 100,000 conversations a day. Redesign the fleet: engine, precision, prefix caching and routing, autoscaling, disaggregation or not, and cost per conversation.
+2. **Multi-tenant inference platform.** Serve 20 fine-tuned 7B variants and one 70B model for several teams with per-team token quotas, fair scheduling, isolated prefix caches and goodput SLOs (Chapters 47 and 79).
+
+## 73.23 References
+
+1. Agrawal, A., Kedia, N., Panwar, A., et al. *Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve*. USENIX OSDI, 2024.
+2. Cai, T., Li, Y., Geng, Z., et al. *Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads*. ICML, 2024.
+3. Chen, C., Borgeaud, S., Irving, G., et al. *Accelerating Large Language Model Decoding with Speculative Sampling*. arXiv:2302.01318, 2023.
+4. Dao, T. *FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning*. ICLR, 2024.
+5. Dao, T., Fu, D. Y., Ermon, S., Rudra, A., Ré, C. *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness*. NeurIPS, 2022.
+6. Dao, T., Haziza, D., Massa, F., Sizov, G. *Flash-Decoding for Long-Context Inference*. Stanford CRFM blog, 2023.
+7. Hugging Face. *Text Generation Inference Documentation*. https://huggingface.co/docs/text-generation-inference
+8. Kwon, W., Li, Z., Zhuang, S., et al. *Efficient Memory Management for Large Language Model Serving with PagedAttention*. ACM SOSP, 2023.
+9. Leviathan, Y., Kalman, M., Matias, Y. *Fast Inference from Transformers via Speculative Decoding*. ICML, 2023.
+10. Li, Y., Wei, F., Zhang, C., Zhang, H. *EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty*. ICML, 2024.
+11. Liu, Z., Yuan, J., Jin, H., et al. *KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache*. ICML, 2024.
+12. llama.cpp. *llama.cpp Repository and Documentation*. https://github.com/ggml-org/llama.cpp
+13. NVIDIA. *TensorRT-LLM Documentation*. https://nvidia.github.io/TensorRT-LLM/
+14. Patel, P., Choukse, E., Zhang, C., et al. *Splitwise: Efficient Generative LLM Inference Using Phase Splitting*. ACM/IEEE ISCA, 2024.
+15. Pope, R., Douglas, S., Chowdhery, A., et al. *Efficiently Scaling Transformer Inference*. MLSys, 2023.
+16. SGLang. *SGLang Documentation*. https://docs.sglang.ai/
+17. Shah, J., Bikshandi, G., Zhang, Y., et al. *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision*. NeurIPS, 2024.
+18. Sheng, Y., Cao, S., Li, D., et al. *Fairness in Serving Large Language Models*. USENIX OSDI, 2024.
+19. vLLM. *vLLM Documentation*. https://docs.vllm.ai/
+20. Yu, G.-I., Jeong, J. S., Kim, G.-W., Kim, S., Chun, B.-G. *Orca: A Distributed Serving System for Transformer-Based Generative Models*. USENIX OSDI, 2022.
+21. Zheng, L., Yin, L., Xie, Z., et al. *SGLang: Efficient Execution of Structured Language Model Programs*. NeurIPS, 2024.
+22. Zhong, Y., Liu, S., Chen, J., et al. *DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving*. USENIX OSDI, 2024.
+
+## 73.24 Open verification items
+
+- Chapter 72 section numbers assumed: §72.10 prefill/decode, §72.11 KV cache, §72.12 MQA/GQA, §72.13 MoE, §72.14 sampling; reconcile when Chapter 72 is final.
+- TGI maintenance mode: date (December 2025) taken from secondary reports of the README banner; a 2026 repository archival is reported by one source only.
+- Reported figures to re-check against the papers: Orca 36.9×; vLLM 20.4–38.2% utilization, under 4% waste, 2–4×; SGLang 6.4×; DistServe 7.4×/12.6×; Splitwise 1.4× at 20% lower cost, 2.35×; Sarathi-Serve 2.6×/3.7×; FlashAttention-3 1.5–2.0×, 75%; Flash-Decoding up to 8× (and its blog URL); Medusa and EAGLE ranges.
+- vLLM `gpu_memory_utilization` default 0.9 and per-engine preemption defaults (as of 2026).
+- H100: about 228 KB shared memory per SM and 132 SMs.
+- Efficiency assumptions (80% bandwidth, 50% MFU, 2 ms overhead) are modeling choices, not measurements.
