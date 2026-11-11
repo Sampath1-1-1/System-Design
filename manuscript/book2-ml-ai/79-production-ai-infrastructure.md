@@ -7,14 +7,14 @@ Chapter 73 served one model well: one engine, one fleet, one set of service-leve
 This chapter is about the **platform layer** that serves many AI applications and teams at once: gateways, routers, multi-model serving, GPU cluster management, token quotas, tenant isolation, multi-region operation, caching, observability, privacy, cost allocation and build versus buy. It reuses the mechanisms of Chapters 22, 40, 44, 47, 50 and 51 and cross-references them. Single-model serving is Chapter 73; *which* model should answer (quality-aware routing, fallbacks, evaluation) is Chapter 78, while this chapter implements routing in the platform; training clusters of 10,000+ GPUs are Chapter 80.
 
 ::: note
-**Assumptions used in this chapter.** These extend the Book II design point and are teaching assumptions, not measurements of any real company. Units are SI (1 GB = 10⁹ bytes). GPUs are NVIDIA H100 80 GB at an illustrative \$2.50 per GPU-hour (§60.11). From Chapter 73 (§73.15), the self-hosted **7B chatbot model** in FP16 on one H100 costs **28.3 µs of GPU time per uncached prompt token** and **0.567 ms per output token** at its memory-limited batch of 46 (decode step 26.1 ms); the **70B option** on four GPUs costs 283 µs per prompt token and 0.586 ms per output token per GPU. **Support chatbot** (Chapter 75): 75,000 retrieval-augmented generation (RAG) queries a day, peak 8 queries/s, each about 4,500 input tokens (of which a 700-token system prompt is prefix-cached) and 230 output tokens. **New in this chapter**, QuickBite consolidates its AI workloads onto one **AI platform** with the tenants of Table 79.1. External API prices are illustrative round numbers, not any provider's price list: a **frontier API** at \$3.00 per million input tokens and \$15.00 per million output tokens, and a **small-model API** at \$0.15 and \$0.60. Regions are those of Chapter 44: United States (Virginia), European Union (Frankfurt) and Asia-Pacific (Tokyo).
+**Assumptions used in this chapter.** These extend the Book II design point and are teaching assumptions, not measurements of any real company. Units are SI (1 GB = 10⁹ bytes). GPUs are NVIDIA H100 80 GB at an illustrative \$2.50 per GPU-hour (§60.11). From Chapter 73 (§73.15), the self-hosted **7B chatbot model** in FP16 on one H100 costs **28.3 µs of GPU time per uncached prompt token** and **0.567 ms per output token** at its memory-limited batch of 46 (decode step 26.1 ms); the **70B option** on four GPUs costs 283 µs per prompt token and 0.586 ms per output token per GPU. **Support chatbot** (Chapter 75): 75,000 retrieval-augmented generation (RAG) queries a day, peak 8 queries/s, each about 4,500 input tokens (of which a 700-token system prompt is prefix-cached) and 230 output tokens. **New in this chapter**, QuickBite consolidates its AI workloads onto one **AI platform** with the tenants of Table 79.1. External API prices are illustrative, not any provider's price list: the **hosted large-model (frontier) API** of Chapters 77–78 at \$2.50 per million input tokens, \$10 per million output tokens and \$0.25 per million cached input tokens, and a **small-model API** at \$0.15 and \$0.60. Regions are those of Chapter 44: United States (Virginia), European Union (Frankfurt) and Asia-Pacific (Tokyo).
 :::
 
 **Table 79.1 — QuickBite AI platform tenants (assumptions).**
 
 | Tenant | Workload | Volume per day | Tokens per call (in / out) | Model | Class |
 |---|---|---|---|---|---|
-| T1 `support-chat` | RAG answers to customers (Ch 75) | 75,000 queries, peak 8/s | 4,500 / 230 | Self-hosted 7B + support adapter | Online, priority P0 |
+| T1 `support-chat` | RAG for the chatbot and human-agent assist (Ch 75) | 75,000 queries, peak 8/s | 4,500 / 230 | Self-hosted 7B + support adapter | Online, priority P0 |
 | T2 `menu-enrich` | Dish descriptions and allergen tags | 100,000 dish updates | 600 / 150 | Self-hosted 7B + menu adapter | Batch by 06:00, P2 |
 | T3 `review-tags` | Tagging the 20,000 daily reviews (Ch 63) | 20,000 reviews | 400 / 60 | Self-hosted 7B + tagging adapter | Near-real-time within 1 h, P2 |
 | T4 `ops-agents` | Internal agents for courier and fraud operations (Ch 77) | 4,000 tasks × 8 steps = 32,000 calls | 6,000 / 300 | Frontier external API | Online, P1 |
@@ -69,7 +69,7 @@ Three pressures push organizations from per-team stacks to a platform:
 A platform gives one enforcement point, pooled capacity, consistent observability and negotiated prices. It costs a platform team, a new hop on every request (§79.5), a shared fate (a gateway bug breaks every AI feature at once) and a temptation to standardize too early on one provider's API shape. Most organizations start with a thin gateway (keys, quotas, logs) and add routing, caching and self-hosted pools as volume justifies them.
 
 ::: mistake
-**Misconception — "A platform means self-hosting everything."** Most platforms route the majority of tokens to external APIs at first. The platform's value is the control point, not the GPUs; self-hosting is a separate, per-model decision made with the break-even analysis of §79.16.
+**Misconception — "A platform means self-hosting everything."** The platform's value is the control point, not the GPUs; self-hosting is a per-model decision (§79.16).
 :::
 
 ## 79.4 Reference architecture
@@ -1067,13 +1067,13 @@ $$c_\text{call} = n_\text{in}^\text{new}\,p_\text{in} + n_\text{in}^\text{cached
 :::
 
 ::: example
-**Worked example — Cost of one ops-agent task.** Eight steps of 6,000 input and 300 output tokens on the frontier API (\$3 and \$15 per million); from step 2 on, about 80% of each prompt is the previous step's context. Assume cached input billed at 10% of the input price (illustrative).
+**Worked example — Cost of one ops-agent task.** Eight steps of 6,000 input and 300 output tokens on the frontier API (\$2.50 input, \$10 output, \$0.25 cached input per million); from step 2 on, about 80% of each prompt is the previous step's context and is billed as cached.
 
-1. Without caching, per step: $6{,}000 \times 3 \times 10^{-6} + 300 \times 15 \times 10^{-6} = 0.018 + 0.0045 = \$0.0225$; per task $8 \times 0.0225 = \$0.180$.
-2. With caching, per step: $1{,}200 \times 3 \times 10^{-6} + 4{,}800 \times 0.3 \times 10^{-6} + 0.0045 = 0.0036 + 0.00144 + 0.0045 = \$0.00954$; per task \$0.076 (treating step 1 like the rest for simplicity).
-3. Monthly at 4,000 tasks a day: \$21,600 without caching, \$9,158 with it.
+1. Without caching, per step: $6{,}000 \times 2.5 \times 10^{-6} + 300 \times 10 \times 10^{-6} = 0.015 + 0.003 = \$0.018$; per task $8 \times 0.018 = \$0.144$.
+2. With caching, per step: $1{,}200 \times 2.5 \times 10^{-6} + 4{,}800 \times 0.25 \times 10^{-6} + 0.003 = 0.003 + 0.0012 + 0.003 = \$0.0072$; per task \$0.0576 (treating step 1 like the rest for simplicity).
+3. Monthly at 4,000 tasks a day ($120{,}000$ tasks): \$17,280 without caching, \$6,912 with it.
 
-**Interpretation.** Output tokens are 5% of the tokens but, with caching, 47% of the cost; cached-token counts belong in every usage record. **Engineering implication.** Alert on the cached-token ratio per alias: a template change that breaks prefix stability more than doubles this tenant's bill overnight.
+**Interpretation.** Output tokens are 5% of the tokens but, with caching, 42% of the cost; cached-token counts belong in every usage record. **Engineering implication.** Alert on the cached-token ratio per alias: a template change that breaks prefix stability multiplies this tenant's bill by 2.5 overnight.
 :::
 
 **Table 79.5 — Core dashboards and alerts.**
@@ -1190,7 +1190,7 @@ $$c_\text{1M} = \frac{p_\text{gpu}\, g_\text{tok}\, 10^6}{3{,}600\, u} \qquad A_
 :::
 
 ::: example
-**Worked example — QuickBite's monthly allocation.** Pool: 2,160 GPU-hours, $C_\text{pool} = \$5{,}400$ (§79.8); busy GPU-hours T1 148.7, T2 85.0, T3 7.6 (total 241.3, $u = 0.112$). Ops agents' API bill with prefix caching: \$9,158 (§79.13). Platform overhead \$2,600, allocated by requests: T1 75,000, T2 100,000, T3 20,000, T4 32,000 a day.
+**Worked example — QuickBite's monthly allocation.** Pool: 2,160 GPU-hours, $C_\text{pool} = \$5{,}400$ (§79.8); busy GPU-hours T1 148.7, T2 85.0, T3 7.6 (total 241.3, $u = 0.112$). Ops agents' API bill with prefix caching: \$6,912 (§79.13). Platform overhead \$2,600, allocated by requests: T1 75,000, T2 100,000, T3 20,000, T4 32,000 a day.
 
 1. Unit rates at 100% busy: input $2.50 \times 28.3 \times 10^{-6} \times 10^6/3{,}600 = \$0.0197$ per million; output $2.50 \times 567/3{,}600 = \$0.394$. Loaded at $u = 0.112$: \$0.176 and \$3.52.
 2. Usage-share allocation of the pool: T1 61.6% → \$3,328; T2 35.2% → \$1,903; T3 3.1% → \$169.
@@ -1204,8 +1204,8 @@ $$c_\text{1M} = \frac{p_\text{gpu}\, g_\text{tok}\, 10^6}{3{,}600\, u} \qquad A_
 | T1 `support-chat` | \$5,169 | — | \$859 | \$6,028 |
 | T2 `menu-enrich` | \$213 | — | \$1,145 | \$1,358 |
 | T3 `review-tags` | \$19 | — | \$229 | \$248 |
-| T4 `ops-agents` | — | \$9,158 | \$367 | \$9,525 |
-| **Total** | \$5,400 | \$9,158 | \$2,600 | \$17,158 |
+| T4 `ops-agents` | — | \$6,912 | \$367 | \$7,279 |
+| **Total** | \$5,400 | \$6,912 | \$2,600 | \$14,912 |
 
 **Interpretation.** The rule moves T2's pool bill by 9× (\$1,903 versus \$213). Under usage share, the menu team subsidizes support chat's idle peak capacity and gains nothing by running at night; under cost driver, support chat sees its true cost, \$0.0027 per query, and the menu team is rewarded for filling valleys. **Engineering implication.** Allocate idle capacity to the tenants whose peaks and SLOs create it, charge valley tenants the busy rate, publish per-alias rates, and review the rule when the tenant mix changes. Overhead by requests over-charges batch tenants with many small calls; by tokens is the alternative.
 :::
@@ -1245,7 +1245,7 @@ $$C_\text{self}(V) = F + c\,V \qquad C_\text{api}(V) = p\,V \qquad V^\star = \fr
 3. Fixed cost: $F = 2 \times 730 \times 2.50 + 8{,}000 = 3{,}650 + 8{,}000 = \$11{,}650$.
 4. Break-even: $V^\star = 11{,}650/(0.172 - 0.0582) = 11{,}650/0.1137 \approx 102{,}500$ million, about 102.5 billion tokens a month.
 5. Actual volume: $75{,}000 \times 4{,}730 \times 30 = 10.6$ billion tokens a month, about a tenth of break-even. The API would cost $10{,}643 \times 0.172 = \$1{,}830$ a month against \$6,028 charged to support chat in Table 79.6.
-6. For the ops agents, the comparison is a 70B self-hosted model (minimum two four-GPU replicas, $8 \times 730 \times 2.50 = \$14{,}600$ a month before staff) against \$9,158 of frontier API with caching, and the two are not the same quality (Chapter 78).
+6. For the ops agents, the comparison is a 70B self-hosted model (minimum two four-GPU replicas, $8 \times 730 \times 2.50 = \$14{,}600$ a month before staff) against \$6,912 of frontier API with caching, and the two are not the same quality (Chapter 78).
 
 **Interpretation.** At QuickBite's volume, buying is cheaper for both workloads by a wide margin. Self-hosting the chatbot is justified only by things the formula omits: the model is QuickBite's own continued-pre-trained 7B (§65.9), which a generic API cannot serve; data controls; and the option to grow. **Engineering implication.** Price the alternatives honestly, including providers that host custom fine-tunes or adapters, and revisit the decision when volume reaches a third of $V^\star$, when GPU prices move, or when the custom model's quality advantage is measured rather than assumed.
 :::
@@ -1280,7 +1280,7 @@ flowchart TB
 | Choose when | Volume ≫ $V^\star$, custom weights or strict data rules | Most new workloads; spiky or small volume |
 
 ::: recommendation
-**Recommendation — Build the control point, rent the GPUs until the numbers say otherwise.** The gateway, ledger and policy layer are worth owning early because they make every later decision reversible; self-hosted pools are worth owning when a workload's volume, data class or custom model justifies them.
+**Recommendation — Build the control point, rent the GPUs until the numbers say otherwise.** The gateway, ledger and policy layer make every later decision reversible; own self-hosted pools only when volume, data class or a custom model justifies them.
 :::
 
 ## 79.17 Summary and revision notes
@@ -1407,4 +1407,4 @@ flowchart TB
 - Provider data controls (OpenAI 30-day abuse-monitoring default and ZDR eligibility; Anthropic default API retention period, reported as changed in 2025; Google Vertex AI ZDR conditions and URL).
 - Feature names for Envoy AI Gateway token limits, LiteLLM limits, NVIDIA Dynamo and llm-d KV-aware routing, Azure and Bedrock provisioned throughput (as of 2026).
 - Bibliographic details for Preble (ICLR 2025), DynamoLLM (HPCA 2025) and GPTCache (NLP-OSS 2023); RouteLLM's venue.
-- Prompt-caching discounts and the 10% cached-input price are illustrative; cold-start and tokenizer timings are assumptions.
+- Provider prompt-caching terms (as of 2026) to re-check; API prices, cold-start and tokenizer timings in this chapter are assumptions.
