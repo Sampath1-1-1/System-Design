@@ -88,7 +88,7 @@
 86: {research: done, draft: done, diagrams: done, review: done, final: todo}
 87: {research: done, draft: done, diagrams: done, review: todo, final: todo}
 88: {research: done, draft: done, diagrams: done, review: todo, final: todo}
-89: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+89: {research: done, draft: done, diagrams: done, review: todo, final: todo}
 90: {research: done, draft: done, diagrams: done, review: todo, final: todo}
 91: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
 92: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
