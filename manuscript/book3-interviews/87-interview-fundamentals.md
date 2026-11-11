@@ -688,7 +688,7 @@ flowchart LR
 | Trade-offs | None stated | Options listed | A-versus-B-because-C with costs |
 | Communication | Silence or monologue | Some narration | Narrated, checked in, used hints well |
 
-For prompts beyond this book, widely used preparation guides include [Xu 2020] and [Xu and Lam 2022] for traditional systems, [Aminian and Xu 2023] for ML, and the community-maintained [Martin, System Design Primer]; for depth behind the boxes, [Kleppmann 2017] and [Huyen 2022] remain the standard references. Use them as prompts and comparisons, not as scripts to memorize.
+For prompts beyond this book, widely used preparation guides include [Xu 2020] and [Xu and Lam 2022] for traditional systems, [Aminian and Xu 2023] for ML, and the community-maintained [Martin n.d.]; for depth behind the boxes, [Kleppmann 2017] and [Huyen 2022] remain the standard references. Use them as prompts and comparisons, not as scripts to memorize.
 
 A practical schedule for someone with six to eight weeks: two mocks per week (one as candidate, one as interviewer), one targeted drill per week, and one case study read with the §52.3 method on each remaining day. Keep a log of rubric scores; the three lowest rows across the last four mocks are your study plan.
 
