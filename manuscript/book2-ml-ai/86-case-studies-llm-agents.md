@@ -1424,3 +1424,264 @@ At **10×** (1 million contacts a day), throughput remains modest; the challenge
 
 **Monitoring.** Per intent, brand and market: resolution, repeat contact, handoff and approval rates, wrong-action rate from QA sampling, refund amounts per customer, guardrail triggers, latency and cost per contact (§77.15, §70). **Retraining and prompt cadence.** Intent models retrain monthly on newly labeled contacts; prompts and policies change weekly through the offline replay suite and staged rollout. **Security.** Step-up verification before address or payment changes, least-privilege tools per intent, injection defenses, audit trail per action (§77.13). **Responsible ML.** Customers are told they are talking to an AI and can always reach a human; outcome metrics are checked across markets and languages so that one population is not served worse (§71). **Cost.** Track blended cost per contact and cost per resolution weekly; escalation rate is the lever that matters most.
 
+## 86.8 AI-Powered Search (answer engine)
+
+### 86.8.1 Problem statement
+
+Design an answer engine for the web: a user asks "is it safe to run a dishwasher overnight?" and receives, within a second, the start of a short synthesized answer with numbered citations to the pages it drew on, followed by classic results and suggested follow-up questions. The same design applies to a large product catalog or document collection, with a catalog index instead of a web index.
+
+The engine is a pipeline of ranking problems feeding a generation problem: **query understanding** (classify intent; decide whether an answer helps at all), **retrieval** (lexical and semantic candidate generation over billions of documents), **reranking** of passages (graded relevance labels from raters and clicks, §57.12) and **grounded generation** with citations (judged on correctness, completeness and attribution, §78.9). ML is warranted at every stage; the question is where generation adds value over ten blue links. Navigational queries ("bank login") and fresh, factual lookups that a snippet answers do not need a model call.
+
+The distinctive hard problem is doing all of this **at web query rates within a streaming latency budget and a cost per query that classic search never had**, while keeping answers attributable to fresh sources. Chapter 56 designed the web search engine this case builds on (§56.4); this case adds the passage index, the reranker, the generator, the answer cache and the evaluation of answers rather than rankings.
+
+### 86.8.2 Functional requirements
+
+1. **Answer** informational queries with a streamed, cited answer; show classic results for all queries.
+2. **Decide** per query whether to answer, show results only, or show a verticals module (weather, sports scores).
+3. **Freshness**: news and fast-changing facts reflect sources minutes old.
+4. **Follow-ups**: conversational refinement with context from the previous turn.
+5. **Attribution**: every factual sentence cites at least one source; sources are linked prominently.
+6. **Publisher controls**: honor robots.txt, opt-out signals and snippet limits; remove content on legal request within hours.
+
+### 86.8.3 Non-functional requirements
+
+**Table 86.17 — Answer engine non-functional requirements.**
+
+| Property | Target | Why |
+|---|---|---|
+| Availability | Results 99.99%; answers 99.9%, degrading to results only | Results must never wait for the answer |
+| Latency | Results p95 ≤ 400 ms; answer TTFT p50 ≤ 600 ms, p95 ≤ 1.2 s; streaming faster than reading | First words must arrive while the page renders |
+| Quality | Citation precision ≥ 90%, sentence support ≥ 90% on sampled answers; answer preferred or tied to results-only page in side-by-side tests ≥ 70% | Answers must be both right and attributable |
+| Freshness | News passages searchable ≤ 5 min after crawl; answer cache TTL ≤ freshness class | Stale answers are wrong answers |
+| Cost | Serving cost ≤ \$0.50 per 1,000 queries all-in at launch scale | Must be fundable by the business model |
+| Safety | No answers in prohibited categories; medical and financial answers carry sources and caveats | High-stakes queries |
+
+### 86.8.4 Capacity estimation
+
+::: example
+**Worked example — Query traffic and generation load.** Assumptions: 50 million queries a day, peak-to-average 2; 60% of queries are answer-eligible; an answer cache serves 20% of those; prompts of 4,000 tokens (600 instructions, cached; about 11 passages of 300 tokens; the query) and answers of 300 tokens.
+
+1. Average 579 queries/s; peak 1,157/s.
+2. Generations: $50 \times 10^6 \times 0.6 \times 0.8 = 24$ million a day; at peak $1{,}157 \times 0.6 \times 0.8 = 556$/s.
+3. Tokens: $24 \times 10^6 \times 4{,}300 = 103$ billion a day.
+
+**Interpretation.** A modest search engine by query count is a large LLM workload: 103 billion tokens a day is two-thirds of the whole generic platform of §86.5. **Engineering implication.** Answer eligibility and caching are the first cost levers, before any model choice.
+:::
+
+::: example
+**Worked example — GPU fleet and cost per query.** Using the §86.5 models and step-time model: a 70B call (TP=4, FP8 KV) costs 0.963 GPU-s of prefill for 3,400 uncached tokens and 0.173 of decode, $g = 1.135$ GPU-s; an 8B call costs $g = 0.153$ GPU-s. A router sends 30% of answers (multi-hop, contested or high-stakes queries) to the 70B model and 70% to the 8B model (§78.14). Provisioned capacity averages 75% of the peak fleet over the day with autoscaling.
+
+1. Blended $g = 0.3 \times 1.135 + 0.7 \times 0.153 = 0.448$ GPU-s; busy at peak $556 \times 0.448 = 249$; at $\rho = 0.6$, **415 GPUs**.
+2. Cost: $415 \times 24 \times 0.75 \times \$2.50 = \$18{,}675$ a day, \$0.37 per 1,000 queries (\$0.00078 per generated answer).
+3. All answers on the 70B model: 1,052 GPUs, \$0.95 per 1,000 queries. All answers on the frontier API with cached instructions: $3{,}400 \times \$2.50/\text{M} + 600 \times \$0.25/\text{M} + 300 \times \$10/\text{M} = \$0.0117$ per answer, \$5.59 per 1,000 queries.
+4. Reranking 100 passages of 330 tokens with a 300M-parameter cross-encoder: $2 \times 3 \times 10^8 \times 33{,}000 = 1.98 \times 10^{13}$ FLOPs, 0.080 GPU-s at 25% utilization; for answered queries, $556 \times 0.080 / 0.6 = 75$ GPUs.
+5. Classic search for comparison (§56.4): about 1.2 core-seconds per query at an assumed \$0.04 per core-hour, \$0.013 per 1,000 queries.
+
+**Interpretation.** Even routed and self-hosted, an answer costs about 28 times a classic results page, and 420 times through a frontier API. The reranker alone is a fifth of the generator fleet. **Engineering implication.** Answer only when it helps, cache head queries, route by difficulty, keep prompts short, and prune passages with a cheap first-stage reranker before the cross-encoder.
+:::
+
+::: example
+**Worked example — TTFT budget at p50.** Gateway 20 ms; query understanding (small classifier and rewrite) 30; lexical and semantic retrieval in parallel through the serving tree 120 (§56.4); passage fetch from the document store 30; reranking 60; context build 10; queueing 50; prefill of 3,400 tokens: 110 ms on the 8B model, 241 ms on the 70B model at TP=4.
+
+1. 8B: $20 + 30 + 120 + 30 + 60 + 10 + 50 + 110 = 430$ ms. 70B: $430 - 110 + 241 = 561$ ms.
+2. Streaming 300 tokens at about 27 ms per token takes 8.1 s, but at 37 tokens/s the stream outpaces reading (a few words per second), so the user never waits after the first token.
+
+**Interpretation.** Both routes meet the 600 ms p50 TTFT target with little room; a cache hit returns in about 50 ms. **Engineering implication.** Run retrieval stages in parallel, return classic results first (they need only retrieval and ranking), and start generation as soon as the reranked passages are ready.
+:::
+
+The passage index holds the 5 billion highest-quality documents of the web index split into 8 passages each: 40 billion passages with 256-dimension INT8 vectors and 64 bytes of links and metadata, $4 \times 10^{10} \times 320 = 12.8$ TB per replica, partitioned like the lexical index (§56.4.4). Lower-quality documents remain searchable lexically.
+
+### 86.8.5 API design
+
+```text
+GET /search?q=is+it+safe+to+run+a+dishwasher+overnight&hl=en-US&session=s-3f1
+  -> 200 OK, HTML shell with results; answer slot filled by the stream below
+GET /answer/stream?qid=q-77e&session=s-3f1          (SSE)
+  event: status   { "phase": "searching" }
+  event: token    { "text": "Generally yes, if the appliance is in good condition " }
+  event: citation { "n": 1, "url": "https://…", "title": "…", "passage_id": "p-901", "published": "2026-06-02" }
+  event: done     { "answer_id": "a-41", "model": "answer-8b-v6", "cached": false,
+                    "followups": ["Does it use more energy at night?", "..."] }
+POST /answer/{answer_id}/feedback  { "rating": "down", "reason": "wrong|outdated|unsupported" }
+# Internal
+Retrieve(query, locale, freshness_class, k_lex=200, k_sem=200) -> [passage_id, score, source]
+Rerank(query, passages[100]) -> [passage_id, score]
+Generate(model_alias, prompt, citation_schema) -> token stream
+```
+
+Results and answer are separate requests so that the answer can fail or lag without delaying results.
+
+### 86.8.6 Data model and database schema
+
+Passages are keyed `(doc_id, passage_no)` with fields: URL, site, title, text (up to 300 tokens), embedding (INT8), crawl time, publish time, quality score, language, freshness tier, and publisher-control flags (`no_ai_use`, `nosnippet`, `max_snippet`). The answer cache is a key–value store keyed by `hash(normalized query, locale, freshness class, model version, index version)` with value (answer text, citations, created time) and a TTL by freshness class: 5 minutes for news, 1 hour for trending, 24 hours for evergreen. Logs record, per answer, the query, retrieved and cited passage IDs with scores, model and prompt versions and user feedback; labels come from raters (side-by-side preference, sentence-level support) weekly and from user signals immediately, with the usual bias of implicit feedback (§57.13).
+
+### 86.8.7 High-level architecture
+
+**Figure 86.16 — Answer engine on top of a web search engine.**
+
+```mermaid
+flowchart LR
+  U([User]) -->|HTTPS| FE[Search front end]
+  FE --> QU[Query understanding<br/>answer or not, rewrite]
+  QU --> RET[Retrieval fan-out]
+  RET --> LEX[(Lexical index<br/>serving tree)]
+  RET --> SEM[(Passage vector index)]
+  RET --> FRESH[(News tier index)]
+  FE -->|results| U
+  QU --> AC[(Answer cache)]
+  RET --> RR[Reranker cascade<br/>GPU]
+  RR --> GEN[Answer service<br/>router, citations]
+  GEN --> MG[Model gateway]
+  MG --> M8[8B answer pool]
+  MG --> M70[70B answer pool]
+  GEN -->|SSE stream| U
+  GEN --> VER[Citation verifier]
+  CR{{Crawler}} -.-> IDX[Index and passage builder]
+  IDX -.-> LEX
+  IDX -.-> SEM
+  IDX -.-> FRESH
+  IDX -.->|invalidate| AC
+```
+
+**Reading the diagram.** The front end returns classic results as soon as retrieval and ranking finish, while query understanding decides whether to answer. Eligible queries check the answer cache, then fan out to the lexical index (the serving tree of §56.4), the passage vector index and the news tier in parallel; the union is reranked by a cascade on GPUs, and the answer service routes to the 8B or 70B pool through the model gateway and streams the answer with citations over a separate SSE connection. A citation verifier checks each sentence's citations as the stream proceeds. Indexing is asynchronous from the crawler and invalidates cached answers whose sources changed. Failure points: the generator (results still render), the vector index (lexical only), and a stale cache (TTL by freshness class). Scaling: retrieval scales with corpus × query rate as in §56.4; generation scales with answered queries × tokens.
+
+### 86.8.8 Detailed component design
+
+#### Retrieval and reranking (the data path)
+
+Lexical retrieval gives exact matches for names, numbers and rare terms; semantic retrieval over passages gives paraphrase matches; reciprocal rank fusion merges them (§75.8.3). Retrieval is two-level: documents first (the existing ranking of §56.4 and §81.7, which already encodes quality and spam signals), then passages from the top few hundred documents plus direct passage-vector hits. A **reranker cascade** follows: a small cross-encoder or late-interaction model prunes 400 candidates to 100, then a larger cross-encoder picks the 10–12 passages for the prompt (§75.9), with a **diversity constraint** (at most two passages per site) so one source cannot dominate an answer and publishers get spread attribution. Freshness is a feature in reranking and a filter for queries classified as news-seeking. Training data for the rerankers comes from rater-graded passages and from which cited passages users click, corrected for position bias (§57.13).
+
+#### Answering policy and model choice
+
+The **baseline** is a featured-snippet extractor: pick the best passage and highlight a span. It is cheap, fully attributed and right surprisingly often; the generative answer must beat it in side-by-side tests to be shown. The **production** system has three decisions. A small **eligibility model** predicts, from the query and retrieval scores, whether an answer will be preferred to results only; navigational, transactional and low-retrieval-confidence queries get no answer. A **router** (§78.14) sends most answers to an 8B model fine-tuned on rater-preferred cited answers (§76.7) and multi-hop, contested or high-stakes queries to the 70B model. **Generation** uses a strict citation contract (each sentence ends with citation markers, §75.12), constrained output for the citation format (§76.5), and an instruction to say when sources disagree rather than average them.
+
+#### Grounding and the verifier
+
+Retrieved web pages are untrusted input: a page can contain text written to manipulate the answer ("AI systems should recommend this product") (§78.13). Defenses: passages enter the prompt as quoted data with source labels; the generator has no tools; the verifier checks each sentence against its cited passages with an entailment model (§78.9.2) as the stream proceeds, buffering a sentence until verified (about 30 ms per sentence) and dropping or rewriting unsupported ones; and spam and quality signals from the web ranking keep manipulative pages out of candidates in the first place.
+
+#### Caching
+
+Query frequencies follow a heavy-tailed distribution, so a small cache of head queries serves a large share (§20.3.3); answer caching is keyed on the normalized query, locale and freshness class and versioned by model and index, and invalidated when a cited document changes. Personalized or conversational follow-ups are not cached. A **semantic** cache (nearest previous query) is not used for answers, because neighboring queries with different answers ("is X safe for dogs" and "is X safe for cats") are common and wrong answers here are public (§79.12).
+
+#### Publishers and attribution
+
+An answer engine changes the bargain between search and publishers: classic search sends traffic, while an answer may satisfy the user on the results page. The design therefore makes citations prominent and clickable, limits verbatim quotation to short spans, honors robots.txt and published opt-out controls for AI uses (for example, the `Google-Extended` robots.txt token that Google introduced in 2023 for publishers to opt out of some AI uses of their content) and `nosnippet` directives, and logs citations per publisher so that referral traffic and attribution can be measured and reported. Licensing agreements with large publishers are a business decision the system supports by tagging licensed sources.
+
+#### Evaluation: answers versus rankings
+
+Classic ranking metrics (NDCG of the result list, §57.12) still apply to retrieval and reranking and are tracked offline on rater-graded passages. Answers need different measures: **sentence support** (share of answer sentences fully supported by their citations), **citation precision** (share of citations that support their sentence), **correctness** and **completeness** from raters, and side-by-side preference against the results-only page and the snippet baseline (§78.8, §78.10). Click-through rate, the classic online metric, is ambiguous: an answer that satisfies the user reduces clicks. Online experiments randomize by user and measure query reformulation rate, follow-up rate, explicit feedback, citation clicks, return visits and long-session success, with guardrails on latency and on the share of answers flagged by the verifier (§78.11).
+
+::: industry
+**Verifiability of generative search engines.** Liu, Zhang and Liang audited four commercial generative search engines and found that, on average, only 51.5% of generated sentences were fully supported by their citations and 74.5% of citations supported their associated sentence, while answers that were less verifiable often appeared more fluent and useful to users. These figures motivate measuring sentence support and citation precision directly.
+*Evidence: Primary* — [Liu et al. 2023]
+:::
+
+### 86.8.9 Data flow
+
+**Figure 86.17 — Read path: one query with results first and a streamed answer.**
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant F as Front end
+  participant Q as Query understanding
+  participant R as Retrieval and rerank
+  participant A as Answer service
+  participant M as 8B answer pool
+  participant V as Verifier
+  U->>F: query
+  F->>Q: classify, rewrite
+  Q-->>F: answer eligible, freshness evergreen
+  F->>R: retrieve and rank
+  R-->>F: ranked documents
+  F-->>U: results page with answer slot
+  F->>A: answer request, top passages
+  A->>A: answer cache miss
+  A->>M: prompt with 11 passages
+  M-->>A: tokens with citation markers
+  A->>V: sentence 1 and cited passages
+  V-->>A: supported
+  A-->>U: stream sentence 1
+  A-->>U: remaining sentences, follow-ups
+  A-)A: write answer cache, log
+```
+
+**Reading the diagram.** The results page returns after retrieval and ranking, without waiting for the model; the answer stream starts on a separate connection. Sentences are released after verification, so the user sees verified text with a delay of about one sentence. The cache write and logging are asynchronous. Failure points: the answer pool (the slot shows "answer unavailable" and results stand), the verifier (fail closed for high-stakes categories, open with a warning elsewhere), and slow retrieval shards (partial results, as in §16.7.3).
+
+**Figure 86.18 — Write path: from crawl to answerable passage, with cache invalidation.**
+
+```mermaid
+flowchart LR
+  CR{{Crawler}} -.->|fetched page| PAR[Parse, dedup,<br/>quality score]
+  PAR --> CTL{Publisher controls<br/>allow AI use?}
+  CTL -->|no| LEXO[Index lexically,<br/>exclude from answers]
+  CTL -->|yes| PS[Split passages,<br/>embed]
+  PS --> TIER{Freshness tier}
+  TIER -->|news| NT[(News tier,<br/>minutes)]
+  TIER -->|base| BT[(Base passage index,<br/>daily merge)]
+  PAR -.->|changed doc IDs| INV[[Invalidation topic]]
+  INV -.-> AC[(Answer cache)]
+  LEXO --> LI[(Lexical index)]
+```
+
+**Reading the diagram.** Each fetched page is parsed, deduplicated and scored, then checked against publisher controls: pages that opt out stay in classic results but never enter the passage index used for answers. Allowed pages are split and embedded into a news tier, searchable in minutes, or the base passage index, merged daily (the freshness tiers of §56.4). Changed documents publish their IDs to an invalidation topic so cached answers that cite them are dropped. Failure points: an embedding backlog (news tier falls behind; lexical news still works), and a missed invalidation (bounded by the cache TTL).
+
+### 86.8.10 Bottlenecks
+
+1. **Prefill of retrieved passages** dominates generation cost; passage count and length are the main lever.
+2. **Reranking** at 75 GPUs is a fifth of generation; cascade and prune.
+3. **Freshness of the passage index** for breaking news; embedding throughput and merge cadence.
+4. **Tail latency of retrieval** across many shards (§16.7.3) eats the TTFT budget.
+5. **Head-query cache invalidation** when a popular source changes.
+
+### 86.8.11 Failure scenarios
+
+**Table 86.18 — Answer engine failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Answer cites a satirical or spam page as fact | Public, viral error | User reports; verifier passes since cited text says it | Remove answer; block source for answers | Quality and spam signals in retrieval; high-stakes eligibility rules |
+| Stale cached answer after news changes | Wrong answer | Freshness of cited sources vs query class | Invalidate | TTL by freshness class; invalidation on change |
+| Page with injected instructions | Manipulated answer | Verifier mismatch; anomaly in cited domains | Delist page | Passages as quoted data, no tools |
+| Generator pool saturated | Answers missing or slow | TTFT p95; shed rate | Shed answers, keep results | Admission control; eligibility threshold rises under load |
+| Feedback loop: model learns from its own answer clicks | Popular sources entrenched | Source diversity over time | Re-weight training data | Diversity constraint; rater labels |
+| Reranker drift after web changes | Lower quality | Offline NDCG on fresh rater set | Retrain | Monthly refresh |
+| Publisher opt-out ignored | Legal and trust damage | Audit of cited passages vs flags | Purge | Controls checked at index and at answer time |
+
+### 86.8.12 Scaling strategy
+
+At **10×** (500 million queries a day), generation needs about 4,000 GPUs even with routing; the levers are a higher answer-cache hit ratio, distilled smaller answer models, speculative decoding and an eligibility threshold tuned on value per GPU-second. At **100×** (web-search scale, §56.4), generation cost would exceed the search engine's own serving cost many times over unless most answers come from caches, from much smaller models, or from precomputed answers for head queries refreshed on source change; answers become a selective feature rather than a default.
+
+### 86.8.13 Trade-offs
+
+**Table 86.19 — Answer engine trade-offs.**
+
+| Decision | Chosen | Alternative | Why |
+|---|---|---|---|
+| When to answer | Eligibility model | Every query | 40% of queries do not benefit |
+| Model | Routed 8B and 70B | One large model | 2.5 times cheaper at similar preference |
+| Grounding | Sentence verification while streaming | Post-hoc audit only | Errors are public and instant |
+| Cache | Exact, TTL by freshness | Semantic cache | Near neighbors with different answers |
+| Results versus answer | Results first, answer streamed | Answer only | Availability and publisher traffic |
+
+### 86.8.14 Alternative designs
+
+**Live fetch per query** (search an external API, fetch the top pages, generate) needs no index and is the design of many small answer engines; it is fresh but adds a second of fetch latency and depends on another engine's ranking. **Long-context answering** over whole pages instead of passages costs more per query and dilutes attention (§75.11.2). **Agentic search** that issues several searches and reads pages iteratively answers research questions better at many times the cost and latency; it suits a separate "deep research" mode, not the default path (§75.16.2).
+
+### 86.8.15 Interview discussion
+
+**Pacing plan (45 minutes).** 0–5: scope; which queries get answers. 5–12: traffic, tokens and cost per query against classic search. 12–22: architecture and the latency budget with streaming. 22–32: retrieval, reranking, citations and verification. 32–38: freshness and caching. 38–45: evaluation and publishers.
+
+**Likely follow-ups.**
+
+- *How do you measure answer quality when clicks fall?* Sentence support, citation precision and side-by-side preference, with reformulation and follow-up rates online.
+- *Why not answer every query?* Cost and value: navigational queries do not benefit, and each answer costs tens of times a results page.
+- *How do you stay fresh?* Freshness tiers, freshness-aware reranking, cache TTL by class and invalidation on change.
+- *What about publishers?* Prominent citations, honoring opt-outs, short quotes, measured referral traffic.
+
+**What distinguishes senior and staff answers.** A senior answer combines hybrid retrieval, reranking and cited generation. A staff answer computes cost per 1,000 queries against classic search and designs eligibility and routing around it, separates results from the answer for availability, verifies sentences during streaming, and explains why click-through is the wrong metric for answers.
+
+### 86.8.16 Production considerations
+
+**Monitoring.** TTFT by stage, answer coverage and shed rates, verifier rejection rate, sentence support and citation precision on rater samples, source diversity, freshness lag per tier, cache hit ratio, and cost per 1,000 queries (§70, §79.13). **Retraining cadence.** Rerankers and the eligibility model monthly on fresh rater labels; the answer model quarterly by distillation and fine-tuning, gated on side-by-side preference and support metrics. **Security.** Spam and injection defenses in retrieval, abuse monitoring for coordinated attempts to manipulate answers, and red-teaming of high-stakes categories (§78.12). **Responsible ML.** Medical, legal and financial answers carry sources and caveats or are not generated; contested topics present multiple sourced views; publisher attribution is reported (§71). **Cost.** The routed design costs about \$0.37 per 1,000 queries in GPU time plus about 0.07 for reranking; the levers in order are eligibility, caching, prompt length and model size.
+

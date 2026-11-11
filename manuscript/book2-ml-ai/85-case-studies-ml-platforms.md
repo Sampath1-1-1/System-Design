@@ -1125,7 +1125,7 @@ GDSF, cost = size (bytes)  hit ratio 0.738  loads 78,590  GB loaded 18,861
 
 What to notice:
 
-- Size-aware eviction beats LRU: weighting frequency by $1/\text{size}$ keeps many small popular models instead of a few large ones, raising the hit ratio from 0.67 to 0.78 (§20.9 compares general cache policies).
+- Size-aware eviction beats LRU: weighting frequency by $1/\text{size}$, the GreedyDual-Size family of web-cache policies [Cao and Irani 1997] extended with frequency, keeps many small popular models instead of a few large ones, raising the hit ratio from 0.67 to 0.78 (§20.9 compares general cache policies).
 - The cost term chooses the objective: cost $= 1$ maximizes hits (fewest slow requests); cost $=$ size minimizes bytes loaded (least load on the artifact store). Platforms usually optimize hits within a cap on load bandwidth.
 - Even the best policy misses 22% of requests when one server tries to cache a 465 GB catalog in 48 GB. The fix is not a better policy but **affinity routing**: with rendezvous placement, each of 20 servers caches only its own share of models, the fleet's 960 GB holds the whole catalog, and misses fall to genuinely cold models.
 
@@ -1376,7 +1376,7 @@ gantt
 3. Hedge each call after 6 ms to another replica (§23.7). A call is late only if the original exceeds 20 ms *and* the hedge, sent at 6 ms, takes more than 14 ms: $0.015 \times 0.025 = 0.000375$, so $p = 0.999625$ per call and $0.999625^5 = 0.998$ per stage.
 4. Cost: hedges fire on at most 5% of calls: $8{,}000 \times 5 \times 0.05 = 2{,}000$ extra calls/s on top of 40,000.
 
-**Interpretation.** The tail of five independent calls, not their median, decides the budget; hedging at the p95 buys a 37-fold reduction in late stages for 5% more load, assuming the slow events on two replicas are independent. **Engineering implication.** Hedge feature reads by default, cap hedges per client at a few percent of traffic (so an overloaded store is not doubled), and give every call a deadline after which the platform uses declared defaults.
+**Interpretation.** The tail of five independent calls, not their median, decides the budget; hedging at the p95 buys a 39-fold reduction in late stages for 5% more load, assuming the slow events on two replicas are independent. **Engineering implication.** Hedge feature reads by default, cap hedges per client at a few percent of traffic (so an overloaded store is not doubled), and give every call a deadline after which the platform uses declared defaults.
 :::
 
 ::: example
@@ -1507,3 +1507,243 @@ The platform's own evaluation is operational: per use case, p99 against budget, 
 **Published prediction services.** DoorDash described Sibyl, a prediction service built to handle its real-time predictions: it loads models from a model store, fetches features from a low-latency feature store, supports shadowing and A/B tests, and writes prediction logs; a later post describes logging every prediction with its feature values and model identifiers for monitoring [DoorDash 2020; DoorDash 2021]. Facebook's ad click-prediction paper combined boosted decision trees with a linear model and reported that prediction accuracy depends strongly on data freshness, which motivated online training of the linear layer [He et al. 2014]. Hedged requests to tame fan-out tails were described by Dean and Barroso [Dean and Barroso 2013].
 *Evidence: Primary* — the cited posts and papers
 :::
+
+### 85.7.9 Data flow
+
+**Figure 85.13 — Read path: one payment-risk decision.**
+
+```mermaid
+sequenceDiagram
+  participant P as Payment service
+  participant D as Decision service
+  participant F as Feature store
+  participant V as Counter store
+  participant X as Device service
+  participant K as Kafka
+  P->>D: Decide, deadline now plus 60 ms
+  par features
+    D->>F: three view-group reads
+    F-->>D: values, ages
+  and
+    D->>V: card and device counters
+    V-->>D: local plus remote counts
+  and
+    D->>X: device reputation
+    Note over D,X: no reply by 6 ms, hedge to second replica
+    X-->>D: reply from hedge
+  end
+  D->>D: transforms, trees, DNN, calibrate, policy
+  D-->>P: step_up, reasons, v42, fallback 0
+  D--)K: decision log with feature vector
+  D--)D: mirror to shadow v43
+```
+
+**Reading the diagram.** The payment service sets an absolute deadline. The decision service issues five feature calls in parallel; the device service is slow, so a hedge goes to a second replica, which answers first. The model and policy run in-process, the decision returns with its model version and fallback level, and then, asynchronously, the decision log goes to Kafka and the request is mirrored to the shadow model. Failure points: any feature source (hedge, then defaults), the device service down (fallback level 2), Kafka unavailable (local buffer; decisions never wait for logging). Scaling: stateless decision services behind the gateway.
+
+**Figure 85.14 — Write path: from outcome to retrained, rolled-out model.**
+
+```mermaid
+sequenceDiagram
+  participant O as Outcome sources
+  participant L as Lakehouse
+  participant T as Training pipeline
+  participant R as Registry
+  participant D as Decision services
+  participant M as Monitors
+  O->>L: chargebacks, clicks, delivery times by request_id
+  L->>L: join outcomes to decision logs
+  T->>L: point-in-time training set from logged and recomputed features
+  T->>R: candidate v43 with metrics and parity report
+  R->>D: alias shadow to v43 in all regions
+  D--)M: shadow scores and decision-rate deltas
+  M->>R: guardrails pass, promote canary 1 to 25 percent
+  M->>R: breach, roll back alias
+```
+
+**Reading the diagram.** Outcomes arrive late and are joined to decision logs by request ID; training uses logged feature vectors where available and point-in-time recomputation for new features. A candidate is registered with offline metrics and a parity report, then moved by alias through shadow and canary stages; monitors compare decision rates and score distributions and either promote or roll back. Every step is asynchronous relative to serving; the alias change is the only control signal decision services receive. Failure points: label delay (proxies used), a feedback loop (declined payments never get fraud labels, so a small random holdout of approvals under a limit keeps training data unbiased, §68.12), a rollback that does not roll back features (§69.13.2).
+
+### 85.7.10 Bottlenecks
+
+1. **Feature-stage tail**: five network calls; hedging, co-location in one zone and fewer view groups.
+2. **GPU batching window versus budget**: a larger window raises throughput but eats the 25 ms; tune per model (§66.6).
+3. **Garbage collection and CPU throttling** in decision services spoil p99 (§23.6.3); set CPU requests equal to limits, keep allocations low on the hot path.
+4. **Counter store hot keys** during card-testing attacks; pre-aggregate and rate-limit per key.
+5. **Logging bandwidth** for ranking; sample requests, not candidates, to keep lists intact.
+
+### 85.7.11 Failure scenarios
+
+**Table 85.16 — Real-time inference failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Feature store slow | p99 breach; defaults rise | Stage latency, level-1 rate | Hedging, defaults, fallback model | Store SLO at p99.8; capacity headroom |
+| Score mismatch online versus offline | Model behaves unlike its evaluation | Score-parity job | Roll back artifact or runtime | Parity gate in CI; artifact digests |
+| Feature skew after a pipeline change | Silent loss of fraud recall | Feature-parity mismatch rate | Revert feature version; retrain | One definition for both paths (§85.4) |
+| Fraudsters adapt to the model | Fraud rate rises in a segment | Manual-review findings, rising chargebacks by segment | Retrain on new patterns; temporary rules | Frequent retraining; adversarial features; monitoring slices (§70.9.2) |
+| Feedback loop from declines | Model never sees outcomes of declined payments | Shrinking label coverage | Exploration holdout | Small randomized approval holdout |
+| Stale model | Accuracy decays | Model age; performance on matured labels | Retrain and promote | Scheduled plus triggered retraining (§70.14) |
+| GPU pool lost | Ranking cannot run the DNN | Health checks, error rate | Fall back to CPU tree ranker | CPU fallback model kept warm |
+| Region lost | One third of capacity gone | Global load balancer | Shift traffic; counters lose remote updates briefly | Each region sized for half of peak |
+| Bad canary | Decline rate jumps for 5% of users | Guardrail breach | Automatic alias rollback | Staged canary, small first step |
+
+### 85.7.12 Scaling strategy
+
+**At 10×** (80,000 risk decisions/s, 75 million ranking predictions/s): ranking GPUs grow to about 750; cost pressure moves to model optimization (distillation, INT8, §67.5–§67.8) and cascades that score 300 candidates with a cheap model and only the top 50 with the DNN (§60.13.2). Risk services stay on CPU; the counter store needs more partitions and per-key pre-aggregation. **At 100×**, regional cells with their own stores and GPU pools, and models compiled per hardware generation; the consistency checks become sampled per cell.
+
+### 85.7.13 Trade-offs
+
+**Table 85.17 — Real-time inference design trade-offs.**
+
+| Decision | Choice | Alternative | Why |
+|---|---|---|---|
+| Small models | In-process on CPU | Remote model server | No hop; trivial cost at this volume |
+| Ranking DNN | GPU with dynamic batching | CPU fleet | Five times cheaper per prediction at this volume |
+| Tail control | Hedging at p95 + deadlines | Larger timeouts | 39× fewer late stages for 5% more calls |
+| Outage policy (risk) | Fail open below an amount, step up above | Fail closed | Lost sales exceed the fraud stopped |
+| Global counters | Local counts + async replicated increments | Home-region routing | Keeps cross-region round trips out of the budget; bounded undercount |
+| Rollout of risk models | Long shadow + guardrailed canary | Short A/B on true labels | Labels take weeks |
+
+### 85.7.14 Alternative designs
+
+- **Embed everything in each product service**, as before the platform: lowest latency, but every team re-solves deadlines, logging, parity and rollout.
+- **A single general model server** (Triton or KServe) for all models: uniform operations, but a network hop for models that take 2 ms in-process.
+- **Precompute decisions** where inputs are known in advance (ETA ranges per zone, user-level risk tiers), leaving only a cheap online adjustment (§60.8).
+- **Rules-first engines** with ML scores as one input: the right shape when policy changes daily and must be auditable; the platform's policy stage is a small version of this.
+
+### 85.7.15 Interview discussion
+
+**Table 85.18 — 45-minute pacing plan for the real-time inference platform.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Scope | Use cases, budgets, label delays, regions |
+| 5–12 | Estimates | Budget decomposition; hedging arithmetic; CPU versus GPU cost |
+| 12–20 | Architecture | Figure 85.12; decision service, stores, model paths |
+| 20–30 | Deep dive: tail | Deadlines, hedges, fallback ladder, fail-open policy |
+| 30–40 | Deep dive: safety | Shadow, canary with proxies, score and feature parity |
+| 40–45 | Wrap-up | Regions and counters, failures, 10× |
+
+**Likely follow-ups.**
+
+- *"Where do the 60 ms go?"* Figure 85.11; the feature stage is the variance, the slack is protected.
+- *"Why not put the fraud model on GPU?"* 3–5 ms on CPU, no batching to fill, and a floor of GPUs per region; CPU is cheaper and faster here.
+- *"How do you canary a model whose labels take 60 days?"* Shadow and proxies (decision rates, score distribution, review queue), plus a long-running holdout.
+- *"How do you know online equals offline?"* Score parity and feature parity jobs on logged samples, and the same checks in CI.
+
+**What distinguishes senior and staff answers.** A senior answer budgets latency and proposes canaries. A staff answer computes the stage's tail probability and the value of hedging, chooses hardware by cost per prediction per workload, designs an explicit outage policy with the business, handles delayed labels and feedback loops in rollout, and solves cross-region counters without spending the budget on round trips.
+
+### 85.7.16 Production considerations
+
+- **Observability.** Per use case and region: stage latencies, hedge and fallback rates, score distributions, decision rates by segment, parity pass rates, model version mix; traces sampled with tail sampling for slow requests (§40.6.3).
+- **Responsible ML.** Reason codes for declines and step-ups; fairness slices on decline rates (§71.5); audit trail of model and policy versions per decision for disputes and regulators (§69.11).
+- **Retraining.** Ranking daily; risk weekly on matured labels plus triggered retraining on drift (§70.14).
+- **Cost.** GPUs for ranking dominate; report cost per million decisions per use case; optimization and cascades are the levers.
+- **Security.** Feature and decision logs contain payment data: tokenized identifiers, encryption, access restricted by use case, retention limits (§50.8).
+
+## 85.8 Summary and revision notes
+
+::: summary
+- **Platforms serve engineers, not end users.** Their requirements have a tenant dimension: for every resource, decide who gets it under contention and who pays for it.
+- **Feature store (§85.4).** Join on availability time with bucketed sort-merge so history is never shuffled; assemble windows from mergeable hourly and daily tiles ($R_{\text{tiled}} \ll \rho W$ for heavy entities); lay out the online store per entity: partition few-key entities, fully replicate small many-key ones to avoid partition fan-out; get exactly-once-ish streaming from deduplication, checkpointed state and idempotent upserts, measured against batch.
+- **Training platform (§85.5).** Quotas with borrowing and whole-gang reclaim keep GPUs busy without breaking guarantees; checkpoint-on-signal cuts preemption loss from $G(\tau/2 + R)$ to $G(t_{\text{save}} + R)$; reservations plus backfill start large jobs; report allocation, goodput and MFU separately, because published traces show allocation overstates useful work.
+- **Multi-tenant serving (§85.6).** Popularity is extremely skewed: dedicate deployments to hot models, put the long tail on multi-model servers sized by memory, scale copies (not servers) to zero, route by rendezvous affinity so the fleet's memory holds the catalog, treat artifacts as untrusted code, and bill memory-hours plus CPU.
+- **Real-time inference (§85.7).** Decompose the p99 budget and protect slack; the probability that a stage of $N$ parallel calls is late is what matters, and hedging at the p95 shrinks it dramatically; choose CPU or GPU per workload by cost per prediction; roll out high-stakes models with shadow and proxy-guarded canaries; verify score and feature parity continuously; replicate counters across regions asynchronously rather than spending the budget on round trips.
+:::
+
+## 85.9 Knowledge checkpoint
+
+1. Why must a point-in-time join use the availability timestamp rather than the event timestamp for a nightly batch view?
+2. A ranking request reads 150 item keys from a store with 48 hash partitions. How many partitions does it touch on average, and why does that matter?
+3. Write the two-level tiling estimate of reads per spine row and evaluate it for a 7-day window at 10 events/h.
+4. Name the three mechanisms that give a streaming feature "exactly-once-ish" behavior.
+5. In the training platform, why are borrowed jobs preempted as whole gangs?
+6. A 64-GPU borrowed job checkpoints every 60 minutes and restarts in 10 minutes. How many GPU-hours does a preemption lose with and without a 2-minute checkpoint-on-signal?
+7. Why is 86% allocation not 86% utilization? Give the three factors.
+8. In §85.6, why does affinity routing matter more than the eviction policy?
+9. What is the difference between scaling a model to zero and scaling a fleet to zero, in cold-start time?
+10. Why do pickled models need a sandbox on a shared server?
+11. Five parallel calls each exceed 20 ms with probability 1.5%. What fraction of stages miss 20 ms, and what does hedging after the p95 change?
+12. Why is the payment-risk model served on CPU while the ranking DNN is served on GPU?
+13. How can you canary a risk model whose labels arrive after 60 days?
+14. What do the score-parity and feature-parity checks each detect?
+
+<details><summary>Answers</summary>
+
+1. The value stamped midnight was not readable until the job published it hours later; joining on event time gives examples in that window a value serving could not have seen, which is label leakage (§62.8).
+2. $48\,(1 - (47/48)^{150}) \approx 46$ partitions. The read waits for the slowest of 46 sub-requests, so its tail is far worse than a three-call read; full replicas of the item view make it one call.
+3. $R_{\text{tiled}} \approx (W/\Delta_2 - 1) + (\Delta_2/\Delta_1 - 1) + \rho\Delta_1 = 6 + 23 + 10 = 39$ reads, versus $\rho W = 1{,}680$ raw events.
+4. Event-ID deduplication in keyed state, checkpointed window state with replay from checkpointed offsets, and idempotent full-value upserts ordered by window end.
+5. Collective operations need every worker; preempting one pod stalls all the others while still holding their GPUs.
+6. Without: $64 \times (30 + 10)/60 = 42.7$ GPU-h. With: $64 \times (2 + 10)/60 = 12.8$ GPU-h.
+7. Allocation counts GPUs held; goodput removes lost and restart time; MFU (or hardware utilization) removes the idle fraction of each held GPU. Effective utilization is their product.
+8. Without affinity, every server sees the whole catalog and even the best policy misses often; with rendezvous placement each server caches only its share, so the fleet's total memory holds the catalog.
+9. Reloading a model on a warm server takes about a second; starting servers on new nodes takes minutes (§66.10).
+10. Unpickling executes code chosen by the artifact's author; on a shared server that code could read other tenants' data or crash their models.
+11. $1 - 0.985^5 = 7.3\%$. With hedging, a call is late only if both attempts are slow: $0.015 \times 0.025$, so about 0.2% of stages miss.
+12. The risk model takes a few milliseconds of CPU at 8,000 decisions/s, so CPUs cost a few dollars an hour with no hop; the ranking DNN needs 7.5 million predictions/s, where a GPU's 125× throughput beats the 25× break-even.
+13. Long shadow on all traffic, then a staged canary guarded by proxies (decline and step-up rates, score distribution, review queue, conversion), plus a long-running holdout evaluated when labels mature.
+14. Score parity detects differences between the served and evaluated artifact or runtime; feature parity detects training–serving skew in features.
+</details>
+
+## 85.10 Interview questions
+
+### Basic
+
+**Q1.** What problems does a company-wide feature store solve that per-team pipelines do not? **Answer.** One definition for training and serving (no skew), point-in-time-correct training sets (no leakage), reuse and discovery of features, a shared low-latency online store, and governance: owners, versions, consumers and access control (§62.6).
+
+**Q2.** Why do training jobs need gang scheduling? **Answer.** Synchronous training needs all workers at every step; placing some workers holds GPUs idle and can deadlock two jobs that each hold part of the cluster (§46.10).
+
+### Intermediate
+
+**Q3.** Design the eviction and routing policy for 5,000 models on 20 multi-model servers. **Answer.** Assign each model a few home servers by rendezvous hashing so caches specialize; within a server, evict by size-aware frequency with a minimum residency time; keep two copies of warm models in different zones; limit concurrent loads; let hot models graduate to dedicated deployments.
+
+**Q4.** How would you allocate a 100 ms p99 budget for a fraud decision? **Answer.** Allocate stages (network, parallel feature fetch, model, policy, response) and keep about a third as slack; compute the probability the parallel stage is late from per-call tails; hedge at the p95 and propagate deadlines; define fallback levels and an explicit outage policy.
+
+### Advanced
+
+**Q5.** A team reports that its model's offline AUC is 0.92 but online performance matches a 0.85 model. How do you investigate on this platform? **Answer.** Check score parity (artifact or runtime differences), then feature parity per feature (skew), then whether the training set joined on event time (leakage for batch views), then defaults and fallback rates online, then population differences between the offline holdout and live traffic (drift, feedback loops).
+
+**Q6.** The GPU fleet is 86% allocated, yet teams complain about waits and finance about cost. What do you change? **Answer.** Measure goodput and SM activity per team; bill idle allocated time; enforce session idle timeouts; lend idle quota as preemptible capacity with checkpoint-on-signal; add reservations for large jobs and backfill; fix input pipelines and communication overlap to raise MFU; price older GPU types lower to shift demand.
+
+## 85.11 Practical exercises
+
+1. Extend the tiling program of §85.4.8 to a 30-day sum and a distinct count (use a set per tile as a stand-in for HyperLogLog), and verify zero mismatches. Which aggregate functions are not mergeable?
+2. Modify the fair-share program of §85.5.8 to break ties by queue age and to cap any team's borrowing at 50% of its quota. Rerun the scenario.
+3. Add a minimum-residency rule (no eviction within 1,000 requests of a load) and a per-server affinity filter (each server sees one twentieth of models) to the cache simulation of §85.6.8. Report the hit ratio.
+4. Simulate the five-call feature stage of §85.7.4 with log-normal latencies and measure p99 with and without hedging at the p95, including the extra calls.
+
+## 85.12 Design challenges
+
+1. **Feature store for 50 regions under data-residency law.** User features may not leave their region; models are global. Design materialization, training-set generation and serving.
+2. **Training platform with 30% spot capacity.** Spot GPUs can vanish with two minutes' notice. Decide which jobs may run on them, how checkpoints and pricing change, and what goodput you can promise.
+3. **Serving 100,000 per-customer models.** Compare multi-model serving with replacing them by one model with customer embeddings or adapters, in cost, quality risk and operations.
+
+## 85.13 References
+
+1. Cao, P., Irani, S. *Cost-Aware WWW Proxy Caching Algorithms*. USENIX Symposium on Internet Technologies and Systems (USITS), 1997.
+2. Crankshaw, D., Wang, X., Zhou, G., Franklin, M. J., Gonzalez, J. E., Stoica, I. *Clipper: A Low-Latency Online Prediction Serving System*. USENIX NSDI, 2017.
+3. Dean, J., Barroso, L. A. *The Tail at Scale*. Communications of the ACM 56(2), 2013.
+4. DoorDash Engineering. *Meet Sibyl, DoorDash's New Prediction Service* (and the companion post on its ideation and requirements). DoorDash Engineering Blog, 2020.
+5. DoorDash Engineering. Post on monitoring ML models with prediction logs. DoorDash Engineering Blog, 2021.
+6. Feast Authors. *Feast documentation*. n.d. https://docs.feast.dev
+7. Gu, J., Chowdhury, M., Shin, K. G., Zhu, Y., Jeon, M., Qian, J., Liu, H., Guo, C. *Tiresias: A GPU Cluster Manager for Distributed Deep Learning*. USENIX NSDI, 2019.
+8. He, X., Pan, J., Jin, O., Xu, T., Liu, B., Xu, T., Shi, Y., Atallah, A., Herbrich, R., Bowers, S., Quiñonero Candela, J. *Practical Lessons from Predicting Clicks on Ads at Facebook*. ADKDD Workshop, 2014.
+9. Hermann, J., Del Balso, M. *Meet Michelangelo: Uber's Machine Learning Platform*. Uber Engineering Blog, 2017.
+10. Jeon, M., Venkataraman, S., Phanishayee, A., Qian, J., Xiao, W., Yang, F. *Analysis of Large-Scale Multi-Tenant GPU Clusters for DNN Training Workloads*. USENIX ATC, 2019.
+11. KServe Authors. *ModelMesh* (repository and documentation). n.d. https://github.com/kserve/modelmesh
+12. Mahajan, K., Balasubramanian, A., Singhvi, A., Venkataraman, S., Akella, A., Phanishayee, A., Chawla, S. *Themis: Fair and Efficient GPU Cluster Scheduling*. USENIX NSDI, 2020.
+13. Narayanan, D., Santhanam, K., Kazhamiaka, F., Phanishayee, A., Zaharia, M. *Heterogeneity-Aware Cluster Scheduling Policies for Deep Learning Workloads*. USENIX OSDI, 2020.
+14. Qiao, A., Choe, S. K., Subramanya, S. J., Neiswanger, W., Ho, Q., Zhang, H., Ganger, G. R., Xing, E. P. *Pollux: Co-adaptive Cluster Scheduling for Goodput-Optimized Deep Learning*. USENIX OSDI, 2021.
+15. Romero, F., Li, Q., Yadwadkar, N. J., Kozyrakis, C. *INFaaS: Automated Model-less Inference Serving*. USENIX ATC, 2021.
+16. Weng, Q., Xiao, W., Yu, Y., Wang, W., Wang, C., He, J., Li, Y., Zhang, L., Lin, W., Ding, Y. *MLaaS in the Wild: Workload Analysis and Scheduling in Large-Scale Heterogeneous GPU Clusters*. USENIX NSDI, 2022.
+17. Xiao, W., Bhardwaj, R., Ramjee, R., Sivathanu, M., Kwatra, N., Han, Z., Patel, P., Peng, X., Zhao, H., Zhang, Q., Yang, F., Zhou, L. *Gandiva: Introspective Cluster Scheduling for Deep Learning*. USENIX OSDI, 2018.
+18. Zanoyan, V., Shapiro, E. *Zipline: A Declarative Feature Engineering Framework*. Strange Loop, 2019.
+
+## 85.14 Open verification items
+
+- Jeon et al. 2019: the "about 52%" hardware utilization and "about 30%" unsuccessful-job figures were checked against the abstract only; trace period (75 days, October–December 2017) is from the authors' slides.
+- Weng et al. 2022: "over 6,000 GPUs" from the abstract; the paper body reportedly gives 6,742.
+- KServe ModelMesh: cache and placement behavior from the repository and an IBM Developer tutorial; confirm against current KServe documentation.
+- DoorDash posts (2020, 2021): confirm exact titles and authors; Sibyl details (feature store, shadowing, prediction logs) were taken from search summaries.
+- Author lists for Gandiva, Tiresias, Themis, Gavel and Pollux; GDSF attribution (Cherkasova 1998) beyond Cao and Irani 1997.
+- All throughput, price and latency figures in the capacity estimates are illustrative assumptions.

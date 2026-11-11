@@ -50,7 +50,7 @@ Work through these cases with the method set out in §52.3: read the problem sta
 
 Design a face recognition service with two clients. The first is a photo-sharing platform's opt-in **People** feature: faces in a user's uploaded photos are grouped into people, the user may name a group, and new photos get suggestions such as "Is this Maya?". The second is an **access-control** product: an enterprise enrolls employees who consent, and a camera at a door identifies whoever stands in front of it and opens the door within half a second.
 
-Both clients need the same pipeline. A **detector** finds faces in an image; an **aligner** warps each face to a canonical pose; an **embedding model** maps the aligned face to a vector such that two photos of the same person are close and photos of different people are far apart (§58.6, §74.3); a **matcher** compares that vector, the **probe**, with stored vectors of known people, the **gallery**. Comparing a probe with one claimed identity is **verification (1:1)**; searching a whole gallery for the best match is **identification (1:N)**.
+Both share one pipeline: a **detector** finds faces; an **aligner** warps each to a canonical pose; an **embedding model** maps it to a vector in which photos of the same person are close (§58.6, §74.3); a **matcher** compares that vector, the **probe**, with stored vectors, the **gallery**. Comparing with one claimed identity is **verification (1:1)**; searching a gallery is **identification (1:N)**.
 
 The ML formulation is metric learning: a model trained on labeled identities so that cosine similarity separates **mated pairs** (same person) from **non-mated pairs**, followed by a threshold decision. ML is warranted (§59.4) because no hand-written rule recognizes a face across pose, age and lighting [Taigman et al. 2014; Schroff et al. 2015].
 
@@ -97,7 +97,7 @@ All figures use decimal units and illustrative assumptions for a teaching design
 2. Live faces: $3 \times 10^8$ faces/day, 3,472/s average, **10,417/s at peak**.
 3. Backfill: $5 \times 10^5 \times 4{,}000 = 2 \times 10^9$ photos/day $= 23{,}148$ photos/s and 27,778 faces/s, **8 times the live volume**.
 
-**Interpretation.** The steady-state upload stream is not the largest workload; processing the libraries of new opt-ins is. **Engineering implication.** Run backfill as a separate, preemptible batch tier with its own quota (§66.13), and cap the opt-in backfill rate so a viral launch cannot starve live processing.
+**Interpretation.** Backfill, not live upload, is the largest workload. **Engineering implication.** Run it as a separate preemptible batch tier with its own quota (§66.13), rate-capped so a launch cannot starve live processing.
 :::
 
 ::: example
@@ -108,7 +108,7 @@ All figures use decimal units and illustrative assumptions for a teaching design
 3. Backfill: $23{,}148 / 600 + 27{,}778 / 2{,}500 = 38.6 + 11.1 = 49.7$ GPUs busy, or $49.7 / 0.8 = 62$ GPUs.
 4. GPU-hours per day: live $\approx (2{,}894/600 + 3{,}472/2{,}500) \times 24 = 149$; backfill $\approx 1{,}193$.
 
-**Interpretation.** Detection, not embedding, dominates, because every photo is scanned but only 1.2 faces per photo are embedded. **Engineering implication.** A cheaper detector on downscaled thumbnails saves more than optimizing the embedder; and the backfill tier, at eight times the GPU-hours, is where spot capacity and off-peak scheduling pay.
+**Interpretation.** Detection dominates because every photo is scanned but only 1.2 faces per photo are embedded. **Engineering implication.** A cheaper detector saves more than a faster embedder, and backfill, at eight times the GPU-hours, is where spot capacity pays.
 :::
 
 ::: example
@@ -118,7 +118,7 @@ All figures use decimal units and illustrative assumptions for a teaching design
 2. Per-user gallery for matching: $150 \times 4 \times 1{,}024 = 614$ KB; across all users 61 TB.
 3. Thumbnail reads for detection at peak: $8{,}681 \times 150$ KB × 8 = 10.4 Gbit/s from object storage.
 
-**Interpretation.** Per-face templates are bulk data read only for re-clustering; the matcher needs only the small per-user gallery. **Engineering implication.** Keep templates in a wide-column store or object storage partitioned by owner, and load a user's 614 KB gallery into matcher memory once per upload session rather than once per photo.
+**Interpretation.** Templates are bulk data read only for re-clustering; matching needs only the small per-user gallery. **Engineering implication.** Partition templates by owner and load a user's gallery once per upload session.
 :::
 
 ::: example
@@ -129,7 +129,7 @@ All figures use decimal units and illustrative assumptions for a teaching design
 3. Worst case, all peak queries against 200,000-person galleries at 50% utilization: $833 \times 0.0041 / 0.5 = 6.8$ cores.
 4. A hypothetical 10-million-entry gallery: 205 ms per brute-force query and 10.2 GB of FP16 vectors; HNSW over int8 vectors would need $10^7 \times (512 + 260 + 8) = 7.8$ GB with sub-millisecond search (§74.14).
 
-**Interpretation.** At enterprise gallery sizes exact search is cheap and exact (§74.5.2); ANN becomes necessary only above a few million entries. **Engineering implication.** The constraint on gallery size is not search cost but false matches, which the next section quantifies.
+**Interpretation.** At enterprise gallery sizes exact search is cheap (§74.5.2); ANN is needed only above a few million entries. **Engineering implication.** Gallery size is limited by false matches, not search cost (§84.4.8).
 :::
 
 ### 84.4.5 API design
@@ -162,7 +162,7 @@ POST /v1/people:merge              { "ids": ["p-1","p-2"] }
 POST /v1/faces/{face_id}:feedback  { "suggested_person": "p-1", "action": "confirm" | "reject" }
 ```
 
-Photo processing is asynchronous: the upload service publishes `photo.uploaded`, and the face pipeline consumes it only if the owner has an active `photo_people` consent. Feedback (confirm, reject, merge, split) is the label stream (§84.4.8). The identify response never returns images or templates; the probe is processed in memory and discarded unless the tenant has enabled time-limited audit retention.
+Photo processing is asynchronous and consumes `photo.uploaded` only for owners with an active `photo_people` consent. Feedback actions are the label stream. The identify response never returns images or templates; the probe is discarded after the decision.
 
 ### 84.4.6 Data model and database schema
 
@@ -233,7 +233,7 @@ flowchart LR
   BF[Backfill batch tier] -.->|library scan| DET
 ```
 
-**Reading the diagram.** In the **photo client** the upload service writes a thumbnail to object storage and publishes an asynchronous `photo.uploaded` event (dotted arrows are asynchronous). The **face pipeline** consumes the event; the consent gate checks the consent database and drops events for users without an active `photo_people` consent, so non-consenting users' faces are never detected, let alone embedded. Detection and embedding run on batched GPU servers (§66.6); the aligner warps each face to 112×112 and drops faces that are too small, blurred or in profile; the per-user matcher loads the uploader's gallery, assigns the face to a person or creates a new cluster, writes the encrypted template, and asynchronously writes suggestions. In **access control** the site edge box detects the face and runs liveness checks locally, sending only an embedding over mutual TLS; the identify service searches the tenant's in-memory gallery synchronously. Storage boundaries: object storage (thumbnails), the template store (encrypted per owner with keys from the key service), the consent database and tenant galleries. Failure points: the consent gate (must fail closed), the GPU tiers (queue builds up, photos lag), and the identify service (doors fall back to badges). Scaling: GPU replicas for photo rate; the backfill tier separately; identify replicas per region with tenant galleries replicated in memory.
+**Reading the diagram.** In the **photo client** the upload service stores a thumbnail and publishes an asynchronous `photo.uploaded` event (dotted arrows are asynchronous). The **face pipeline** first passes the consent gate, which drops events of users without an active consent, so their faces are never even detected. Detection and embedding run on batched GPU servers (§66.6); the aligner drops faces that are too small, blurred or in profile; the matcher assigns each face to a person, writes the encrypted template and asynchronously publishes suggestions. In **access control** the site edge box detects faces and checks liveness locally, sending only an embedding over mutual TLS to the identify service, which searches the tenant's in-memory gallery synchronously. Storage boundaries: object storage, the template store (per-owner keys), the consent database and tenant galleries. Failure points: the consent gate (must fail closed), the GPU tiers (photos lag) and the identify service (doors fall back to badges). Scaling: GPU replicas for photo rate, the backfill tier separately, identify replicas per region.
 
 ### 84.4.8 Detailed component design
 
@@ -249,7 +249,7 @@ The **embedder** is a CNN (§58.7) producing a 512-dimension, L2-normalized vect
 
 **Baseline first:** a published open model evaluated on your own consented benchmark, after checking its license and training-data provenance (several web-scraped face datasets were withdrawn by their creators over consent concerns). **Production model:** an ArcFace-style ResNet-50-class network trained on a dataset whose subjects consented to training use, documented by demographic composition (§63.13), quantized to INT8 with a calibration set covering every slice (§67.4.3), and distilled to a MobileNet-class student for devices (§67.8).
 
-The hardest operational fact is that **embeddings from two model versions are not comparable**: a template from version 1 cannot be matched against a probe from version 2. Every model upgrade therefore re-embeds every stored template, which for the photo client is $4.8 \times 10^{11}$ faces: $4.8 \times 10^{11} / 2{,}500 / 86{,}400 \approx 2{,}200$ GPU-days of embedding (100 GPUs for about three weeks), plus re-reading every source thumbnail. Storing each face's landmarks with its template avoids re-running detection, which would add another 7,700 GPU-days. The rollout is a **dual-write migration**: new photos are embedded by both versions; a batch job re-embeds the history per user; each user's gallery flips to version 2 atomically once complete; version-1 templates are deleted after the flip. Access-control tenants whose consent does not cover keeping enrollment photos must re-enroll employees, so upgrades are scheduled and announced.
+The hardest operational fact is that **embeddings from two model versions are not comparable**, so every model upgrade re-embeds every stored template: $4.8 \times 10^{11} / 2{,}500 / 86{,}400 \approx 2{,}200$ GPU-days for the photo client (100 GPUs for three weeks). Storing each face's landmarks with its template avoids re-running detection, which would add 7,700 GPU-days. The rollout is a **dual-write migration**: new photos are embedded by both versions, a batch job re-embeds each user's history, the user's gallery flips atomically, and old templates are deleted. Access-control tenants whose consent does not cover keeping enrollment photos must re-enroll employees, so upgrades are scheduled and announced.
 
 #### Threshold selection and the 1:N multiplier
 
@@ -279,10 +279,10 @@ The approximation treats the $N$ comparisons as independent; real galleries cont
 3. Gallery of 200,000 at FMR = $10^{-7}$: FPIR $\approx 2\%$ (exact 1.98%). Fails by 20×; it would need FMR = $5 \times 10^{-9}$.
 4. Measuring FMR = $10^{-7}$ needs at least $3 \times 10^{7}$ non-mated comparisons, and more per demographic slice.
 
-**Interpretation.** For a fixed model, the false-match budget per comparison shrinks in proportion to gallery size. **Engineering implication.** Large sites must not run open 1:N over all employees: partition the gallery by building or shift (smaller $N$), or turn identification into verification by combining face with a badge or PIN (1:1, $N = 1$). Privacy and accuracy point the same way: the smallest gallery that does the job is both the safest and the most accurate.
+**Interpretation.** The false-match budget per comparison shrinks in proportion to gallery size. **Engineering implication.** Do not run open 1:N over a large site: partition galleries by building, or combine face with a badge or PIN (1:1, $N = 1$). Privacy and accuracy point the same way: the smallest gallery that does the job is both the safest and the most accurate.
 :::
 
-The following program makes threshold selection concrete. It draws synthetic similarity scores (not from a real model) for mated pairs and for non-mated pairs from two demographic groups, picks the threshold that gives FMR = $10^{-5}$ on group A, and reports what the same threshold does to group B and to 1:N searches.
+The following program draws synthetic similarity scores (not from a real model) for mated pairs and for non-mated pairs from two demographic groups, picks the threshold giving FMR = $10^{-5}$ on group A, and shows what that threshold does to group B and to 1:N search.
 
 ```python
 import numpy as np
@@ -346,7 +346,7 @@ The matcher assigns each new face online to the nearest of the user's ~600 exemp
 
 This is an engineer's map as of 2026, not legal advice. **BIPA** (Illinois, 2008) requires informed written consent before collecting a biometric identifier and a public retention and destruction schedule, prohibits selling biometric data, and gives individuals a private right of action. **GDPR** Article 9 treats biometric data used to uniquely identify a person as a special category, generally requiring explicit consent; Articles 17 and 25 add erasure and data protection by design. The **EU AI Act** prohibits untargeted scraping of facial images and biometric categorization inferring sensitive attributes, and treats remote biometric identification as high-risk (§71.13.1).
 
-Turned into requirements, these become mechanisms: a **consent gate** that fails closed before detection; **purpose binding**, so a `photo_people` consent never authorizes access-control matching and vice versa; **gallery scoping**, so no index spans users or tenants and no stranger search is technically possible; **per-owner encryption** with crypto-shredding for deletion, including backups; **retention schedules** enforced by a job that deletes templates at `retention_until`; and an **audit trail** of every identification. Figure 84.2 shows the consent lifecycle that drives them.
+These become mechanisms: a **consent gate** that fails closed before detection; **purpose binding** (a photo consent never authorizes access control); **gallery scoping**, so no index spans users or tenants and stranger search is technically impossible; **per-owner encryption** with crypto-shredding; **retention schedules** enforced by a job; and an **audit trail** of every identification (Figure 84.2).
 
 **Figure 84.2 — Biometric consent and template lifecycle.**
 
@@ -365,11 +365,11 @@ stateDiagram-v2
   Deleted --> NoConsent: may opt in again later
 ```
 
-**Reading the diagram.** Each state is a value of the consent record for one subject and purpose. No templates exist in *NoConsent*. Opt-in requires an explicit action after a notice that states the purpose and retention period; the backfill batch then processes the library (*Processing*). Withdrawal and retention expiry both create a deletion job, whose completion requires two events: the per-owner key is destroyed (making every encrypted copy, including backups and replicas, unreadable) and each store confirms its purge (template store, galleries, suggestion cache, search indexes). Failure points: a deletion job that stalls (alert on age against the 30-day legal deadline) and a store missing from the purge list (enumerated in the receipt so an audit finds the gap). Scaling: deletion is a batch workflow, sized for mass withdrawals such as a feature shutdown.
+**Reading the diagram.** Each state is the consent record for one subject and purpose; no templates exist in *NoConsent*. Opt-in follows a notice stating purpose and retention; backfill then processes the library. Withdrawal and expiry both create a deletion job, complete only when the per-owner key is destroyed (making backups and replicas unreadable) and every store confirms its purge. Failure points: a stalled job (alert on age against the 30-day deadline) and a store missing from the purge list (visible in the receipt). Scaling: deletion is a batch workflow sized for mass withdrawals.
 
 #### Evaluation
 
-Offline: FNMR at FMR = $10^{-5}$ and $10^{-6}$ for verification, FNIR at FPIR = 0.1% for identification at the deployed gallery sizes, all per demographic slice, on a consented benchmark with at least $3 \times 10^{7}$ non-mated pairs per slice for the strictest operating point. Participate in NIST's ongoing evaluations for an external check. Online, for the photo client: suggestion acceptance rate, rejection rate, and merges and splits per 1,000 faces (each is a model error a user fixed), compared in an A/B test with users as the unit (§57.14). For access control: badge-fallback rate (FNIR proxy) and confirmed false grants from security review (FPIR evidence), per site.
+Offline: FNMR at FMR = $10^{-5}$ and $10^{-6}$, and FNIR at FPIR = 0.1% at deployed gallery sizes, per demographic slice, on a consented benchmark large enough for the rule of three; NIST's ongoing evaluations give an external check. Online: suggestion acceptance, rejection, and merges and splits per 1,000 faces (each a model error a user fixed), A/B tested with users as the unit (§57.14); for doors, badge-fallback rate (an FNIR proxy) and confirmed false grants per site.
 
 ### 84.4.9 Data flow
 
@@ -403,7 +403,7 @@ sequenceDiagram
   end
 ```
 
-**Reading the diagram.** The upload itself completes synchronously and independently of face processing; the face pipeline is asynchronous and can lag minutes without users noticing. The consent check is the first step and fails closed: if the consent database is unreachable, events wait in the stream rather than being processed. Detection and alignment run on the thumbnail; aligned crops travel in memory to the embedder and are never stored. The matcher loads the owner's gallery once per upload session (a user uploading 50 photos pays one load), assigns faces and writes encrypted templates; suggestions are pushed asynchronously. Failure points: GPU queue growth (photos lag; scale the tier or shed backfill first), template store write failure (retry idempotently by `face_id`), and a model-version mismatch between gallery and probe (rejected by the matcher). Scaling: partition the stream by owner so one user's photos are processed by one matcher in order.
+**Reading the diagram.** The upload completes independently; face processing is asynchronous and may lag minutes unnoticed. The consent check comes first and fails closed: if the consent database is unreachable, events wait in the stream. Aligned crops travel in memory and are never stored. The matcher loads the owner's gallery once per upload session and writes templates idempotently by `face_id`. Failure points: GPU queue growth (shed backfill first), template write failures (retry) and model-version mismatches (rejected). Scaling: partition the stream by owner so one matcher handles a user's photos in order.
 
 **Figure 84.4 — Read path: identification at a door.**
 
@@ -427,7 +427,7 @@ sequenceDiagram
   X->>DR: unlock or show badge prompt
 ```
 
-**Reading the diagram.** The edge box at the site runs detection, tracking (so a person walking up is processed once, from the best frame), **liveness detection** (rejecting photos, screens and masks, a presentation-attack defense) and embedding, so raw video never leaves the building. Only a 1 KB embedding crosses the network to the identify service, which searches the relevant gallery partition exactly, applies the tenant's threshold profile, writes the audit record asynchronously and returns a decision. Failure points: the network or identify service (the edge box falls back to badge after the deadline, never to an open door), a stale gallery (an employee who left must not be granted; galleries version on every change), and liveness failures. Scaling: identify replicas per region; very large tenants get dedicated replicas with their galleries pinned in memory.
+**Reading the diagram.** The edge box tracks a person across frames and processes the best one, runs **liveness detection** (rejecting photos, screens and masks) and embeds locally, so raw video never leaves the building. Only a 1 KB embedding crosses the network; the identify service searches the gallery partition exactly, applies the tenant's threshold profile, logs asynchronously and returns a decision. Failure points: network or service failure (badge fallback after the deadline, never an open door), a stale gallery (versioned on every change so departed employees are removed) and liveness errors. Scaling: identify replicas per region; large tenants get dedicated replicas.
 
 ### 84.4.10 Bottlenecks
 
@@ -455,7 +455,7 @@ sequenceDiagram
 
 ### 84.4.12 Scaling strategy
 
-**At 10× users** (a billion opted-in users, 2.5 billion photos/day): live GPUs grow linearly to about 320, backfill to about 620 at the same opt-in ratio; template storage reaches 5.4 PB. Push detection toward the device, which already decodes the photo (§84.4.14), so the server embeds only faces the device found; move cold templates to an archive tier and keep only exemplars hot (§15.9).
+**At 10× users** (a billion opted-in users): about 320 live and 620 backfill GPUs and 5.4 PB of templates. Push detection to the device, which already decodes the photo, and keep only exemplars hot, archiving the rest (§15.9).
 
 **At 10× gallery size for access control** (2-million-person tenants such as a university system or stadium): search moves from exact to HNSW with exact re-ranking of the top 100, but the binding constraint is FPIR: at $N = 2 \times 10^6$ even FMR = $10^{-8}$ gives 2%. The design changes to verification (face plus credential) or partitioned galleries, not to a bigger index.
 
@@ -477,12 +477,12 @@ sequenceDiagram
 
 ### 84.4.14 Alternative designs
 
-- **Fully on-device recognition.** The phone detects, embeds and clusters faces in the user's library; templates never leave the device, and synchronization across a user's devices can be end-to-end encrypted. Apple has described on-device face detection and people recognition in Photos along these lines [Apple 2017; Apple 2021]. This removes most server cost and much of the legal exposure but limits model size (§67.8), makes cross-device consistency harder, and makes friend suggestions impossible without sharing templates.
+- **Fully on-device recognition.** The phone detects, embeds and clusters faces; templates never leave the device. Apple has described on-device face detection and people recognition in Photos [Apple 2017; Apple 2021]. This removes server cost and much legal exposure, but limits model size (§67.8) and rules out friend suggestions.
 - **Verification-only access control.** Badge or phone credential plus a 1:1 face check; $N = 1$ eliminates the FPIR multiplier and the need for a gallery search at all.
 - **No face recognition.** Grouping by event, location and user tags gives much of the photo product's value with no biometric processing at all.
 
 ::: industry
-**Facebook face recognition and BIPA.** A class action alleged that Facebook's tag-suggestion feature collected face templates of Illinois users without the written consent BIPA requires; the case settled for USD 650 million in 2021. Later that year Meta announced it was shutting down the Face Recognition system on Facebook and deleting the individual templates of more than a billion people, citing societal concerns and regulatory uncertainty. The lesson for designers is that consent and retention are not policy documents beside the system: they are requirements that, if missing from the architecture, can force a feature to be removed entirely.
+**Facebook face recognition and BIPA.** A class action alleged that Facebook's tag suggestions collected face templates of Illinois users without the written consent BIPA requires; it settled for USD 650 million in 2021. Later that year Meta announced it was shutting down the Face Recognition system on Facebook and deleting the templates of more than a billion people. Consent and retention are architecture requirements: missing them can force a feature's removal.
 *Evidence: Primary* — [Meta 2021; In re Facebook Biometric Information Privacy Litigation 2021]
 :::
 
@@ -520,11 +520,11 @@ sequenceDiagram
 
 ### 84.5.1 Problem statement
 
-Design a cloud image classification API for many business customers (**tenants**). A tenant sends an image, or a reference to one in object storage, and receives labels with confidences: either from a general model ("dog", "beach", "invoice") or from a **custom model** the tenant trained on its own labeled images ("defective weld", "our product, front view"). Requests arrive both one at a time from user-facing applications and as batch jobs of millions of images.
+Design a cloud image classification API for business customers (**tenants**). A tenant sends an image, or an object-storage reference, and receives labels with confidences from a general model ("dog", "invoice") or from a **custom model** trained on its own labeled images ("defective weld"). Requests arrive singly from applications and as batch jobs of millions of images.
 
-The ML formulation is supervised multi-class or multi-label classification (§57.10): input an image, output a probability per class; labels come from the tenant's uploaded, labeled examples (§63.5). ML is warranted because visual categories cannot be specified by rules, and transfer learning from a large pretrained backbone lets a tenant reach useful accuracy with a few hundred examples per class [He et al. 2016; Dosovitskiy et al. 2021].
+The ML formulation is supervised multi-class or multi-label classification (§57.10) with labels from the tenant's uploaded examples (§63.5). ML is warranted because visual categories cannot be written as rules, and transfer learning from a pretrained backbone reaches useful accuracy with a few hundred examples per class [He et al. 2016; Dosovitskiy et al. 2021].
 
-The distinctive hard problem is **throughput economics at multi-tenant scale**. The model is cheap per image on a GPU only when images arrive in batches (§66.6); turning a compressed JPEG into a normalized tensor can cost more CPU than the model costs GPU; and thousands of customer models, each versioned and pinned by its owner, must share hardware without each paying for an idle replica. The answer is measured in **cost per 1,000 images** at a latency objective. The general multi-tenant serving platform is Chapter 85's subject (§85.6); this case focuses on what images add.
+The distinctive hard problem is **throughput economics at multi-tenant scale**: the model is cheap per image only in batches (§66.6); decoding a JPEG can cost more CPU than the model costs GPU; and thousands of versioned customer models must share hardware without each paying for an idle replica. The answer is measured in **cost per 1,000 images** at a latency objective. The general multi-tenant platform is §85.6; this case focuses on what images add.
 
 ### 84.5.2 Functional requirements
 
@@ -607,7 +607,7 @@ $$C_{1k} = \frac{1{,}000}{3{,}600} \sum_{i} \frac{p_i}{X_i \, u_i} \qquad N_i = 
 **Interpretation.** Head-only models make the "many models" problem disappear; full fine-tunes bring back multiplexing and cold starts. **Engineering implication.** Make shared-backbone heads the default product and price full fine-tuning as a premium tier served by model-aware routing (§66.8).
 :::
 
-Training is small by comparison: a head trains on cached backbone embeddings of the tenant's images (5,000 images embed in 2 GPU-seconds; the logistic regression trains on CPU in seconds), and a full fine-tune of 10 epochs over 10,000 images is about $10 \times 10{,}000 \times 3 / 2{,}500 = 120$ GPU-seconds. Training images average 5,000 per tenant: $25{,}000 \times 5{,}000 \times 400$ KB = 50 TB in object storage.
+Training is small by comparison: a head trains on cached backbone embeddings (5,000 images embed in 2 GPU-seconds), and a full fine-tune of 10 epochs over 10,000 images is about $10 \times 10{,}000 \times 3 / 2{,}500 = 120$ GPU-seconds. Training images: $25{,}000 \times 5{,}000 \times 400$ KB = 50 TB.
 
 ### 84.5.5 API design
 
@@ -659,7 +659,7 @@ CREATE TABLE model_alias (
 );
 ```
 
-Training examples are rows `(tenant_id, dataset_id, image_key, label(s), split, labeler, ts)`; split assignment is fixed at upload by hashing the image key so that re-training never leaks test images into training (§57.7). Backbone embeddings of training images are cached as `(backbone_id, image_hash) → float16[2048]` in object storage, so a head retrains without touching the GPU. Prediction logs keep `(request_id, tenant, model, version, top labels, latency, image_hash)`, never the image unless the tenant opts in. The feedback label delay is days or never; most tenants never send feedback, so quality monitoring cannot rely on it (§70.8).
+Training examples are rows `(tenant_id, dataset_id, image_key, labels, split, labeler, ts)`; the split is fixed at upload by hashing the image key, so retraining never leaks test images (§57.7). Backbone embeddings are cached as `(backbone_id, image_hash) → float16[2048]`. Prediction logs keep metadata and an image hash, never the image unless the tenant opts in. Feedback labels arrive days later or never, so monitoring cannot rely on them (§70.8).
 
 ### 84.5.7 High-level architecture
 
@@ -690,7 +690,7 @@ flowchart LR
 
 #### Preprocessing: where the CPU goes
 
-A request's image must be fetched, decoded from JPEG, PNG or HEIC, rotated by its EXIF orientation, resized to 224×224 (or the backbone's input), converted to floating point and normalized. Decoding dominates, and its cost grows with the image's pixel count, not with the model's input size: a 12-megapixel phone photo costs about six times a 2-megapixel one before being thrown away down to 50,000 pixels. Four techniques, in the order to try them:
+A request's image must be fetched, decoded, rotated by its EXIF orientation, resized to 224×224 and normalized. Decoding dominates, and its cost grows with the image's pixel count, not the model's input: a 12-megapixel photo costs about six times a 2-megapixel one. Four techniques, in the order to try them:
 
 1. **Reduced-scale decode.** JPEG stores 8×8 DCT blocks, so a decoder can produce a 1/2, 1/4 or 1/8 scale image without computing full resolution, at a fraction of the cost. Pick the largest reduction that still leaves at least the model's input size.
 2. **Cap input size at the edge.** Reject or downscale images above a pixel limit before they reach the decode pool, and bill them accordingly.
@@ -713,7 +713,7 @@ flowchart TB
   end
 ```
 
-**Reading the diagram.** In the CPU placement, decode, resize and normalization run in the CPU pool and a 224×224×3 FP32 tensor (602 KB; 301 KB in FP16) crosses PCIe. In the GPU placement only the compressed bytes cross, and the GPU does the rest, sharing its compute with the model. All arrows are synchronous within a request. The failure point in both is a pathological input (huge or malformed image); the scaling choice is between adding CPU cores and adding GPU time. The CPU placement is easier to isolate and to scale independently; the GPU placement wins when CPU cost per image is high and GPU headroom exists.
+**Reading the diagram.** In the CPU placement a 224×224×3 FP32 tensor (602 KB) crosses PCIe; in the GPU placement only the compressed bytes cross and the GPU shares its compute between decode and model. All arrows are synchronous. The failure point in both is a pathological input; the scaling choice is CPU cores versus GPU time. The CPU placement isolates and scales independently; the GPU placement wins when CPU cost per image is high and GPU headroom exists.
 
 #### Dynamic batching and the latency budget
 
@@ -747,7 +747,7 @@ The cost of version stability is therefore not storage but running two backbones
 
 #### Training and evaluation
 
-**Baseline:** the general model's backbone with a logistic-regression head, trained in seconds; it is the default and the yardstick. **Production custom model:** the same head with tuned regularization and class weighting, or a full fine-tune when the tenant's images look nothing like the backbone's training data (microscope slides, X-rays) and the head's holdout accuracy is poor. The tenant's data is split by hashed image key, with near-duplicate detection across splits by perceptual hash, because duplicates in train and test inflate accuracy. Evaluation reports per-class precision, recall and a confusion matrix; deployment is blocked if any class has fewer than 20 test examples. For the general model, a monthly audit sample of production images, labeled by annotators under the tenant-consent rules (§63.14.2), is the online quality check; prediction-confidence and embedding drift per tenant (§70.7.4) are the early warning, because tenant feedback is sparse. General-model changes are A/B tested on tenants who opted into the `latest` alias, with top-1 agreement and confidence calibration as guardrails.
+**Baseline:** the backbone with a logistic-regression head, trained in seconds. **Production custom model:** the same head with tuned regularization and class weights, or a full fine-tune when the tenant's images look nothing like the backbone's training data (microscope slides, X-rays). Near-duplicates are grouped by perceptual hash before splitting, because duplicates across splits inflate accuracy; deployment is blocked if any class has fewer than 20 test examples. For the general model, a monthly labeled audit sample (§63.14.2) is the quality check and per-tenant confidence and embedding drift (§70.7.4) the early warning; general-model changes are A/B tested on tenants who opted into the `latest` alias.
 
 ### 84.5.9 Data flow
 
@@ -776,7 +776,7 @@ sequenceDiagram
   SV-->>REG: ack loaded on all replicas
 ```
 
-**Reading the diagram.** Images go straight to object storage through presigned URLs, bypassing the API servers. Training is asynchronous: only images without a cached embedding for this backbone are embedded on the GPU; training the head is a CPU job. The registry stores the immutable version with its metrics; the tenant, not the system, moves the `prod` alias. The new head is pushed asynchronously to every replica's head bank, and the alias flip becomes visible to the router only after all replicas acknowledge, so no request is routed to a replica that lacks the head. Failure points: a replica that fails to load (alias flip waits; the old version keeps serving) and a training job that crashes (idempotent restart from cached embeddings). Scaling: training jobs are queued and run on spare batch capacity.
+**Reading the diagram.** Images go to object storage through presigned URLs, bypassing the API. Training is asynchronous; only images without a cached embedding are embedded on the GPU, and the head trains on CPU. The tenant, not the system, moves the `prod` alias, and the flip becomes visible only after every replica acknowledges loading the head. Failure points: a replica that fails to load (the old version keeps serving) and a crashed training job (idempotent restart from cached embeddings). Scaling: training runs on spare batch capacity.
 
 **Figure 84.8 — Read path: an online classification.**
 
@@ -802,7 +802,7 @@ sequenceDiagram
   RT-->>C: labels, version 8, backbone id
 ```
 
-**Reading the diagram.** Every step is synchronous within the request except the asynchronous prediction log. The router's alias cache is invalidated by the registry's publish event. Preprocessing checks the content type from the bytes rather than the header, enforces the pixel cap and decodes at reduced scale. The queue releases a batch when it reaches 32 rows or the oldest row has waited 8 ms; rows from different tenants share the backbone pass and then use their own heads. Failure points: a full queue (shed with 429 and `Retry-After` rather than let latency grow, §66.14), a GPU fault (requests retried once on another replica), and a malformed image (rejected with 400 by the sandboxed decoder). Scaling: replicas behind the router; tenants with high volume can get a dedicated queue to limit noisy-neighbor effects.
+**Reading the diagram.** Every step is synchronous except the prediction log. Preprocessing checks the content type from the bytes, enforces the pixel cap and decodes at reduced scale. The queue releases a batch at 32 rows or after 8 ms; rows from different tenants share the backbone pass, then use their own heads. Failure points: a full queue (shed with 429 and `Retry-After`, §66.14), a GPU fault (retry once elsewhere), a malformed image (400 from the sandboxed decoder). Scaling: replicas behind the router; high-volume tenants can get dedicated queues.
 
 ### 84.5.10 Bottlenecks
 
@@ -1766,7 +1766,7 @@ sequenceDiagram
 16. Dosovitskiy, A., et al. *An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale*. ICLR, 2021.
 17. Radford, A., Kim, J. W., et al. *Learning Transferable Visual Models From Natural Language Supervision*. ICML, 2021.
 18. NVIDIA. *Data Loading Library (DALI) documentation*. https://docs.nvidia.com/deeplearning/dali/user-guide/docs/
-19. Graves, A., Fernández, S., Gomez, F., Schmidhuber, J. *Connectionist Temporal Classification: Labelling Unsegmented Sequence Data with Recurrent Neural Networks*. ICML, 2006.
+19. Graves, A., Fernández, S., Gomez, F., Schmidhuber, J. *Connectionist Temporal Classification: Labeling Unsegmented Sequence Data with Recurrent Neural Networks*. ICML, 2006.
 20. Graves, A. *Sequence Transduction with Recurrent Neural Networks*. ICML Workshop on Representation Learning, 2012. arXiv:1211.3711.
 21. Chan, W., Jaitly, N., Le, Q., Vinyals, O. *Listen, Attend and Spell: A Neural Network for Large Vocabulary Conversational Speech Recognition*. IEEE ICASSP, 2016.
 22. He, Y., Sainath, T. N., Prabhavalkar, R., et al. *Streaming End-to-end Speech Recognition for Mobile Devices*. IEEE ICASSP, 2019.

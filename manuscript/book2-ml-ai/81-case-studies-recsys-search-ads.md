@@ -1860,3 +1860,750 @@ At **10× catalog** (5 billion products, typical of marketplaces with many selle
 - **Retraining.** Tables daily with hourly deltas; ranker daily; value head weekly once returns mature; session model weekly.
 - **Responsible ML.** Minimum support on co-purchase rules (privacy); seller exposure fairness for small sellers; avoid sensitive inferences from purchases (health, pregnancy) in recommendations and e-mail without explicit policy (§71.9).
 - **Cost.** Batch pair counting and storage dominate; serving is cheap.
+
+## 81.9 Personalized advertising
+
+### 81.9.1 Problem statement
+
+Design the ad-serving and ad-ranking system of a large consumer platform with a feed (§81.5) into which ads are inserted. Advertisers create campaigns with targeting, a bid (per click, or a target cost per conversion), and a daily budget. Each time a user's feed has an ad slot, the system must choose which ad to show, at what price, within about 100 milliseconds, hundreds of thousands of times per second, while every advertiser's budget is spread over their day and every charge is correct to the cent.
+
+The distinctive problem is that **predictions are money**. A recommender's score only has to order items; an ad system multiplies its predicted probabilities by bids to run an **auction**, so a 10% overprediction for one advertiser changes who wins and what everyone pays. Around this core sit the other hard problems: **calibration**, **budget pacing**, **extreme request rates and latency**, and **delayed conversions**, whose labels arrive days after the click.
+
+**ML formulation.** For each (user, ad, context) predict $p_{\text{CTR}} = P(\text{click} \mid \text{impression})$ and $p_{\text{CVR}} = P(\text{conversion} \mid \text{click})$, both binary classifications that must be **calibrated** probabilities (§57.10.3), trained on impression logs with negative downsampling and corrected in serving (§68.7.5). The auction ranks ads by expected value to the platform and advertiser; quality and user-experience terms penalize ads predicted to annoy users. Labels: click (seconds), conversion (minutes to 28 days, reported by advertisers' pixels or APIs).
+
+### 81.9.2 Functional requirements
+
+1. **Ad request.** Given a user, placement and context, return zero or one ad (or a few for multi-slot placements) with its price, within the latency budget.
+2. **Targeting and eligibility.** Match ads to users by advertiser targeting (geography, age band, interests, custom audiences), policy approval and frequency caps.
+3. **Auction and pricing.** Rank by bid × predicted probability plus quality terms; price by a second-price rule; enforce reserve prices.
+4. **Budget pacing.** Spend each campaign's daily budget smoothly over the day; never overspend by more than a small tolerance.
+5. **Billing events.** Record impressions, clicks and conversions exactly once for billing and reporting.
+6. **Conversion attribution.** Join conversions reported later to the click or impression that caused them, within an attribution window.
+7. **Advertiser reporting** within hours; invalid-traffic filtering before billing.
+
+Out of scope: the advertiser user interface, creative review models (Chapter 82), and payment collection (§55.9).
+
+### 81.9.3 Non-functional requirements
+
+**Table 81.30 — Advertising system requirements.**
+
+| Property | Target | Why |
+|---|---|---|
+| Latency | Ad server p99 ≤ 100 ms (ranking ≤ 40 ms) | The feed waits for the ad slot or fills it with organic content |
+| Availability | 99.99% of requests answered (an empty slot is a valid answer) | Lost requests are lost revenue |
+| Calibration | Calibration ratio (Σ predicted / Σ observed) within 0.97–1.03 per major segment | Auction prices depend on absolute probabilities |
+| Offline gates | Normalized entropy and AUC not worse; calibration within band | Small log-loss gains are worth millions |
+| Model freshness | Continuous or hourly incremental updates; full retrain daily | Ads and campaigns change by the hour |
+| Budget accuracy | Daily overspend ≤ 1% of budget; under-delivery minimized | Advertiser trust and contracts |
+| Billing correctness | Exactly-once charge per billable event; reconciled daily | Money (§55.9) |
+| Online guardrails | Revenue (primary); user engagement with organic content, ad hide rate, advertiser value (conversions per dollar) | Short-term revenue can cost users and advertisers |
+
+### 81.9.4 Capacity estimation
+
+::: example
+**Worked example — Requests, ranking and logging.** Assumptions: 1 billion daily active users; 30 ad opportunities per user per day; peak 2× average; per request 5,000 eligible ads after targeting, a light model on CPU at 2 µs per ad keeps 500, and a heavy model at 20 MFLOPs per ad scores them; click-through rate 1%; conversion rate 1% of clicks; average price $5 per 1,000 impressions (illustrative).
+
+1. Requests: $10^9 \times 30 = 3 \times 10^{10}$ per day; 347,222/s average; **694,444/s at peak**.
+2. Light model: $5{,}000 \times 2\ \mu\text{s} = 10$ ms CPU per request; $694{,}444 \times 0.01 / 0.5 = 13{,}889$ cores.
+3. Heavy model: $500 \times 2 \times 10^7 = 10^{10}$ FLOPs per request; $6.94 \times 10^{15}$ FLOP/s at peak; 46 GPUs busy, 77 at $u = 0.6$; three regions sized for one loss: 39 per region, **117 GPUs**.
+4. Per-ad feature lookups for the heavy model: $694{,}444 \times 500 = 3.47 \times 10^8$ per second.
+5. Events: $3 \times 10^{10}$ impressions, $3 \times 10^8$ clicks and $3 \times 10^6$ conversions per day.
+6. Revenue: $3 \times 10^{10} / 1{,}000 \times 5 = \$150$ million per day, so a 0.1% revenue change is \$150,000 a day.
+
+**Interpretation.** The request rate is higher than the feed's own (§81.5.4) because many surfaces carry ad slots, and the per-ad feature fetch is the heaviest load. **Engineering implication.** Keep ad-side features in memory on each ad server (10 million ads is a small table), fetch user features once, and justify model complexity in dollars: here a 0.1% gain pays for a large GPU fleet.
+:::
+
+::: example
+**Worked example — Training data volume.** Keep all $3 \times 10^8$ clicks and 5% of the $2.97 \times 10^{10}$ non-clicks; 500 bytes per example.
+
+1. Examples: $3 \times 10^8 + 0.05 \times 2.97 \times 10^{10} = 1.785 \times 10^9$ per day.
+2. Storage: $1.785 \times 10^9 \times 500 = 0.89$ TB per day.
+3. Correction at serving with $w = 0.05$ (§68.7.5): a raw prediction $p' = 0.15$ becomes $0.15 / (0.15 + 0.85/0.05) = 0.15 / 17.15 = 0.0087$.
+
+**Interpretation.** Downsampling cuts training data twentyfold while keeping every rare positive. **Engineering implication.** The correction must live inside the serving graph, versioned with the model, because the auction consumes the probability directly.
+:::
+
+### 81.9.5 API design
+
+```protobuf
+service AdServer {
+  rpc GetAds(AdRequest) returns (AdResponse);
+}
+message AdRequest {
+  string request_id = 1;       // idempotency key for billing joins
+  string user_id = 2; Placement placement = 3; Context ctx = 4;
+  int32 max_ads = 5; int64 deadline_ms = 6;
+}
+message AdResponse {
+  repeated AdDecision ads = 1;
+}
+message AdDecision {
+  string ad_id = 1; string campaign_id = 2;
+  double price_micros = 3;     // price per click or per 1,000 impressions
+  BillingType billing = 4;     // CPC, CPM, OPTIMIZED_CPM
+  double p_ctr = 5; double p_cvr = 6;   // logged for calibration and auditing
+  string impression_token = 7; // signed; client returns it on render and click
+}
+// Advertiser-side conversion reporting (pixel or server API)
+message ConversionEvent {
+  string click_or_impression_token = 1; string event_name = 2;
+  double value = 3; int64 event_ts_ms = 4; string dedup_key = 5;
+}
+```
+
+The `impression_token` is signed so that billable events cannot be forged; the billing pipeline deduplicates on it (exactly-once charging, §55.9). `dedup_key` lets advertisers report the same conversion from a pixel and a server without double counting.
+
+### 81.9.6 Data model and database schema
+
+**Table 81.31 — Data for ad ranking.**
+
+| Data | Key | Content | Freshness |
+|---|---|---|---|
+| Campaign and ad | ad_id | Creative, targeting, bid, billing type, approval | Seconds (advertiser edits) |
+| Budget state | campaign_id | Daily budget, spend so far, pacing multiplier | Seconds |
+| Targeting index | attribute value | Posting lists of ad IDs (an inverted index, §16.3) | Seconds to minutes |
+| User features | user_id | Interests, ad-engagement history, demographics band | Minutes to daily |
+| Ad performance | ad_id | Decayed CTR and CVR, by placement | Minutes |
+| Frequency caps | (user_id, campaign_id) | Impressions in window | Seconds |
+| Impressions and clicks | impression_token | Features as served, predictions, price | Logged at serve |
+
+**Labels and delay.** Clicks are known within seconds; the click-model training example is written after a short window (for example 15 minutes). Conversions arrive over days: the conversion model must handle examples whose label is "no conversion yet", which is not the same as "no conversion" (§81.9.8).
+
+```sql
+CREATE TABLE billable_events (
+  impression_token STRING PRIMARY KEY,   -- dedup across retries
+  campaign_id      STRING,
+  event_type       STRING,               -- IMPRESSION, CLICK
+  price_micros     BIGINT,
+  event_ts         TIMESTAMP,
+  valid            BOOLEAN,              -- after invalid-traffic filtering
+  billed_batch_id  STRING
+);
+```
+
+### 81.9.7 High-level architecture
+
+**Figure 81.16 — Ad serving, auction, pacing and learning.**
+
+```mermaid
+flowchart LR
+  FD([Feed service]) -->|ad slot request| AS[Ad server]
+  AS -->|user attributes| TI[(Targeting index)]
+  AS -->|user features| UF[(User feature store)]
+  AS --> LM[Light model CPU]
+  LM -->|top 500| HM[pCTR and pCVR model]
+  HM --> AU[Auction and pricing]
+  AU -->|pacing multipliers| PB[(Budget and pacing state)]
+  AU --> AS
+  AS -->|ad, price, token| FD
+  FD -.->|render, click| EV[[Event stream]]
+  ADV{{Advertiser conversion APIs}} -.-> EV
+  EV -.-> IVT[Invalid-traffic filter]
+  IVT -.-> BL[(Billing ledger)]
+  IVT -.-> SP[Spend aggregator]
+  SP -.-> PB
+  IVT -.-> JN[Label join with delay model]
+  JN -.-> OT[Online trainer]
+  OT -.->|model deltas| HM
+```
+
+**Reading the diagram.** Solid arrows are the synchronous request: the ad server looks up eligible ads in the targeting index (an inverted index from user attributes to ads), fetches user features, runs the light model over thousands of ads and the calibrated heavy model over 500, and the auction applies bids, quality terms, pacing multipliers and reserve prices, returning the winner with its price and a signed token. Asynchronously, render and click events and advertisers' conversion reports pass an invalid-traffic filter, then feed three consumers: the billing ledger (exactly once by token), the spend aggregator that updates budget state within seconds, and the label join that produces training examples for an online trainer that pushes model updates. Failure points: the pacing state (stale spend means overspend), the trainer (a bad update reaches the auction quickly), the event stream (billing delayed, not lost). Scaling: ad servers by request rate; the targeting index replicated per server; the trainer by event rate.
+
+### 81.9.8 Detailed component design
+
+#### The auction: expected value and second pricing
+
+The platform ranks ads by the expected value of showing them. For a cost-per-click bid, expected revenue per impression is bid × $p_{\text{CTR}}$; for a conversion-optimized bid, bid × $p_{\text{CTR}} \times p_{\text{CVR}}$. The **generalized second-price (GSP)** auction charges each winner the minimum it would have needed to keep its position [Edelman et al. 2007; Varian 2007].
+
+::: formula
+**Ranking by expected value and GSP click price**
+
+$$\text{eCPM}_i = 1{,}000 \cdot b_i \cdot \hat{p}_i \qquad c_1 = \frac{b_2\, \hat{p}_2}{\hat{p}_1}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $b_i$ | Advertiser $i$'s bid per click | $ per click |
+| $\hat{p}_i$ | Calibrated predicted click probability for this impression | probability |
+| $\text{eCPM}_i$ | Expected revenue per 1,000 impressions | $ |
+| $c_1$ | Price per click paid by the winner (ranked first by eCPM) | $ per click |
+:::
+
+::: example
+**Worked example — How miscalibration changes the winner and the price.** Three ads: A bids \$2.00 with $\hat{p} = 0.010$; B bids \$1.00 with $\hat{p} = 0.025$; C bids \$4.00 with $\hat{p} = 0.004$.
+
+1. eCPM: A $= 1{,}000 \times 2.00 \times 0.010 = \$20$; B $= \$25$; C $= \$16$. B wins.
+2. B's price per click: $2.00 \times 0.010 / 0.025 = \$0.80$ (below its \$1.00 bid). Expected revenue per 1,000 impressions: $25 \text{ clicks} \times 0.80 = \$20$.
+3. Now suppose A's predictions are 30% too high ($\hat{p} = 0.013$, true 0.010). A's eCPM becomes \$26 and A wins; its price is $1.00 \times 0.025 / 0.013 = \$1.92$ per click.
+4. Actual revenue per 1,000 impressions: $10 \text{ clicks} \times 1.92 = \$19.23$, and users see an ad with a 60% lower true click rate.
+
+**Interpretation.** One miscalibrated advertiser's predictions changed the winner, raised that advertiser's price per click by 140% relative to B's, lowered platform revenue and showed users a less relevant ad. **Engineering implication.** Monitor calibration per advertiser segment, placement and model version, not just globally; recalibrate with an isotonic or Platt layer (§68.7.5) whenever the ratio leaves its band.
+:::
+
+Real auctions add a **quality** or user-cost term (a predicted probability of hiding the ad, weighted negatively) so that annoying ads must bid more, and **reserve prices** below which no ad is shown. Bottou et al. describe how small changes in such an ad system ripple through advertisers' and users' behavior, which is why counterfactual reasoning and careful experimentation are needed [Bottou et al. 2013].
+
+#### CTR prediction at scale: calibration and freshness
+
+Two published systems define the classic designs. He et al. described Facebook's click prediction as gradient-boosted trees whose leaf indices became features of a logistic regression, reported that **data freshness** mattered (models degraded measurably as they aged by days), and used negative downsampling with recalibration [He et al. 2014]. McMahan et al. described Google's online logistic regression trained with **FTRL-Proximal**, per-coordinate learning rates, probabilistic feature inclusion and reduced-precision weights to fit billions of coefficients in memory, plus a calibration layer and monitoring of calibration by slice [McMahan et al. 2013]. Modern systems use deep multi-task networks (§68.7.3–§68.7.4) predicting click and conversion together, but keep the two lessons: train continuously, and treat calibration as a contract with the auction.
+
+Training runs in two loops. An **online trainer** consumes the joined stream and pushes parameter deltas every few minutes, with automatic safeguards: predictions are compared with observed outcomes on a holdout stream, and an update that moves the calibration ratio by more than a threshold is rejected. A **daily full retrain** from logs rebuilds the model from scratch to avoid drift accumulated by incremental updates, and must beat the online model offline before replacing it.
+
+::: industry
+**Facebook and Google on click prediction.** He et al. report that boosted-tree features plus logistic regression outperformed either alone, that model accuracy declined as the training data aged, motivating frequent retraining, and that they downsampled negatives and recalibrated predictions. McMahan et al. report FTRL-Proximal online learning for sparse logistic regression with per-coordinate learning rates, memory-saving techniques, and calibration correction applied to model outputs.
+*Evidence: Primary* — [He et al. 2014; McMahan et al. 2013]
+:::
+
+#### Budget pacing
+
+An unpaced campaign with a \$1,000 budget that could spend \$2,500 a day wins every auction it enters until mid-afternoon, then disappears for the evening, when its best customers may be online. **Pacing** spreads spend over the day by either **throttling** (entering only a fraction of eligible auctions) or **bid shading** (multiplying the bid by a factor below 1). Agarwal et al. described LinkedIn's throttling-based pacing driven by a target spend curve [Agarwal et al. 2014]; Lee et al. described smooth budget delivery for real-time bidding [Lee et al. 2013]. A feedback controller compares actual spend with a plan that follows expected traffic and adjusts the participation rate:
+
+```python
+import numpy as np
+rng = np.random.default_rng(42)
+MIN = 1440                                    # one day in minutes
+t = np.arange(MIN)
+traffic = 1 + 0.8 * np.sin(2 * np.pi * (t - 14 * 60) / MIN)  # diurnal curve, peak at 20:00
+traffic /= traffic.sum()
+BUDGET = 1_000.0                              # daily budget, $
+UNCONSTRAINED = 2_500.0                       # spend if the campaign entered every auction
+plan = np.cumsum(traffic) * BUDGET            # target cumulative spend follows traffic
+
+def run(pacing, kp=2.0, ki=0.05):
+    spent, rate, integ, done_at = 0.0, 1.0, 0.0, None
+    per_min = np.zeros(MIN)
+    for m in range(MIN):
+        if pacing:                            # PI controller on the spend error
+            err = (plan[m] - spent) / BUDGET  # positive: behind plan
+            integ += err
+            rate = float(np.clip(0.4 + kp * err + ki * integ, 0.0, 1.0))
+        opportunity = UNCONSTRAINED * traffic[m] * rng.lognormal(0, 0.3)
+        per_min[m] = min(opportunity * rate, BUDGET - spent)   # throttled spend
+        spent += per_min[m]
+        if done_at is None and spent >= BUDGET - 1e-9:
+            done_at = m
+    return spent, done_at, per_min[18 * 60:].sum() / spent
+
+for pacing in (False, True):
+    spent, done, evening = run(pacing)
+    when = f"{done // 60:02d}:{done % 60:02d}" if done is not None else "not exhausted"
+    print(f"pacing={pacing!s:5} spent ${spent:7.2f}  {when:>13}  share after 18:00 {evening:.1%}")
+print(f"planned share after 18:00 {traffic[18 * 60:].sum():.1%}")
+```
+
+Output:
+
+```text
+pacing=False spent $1000.00          14:56  share after 18:00 0.0%
+pacing=True  spent $1000.00          23:58  share after 18:00 42.3%
+planned share after 18:00 42.4%
+```
+
+What to notice:
+
+- Without pacing the budget is gone at 14:56 and the campaign misses the whole evening peak, where 42.4% of its audience's traffic falls.
+- The proportional–integral controller tracks the traffic-shaped plan: 42.3% of spend lands after 18:00, and the budget is used up two minutes before midnight.
+- In production the controller runs per campaign in the auction tier from spend state that is seconds old; spend aggregation lag is the main source of overspend, so the controller also stops a campaign when *pending* (not yet aggregated) spend could exceed the remaining budget.
+
+#### Delayed conversions
+
+A conversion (a purchase on the advertiser's site) may come days after the click. A model trained on yesterday's clicks sees only the conversions that have already happened; treating the rest as negatives teaches it that conversion rates are lower than they are.
+
+::: formula
+**Observed conversion rate under exponential delay** [Chapelle 2014]
+
+$$\text{CVR}_{\text{obs}}(\tau) = \text{CVR} \cdot F(\tau), \qquad F(\tau) = 1 - e^{-\tau/\mu}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| CVR | True probability that a click eventually converts | probability |
+| $\tau$ | Time elapsed since the click when the example is labeled | days |
+| $\mu$ | Mean conversion delay | days |
+| $F(\tau)$ | Share of eventual conversions already observed | fraction |
+:::
+
+::: example
+**Worked example — Labeling clicks after one day.** True CVR $= 2\%$; mean delay $\mu = 2$ days; examples labeled $\tau = 1$ day after the click.
+
+1. $F(1) = 1 - e^{-0.5} = 0.393$.
+2. Observed rate $= 0.02 \times 0.393 = 0.79\%$: the model would underpredict by 61%.
+3. Waiting $\tau = 7$ days gives $F = 1 - e^{-3.5} = 0.970$, but the model is then a week stale.
+
+**Interpretation.** Freshness and label completeness trade off directly. **Engineering implication.** Train on fresh clicks but model the delay: Chapelle jointly fits the conversion probability and the delay distribution so that a not-yet-converted click counts as "converted later with probability $1 - F(\tau)$" [Chapelle 2014]; an alternative used for continuously trained networks is to ingest examples immediately as negatives and re-ingest them as positives when the conversion arrives, with a correction in the loss [Ktena et al. 2019].
+:::
+
+### 81.9.9 Data flow
+
+**Figure 81.17 — Write path: from events to bills, budgets and model updates.**
+
+```mermaid
+sequenceDiagram
+  participant CL as Client
+  participant AV as Advertiser API
+  participant ES as Event stream
+  participant IV as Invalid-traffic filter
+  participant BL as Billing ledger
+  participant SP as Spend aggregator
+  participant PB as Pacing state
+  participant JN as Label join
+  participant OT as Online trainer
+  CL-)ES: render and click with signed token
+  AV-)ES: conversion with dedup key
+  ES-)IV: all events
+  IV->>IV: bots, duplicates, click spam
+  IV->>BL: valid billable event, idempotent by token
+  IV-)SP: valid spend
+  SP->>PB: spend per campaign every few seconds
+  IV-)JN: impressions, clicks, conversions
+  JN->>JN: click labels after 15 min, conversion delay model
+  JN-)OT: training examples
+  OT->>OT: update, check calibration on holdout stream
+  OT-)OT: push deltas to ad servers if checks pass
+```
+
+**Reading the diagram.** Every arrow after the client is asynchronous except the ledger write and the pacing-state update, which must be durable and idempotent. Invalid-traffic filtering runs before anything that costs advertisers money or teaches the model. The ledger deduplicates by signed token (a retried click is billed once), the spend aggregator updates pacing state within seconds, and the label join emits click examples after a short window and conversion examples through the delay model. The online trainer validates calibration before pushing deltas. Failure points: aggregator lag (overspend, mitigated by pending-spend accounting), trainer corruption (rejected by calibration checks; fall back to the last good snapshot), filter misses (refunds after later detection).
+
+**Figure 81.18 — Read path: one ad request.**
+
+```mermaid
+sequenceDiagram
+  participant FD as Feed service
+  participant AS as Ad server
+  participant TI as Targeting index
+  participant UF as User features
+  participant LM as Light model
+  participant HM as Heavy model
+  participant AU as Auction
+  FD->>AS: GetAds slot, user, context, 100 ms
+  par
+    AS->>TI: user attributes
+    AS->>UF: user features
+  end
+  TI-->>AS: 20,000 matching ads
+  AS->>AS: frequency caps, policy, budget alive
+  AS->>LM: 5,000 eligible ads
+  LM-->>AS: top 500
+  AS->>HM: 500 ads, user features
+  HM-->>AS: calibrated pCTR, pCVR, p_hide
+  AS->>AU: bids, predictions, pacing multipliers
+  AU->>AU: rank by expected value, reserve, GSP price
+  AU-->>AS: winner and price
+  AS-->>FD: ad, price, signed token
+```
+
+**Reading the diagram.** All calls are synchronous. Targeting lookup and user features run in parallel; eligibility removes ads that are capped, unapproved or out of budget, so the models never score ads that cannot win. The light model prunes to 500; the heavy model returns calibrated probabilities including a user-cost term. The auction applies pacing multipliers and reserves before pricing. If the heavy model is late, the auction runs on light-model predictions only for ads whose light model is itself calibrated; otherwise the slot is returned empty to the feed, which fills it with organic content.
+
+### 81.9.10 Bottlenecks
+
+1. **Per-ad feature fetch** at 347 million per second; keep ad features in each server's memory and only user features remote.
+2. **Pacing state contention**: popular campaigns update spend from thousands of servers; aggregate locally and publish deltas every few seconds.
+3. **Targeting index updates** when advertisers edit campaigns; incremental updates with versioned snapshots.
+4. **Online trainer throughput**: billions of examples per day with minute-level freshness; shard by feature hash, as parameter servers do (§65.8).
+
+### 81.9.11 Failure scenarios
+
+**Table 81.32 — Advertising failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Calibration drift on a segment | Wrong winners and prices | Calibration ratio per segment | Recalibrate; roll back | Calibration gate on every model push |
+| Corrupted online update | Revenue drop within minutes | Holdout-stream log loss, revenue per 1,000 | Revert to last snapshot | Pre-push validation; rate-limited deltas |
+| Pacing state stale | Overspend beyond tolerance | Spend vs budget per minute | Refund overspend; stop campaign | Pending-spend accounting |
+| Delayed-label bias | Conversion model underpredicts; under-delivery | Calibration by label age | Delay model | Delay-aware training |
+| Click fraud and bots | Advertisers billed for invalid clicks; polluted labels | Invalid-traffic models, anomaly detection | Refund; purge from training | Filter before billing and training |
+| Duplicate billing on retries | Overcharge | Ledger reconciliation | Refund | Idempotent token-keyed ledger |
+| Feedback loop: new ads never shown | Advertisers churn; stale ad set | Impressions of new ads | Exploration budget | Prior from similar ads; exploration bonus |
+| Privacy: targeting on sensitive attributes | Legal and ethical harm | Policy audits | Remove targeting option | Restricted attribute list (§71.13) |
+
+### 81.9.12 Scaling strategy
+
+At **10× requests** (6.9 million per second), ad servers and GPU ranking scale linearly; pacing aggregation becomes hierarchical (per server, per region, global). At **10× ads** (100 million active), retrieval needs learned candidate generation (two-tower over users and ads with ANN) rather than pure targeting-index matching. At **100×**, regional auction shards with global budget coordination, and continuous training sharded across many trainers, become necessary; budget accuracy is then a distributed-systems problem as much as a control problem.
+
+### 81.9.13 Trade-offs
+
+**Table 81.33 — Advertising trade-offs.**
+
+| Decision | Choice | Alternative | Why |
+|---|---|---|---|
+| Model output | Calibrated probabilities | Rank scores | The auction multiplies them by money |
+| Training | Online updates + daily full retrain | Daily only | Freshness is worth revenue [He et al. 2014] |
+| Pricing | GSP with quality terms | First price | Simpler bidding for advertisers |
+| Pacing | Throttling with PI control | Bid shading | Preserves bid semantics; easy to reason about |
+| Conversion labels | Delay model on fresh data | Wait 7 days | Freshness and completeness both |
+| Empty slot | Allowed | Always show an ad | User experience; reserve prices |
+
+### 81.9.14 Alternative designs
+
+- **First-price auctions with bid shading** are common in programmatic display; the platform's role shifts to helping advertisers bid, and calibration remains essential.
+- **Autobidding** (the platform bids on the advertiser's behalf toward a target cost per acquisition) moves budget pacing and bid optimization into one controller per campaign.
+- **Contextual-only targeting** (no user-level history) reduces privacy risk and data needs at the cost of relevance; increasingly relevant as tracking is restricted.
+- **On-device or aggregated measurement** of conversions changes the label pipeline from per-click joins to delayed, noisy aggregates.
+
+### 81.9.15 Interview discussion
+
+**Table 81.34 — 45-minute pacing plan for personalized advertising.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Scope | Ad request, auction, pacing, billing, conversions |
+| 5–10 | Formulation | Calibrated pCTR and pCVR; eCPM ranking; label delays |
+| 10–15 | Estimates | 694k requests/s; 117 GPUs; 347M feature lookups/s; \$150M/day |
+| 15–23 | Architecture | Figure 81.16, synchronous auction and asynchronous money paths |
+| 23–37 | Deep dives | Miscalibration example; pacing controller; delayed conversions |
+| 37–45 | Correctness and failures | Exactly-once billing; fraud; online-update safety |
+
+**Likely follow-ups.**
+
+- *"Why must the model be calibrated if it only ranks?"* It does not only rank: probabilities multiply bids and set prices; the worked example shows a 30% error changing the winner and price.
+- *"What happens if the spend aggregator lags?"* Campaigns overspend; count pending spend and stop near the limit; refund residual overspend.
+- *"How do you train on conversions that have not happened yet?"* Model the delay distribution, or ingest as negative and correct when the positive arrives.
+
+**What distinguishes senior and staff answers.** Senior answers combine pCTR, bids and an auction with a sensible latency budget. Staff answers treat calibration as a contract, quantify the dollar value of model changes, design pacing as a control loop with measured lag, and keep the money path (billing, budgets) exactly-once and independent of model failures.
+
+### 81.9.16 Production considerations
+
+- **Monitoring.** Calibration ratio per advertiser segment, placement and model; normalized entropy on a holdout stream; revenue per 1,000 requests; overspend and under-delivery; invalid-traffic rate; label delay distribution.
+- **Retraining.** Continuous deltas with gates; daily full retrain; immediate rollback path.
+- **Responsible ML.** Restricted targeting for housing, employment and credit ads, and audits of delivery skew across groups (§71.4–§71.5); minimum audience sizes; transparency on why an ad was shown.
+- **Cost.** The ad-server CPU fleet and feature memory dominate; justify model complexity by revenue per 1,000 requests.
+
+## 81.10 Large-scale recommendation platform
+
+### 81.10.1 Problem statement
+
+The previous six cases each designed one ranking system. A large consumer company runs dozens of them: home feed, short video, notifications, people you may know, search, ads, e-mail digests, shopping. Built separately, each team rebuilds event logging, feature pipelines, embedding training, a candidate-retrieval service, a ranking server and an experiment framework, and the copies drift apart. Design the **shared recommendation platform** on which 40 product teams build 30 ranking surfaces.
+
+The distinctive hard problem is **sharing without coupling**. Shared embeddings, features and infrastructure save enormous duplicated effort and make every team's models better (a user embedding trained on all surfaces knows more than one trained on notifications alone), but they also create dependencies: a new version of a shared user embedding changes the inputs of 50 downstream models; one team's traffic spike or bad model can degrade another's surface; and experiments on different surfaces interfere through shared users. The platform must make reuse the easy path while keeping each tenant isolated in failure, cost and release cadence.
+
+**ML formulation.** The platform owns ML artifacts consumed by tenants: (a) **shared embeddings** of users and of each item type (posts, videos, products, accounts, ads), trained on multi-surface engagement and versioned; (b) a **feature catalog** with shared definitions (Chapter 62); (c) **model templates** (two-tower retrieval, multi-task ranker) that teams configure rather than write. Tenants own their surface's labels, objectives and fusion weights.
+
+### 81.10.2 Functional requirements
+
+1. **Logging and labels.** One impression and event schema for all surfaces; a shared join service producing labeled examples per surface with configurable windows.
+2. **Feature platform.** Register, compute, backfill and serve features with point-in-time correctness (§62.8), with ownership and documentation.
+3. **Embedding platform.** Train, version, publish and serve shared embeddings; let consumers pin a version and migrate on their schedule.
+4. **Training platform.** Pipelines from templates; scheduled and triggered retraining; a shared GPU pool with quotas.
+5. **Serving.** A shared candidate-retrieval service (ANN indexes per item type), a ranking service hosting many tenants' models, and an orchestration framework in which a surface is configuration plus a few plug-ins.
+6. **Experimentation.** Layered, overlapping experiments with consistent assignment across surfaces, holdouts and automated analysis.
+7. **Governance.** Model registry with lineage, cost attribution per tenant, and responsible-ML reviews.
+
+### 81.10.3 Non-functional requirements
+
+**Table 81.35 — Platform requirements.**
+
+| Property | Target | Why |
+|---|---|---|
+| Serving availability | 99.99% per tier; tenant isolation so one tenant's failure affects only itself | Shared tiers multiply blast radius |
+| Serving latency overhead | Platform framework adds ≤ 10 ms p99 to a surface's budget | Teams will route around a slow platform |
+| Feature freshness tiers | Batch daily; streaming ≤ 60 s; request-time | Different surfaces need different freshness |
+| Embedding versions | At least two versions served concurrently; deprecation notice ≥ 30 days | Consumers migrate independently |
+| Onboarding | A new surface to production A/B test within 4 weeks using templates | Platform value is speed |
+| Experiment capacity | ≥ 400 concurrent experiments; assignment consistent across surfaces | Dozens of teams test weekly |
+| Cost attribution | 100% of serving and training cost attributed to tenants | Prevents tragedy of the commons |
+| Quality | Shared-embedding releases must not regress any registered consumer's offline metric beyond tolerance | A shared change has many victims |
+
+### 81.10.4 Capacity estimation
+
+::: example
+**Worked example — Serving and embeddings.** Assumptions: all surfaces together peak at 1.5 million ranking requests per second; heavy rankers score 500 candidates at 50 MFLOPs each on average; 2 billion users with 256-dimension FP16 shared embeddings; $10^{10}$ items across all item types at 128 dimensions FP16; two versions served at once.
+
+1. Item scorings: $1.5 \times 10^6 \times 500 = 7.5 \times 10^8$ per second.
+2. GPU FLOPs: $7.5 \times 10^8 \times 5 \times 10^7 = 3.75 \times 10^{16}$ FLOP/s; 250 GPUs busy at 150 TFLOP/s; **417** at $u = 0.6$ (before regional redundancy).
+3. User embeddings: $2 \times 10^9 \times 256 \times 2 = 1.02$ TB; items: $10^{10} \times 128 \times 2 = 2.56$ TB; two versions: about **7.2 TB** in the embedding serving tier.
+4. User embedding reads: one per request, 1.5 million per second, plus batch reads by training pipelines.
+
+**Interpretation.** Each surface alone is the size of one of the earlier cases; together they justify dedicated tiers for embeddings and ranking. **Engineering implication.** Serve embeddings from a sharded in-memory tier keyed by (entity, version), and pack many tenants' models onto the ranking fleet with per-tenant quotas rather than one cluster per team.
+:::
+
+::: example
+**Worked example — Pooling training GPUs.** Assumptions: 40 teams each run 25 retrains a day averaging 50 GPU-hours; each team's demand peaks at 3× its average (everyone retrains after a data incident or a new embedding), while the pooled demand of all teams peaks at 1.3× the total average because peaks rarely coincide.
+
+1. Demand: $40 \times 25 \times 50 = 50{,}000$ GPU-hours per day, an average of $50{,}000/24 = 2{,}083$ GPUs busy.
+2. Dedicated clusters sized for each team's peak: $2{,}083/40 \times 3 \times 40 = 6{,}250$ GPUs.
+3. One pool sized for the pooled peak: $2{,}083 \times 1.3 = 2{,}708$ GPUs, 57% fewer.
+
+**Interpretation.** Statistical multiplexing is the platform's largest cost lever. **Engineering implication.** A shared pool needs quotas, priorities and preemption (§46, §79) so that the savings do not come with unpredictable queueing for critical retrains such as ads.
+:::
+
+### 81.10.5 API design
+
+```yaml
+# Surface definition: what a tenant writes to onboard a ranking surface (illustrative)
+surface: notifications_digest
+owner: team-notifications
+candidate_sources:
+  - type: ann_retrieval
+    item_type: post
+    embedding: user_shared@v7        # pinned shared-embedding version
+    quota: 400
+  - type: social_inbox
+    quota: 200
+eligibility: [integrity.recommendable, notifications.not_sent_24h]
+ranker:
+  template: multitask_ranker
+  model: notifications_ranker@prod   # registry alias
+  heads: [open, click, unsubscribe]
+  fusion: {open: 1.0, click: 0.5, unsubscribe: -8.0}
+latency_budget_ms: 150
+experiment_layer: notifications_ranking
+quota: {peak_rps: 20000, gpu_ms_per_s: 4000}
+```
+
+```protobuf
+service EmbeddingService {
+  rpc Get(EmbeddingRequest) returns (EmbeddingResponse);
+}
+message EmbeddingRequest {
+  string entity_type = 1;          // user, post, video, product
+  repeated string ids = 2;
+  string version = 3;              // explicit; no "latest" in production
+}
+service Experiments {
+  rpc Assign(AssignRequest) returns (Assignments);   // user_id -> arm per layer
+}
+```
+
+Surfaces are declarations, reviewed like code; the platform compiles them into orchestration graphs. Embedding reads always name a version, so a platform release can never silently change a consumer's inputs.
+
+### 81.10.6 Data model and database schema
+
+**Table 81.36 — Platform metadata and data stores.**
+
+| Store | Key | Content |
+|---|---|---|
+| Event log | (surface, request_id) | Unified impression and engagement schema, partitioned by date and surface |
+| Feature registry | feature_name@version | Definition, owner, entity key, freshness tier, consumers |
+| Offline feature store | (entity, event_time) | History for point-in-time joins (§62.8) |
+| Online feature store | entity key | Latest values, by freshness tier |
+| Embedding registry | embedding@version | Training data window, objective, metrics, compatibility group, consumers, deprecation date |
+| Embedding serving tier | (entity, version) | Vectors |
+| Model registry | model@version | Lineage to features, embeddings and data (§69.8) |
+| Experiment registry | layer, experiment | Arms, traffic share, metrics, owner, dates |
+| Cost ledger | (tenant, resource, hour) | GPU-seconds, CPU, storage, requests |
+
+The consumer lists in the feature and embedding registries are what make safe evolution possible: before releasing `user_shared@v8`, the platform knows every model that reads v7 and can evaluate each against v8 offline.
+
+### 81.10.7 High-level architecture
+
+**Figure 81.19 — Shared recommendation platform and its tenants.**
+
+```mermaid
+flowchart TB
+  subgraph Surfaces
+    S1([Home feed])
+    S2([Video])
+    S3([Notifications])
+    S4([Shopping])
+  end
+  Surfaces -->|surface config| ORC[Orchestration framework]
+  ORC -->|assign| EXP[Experiment service]
+  ORC -->|vectors by version| EMB[(Embedding serving tier)]
+  ORC -->|ANN by item type| RET[Retrieval service]
+  ORC -->|features| OFS[(Online feature store)]
+  ORC -->|tenant model| RNK[Multi-tenant ranking service]
+  ORC -.->|unified events| LOG[[Event log]]
+  LOG -.-> JOIN[Label join per surface]
+  JOIN -.-> OFF[(Offline store and lakehouse)]
+  OFF -.-> ETR[Shared embedding training]
+  OFF -.-> TTR[Tenant model training]
+  ETR -.->|versioned| EMB
+  ETR -.->|item vectors| RET
+  TTR -.->|registry| RNK
+  GPU[(Shared GPU pool with quotas)] --- ETR
+  GPU --- TTR
+  OFF -.-> ANA[Experiment analysis]
+```
+
+**Reading the diagram.** Tenant surfaces (top) declare configurations that the orchestration framework turns into request graphs (solid, synchronous): experiment assignment, embedding lookups pinned by version, retrieval from shared ANN indexes per item type, feature reads and ranking by the tenant's model on the multi-tenant ranking service. Every surface emits the unified event schema (dotted, asynchronous); a join service produces labels per surface into the offline store, from which the platform trains shared embeddings and tenants train their own models on a shared GPU pool. Shared embeddings flow to the embedding tier and the retrieval indexes as new versions; tenant models flow through the registry. Storage boundaries: event log, offline store, online feature store, embedding tier, registries. Failure points: shared tiers (embedding, retrieval, ranking) have the largest blast radius and are isolated per tenant by quotas, cells and bulkheads (§39); a bad shared embedding version affects only consumers who adopt it. Scaling: each tier independently; tenants add load through declared quotas.
+
+### 81.10.8 Detailed component design
+
+#### Shared embeddings and versioning
+
+A shared user embedding trained on engagement across all surfaces is a strong feature for every surface, especially small ones (a new shopping surface with little data benefits from what the home feed learned). Published examples include Pinterest's PinSage, a graph convolutional network producing pin embeddings used across recommendation surfaces [Ying et al. 2018], Pinterest's ItemSage product embeddings shared by shopping recommendations on several surfaces [Baltescu et al. 2022], and Twitter's SimClusters, community-based representations used across multiple products [Satuluri et al. 2020].
+
+The hard part is change. Embeddings from two training runs live in different coordinate systems even with the same architecture, so a model trained on v7 vectors receives meaningless inputs from v8. Three policies, in increasing sophistication:
+
+1. **Pin and migrate.** Serve v7 and v8 side by side; each consumer retrains on v8 and switches when ready; v7 is retired after the deprecation window. Simple, but doubles serving memory and makes every release a coordinated migration of 50 models.
+2. **Backward-compatible training.** Train v8 with an additional loss that keeps its vectors usable by models trained on v7, so consumers can switch without retraining and retrain at leisure; Shen et al. proposed such backward-compatible representation learning for embedding upgrades [Shen et al. 2020].
+3. **Learned transformation.** Fit a mapping from v8 to v7 space for consumers that cannot retrain soon.
+
+The platform uses (1) as the default and (2) for frequent refreshes, and gates every release on the consumer list: each registered consumer's offline metric with the new version must stay within tolerance.
+
+::: industry
+**Shared building blocks for many recommendation surfaces.** Twitter's 2023 description of its home timeline recommendation pipeline named a shared framework, Product Mixer, for building feeds, and shared representations such as SimClusters, which the original paper describes as community-based representations serving multiple products. LinkedIn's LiRank paper describes one family of large ranking models and techniques applied to its feed, job recommendations and ads click-through prediction.
+*Evidence: Primary* — [Twitter Engineering 2023; Satuluri et al. 2020; Borisyuk et al. 2024]
+:::
+
+#### Multi-tenant serving
+
+Packing many tenants on one ranking fleet saves capacity but creates **noisy neighbors**: one tenant's traffic spike or slow model raises queueing for everyone (Chapter 47). The ranking service therefore enforces per-tenant admission quotas in GPU-milliseconds per second (declared in the surface configuration), separates tenants into cells so that a crash-looping model takes down only its cell, and keeps critical tenants (ads, whose outage loses revenue by the second) on dedicated cells. Models are loaded per tenant with warm-up (§66.10), and batching is per model, so tenants do not share batches. The orchestration framework enforces each surface's latency budget with deadline propagation and per-stage fallbacks, as in every earlier case, so a tenant's degraded mode is its own.
+
+#### Experimentation platform
+
+With 40 teams each running several experiments, users cannot be split into disjoint groups for every experiment: there are not enough users to give each experiment the sample size it needs. Google's overlapping experiment infrastructure solved this with **layers**: each layer partitions all traffic among its experiments, experiments in different layers overlap independently, and parameters that interact must be in the same layer [Tang et al. 2010].
+
+::: formula
+**Concurrent experiments per layer**
+
+$$E = \left\lfloor \frac{f \, U}{k \, n} \right\rfloor$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $U$ | Users exposed to the surfaces covered by the layer during the test | users |
+| $f$ | Share of those users available to experiments (the rest are holdouts and production) | fraction |
+| $k$ | Arms per experiment | arms |
+| $n$ | Users needed per arm for the chosen minimum detectable effect (§57.14.2) | users |
+| $E$ | Experiments the layer can run at once | experiments |
+:::
+
+::: example
+**Worked example — How many experiments fit?** $U = 10^9$ users; $f = 0.5$; two-arm tests ($k = 2$) on a metric with baseline 10%.
+
+1. For a 2% relative MDE, §57.14.2 gives $n = 356{,}331$: $E = \lfloor 5 \times 10^8 / 712{,}663 \rfloor = 701$.
+2. For a 0.5% relative MDE, $n = 5{,}663{,}744$ (16 times more, by the $1/\delta^2$ law): $E = \lfloor 5 \times 10^8 / 11{,}327{,}488 \rfloor = 44$.
+3. With 10 independent layers, about 440 concurrent experiments at the 0.5% MDE.
+
+**Interpretation.** Mature recommenders chase small effects, and small effects consume users quadratically; a single layer would allow only 44 experiments. **Engineering implication.** Layer the experiment space by component (retrieval, ranking, UI, notifications), keep interacting parameters in one layer, reserve a global long-term holdout across all layers, and use variance-reduction techniques and interleaving (§68.14.2) to lower $n$.
+:::
+
+Assignment is a hash of (user ID, layer salt), computed identically by every surface, so a user is in the same arm wherever they appear. Analysis is automated: every experiment gets the same metric definitions from the platform's metric catalog, guardrails across *all* surfaces (a notification experiment that raises notification opens but lowers home-feed sessions is caught), and sample-ratio-mismatch checks [Kohavi et al. 2020].
+
+#### Features, training templates and governance
+
+The feature platform follows Chapter 62: one definition, offline and online materialization, point-in-time backfills, and a registry with owners and consumers. Uber's Michelangelo, a single platform with a shared feature store across teams (§62.13, §69.14), is the published archetype [Hermann and Del Balso 2017]. Training templates (two-tower, multi-task ranker, sequence model) encode the lessons of the earlier cases (log features as served, time-based splits, downsampling with recalibration, per-head calibration gates) so that each new surface inherits them. Governance attaches to the registry: every model records the features, embedding versions and data windows it used, its fairness and privacy review (§71.14), and its cost.
+
+### 81.10.9 Data flow
+
+**Figure 81.20 — Write path: releasing a new shared embedding version.**
+
+```mermaid
+sequenceDiagram
+  participant LK as Lakehouse
+  participant ET as Embedding training
+  participant ER as Embedding registry
+  participant CV as Consumer evaluation
+  participant EM as Embedding tier
+  participant RT as Retrieval indexes
+  participant TM as Tenant teams
+  ET->>LK: read 30 days of multi-surface engagement
+  ET->>ET: train v8 with compatibility loss to v7
+  ET->>ER: register v8, metrics, compatibility group
+  ER->>CV: list consumers of v7
+  CV->>CV: offline metrics of each consumer with v8
+  alt every consumer within tolerance
+    CV->>ER: approve
+    ER-)EM: load v8 alongside v7
+    ER-)RT: build v8 item indexes, keep v7
+    ER-)TM: notice, v7 deprecated in 30 days
+  else some consumer regresses
+    CV->>ET: block release, report regressions
+  end
+```
+
+**Reading the diagram.** Embedding training reads multi-surface engagement from the lakehouse and trains a candidate version with a compatibility loss. The registry knows every consumer of the current version, so evaluation runs each consumer's offline metrics with the new vectors; any regression blocks the release. On approval, the new version is loaded *beside* the old one in the embedding tier and retrieval indexes (asynchronous), and tenants are notified of a deprecation date; nothing changes for any consumer until it repins. Failure points: the consumer evaluation being incomplete (unregistered consumers break silently, which is why reads without a version are forbidden), and memory for two versions (planned in §81.10.4).
+
+**Figure 81.21 — Read path: one request on a tenant surface.**
+
+```mermaid
+sequenceDiagram
+  participant SF as Surface client
+  participant OR as Orchestration framework
+  participant EX as Experiment service
+  participant EM as Embedding tier
+  participant RE as Retrieval service
+  participant FS as Feature store
+  participant RK as Ranking service cell
+  SF->>OR: request, surface id, user
+  OR->>EX: assign user in all layers
+  EX-->>OR: arms, config overrides
+  OR->>EM: user vector, pinned version
+  EM-->>OR: vector
+  par sources from surface config
+    OR->>RE: ANN, item type, quota
+    OR->>OR: tenant plug-in sources
+  end
+  OR->>FS: features for candidates
+  OR->>RK: tenant model alias, candidates, quota check
+  alt within tenant quota
+    RK-->>OR: head predictions
+  else quota exceeded or cell degraded
+    RK-->>OR: shed, use light scores
+  end
+  OR->>OR: fusion weights from config and arm
+  OR-->>SF: ranked items, rec_token
+  OR-)OR: unified event log with arms
+```
+
+**Reading the diagram.** The framework executes the surface's declared graph synchronously. Experiment assignment comes first because arms may change any later step (a different source quota, a different model alias, different fusion weights). The embedding read names a version; retrieval and tenant-specific plug-in sources run in parallel; the ranking service admits the request only within the tenant's quota and otherwise sheds it to the light scores, so one tenant's overload cannot consume another's capacity. The event log records the arms in every layer, which is what makes cross-surface guardrail analysis possible.
+
+### 81.10.10 Bottlenecks
+
+1. **The orchestration framework** is on every request of every surface; its overhead must stay within 10 ms and its releases need the strictest canarying.
+2. **Embedding tier memory** doubles during migrations; schedule releases so that at most two versions coexist.
+3. **GPU pool contention** when many teams retrain at once (after a shared embedding release); stagger with priorities.
+4. **Experiment traffic** for small effects; layers, variance reduction and interleaving.
+5. **Platform team bandwidth.** Every tenant's special case pulls toward bespoke features; plug-in interfaces keep special cases in tenant code.
+
+### 81.10.11 Failure scenarios
+
+**Table 81.37 — Platform failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Shared embedding release breaks a consumer | Silent quality drop on a surface | Consumer metrics; skew detectors on embedding inputs | Repin to previous version | Mandatory version pinning; consumer evaluation gate |
+| Noisy neighbor on ranking fleet | Latency SLO breach for other tenants | Per-tenant latency and quota usage | Shed offending tenant | Quotas, cells, dedicated cells for critical tenants |
+| Framework bug in a release | All surfaces degraded | Global error and latency | Roll back framework | Canary by surface; staged rollout |
+| Feature definition changed in place | Training–serving skew for consumers | Skew detector; registry diff | Restore definition | Immutable versioned features |
+| Cross-surface experiment interference | Wrong launch decisions | Cross-surface guardrails; layer interaction tests | Re-run in same layer | Layer design rules |
+| Feedback loop across surfaces | Shared embedding amplifies one surface's bias everywhere | Exposure concentration across surfaces | Reweight training data by surface | Per-surface sampling and debiasing in embedding training |
+| Cost runaway by a tenant | Budget overrun | Cost ledger alerts | Throttle; chargeback | Quotas and attribution |
+
+### 81.10.12 Scaling strategy
+
+At **10× tenants**, onboarding and support become the bottleneck: self-service templates, automated quotas and documentation matter more than hardware. At **10× traffic**, tiers scale horizontally; the ranking fleet adopts per-region cells and the embedding tier shards further. At **100×**, a single large **foundation model** of user behavior trained on all surfaces, fine-tuned or prompted per surface, can replace many per-surface rankers; the platform then looks like the AI platform of Chapter 79, with the versioning and multi-tenancy problems of this case at a larger scale.
+
+### 81.10.13 Trade-offs
+
+**Table 81.38 — Platform trade-offs.**
+
+| Decision | Choice | Alternative | Why |
+|---|---|---|---|
+| Embedding change policy | Pinned versions + compatibility training | Always latest | Many consumers; silent breakage |
+| Tenancy | Shared fleet with quotas and cells; dedicated cells for ads | One cluster per team | 57% fewer training GPUs; isolation where critical |
+| Surface definition | Declarative configuration + plug-ins | Free-form services | Reuse, review and speed |
+| Experiments | Layered overlapping | Disjoint splits | Capacity for small effects |
+| Ownership | Platform owns tiers and templates; tenants own objectives | Platform owns everything | Objectives are product decisions |
+
+### 81.10.14 Alternative designs
+
+- **No platform, shared libraries only.** Teams run their own services using common libraries: maximum autonomy, duplicated operations, inconsistent logging and experiments.
+- **Fully centralized ranking team** that builds every surface: consistency, but a bottleneck and distance from product needs.
+- **Buy versus build.** Managed feature stores, vector databases and experimentation tools (as of 2026) cover parts of this design; integration and the unified event schema remain in-house work (§69.15).
+- **One giant multi-surface model** instead of shared embeddings plus per-surface rankers: maximal sharing, but every surface's release is coupled to one model's cadence.
+
+### 81.10.15 Interview discussion
+
+**Table 81.39 — 45-minute pacing plan for a recommendation platform.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Scope | Tenants, surfaces, what is shared and what is owned |
+| 5–10 | Estimates | 1.5M requests/s; 7.2 TB embeddings; pooled GPUs 2,708 vs 6,250 |
+| 10–20 | Architecture | Figure 81.19; declarative surfaces; shared tiers |
+| 20–32 | Deep dives | Embedding versioning; multi-tenant isolation |
+| 32–40 | Experimentation | Layers; capacity formula; cross-surface guardrails |
+| 40–45 | Failures and organization | Shared-release breakage; noisy neighbors; ownership boundaries |
+
+**Likely follow-ups.**
+
+- *"How do you upgrade a shared embedding used by 50 models?"* Version pinning, compatibility training, consumer evaluation gate, side-by-side serving and a deprecation window.
+- *"How do you stop one team from hurting another?"* Quotas in declared units, cells, dedicated cells for critical tenants, per-tenant fallbacks, cost attribution.
+- *"Why layered experiments?"* Users are finite and small effects need millions per arm; layers let independent experiments reuse the same users.
+
+**What distinguishes senior and staff answers.** Senior answers list the right shared components. Staff answers identify coupling as the central risk and design versioning, isolation and ownership boundaries for it, quantify the pooling benefit and the experiment capacity, and treat onboarding speed and organizational interfaces as requirements.
+
+### 81.10.16 Production considerations
+
+- **Monitoring.** Per-tenant SLOs and quota usage; framework overhead; embedding version adoption; consumer metrics after releases; experiment sample-ratio checks; cost per tenant.
+- **Retraining.** Shared embeddings weekly with compatibility training; tenant models on their own cadence via templates.
+- **Responsible ML.** Platform-level fairness and privacy reviews applied by template (§71.14); data minimization in the unified event schema; deletion requests propagated to embeddings by retraining windows.
+- **Cost.** Attribute every GPU-second and request to a tenant; the platform's own cost is justified by pooling savings and onboarding speed.
