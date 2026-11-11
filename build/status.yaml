@@ -70,11 +70,11 @@
 68: {research: done, draft: done, diagrams: done, review: done, final: todo}
 69: {research: done, draft: done, diagrams: done, review: done, final: todo}
 70: {research: done, draft: done, diagrams: done, review: done, final: todo}
-71: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-72: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-73: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-74: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-75: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+71: {research: done, draft: done, diagrams: done, review: done, final: todo}
+72: {research: done, draft: done, diagrams: done, review: done, final: todo}
+73: {research: done, draft: done, diagrams: done, review: done, final: todo}
+74: {research: done, draft: done, diagrams: done, review: done, final: todo}
+75: {research: done, draft: done, diagrams: done, review: done, final: todo}
 76: {research: done, draft: done, diagrams: done, review: todo, final: todo}
 77: {research: done, draft: done, diagrams: done, review: todo, final: todo}
 78: {research: done, draft: done, diagrams: done, review: todo, final: todo}

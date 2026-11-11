@@ -111,15 +111,9 @@ flowchart TB
   PLACE -.-> GPU
 ```
 
-**Reading the diagram.** The data plane runs top to bottom: clients send HTTPS requests, streamed back as Server-Sent Events (SSE, §9.5); the gateway authenticates, checks quotas and policy and may answer from the response cache; the router chooses between self-hosted pools (gRPC or HTTP) and external providers (HTTPS). Usage and log events flow asynchronously (dotted) into the usage ledger and a redacted prompt log store, the two main storage boundaries. The control plane pushes configuration asynchronously: registry to router, policy and quotas to gateway, ledger to billing, placement to GPUs. Failure points: the gateway and router are on every request and must be replicated per region; the quota service must fail open or closed by policy (§79.9); external providers fail independently and need fallbacks. Scaling: gateways scale horizontally on CPU; pools scale on LLM signals (§79.8).
+**Reading the diagram.** The data plane runs top to bottom: clients send HTTPS requests, streamed back as Server-Sent Events (SSE, §9.5); the gateway authenticates, checks quotas and policy and may answer from the response cache; the router chooses between self-hosted pools (gRPC or HTTP) and external providers (HTTPS). Usage and log events flow asynchronously (dotted) into the usage ledger and a redacted prompt log store, the two main storage boundaries. The control plane pushes configuration asynchronously: registry to router, policy and quotas to gateway, ledger to billing, placement to GPUs. Failure points: gateway and router are on every request and are replicated per region; the quota service fails open or closed by policy (§79.9). Scaling: gateways scale on CPU, pools on LLM signals (§79.8).
 
-#### How it works internally
-
-1. **Registration.** A team registers a model version in the registry (§69.8) with its serving metadata: engine, GPU type, memory, context length, adapters, evaluation results and data-handling class.
-2. **Deployment.** The placement controller creates or updates a serving pool, the router learns its endpoints, and an alias (`support-default → qb-7b@v14 + support-lora@v6`) is published.
-3. **Serving.** Requests flow gateway → router → pool, with fallbacks to other pools or providers.
-4. **Metering.** Usage events (tenant, alias, deployment, input, cached and output tokens, latency, status) land in the ledger within seconds; quotas reconcile against them (§79.9).
-5. **Accounting.** Billing aggregates the ledger monthly and produces showback or chargeback (§79.15).
+In operation, a team registers a model version with serving metadata (§69.8), the placement controller deploys it and publishes an alias (`support-default → qb-7b@v14 + support-lora@v6`), requests flow gateway → router → pool, and usage events reach the ledger within seconds for quotas (§79.9) and monthly chargeback (§79.15).
 
 ::: industry
 **Open-source platform building blocks.** As of 2026, several open-source projects implement parts of this architecture. LiteLLM provides a Python SDK and a proxy server that expose many providers behind an OpenAI-compatible API, with virtual keys, per-key and per-team budgets, tokens-per-minute and requests-per-minute limits, fallbacks and spend tracking [LiteLLM Docs]. Envoy AI Gateway extends Envoy Gateway with a unified API to multiple providers, upstream credential injection and token-usage-based rate limiting [Envoy AI Gateway Docs]. The Kubernetes Gateway API Inference Extension adds LLM-aware endpoint selection to Kubernetes gateways (§79.6.3) [Kubernetes Blog 2025], and KServe provides Kubernetes custom resources for deploying and autoscaling model servers, including LLM runtimes [KServe Docs].
@@ -133,7 +127,6 @@ flowchart TB
 | Option | How it works | Advantages | Disadvantages | Choose when |
 |---|---|---|---|---|
 | Direct provider access | Each team holds keys, calls providers | Fastest start, no platform team | No central policy, cost or audit; duplicated code | One or two experimental teams |
-| Shared client library | Common SDK wraps providers | Reuse without a new hop | Policy bypassable; upgrades need every team to redeploy | Few languages, high trust |
 | Central gateway | All calls pass one proxy | Enforceable policy, metering, keys never leave platform | Extra hop and shared fate | Several teams, customer data in prompts |
 | Full AI platform | Gateway + router + self-hosted pools + billing | Pooled GPUs, chargeback, multi-region | Largest investment | Large or regulated token volumes |
 
@@ -192,7 +185,7 @@ sequenceDiagram
   G-)G: emit usage and log events async
 ```
 
-**Reading the diagram.** The client opens one streaming HTTPS request. The gateway reserves an *estimated* token count with the quota service (a fast in-memory store, §22.8) before any GPU work. The primary pool rejects the request with 503 before producing a token, so the router retries on a fallback provider; this is safe because the client has received nothing yet. Tokens then stream back hop by hop as SSE events, each hop relaying without buffering. When the provider reports final usage, the gateway reconciles the reservation with actual tokens and emits usage and log events asynchronously (open arrowhead), off the client's latency path. Failure points: a fallback after the first token would duplicate or contradict text already shown, so mid-stream failures are surfaced to the client instead; the quota service must answer within a millisecond or two, or the gateway falls back to local limits.
+**Reading the diagram.** The gateway reserves an *estimated* token count in the quota store (§22.8) before any GPU work. The primary pool returns 503 before any token, so the router safely retries on a fallback provider. Tokens stream back hop by hop as SSE events without buffering; on the final usage report the gateway reconciles the reservation and emits usage and log events asynchronously (open arrowhead). Failure points: a fallback after the first token would duplicate or contradict text already shown, so mid-stream failures are surfaced to the client instead; the quota service must answer within a millisecond or two, or the gateway falls back to local limits.
 
 #### Normalization, streaming, retries and timeouts
 
@@ -467,7 +460,7 @@ What to notice:
 
 ### 79.6.2 Load-aware routing for LLM pools
 
-Request counts are a weak signal for LLMs; outstanding tokens, queue depth and KV-cache usage are better (§73.15). Two refinements matter at scale. **Weight prompt and output tokens by cost**: in the 7B chatbot an output token costs 20× a prompt token in GPU time (0.567 ms versus 28.3 µs), so a fair "outstanding work" counter weights them accordingly. **Account for in-flight migration**: Llumnix showed that live-migrating requests (and their KV cache) between instances at runtime can rebalance load, reduce fragmentation and prioritize requests better than placement-only routing [Sun et al. 2024]; Preble studied scheduling prompts across GPUs to balance prefix reuse against load [Srivatsa et al. 2025].
+Two refinements matter at scale. **Weight tokens by cost**: a 7B output token costs 20× a prompt token in GPU time (0.567 ms versus 28.3 µs). **Migrate in flight**: Llumnix live-migrates requests and their KV cache between instances to rebalance load [Sun et al. 2024]; Preble schedules prompts across GPUs to balance prefix reuse against load [Srivatsa et al. 2025].
 
 ### 79.6.3 Routing inside Kubernetes
 
@@ -494,7 +487,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** The client calls the gateway over HTTPS. For each request, the gateway calls the Endpoint Picker synchronously through Envoy's external-processing gRPC interface, sending the request's metadata; the picker answers with a pod chosen from metrics it scrapes asynchronously (dotted) from every model server in the InferencePool, then the gateway forwards the request over HTTP to that pod. The pool is a label selector, so pods join and leave as the autoscaler changes replicas. Failure points: if the picker is down, the gateway must fail open to plain balancing or fail closed by configuration; stale metrics cause herding. Scaling: run several picker replicas and keep their scrape interval short (sub-second) relative to request duration.
+**Reading the diagram.** For each request the gateway calls the Endpoint Picker synchronously over Envoy's external-processing gRPC interface; the picker answers with a pod chosen from metrics it scrapes asynchronously (dotted) from the InferencePool's model servers, and the gateway forwards the request over HTTP. The pool is a label selector, so pods join and leave with autoscaling. Failure points: if the picker is down, the gateway must fail open to plain balancing or fail closed by configuration; stale metrics cause herding. Scaling: run several picker replicas and keep their scrape interval short (sub-second) relative to request duration.
 
 Other systems implement the same idea: SGLang's router combines cache-aware and load-balanced routing across SGLang workers [SGLang Docs], and, as of 2026, NVIDIA Dynamo and the llm-d project offer KV-cache-aware routing as part of distributed inference stacks.
 
@@ -503,9 +496,7 @@ Other systems implement the same idea: SGLang's router combines cache-aware and 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | One replica at 100% KV, others idle | Unbounded affinity on a hot prefix | Per-replica queue spread | Drain hot replica, rebalance | Bounded affinity |
-| Tail latency doubles after scaling out | New replicas get affinity misses and full load | TTFT p99 rises with replica count changes | Ramp new replica weight | Slow start (§19.5) |
 | Herding onto the least-loaded replica | Many routers see the same stale metric | Load oscillates between replicas | Randomize | Power of two choices; shorter scrape interval |
-| Requests routed to a region the tenant may not use | Fallback rule ignores policy | Residency audit query | Block and purge logs | Policy filter before fallback (Figure 79.3) |
 
 ## 79.7 Multi-model serving and model registries
 
@@ -524,7 +515,7 @@ Platforms accumulate models faster than traffic: team fine-tunes, rollback versi
 1. **Registry as source of truth.** Each registry entry (§69.8) carries serving metadata the platform needs: base model and adapter lineage, engine and version, precision, GPU memory at the target context, required GPU type, evaluation status, data-handling class and an owner. Aliases (`support-default`) point to entries; changing an alias is a deployment.
 2. **Placement.** A controller assigns models to pools using demand, memory and SLO class. Hot models get dedicated replicas; warm models share replicas; cold models load on demand.
 3. **Loading and eviction.** A replica loads weights from a node-local cache or object storage, warms up and joins the router; under memory pressure it evicts the least recently used model or adapter (Figure 79.5).
-4. **Adapters.** Engines such as vLLM load LoRA adapters at runtime and batch requests for different adapters together; S-LoRA stores adapters in a unified paged memory pool with the KV cache and uses custom kernels for heterogeneous-adapter batches, serving thousands of adapters on one GPU [Sheng et al. 2024a]; Punica introduced a batched kernel (SGMV) for the same purpose [Chen et al. 2024]. The router should prefer replicas that already hold the requested adapter, a filter the Endpoint Picker of §79.6.3 also applies.
+4. **Adapters.** Engines such as vLLM, whose paged KV memory makes sharing a GPU among many sequences practical [Kwon et al. 2023], load LoRA adapters at runtime and batch requests for different adapters together; S-LoRA stores adapters in a unified paged memory pool with the KV cache and uses custom kernels for heterogeneous-adapter batches, serving thousands of adapters on one GPU [Sheng et al. 2024a]; Punica introduced a batched kernel (SGMV) for the same purpose [Chen et al. 2024]. The router should prefer replicas that already hold the requested adapter, a filter the Endpoint Picker of §79.6.3 also applies.
 5. **Model parallelism as multiplexing.** AlpaServe showed that splitting models across GPUs with model parallelism, even when each fits on one GPU, lets several models share a larger GPU group and absorb each other's bursts, improving SLO attainment for bursty multi-model workloads [Li et al. 2023].
 
 **Figure 79.5 — Lifecycle of a model on a serving replica.**
@@ -543,7 +534,7 @@ stateDiagram-v2
   Unloaded --> [*]: version retired
 ```
 
-**Reading the diagram.** A version is registered once and may be loaded on many replicas. Loading copies weights from storage (the storage boundary: node cache, then object store) into GPU memory; warming profiles memory and captures CUDA Graphs (§73.15); the router adds the replica only after the readiness probe passes. Eviction goes through draining, so streams in progress finish rather than break. Failure points: loading fails on out-of-memory when the placement controller's memory estimate is wrong, and a model flapping between Serving and Unloaded under memory pressure thrashes the cache. Scaling: popular models are held on several replicas; rare ones on one, or none until called.
+**Reading the diagram.** Loading copies weights from storage (node cache, then object store: the storage boundary) into GPU memory; warming captures CUDA Graphs (§73.15); the router adds the replica only after the readiness probe. Eviction drains first, so streams finish. Failure points: loading fails on out-of-memory when the placement controller's memory estimate is wrong, and a model flapping between Serving and Unloaded under memory pressure thrashes the cache. Scaling: popular models are held on several replicas; rare ones on one, or none until called.
 
 #### Mathematical foundations: adapter memory
 
@@ -587,10 +578,10 @@ Inference models span from a 33M-parameter reranker to a 70B model needing four 
 
 #### How it works internally
 
-1. **Pools by shape.** Kubernetes exposes GPUs through a device plugin as an extended resource (`nvidia.com/gpu`) [Kubernetes Docs: Schedule GPUs]; with MIG enabled, the NVIDIA GPU Operator can expose each slice profile as its own resource. QuickBite runs an **H100 pool** of 8-GPU NVLink nodes for LLMs (whole GPUs, tensor-parallel groups kept inside one node) and a **MIG pool** for encoders.
-2. **Pack small models.** First-fit decreasing by memory, subject to each replica's compute share and SLO class; latency-critical models go on MIG slices (hardware isolation), cooperative batch models may share a slice or use time-slicing.
-3. **Spread for availability.** Replicas of one model go to different nodes and, where possible, failure zones (topology spread constraints).
-4. **Autoscale on LLM signals.** Scale on queue depth, KV-cache usage and TTFT p95, or on tokens per second per replica against a measured capacity at the SLO, not on GPU utilization, which reads near 100% whenever anything runs (§73.15). Schedule pre-scaling for known peaks. Energy-aware controllers such as DynamoLLM also reconfigure instance count, parallelism and GPU frequency as load changes [Stojkovic et al. 2025].
+1. **Pools by shape.** Kubernetes exposes GPUs through a device plugin as `nvidia.com/gpu` [Kubernetes Docs: Schedule GPUs]; with MIG, each slice profile can be its own resource. QuickBite runs an **H100 pool** of 8-GPU NVLink nodes for LLMs and a **MIG pool** for encoders.
+2. **Pack small models** first-fit decreasing by memory and compute; latency-critical models get MIG slices, cooperative batch models may time-slice.
+3. **Spread replicas** across nodes and failure zones.
+4. **Autoscale on LLM signals**: queue depth, KV-cache usage, TTFT p95 or tokens per second against measured capacity, never GPU utilization (§73.15); pre-scale for known peaks. Energy-aware controllers such as DynamoLLM also reconfigure instance count, parallelism and GPU frequency as load changes [Stojkovic et al. 2025].
 5. **Plan for cold starts.** A new replica needs a node, an image, weights and warm-up; size warm headroom for the time this takes (Figure 79.7).
 
 **Figure 79.6 — QuickBite's inference node pools and MIG layout.**
@@ -614,7 +605,7 @@ flowchart TB
   OBJ -.->|load| MIGP
 ```
 
-**Reading the diagram.** The scheduler places pods synchronously onto two node pools by label and taint. LLM replicas take whole H100s inside NVLink nodes, and a four-GPU group is held inside one node for tensor parallelism. A second pool partitions H100s with MIG, giving each encoder or reranker an isolated slice with its own memory and compute. The autoscaler adjusts replica counts asynchronously from LLM signals; weights load asynchronously from object storage, the storage boundary and the slowest step of a cold start. Failure points: a node loss takes all replicas on it (spread replicas across nodes); MIG layouts are fixed until reconfigured, which requires the GPU to be idle. Scaling: add nodes to a pool; change MIG profiles only during planned maintenance.
+**Reading the diagram.** The scheduler places pods synchronously by label and taint: LLM replicas take whole H100s, with four-GPU groups kept inside one NVLink node; the MIG pool gives each encoder an isolated slice. The autoscaler acts asynchronously on LLM signals; weights load from object storage, the storage boundary and slowest cold-start step. Failure points: a node loss takes all replicas on it (spread replicas across nodes); MIG layouts are fixed until reconfigured, which requires the GPU to be idle. Scaling: add nodes to a pool; change MIG profiles only during planned maintenance.
 
 #### Mathematical foundations: capacity and warm headroom
 
@@ -710,7 +701,7 @@ sequenceDiagram
   end
 ```
 
-**Reading the diagram.** The gateway makes a synchronous reservation against the bucket store before calling the engine. If granted, the request runs and streams; on completion the gateway adjusts the bucket by the difference between estimate and actual and asynchronously writes the actual usage to the ledger, which is the record billing trusts. If denied, the client receives 429 with a computed retry time and no GPU time is spent. Failure points: if the gateway crashes between reservation and reconciliation the reservation leaks, so reservations carry a TTL; if the bucket store is unreachable, the gateway falls back to local per-node buckets at a fraction of the limit. Scaling: buckets shard by tenant key.
+**Reading the diagram.** The gateway reserves synchronously before calling the engine. If granted, the request runs; on completion the bucket is adjusted by estimate minus actual, and actual usage goes asynchronously to the ledger, the record billing trusts. If denied, the client gets 429 and no GPU time is spent. Failure points: if the gateway crashes between reservation and reconciliation the reservation leaks, so reservations carry a TTL; if the bucket store is unreachable, the gateway falls back to local per-node buckets at a fraction of the limit. Scaling: buckets shard by tenant key.
 
 #### Mathematical foundations
 
@@ -832,15 +823,6 @@ What to notice:
 *Evidence: Primary* — vendor and project documentation.
 :::
 
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Tenant exceeds TPM yet never sees 429 | Output tokens not charged | Ledger tokens ≫ limit | Enable reconciliation | Post-debit or reconcile mode |
-| False 429s at peak | `max_tokens` reservations held in flight | High 429 rate with spare GPU | Lower $\hat o$ | Percentile estimates; clamp `max_tokens` |
-| Reservations leak after crashes | No reconciliation for lost requests | Bucket balance drifts down | Expire reservations by TTL | TTL on every reservation |
-| Limits differ per gateway node | Local buckets only | Tenant throughput scales with node count | Central store | Shared store with local cache (§22.8) |
-
 ## 79.10 Tenant isolation
 
 ### 79.10.1 Noisy neighbors on shared GPUs
@@ -876,7 +858,7 @@ flowchart LR
   DQ --> DR["Dedicated replicas"]
 ```
 
-**Reading the diagram.** Each shared tenant's requests wait in its own queue; the fair scheduler admits synchronously into the shared replicas' running batch, choosing the backlogged tenant with the least weighted service while keeping a reserve of batch slots for P0. A tenant on the dedicated tier bypasses the shared scheduler entirely. Queues live in the engine or router memory, so a replica crash loses queued requests, which clients retry. Failure points: a weight misconfiguration starves a tenant; dedicated replicas idle when their tenant is quiet. Scaling: add shared replicas for the pool, dedicated replicas per contract.
+**Reading the diagram.** Each tenant waits in its own queue; the fair scheduler admits synchronously into the shared batch from the tenant with the least weighted service, keeping slots reserved for P0. The dedicated tier bypasses it. Queues live in memory, so a crash loses queued requests, which clients retry. Failure points: a weight misconfiguration starves a tenant; dedicated replicas idle when their tenant is quiet. Scaling: add shared replicas for the pool, dedicated replicas per contract.
 
 ::: formula
 **Weighted service in GPU-cost units**
@@ -945,7 +927,7 @@ flowchart LR
   PEU1 -.->|logs stay in EU| LEU[("EU log store")]
 ```
 
-**Reading the diagram.** Each user reaches the nearest gateway. The EU gateway sends traffic synchronously to its local pool and fails over (dotted, used only on failure) to a second EU region or to a provider's EU endpoint; the crossed edge shows that policy forbids sending EU prompts to the US pool even when it has spare GPUs. The US gateway has its own pool and spillover. Logs are written to a store inside the jurisdiction, a storage boundary that must follow the same rules as inference. Failure points: a provider's regional endpoint may hit its own capacity limits during a wide outage; a fallback model may answer worse (Chapter 78). Scaling: add regions per jurisdiction; spillover absorbs short peaks without owning GPUs.
+**Reading the diagram.** The EU gateway serves synchronously from its local pool and fails over (dotted, only on failure) to a second EU region or a provider's EU endpoint; the crossed edge shows policy forbidding EU prompts in the US pool even when it has spare GPUs. Logs stay in a store inside the jurisdiction, a storage boundary under the same rules. Failure points: a provider's regional endpoint may hit its own capacity limits during a wide outage; a fallback model may answer worse (Chapter 78). Scaling: add regions per jurisdiction; spillover absorbs short peaks without owning GPUs.
 
 ::: formula
 **Standby capacity versus spillover**
@@ -1041,7 +1023,7 @@ $$S = h\,C_\text{gen} - C_\text{lookup} - h\,f\,C_\text{err} \qquad f^\star = \f
 
 #### How it works internally
 
-1. **One usage record per model call**, emitted by the gateway: tenant, alias, resolved deployment and version, region, input/cached/output tokens (provider-reported), TTFT, TPOT, end-to-end latency, finish reason, retries and fallbacks, cache status and computed cost.
+1. **One usage record per call** from the gateway: tenant, alias, deployment, region, input/cached/output tokens, TTFT, TPOT, latency, finish reason, retries, cache status and cost.
 2. **Standard attribute names.** The OpenTelemetry semantic conventions for generative AI define span attributes such as `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`, and metrics for token usage and operation duration, plus server-side TTFT and time-per-output-token metrics; they were still marked as in development as of 2026 [OpenTelemetry: GenAI semantic conventions].
 3. **Traces across agent steps.** The agent framework opens a root span per task; each model call, tool call and retrieval is a child span carrying the same trace context through the gateway (§40.6), so cost and latency roll up per task.
 4. **Content logging under policy.** Prompts and responses go to a separate, redacted, access-controlled store with short retention, sampled for most tenants (§79.14); metrics and traces carry no content.
@@ -1069,7 +1051,7 @@ sequenceDiagram
   A-)O: root span: task cost and outcome
 ```
 
-**Reading the diagram.** The agent runtime propagates one trace context through every call. The gateway forwards model calls synchronously and emits a span per call asynchronously to the telemetry collector, with token counts, TTFT and cost; tools emit their own spans; the runtime closes a root span with the task's total cost and outcome. The collector feeds the metrics and trace stores, the storage boundary. Failure points: a tool or provider that drops the trace header breaks the chain; high-cardinality attributes (user IDs, prompt hashes) on metrics explode storage, so they belong on traces and logs. Scaling: sample traces by tenant and by outcome, keeping all errors.
+**Reading the diagram.** One trace context flows through every call. The gateway forwards model calls synchronously and emits spans asynchronously with tokens, TTFT and cost; tools emit their own; the runtime closes a root span with task cost and outcome. The collector feeds the trace and metric stores, the storage boundary. Failure points: a tool or provider that drops the trace header breaks the chain; high-cardinality attributes (user IDs, prompt hashes) on metrics explode storage, so they belong on traces and logs. Scaling: sample traces by tenant and by outcome, keeping all errors.
 
 ::: formula
 **Cost of one model call and of one task**
@@ -1141,7 +1123,7 @@ flowchart LR
   LOG -.->|role, reason| AUD[("Audit log")]
 ```
 
-**Reading the diagram.** The gateway classifies the request and replaces identifiers with reversible tokens, storing the mapping in a vault, the most sensitive storage boundary. The router sends personal data only to self-hosted pools or to providers whose contract (for example zero data retention) the data class allows. A redacted copy goes asynchronously to the prompt log store under a per-tenant key and short TTL, and every read of that store is recorded in the audit log. Failure points: redaction misses (NER recall is never 100%), so the provider control is defense in depth, not a substitute; the vault and keys must be as available as the gateway. Scaling: redaction runs on gateway CPUs; NER models may need their own pool.
+**Reading the diagram.** The gateway replaces identifiers with reversible tokens kept in a vault, the most sensitive storage boundary. The router sends personal data only to self-hosted pools or providers whose contract (such as zero data retention) the data class allows. Redacted copies go asynchronously to a short-TTL log store under per-tenant keys, and every read is audited. Failure points: redaction misses (NER recall is never 100%), so the provider control is defense in depth, not a substitute; the vault and keys must be as available as the gateway. Scaling: redaction runs on gateway CPUs; NER models may need their own pool.
 
 ::: warning
 **Warning — Retention hides in derived copies.** Zero data retention at the provider does nothing for your own gateway logs, caches, traces and evaluation sets. Inventory every store that holds content, give each a TTL and an erasure path, and test erasure end to end.
@@ -1152,7 +1134,6 @@ flowchart LR
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Names reach provider logs | NER misses a name | Sampled audits of outbound prompts | Request deletion under contract | Layered controls; ZDR for personal data |
-| Debug logging stores raw prompts | Verbose mode enabled in production | Content in metric or trace stores | Purge; rotate keys | Content only through the logging API |
 | Engineer browses customer chats | Broad read access | Audit log anomaly | Revoke | Role, reason and approval for content reads |
 | Erasure request incomplete | Copy in cache or eval set | Erasure test fails | Purge copies | Per-tenant keys and data inventory |
 
@@ -1301,3 +1282,129 @@ flowchart TB
 ::: recommendation
 **Recommendation — Build the control point, rent the GPUs until the numbers say otherwise.** The gateway, ledger and policy layer are worth owning early because they make every later decision reversible; self-hosted pools are worth owning when a workload's volume, data class or custom model justifies them.
 :::
+
+## 79.17 Summary and revision notes
+
+::: summary
+- An AI platform gives product teams, agents and batch jobs one governed path to models; the control plane stays off the request path.
+- The gateway authenticates, meters tokens, normalizes provider APIs, streams without buffering and retries only before the first byte; its overhead budget $B_\text{gw} = S_\text{TTFT} - T_\text{net} - T_\text{engine} - M$ was 90 ms for support chat, of which proxying used 9 ms.
+- The router picks a deployment by policy, health, priority and cost, then a replica by outstanding tokens and bounded prefix affinity; in simulation, unbounded affinity reached 92% prefix hits but a 4.2 s TTFT hot spot, while the bound kept 91% hits with the best TTFT.
+- Multi-LoRA serving puts team variants on one base: a rank-16 adapter of the 7B model is 33.6 MB.
+- Size pools as $\lceil \lambda g_\text{req}/\rho \rceil + r$ with warm headroom for cold starts; QuickBite's 7B pool needs 5 GPUs at peak, 2 off-peak, absorbs both batch tenants at zero marginal cost, and is still only 11% utilized.
+- Quotas count tokens: reserve $n_\text{in} + \hat o$, reconcile with actual usage, allow debt; reserving `max_tokens` wastes quota, ignoring output leaks it.
+- Fair scheduling in GPU-cost units protects throughput; latency needs priority caps on batch slots; dedicated tiers buy stronger isolation.
+- Multi-region AI is bound by GPU scarcity and residency, not latency; spillover to a compliant provider costs about \$3.51 a month against \$3,650 of standby GPUs.
+- Exact and prefix caches are safe; a semantic answer cache pays only below a false-hit rate of $f^\star$, 0.07% for support chat.
+- Usage records carry input, cached and output tokens, TTFT, TPOT and cost; content logs are redacted, short-lived and audited.
+- Charge idle capacity to the tenants whose peaks create it; break-even $V^\star = F/(p - c)$ is about 102.5 billion tokens a month for the chatbot, ten times QuickBite's volume.
+:::
+
+## 79.18 Knowledge checkpoint
+
+1. Name the three pressures that lead organizations to build an AI platform.
+2. Which components belong to the data plane and which to the control plane?
+3. Why may a gateway retry a failed LLM call before the first token but not after?
+4. Name the three timeouts an LLM gateway needs.
+5. Why is request count a poor load signal for LLM replicas?
+6. What failure does unbounded prefix affinity cause, and how does the bound fix it?
+7. How large is a rank-8 LoRA adapter on the four attention projections of the 7B model in FP16?
+8. Why should LLM pools not autoscale on GPU utilization?
+9. A tenant reserves `max_tokens` at admission. What goes wrong at peak?
+10. Why does fair sharing of throughput not protect a P0 tenant's TPOT?
+11. Why is multi-region failover for AI usually limited by residency and capacity rather than latency?
+12. Why is a semantic cache of answers risky for a support chatbot?
+
+<details><summary>Answers</summary>
+
+1. Governance, cost and reuse.
+2. Data plane: gateway, router, serving pools, caches, log stream. Control plane: registry, policy, quotas configuration, billing, placement and autoscaling controllers.
+3. Before the first token the client has seen nothing, so a retry is invisible; after it, a retry bills again and may contradict text already shown.
+4. TTFT timeout, idle-stream timeout and an overall deadline.
+5. Request cost varies by 100× and output length is unknown at arrival; outstanding tokens and KV usage track real load.
+6. A hot shared prefix piles onto one replica; falling back to least-loaded above $\max(A, \beta \min L)$ prevents the hot spot.
+7. $32 \times 4 \times 8 \times 8{,}192 \times 2 = 16.8$ MB.
+8. It reads near 100% whenever any request runs, so it never scales in; use queue depth, KV usage and TTFT p95.
+9. Unused reservations held in flight consume burst capacity, producing false 429s while GPUs have room.
+10. Batch work admitted within its fair share still enlarges the batch and lengthens every decode step; a slot cap or priority preemption is needed.
+11. Extra round trips are small against TTFT, but prompts may not leave a jurisdiction and GPU capacity may be unavailable in the target region.
+12. A false hit returns another customer's or an outdated answer, and the error cost dwarfs the generation cost saved.
+
+</details>
+
+## 79.19 Interview questions
+
+### Basic
+
+**Q1. What does a model gateway do that a generic API gateway does not?**
+**Answer.** It understands the payload: counts and estimates tokens, enforces token quotas, translates between provider schemas, relays streamed events without buffering, retries only before the first token, reads provider usage reports and emits cost-bearing usage records.
+
+**Q2. How would you rate-limit tenants of an LLM API?**
+**Answer.** Two token buckets per tenant, RPM and TPM; reserve prompt tokens plus an output estimate at admission; reconcile with actual usage at completion, allowing debt; return 429 with Retry-After; separate tiers for interactive and batch traffic.
+
+### Intermediate
+
+**Q3. Your pool's TTFT p99 spikes every minute although average load is moderate. What do you suspect?**
+**Answer.** A burst sharing one prefix routed by unbounded prefix affinity, or a batch tenant flooding shared batches. Check per-replica queue depth; add a load bound, per-tenant queues and a P2 slot cap.
+
+**Q4. How would you allocate a shared GPU pool's cost among an online and a batch tenant?**
+**Answer.** Meter GPU-seconds per tenant; charge valley-only tenants the busy rate for what they consume and charge the remaining idle capacity to the tenant whose peak and SLO set the pool size; publish per-alias rates.
+
+### Advanced
+
+**Q5. Design an AI platform for 30 teams using three providers and two self-hosted models in two jurisdictions.**
+**Answer.** Regional gateways with virtual keys, token quotas and redaction; a router that filters by data class before health and cost; multi-LoRA pools with bounded prefix affinity and LLM-signal autoscaling; per-tenant fair queues and dedicated tiers; residency-aware spillover; a usage ledger feeding chargeback; GenAI tracing; audited, short-retention logs.
+
+**Q6. Should a company with 10 billion tokens a month self-host?**
+**Answer.** Compute $V^\star = F/(p - c)$ with $F$ including the minimum redundant fleet and staff and $c$ at realistic utilization; for a 7B-class chatbot against a small-model API, $V^\star$ was about 100 billion tokens, so buy, unless custom weights, data rules or measured quality justify self-hosting. Keep the gateway so the decision is reversible.
+
+## 79.20 Practical exercises
+
+1. Add a per-replica speed weight to `least_tokens` and `affinity_bounded` in the router simulator and report end-to-end p99.
+2. Make the router's view of replica caches approximate (it records only what it routed, and forgets after 60 s) and measure the loss in hit ratio.
+3. Extend the token-bucket simulator with a P0 and a P2 tenant sharing one pool limit, with P2 admitted only from capacity P0 leaves.
+4. Recompute Table 79.6 with overhead allocated by tokens instead of requests, and discuss which teams' incentives change.
+
+## 79.21 Design challenges
+
+1. **QuickBite at 10× volume.** Support chat grows to 750,000 queries a day and ops agents to 40,000 tasks. Re-run the capacity plan, the chargeback and the build-versus-buy decision for both workloads, including a 70B self-hosted option for agents.
+2. **Regulated enterprise tenant.** An enterprise customer of a B2B AI product requires dedicated capacity, EU-only processing, customer-managed keys and 7-day log retention. Design its tier on the platform and price it.
+
+## 79.22 References
+
+1. Bang, F. *GPTCache: An Open-Source Semantic Cache for LLM Applications Enabling Faster Answers and Cost Savings*. NLP-OSS Workshop, 2023.
+2. Chen, L., Ye, Z., Wu, Y., Zhuo, D., Ceze, L., Krishnamurthy, A. *Punica: Multi-Tenant LoRA Serving*. MLSys, 2024.
+3. Kwon, W., Li, Z., Zhuang, S., et al. *Efficient Memory Management for Large Language Model Serving with PagedAttention*. ACM SOSP, 2023.
+4. Li, Z., Zheng, L., Zhong, Y., et al. *AlpaServe: Statistical Multiplexing with Model Parallelism for Deep Learning Serving*. USENIX OSDI, 2023.
+5. Ong, I., Almahairi, A., Wu, V., et al. *RouteLLM: Learning to Route LLMs with Preference Data*. arXiv:2406.18665, 2024.
+6. Sheng, Y., Cao, S., Li, D., et al. *S-LoRA: Serving Thousands of Concurrent LoRA Adapters*. MLSys, 2024. [Sheng et al. 2024a]
+7. Sheng, Y., Cao, S., Li, D., et al. *Fairness in Serving Large Language Models*. USENIX OSDI, 2024. [Sheng et al. 2024b]
+8. Srivatsa, V., He, Z., Abhyankar, R., Li, D., Zhang, Y. *Preble: Efficient Distributed Prompt Scheduling for LLM Serving*. ICLR, 2025.
+9. Stojkovic, J., Zhang, C., Goiri, Í., Torrellas, J., Choukse, E. *DynamoLLM: Designing LLM Inference Clusters for Performance and Energy Efficiency*. IEEE HPCA, 2025.
+10. Sun, B., Huang, Z., Zhao, H., et al. *Llumnix: Dynamic Scheduling for Large Language Model Serving*. USENIX OSDI, 2024.
+11. Zheng, L., Yin, L., Xie, Z., et al. *SGLang: Efficient Execution of Structured Language Model Programs*. NeurIPS, 2024.
+12. Kubernetes. *Introducing Gateway API Inference Extension*. Kubernetes Blog, June 2025. https://kubernetes.io/blog/2025/06/05/introducing-gateway-api-inference-extension/
+13. Kubernetes SIG Network. *Gateway API Inference Extension Documentation*. https://gateway-api-inference-extension.sigs.k8s.io/
+14. Kubernetes. *Schedule GPUs*. https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/
+15. KServe. *KServe Documentation*. https://kserve.github.io/website/
+16. LiteLLM. *LiteLLM Documentation*. https://docs.litellm.ai/
+17. Envoy AI Gateway. *Envoy AI Gateway Documentation: Usage-based rate limiting*. https://aigateway.envoyproxy.io/docs/capabilities/traffic/usage-based-ratelimiting
+18. vLLM. *vLLM Documentation*. https://docs.vllm.ai/
+19. SGLang. *SGLang Documentation*. https://docs.sglang.ai/
+20. NVIDIA. *Multi-Instance GPU User Guide*. https://docs.nvidia.com/datacenter/tesla/mig-user-guide/
+21. OpenTelemetry. *Semantic Conventions for Generative AI Systems*. https://opentelemetry.io/docs/specs/semconv/gen-ai/
+22. OpenAI. *Your data* (API data controls). https://developers.openai.com/api/docs/guides/your-data
+23. OpenAI. *Prompt caching*. https://platform.openai.com/docs/guides/prompt-caching
+24. Anthropic. *API and data retention*. https://platform.claude.com/docs/en/manage-claude/api-and-data-retention
+25. Anthropic. *Prompt caching*. https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+26. Google Cloud. *Vertex AI generative AI data governance*. (URL to confirm)
+27. Microsoft. *Provisioned throughput for Azure OpenAI*. Microsoft Learn. https://learn.microsoft.com/azure/ai-services/openai/concepts/provisioned-throughput
+28. Amazon Web Services. *Provisioned Throughput for Amazon Bedrock*. https://docs.aws.amazon.com/bedrock/latest/userguide/prov-throughput.html
+
+## 79.23 Open verification items
+
+- Gateway API Inference Extension: resource names (InferencePool; the model-to-pool resource, InferenceModel in the 2025 alpha API, reportedly renamed later) and picker signals, as of 2026; documentation site not reachable from the authoring environment.
+- OpenTelemetry GenAI conventions: attribute and metric names and stability status (including the `gen_ai.system` to `gen_ai.provider.name` change).
+- Provider data controls (OpenAI 30-day abuse-monitoring default and ZDR eligibility; Anthropic default API retention period, reported as changed in 2025; Google Vertex AI ZDR conditions and URL).
+- Feature names for Envoy AI Gateway token limits, LiteLLM limits, NVIDIA Dynamo and llm-d KV-aware routing, Azure and Bedrock provisioned throughput (as of 2026).
+- Bibliographic details for Preble (ICLR 2025), DynamoLLM (HPCA 2025) and GPTCache (NLP-OSS 2023); RouteLLM's venue.
+- Prompt-caching discounts and the 10% cached-input price are illustrative; cold-start and tokenizer timings are assumptions.
