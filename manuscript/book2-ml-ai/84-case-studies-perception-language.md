@@ -19,13 +19,13 @@ Each case emphasizes a different hard problem, summarized in Table 84.1.
 
 After this chapter you should be able to:
 
-- Design a consent-scoped face recognition service end to end (detection, alignment, embedding, 1:N matching), select a threshold from false match and false non-match rates, and show why the false positive identification rate grows with gallery size.
-- Measure demographic differentials in a biometric system and turn biometric privacy law (BIPA, GDPR Article 9, the EU AI Act) into concrete requirements: opt-in, purpose limitation, retention and verifiable deletion.
-- Design a multi-tenant image classification API, size its preprocessing (CPU and GPU) and model fleets, configure dynamic batching, and compute cost per 1,000 images.
-- Version and roll out thousands of customer models with a shared backbone and per-tenant heads, and explain when that architecture stops fitting.
-- Design a streaming speech recognizer with partial results, end-pointing and contextual biasing; decompose its latency; compute real-time factor and streams per GPU; and evaluate it with word error rate.
-- Decide between on-device and cloud inference for perception and speech on latency, privacy, cost and quality.
-- Design a translation service for text and speech, choose between a cascade and an end-to-end model, set a wait-k policy from an average-lagging budget, serve many languages, and evaluate with BLEU, COMET and human review.
+- Design a consent-scoped face recognition service (detection, alignment, embedding, 1:N matching), choose a threshold from FMR and FNMR, and show why false positive identification grows with gallery size.
+- Measure demographic differentials and turn biometric law (BIPA, GDPR Article 9, the EU AI Act) into opt-in, purpose limitation, retention and verifiable deletion.
+- Size the preprocessing and GPU fleets of a multi-tenant image classification API, configure dynamic batching and compute cost per 1,000 images.
+- Version thousands of customer models with a shared backbone and per-tenant heads.
+- Design streaming speech recognition with partials, end-pointing and contextual biasing; decompose its latency; compute real-time factor; evaluate with word error rate.
+- Decide between on-device and cloud inference on latency, privacy, cost and quality.
+- Design text and speech translation: cascade versus end-to-end, wait-k from an average-lagging budget, many-language routing, and evaluation with BLEU, COMET and human review.
 - Run each design as a 45-minute interview, including the follow-ups that separate senior from staff answers.
 
 ## 84.2 Prerequisites
@@ -729,7 +729,7 @@ The backbone runs one batched forward pass for requests from many tenants, becau
 **Interpretation.** Batching costs at most 34 ms and buys a fivefold throughput gain over batch size 1. **Engineering implication.** The GPU is not the latency problem; image transfer is. Keep $D_{\max}$ small for online traffic and run batch jobs at $B = 64$ on separate queues so they never sit in front of online requests.
 :::
 
-Batch-job traffic uses a lower-priority queue on the same GPUs; the scheduler always drains online first, giving batch the leftover capacity of Figure 84.5's troughs.
+Batch-job traffic uses a lower-priority queue on the same GPUs; the scheduler always drains online first, giving batch the leftover capacity of the daily troughs (§84.5.4).
 
 #### Many customer models: heads, versions and the backbone upgrade
 
@@ -892,7 +892,7 @@ sequenceDiagram
 
 Design the speech recognition behind a phone's voice assistant and dictation keyboard. The user speaks; words appear on screen while they talk (**partial results**); when they stop, the system decides that the utterance has ended (**end-pointing**), produces a **final** transcript and hands it to the assistant or the text field. "Call Maya Chen" must work even though "Chen" is rare in general speech, because Maya Chen is in this user's contacts.
 
-The ML formulation is sequence transduction: map a sequence of acoustic frames (log-mel features every 10 ms) to a sequence of word pieces, trained on transcribed audio with a sequence loss. ML is warranted because speech varies with speaker, accent, noise and microphone, and end-to-end neural models replaced the separate acoustic, pronunciation and language models of earlier systems while improving accuracy [Graves 2012; He et al. 2019; Radford et al. 2023].
+The ML formulation is sequence transduction: map acoustic frames (log-mel features every 10 ms) to word pieces, trained on transcribed audio with a sequence loss. ML is warranted because speech varies with speaker, accent and noise, and end-to-end neural models replaced the separate acoustic, pronunciation and language models of earlier systems [Graves 2012; He et al. 2019].
 
 The distinctive hard problem is **streaming under a latency budget**: the system must emit words before the sentence is finished and decide when it is finished, both with incomplete information, on a phone or in the cloud. A second problem is **personalization without collecting personal data**: biasing toward the user's contacts and vocabulary while keeping audio and contact lists private.
 
@@ -1020,7 +1020,7 @@ CREATE TABLE transcript (
 );
 ```
 
-Labels are human transcripts with a delay of days to weeks and a cost of several hours of transcriber time per hour of audio, so only a sample (for example 200 of the 4,444 donated hours per day) is transcribed, stratified by language, slice and model confidence (active learning, §63.9). Training data is a mix of transcribed audio, a much larger pool of machine-labeled audio (teacher model output, filtered by confidence), and text-only data for the language model. Test sets are frozen per release and never used for training. Bias phrases live only on the device and in request memory.
+Labels are human transcripts, delayed by days to weeks and costing several hours of work per audio hour, so only a sample (say 200 of 4,444 donated hours per day) is transcribed, stratified by language, slice and confidence (§63.9). Training also uses teacher-labeled audio filtered by confidence and text-only data. Test sets are frozen per release. Bias phrases live only on the device and in request memory.
 
 ### 84.6.7 High-level architecture
 
@@ -1052,13 +1052,13 @@ flowchart LR
   TRN -.->|weekly| GPU
 ```
 
-**Reading the diagram.** On the **phone**, voice activity detection gates the microphone so silence is not processed; if an on-device model is installed for the language, the whole recognition runs locally with an INT8 model, biased by a list built from contacts and app names that never leaves the device. Otherwise the client opens a **streaming connection** (solid arrows are the synchronous stream) to a gateway that pins the stream to one GPU worker, because the encoder and decoder keep per-stream state. The scheduler groups streams into batched encoder steps; beam search with contextual biasing produces partials; the end-of-query detector decides when to finalize; a second pass rescores and formats the final hypothesis. Only donated audio of opted-in users flows asynchronously (dotted) to the encrypted donation store and the training pipeline, which ships models to both tiers. Failure points: a GPU worker crash (stream state lost), gateway overload (reconnect storms, §9.9.6), and the model update channel to devices. Scaling: GPU workers by concurrent streams; gateways by connections.
+**Reading the diagram.** On the **phone**, voice activity detection gates the microphone; with an on-device model for the language, recognition runs locally with an INT8 model, biased by a contact list that never leaves the device. Otherwise the client opens a **streaming connection** (solid arrows) to a gateway that pins the stream to one GPU worker, because the model keeps per-stream state. The scheduler batches encoder steps across streams; beam search with biasing produces partials; the end-of-query detector finalizes; a second pass rescores and formats. Only opted-in donated audio flows asynchronously (dotted) to the donation store and training pipeline, which ships models to both tiers. Failure points: worker crashes (stream state lost), reconnect storms (§9.9.6) and the device update channel. Scaling: workers by concurrent streams, gateways by connections.
 
 ### 84.6.8 Detailed component design
 
 #### Model: why a transducer streams and an attention decoder does not
 
-Three end-to-end families exist. **CTC** emits a label or blank per frame, assuming outputs independent given the audio [Graves et al. 2006]. **Attention encoder–decoder** models, such as Listen, Attend and Spell [Chan et al. 2016] and Whisper, attend over the *entire* encoded utterance before emitting each token; they are accurate but not naturally streaming. Whisper, trained on 680,000 hours of weakly supervised multilingual audio, processes 30-second windows and is robust across accents and noise, which makes it a strong offline and long-form model and a good teacher, but a poor fit for 300 ms partials without chunking tricks [Radford et al. 2023]. The **RNN Transducer (RNN-T)** combines an audio encoder, a **prediction network** that sees the tokens emitted so far, and a **joint network** that, at each frame, decides whether to emit a token or advance to the next frame [Graves 2012]. Because the encoder can be made causal (limited lookahead), the transducer emits words as audio arrives. Google described an all-neural streaming RNN-T that ran on Pixel phones, with quantization making it small and fast enough for on-device use [He et al. 2019].
+Three end-to-end families exist. **CTC** emits a label or blank per frame, assuming outputs independent given the audio [Graves et al. 2006]. **Attention encoder–decoder** models such as Listen, Attend and Spell [Chan et al. 2016] and Whisper attend over the *entire* encoded input before emitting tokens: accurate, but not naturally streaming. Whisper, trained on 680,000 hours of weakly supervised multilingual audio, processes 30-second windows and is robust across accents and noise, a strong offline model and teacher but a poor fit for 300 ms partials [Radford et al. 2023]. The **RNN Transducer (RNN-T)** combines an audio encoder, a **prediction network** over the tokens emitted so far, and a **joint network** that at each frame emits a token or advances [Graves 2012]; with a causal encoder it emits words as audio arrives. Google described an all-neural streaming RNN-T running on Pixel phones [He et al. 2019].
 
 **Figure 84.10 — Streaming transducer with contextual biasing and a second pass.**
 
@@ -1075,13 +1075,13 @@ flowchart LR
   LAS --> FIN[Final transcript]
 ```
 
-**Reading the diagram.** The causal encoder turns each 160 ms chunk of features into encoder frames without waiting for future chunks. For each frame, the joint network combines the encoder frame with the prediction network's summary of tokens emitted so far and outputs a distribution over word pieces plus *blank*. Beam search keeps the best few hypotheses, adds a bonus for prefixes of bias phrases, and feeds each emitted token back to the prediction network (the loop is what makes the model autoregressive in its outputs). Partials are the current best hypothesis. At the end-point, the n-best list is rescored by a second-pass model that sees the whole utterance, a design Google published as two-pass end-to-end recognition [Sainath et al. 2019]. The failure point is the loop: a biased token that is wrong is fed back and conditions everything after it, which is why boosts must be bounded.
+**Reading the diagram.** The causal encoder turns each 160 ms chunk into encoder frames without waiting for future audio. The joint network combines each frame with the prediction network's summary of emitted tokens and outputs word-piece probabilities plus *blank*. Beam search keeps the best hypotheses, adds bonuses for bias-phrase prefixes, and feeds emitted tokens back to the prediction network. At the end-point, a second pass that sees the whole utterance rescores the n-best list [Sainath et al. 2019]. The failure point is the loop: a wrongly biased token conditions everything after it, so boosts must be bounded.
 
 **Baseline first:** a CTC model with an external n-gram language model, which is simple to bias and to evaluate. **Production model:** a Conformer-encoder transducer [Gulati et al. 2020] of about 120 million parameters in the cloud, distilled (§67.8) into a smaller INT8 model for devices, with Whisper-class large models used offline as teachers to label untranscribed audio.
 
 #### Contextual biasing
 
-A general model rarely outputs "Chen" after "Maya". Biasing raises the score of hypotheses that are prefixes of known phrases during beam search: a phrase list is compiled into a small prefix tree (or weighted finite-state transducer) over word pieces, and each hypothesis that advances along it gets a log-probability bonus, withdrawn if the hypothesis leaves the phrase. This **shallow fusion** is cheap and needs no retraining [Aleksic et al. 2015]; **neural biasing** such as CLAS feeds the phrases into the model as an attention context [Pundak et al. 2018]. Two guardrails matter. Boosts must be bounded and applied mainly in contexts where the phrase class is expected ("call …", "text …"), or biasing hallucinates contacts into unrelated speech; and evaluation needs two numbers: recall of bias phrases that were spoken, and the **false-trigger rate** on utterances with no bias phrase. Privacy comes from placement: on device, the contact list never leaves the phone; in the cloud it is sent per request inside the stream config and dropped when the stream ends.
+A general model rarely outputs "Chen" after "Maya". **Shallow fusion** compiles the phrase list into a prefix tree over word pieces and gives a log-probability bonus to hypotheses advancing along it, withdrawn if they leave the phrase; it needs no retraining [Aleksic et al. 2015]. **Neural biasing** such as CLAS feeds the phrases to the model as attention context [Pundak et al. 2018]. Boosts must be bounded and applied mainly where the phrase class is expected ("call …"), or contacts get hallucinated into unrelated speech; evaluation therefore reports both bias-phrase recall and the **false-trigger rate** on utterances without bias phrases. On device the contact list never leaves the phone; in the cloud it travels in the stream config and is dropped when the stream ends.
 
 #### End-pointing
 
@@ -1186,7 +1186,7 @@ sequenceDiagram
   G->>W: release state, discard audio and bias list
 ```
 
-**Reading the diagram.** One stream stays on one worker because encoder caches and beam state live there. Audio frames arrive every 20 ms; the worker accumulates them and runs one batched encoder step per 160 ms chunk for all its streams. Partials flow back asynchronously as the beam changes; the end-point decision triggers the second pass and the final result. On close, state, audio and the bias list are discarded. Failure points: the worker dies mid-utterance (the gateway reassigns the stream, and the client replays its last two seconds of buffered audio, so the utterance survives with a short delay); the gateway drains for deployment (new streams go elsewhere, existing ones finish, §9.9.7); network stalls (the client falls back to on-device recognition if available). Scaling: stream slots per worker are the unit of capacity; the scheduler refuses new streams on a worker whose step time approaches the chunk period.
+**Reading the diagram.** One stream stays on one worker because encoder caches and beam state live there. Frames arrive every 20 ms; the worker runs one batched encoder step per 160 ms chunk for all its streams. Partials flow back asynchronously; the end-point triggers the second pass and the final. On close, state, audio and bias list are discarded. Failure points: a worker dies (the stream is reassigned and the client replays its last two seconds of buffered audio), a gateway drains for deployment (§9.9.7), the network stalls (fall back to on-device). Scaling: stream slots per worker are the unit of capacity, with admission refused as step time nears the chunk period.
 
 **Figure 84.12 — Write path: from donated audio to a new model on devices.**
 
@@ -1211,7 +1211,7 @@ sequenceDiagram
   REL->>REL: cloud canary, then staged device rollout
 ```
 
-**Reading the diagram.** All steps are batch and asynchronous. The sampler sends a stratified sample, weighted toward low-confidence and under-represented slices, to human transcribers; a large teacher model pseudo-labels the rest, kept only above a confidence threshold. Training produces a cloud model and a distilled, quantized device model. The evaluation gate checks frozen test sets per slice, entity accuracy, and measured latency and memory on the oldest supported devices. Release canaries the cloud model on a fraction of streams and rolls the device model out in stages with a kill switch. Failure points: pseudo-label errors reinforcing themselves (feedback loop), test-set contamination, and a device model that exceeds memory on old phones. Audio is deleted from the donation store after 90 days, transcripts after their consent period.
+**Reading the diagram.** All steps are batch and asynchronous. Transcribers receive a sample weighted toward low-confidence and under-represented slices; a teacher pseudo-labels the rest above a confidence threshold. Training yields a cloud model and a distilled, quantized device model; the gate checks per-slice WER, entity accuracy, and latency and memory on the oldest devices; release canaries the cloud model and stages the device rollout with a kill switch. Failure points: pseudo-label feedback loops, test-set contamination, and device models exceeding memory. Donated audio is deleted after 90 days.
 
 ### 84.6.10 Bottlenecks
 
@@ -1300,7 +1300,7 @@ sequenceDiagram
 
 Design a translation service for a communications platform. **Text translation** translates chat messages, documents and interface strings between any pair of 200 languages. **Speech translation** gives participants in a live meeting captions, and optionally synthesized speech, in their own language while the speaker is still talking. Enterprise tenants supply **glossaries**: their product names must never be translated, and their terms must be translated their way.
 
-The ML formulation is conditional sequence generation: given a source sequence (text, or audio) and a target language, generate the target text that maximizes adequacy and fluency; labels are human reference translations, plus large mined and back-translated parallel corpora. ML is warranted because translation is open-ended generation; neural models replaced phrase-based systems in production years ago [Vaswani et al. 2017; Johnson et al. 2017].
+The ML formulation is conditional sequence generation: given a source (text or audio) and a target language, generate an adequate and fluent translation; labels are human references plus mined and back-translated parallel corpora. Neural models replaced phrase-based systems in production years ago [Vaswani et al. 2017; Johnson et al. 2017].
 
 The distinctive hard problems are three. **Latency versus quality for simultaneous translation**: a translator who waits for the full sentence translates better but lags by a sentence, and word order differs between languages (a German verb may arrive last). **Many-language serving**: 200 languages are 39,800 directed pairs, far too many for one model per pair. **Control**: terminology, do-not-translate terms and formality must be honored by a model that generates freely.
 
@@ -1394,7 +1394,7 @@ CREATE TABLE direction_route (
 );
 ```
 
-The segment cache is a key–value store keyed by `hash(source text, src, tgt, model version, glossary version, formality)`, so a glossary or model change can never serve a stale translation. Training data is a corpus of `(src_lang, tgt_lang, source, target, origin, quality_score)` rows, with origin = human, mined or back-translated, and a per-row score from a quality-estimation model used for filtering. Labels for evaluation are human references and MQM annotations (§84.7.8), with a delay of weeks per release; user flags arrive within minutes but are sparse and biased toward visible errors.
+The segment cache is keyed by `hash(source, src, tgt, model version, glossary version, formality)`, so a model or glossary change can never serve a stale translation. Training rows are `(src_lang, tgt_lang, source, target, origin, quality_score)`, with origin human, mined or back-translated and a quality-estimation score for filtering. Evaluation labels are human references and MQM annotations, weeks per release; user flags arrive in minutes but are sparse.
 
 ### 84.7.7 High-level architecture
 
@@ -1421,13 +1421,13 @@ flowchart LR
   REG[(Route table and<br/>model registry)] --> RTE
 ```
 
-**Reading the diagram.** The **text path** is synchronous: the API checks the segment cache, resolves the tenant's glossary version, and the direction router sends the segment to a dedicated bilingual model for high-volume directions or to the multilingual model otherwise; post-processing restores masked terms, checks glossary compliance and formats the output. The **speech path** receives meeting audio via WebRTC at the media server (§9.7), runs streaming ASR (§84.6), and a segmenter applies the simultaneous policy, deciding how much source to commit before translating. Translations flow back as caption events over the meeting's WebSocket; optional speech synthesis feeds audio back into the media server (dotted, because it lags captions). Storage boundaries: segment cache, glossary store, route table. Failure points: ASR errors that propagate into translation, the router sending a direction to a model that does not support it, glossary service unavailability (fail to cached version). Scaling: bilingual and multilingual pools scale independently by token rate; ASR by streams.
+**Reading the diagram.** The **text path** is synchronous: cache check, glossary resolution, then the direction router picks a bilingual model for high-volume directions or the multilingual model; post-processing restores masked terms, checks the glossary and formats. The **speech path** takes meeting audio via WebRTC (§9.7) into streaming ASR (§84.6); a segmenter applies the simultaneous policy; captions return over the meeting's WebSocket, and optional synthesized speech returns to the media server (dotted, as it lags captions). Storage boundaries: segment cache, glossary store, route table. Failure points: ASR errors propagating, misrouted directions, glossary service outage (use the cached version). Scaling: model pools by token rate, ASR by streams.
 
 ### 84.7.8 Detailed component design
 
 #### Cascade or end-to-end
 
-A **cascade** chains ASR → MT → TTS. Each stage is trained on abundant data of its own kind, can be evaluated and improved separately, and exposes an intermediate transcript that glossaries, logging and captions in the source language can use. Its weaknesses are error propagation (ASR mistakes become fluent mistranslations), lost prosody and speaker voice, and summed latency. An **end-to-end** model translates speech directly into target text or speech: Translatotron showed direct speech-to-speech translation with a single sequence model [Jia et al. 2019], and SeamlessM4T offered one multitask model for speech and text input and output across about 100 languages [Seamless Communication et al. 2023]. End-to-end avoids compounding errors and can keep voice characteristics, but parallel speech data is scarce, terminology control is harder without an intermediate transcript, and each component cannot be fixed independently.
+A **cascade** chains ASR → MT → TTS. Each stage trains on abundant data of its own kind, is evaluated separately, and exposes a transcript that glossaries and source captions can use; its weaknesses are error propagation, lost voice and prosody, and summed latency. An **end-to-end** model translates speech directly: Translatotron showed direct speech-to-speech translation [Jia et al. 2019], and SeamlessM4T one multitask model for speech and text across about 100 languages [Seamless Communication et al. 2023]. It avoids compounding errors and can keep voice characteristics, but parallel speech data is scarce and terminology control is harder.
 
 **Choice:** a cascade for captions, because captions *are* the text, glossaries need text, and the ASR and MT stages already exist and are monitored; an end-to-end speech-to-speech model as an option for voice output in the top directions, evaluated against cascade plus TTS.
 
@@ -1499,13 +1499,13 @@ What to notice:
 **Interpretation.** One latency target implies a different $k$ per direction. **Engineering implication.** Store $k$ (or the adaptive policy's threshold) per direction in the route table, tuned on a quality-versus-AL curve from the direction's test set.
 :::
 
-The alternative in production is **re-translation**: translate the current partial sentence from scratch each time ASR updates, and let the caption change [Arivazhagan et al. 2020]. It works with any full-sentence MT model and gives full-sentence quality at the end of each sentence, at the cost of **flicker** (captions that change under the reader) and roughly three times the MT compute (§84.7.4). A **stability policy** caps flicker by showing only the prefix that has not changed for the last two updates, plus masking the final $m$ words. **Choice:** re-translation with a stability mask for the top directions, where existing high-quality bilingual models make it the cheapest path to quality, and wait-k models for the long tail of directions served by the multilingual model, where compute matters more.
+The alternative is **re-translation**: translate the current partial sentence from scratch on each ASR update and let the caption change [Arivazhagan et al. 2020]. It works with any full-sentence model, at the cost of **flicker** and about three times the MT compute (§84.7.4); a **stability mask** shows only the prefix unchanged over the last two updates. **Choice:** re-translation for the top directions, where strong bilingual models already exist, and wait-k for the long tail on the multilingual model, where compute matters more.
 
 #### Many languages: one multilingual model, many pairs, or pivoting
 
 Three options. **Pairwise models** give the best quality per direction for high-resource pairs but scale with $L(L-1)$. **Pivoting** through English needs only $2(L-1)$ models but doubles latency and compounds errors, and loses information English does not mark (formality, gender). **One multilingual model** with a target-language token serves all directions, transfers from high-resource to low-resource languages and can translate directions never seen in training [Johnson et al. 2017]. NLLB-200 scaled this to 200 languages, with a mixture-of-experts model and smaller distilled dense versions, evaluated on the FLORES-200 benchmark [NLLB Team 2022].
 
-**Design:** route by direction (Table `direction_route`). The 40 highest-volume directions, perhaps 80% of tokens, go to distilled bilingual or small multi-pair models, cheaper per token and better for those pairs; everything else goes to a 1.3-billion-parameter multilingual model; directions whose multilingual quality is poor are pivoted through English if that measures better. Each direction carries a quality tier from its last evaluation, shown to clients. Continuous batching across directions works for the multilingual model because the target-language token is just part of the input (§73.6).
+**Design:** route by direction (`direction_route`). The 40 highest-volume directions, perhaps 80% of tokens, go to distilled bilingual models, cheaper and better for those pairs; the rest go to the 1.3-billion-parameter multilingual model, or pivot through English where that measures better. Each direction's quality tier is shown to clients. Continuous batching mixes directions freely, since the target-language token is part of the input (§73.6).
 
 #### Terminology and glossary control
 
@@ -1519,7 +1519,7 @@ The production path applies (3) for glossary terms, (1) for do-not-translate ter
 
 #### Evaluation
 
-**BLEU** (§78.6.2) measures n-gram overlap with references; compute it with sacreBLEU's standard tokenization, or numbers are not comparable [Post 2018]. **chrF** works on character n-grams and suits morphologically rich languages [Popović 2015]. **COMET** is a learned metric that scores a translation given source and reference with a multilingual encoder trained on human judgments [Rei et al. 2020]; a large comparison found it ranked systems in agreement with humans more often than BLEU [Kocmi et al. 2021]. Learned metrics can be gamed and have their own biases, so the release gate for top directions is a human **MQM** evaluation, in which professional translators mark error spans by category and severity [Freitag et al. 2021]. Online, the experiment unit is the meeting or the conversation; guardrails are user flags per 1,000 segments, caption-off rate in meetings and post-edit distance for tenants who post-edit. Speech translation adds AL and flicker (fraction of displayed words later changed) to every report.
+**BLEU** (§78.6.2) measures n-gram overlap with references; use sacreBLEU's standard tokenization or numbers are not comparable [Post 2018]. **chrF** uses character n-grams and suits morphologically rich languages [Popović 2015]. **COMET** is a learned metric scoring a translation given source and reference [Rei et al. 2020]; a large comparison found it agreed with human system rankings more often than BLEU [Kocmi et al. 2021]. Because learned metrics have their own biases, the gate for top directions is human **MQM** evaluation, in which professional translators mark error spans by category and severity [Freitag et al. 2021]. Online guardrails, with the conversation as the unit: flags per 1,000 segments, caption-off rate and post-edit distance; speech adds AL and flicker.
 
 ### 84.7.9 Data flow
 
@@ -1547,7 +1547,7 @@ sequenceDiagram
   Q-->>L: caption segment 7, final true
 ```
 
-**Reading the diagram.** Audio reaches ASR through the media server; ASR partials flow to the segmenter, which decides, under the direction's policy, what source prefix to send. The MT model translates the prefix (re-translation) or extends its output (wait-k); the post-processor restores masked terms and checks the glossary, then sends a caption event over the listener's WebSocket. When ASR finalizes the sentence, a final translation replaces the draft, and `stable_len` keeps the words the listener has already read in place where possible. All arrows inside the pipeline are asynchronous stream events. Failure points: an ASR error (it is translated fluently; showing source captions alongside helps), MT overload (fall back to finals only, lowering cost and raising lag), and listener network loss (captions resume from the latest segment). Scaling: one pipeline per meeting and target language, packed onto shared GPU pools.
+**Reading the diagram.** ASR partials flow to the segmenter, which decides under the direction's policy what source prefix to send; MT re-translates the prefix or extends its output; the post-processor restores terms, checks the glossary and sends a caption event. When ASR finalizes, a final translation replaces the draft, with `stable_len` keeping already-read words in place. All arrows are asynchronous stream events. Failure points: ASR errors (show source captions alongside), MT overload (fall back to finals only) and listener disconnects (resume from the latest segment). Scaling: one pipeline per meeting and target language on shared GPU pools.
 
 **Figure 84.15 — Write path: a tenant updates a glossary.**
 
@@ -1569,7 +1569,7 @@ sequenceDiagram
   GS-->>TR: version 13 within 1 minute
 ```
 
-**Reading the diagram.** A glossary edit creates an immutable new version after validation (for example, warning about terms that are also common words, or a missing inflection rule for a German noun). The new version is published asynchronously to API instances' local caches; because the segment cache key includes the glossary version, old translations are never served for the new glossary, and no cache flush is needed. Requests that pin a version keep it, giving tenants reproducible output for regulated documents. Failure points: the glossary service is down (API uses the last cached version and marks responses), and a bad glossary (tenant rolls back by pointing to the previous version). Scaling: glossaries are small and read-heavy, so local caching is enough.
+**Reading the diagram.** An edit creates an immutable version after validation (for example, warning about terms that are also common words). It is published asynchronously to API caches; since the segment cache key includes the glossary version, no flush is needed and old translations are never served. Pinned versions give reproducible output. Failure points: glossary service down (use cached version) and a bad glossary (roll back to the previous version). Scaling: small, read-heavy data cached locally.
 
 ### 84.7.10 Bottlenecks
 

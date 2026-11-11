@@ -91,7 +91,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 81 | Case Studies VI: Recommendation, Search and Ads | 3-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | 27,429 | 21 | 39 | 7 |
 | 82 | Case Studies VII: Risk and Trust | 3-5 | ✅ | ✅ | ✅ | ⬜ | ⬜ | 19,059 | 12 | 19 | 0 |
 | 83 | Case Studies VIII: Marketplace Forecasting and Optimization | 3-5 | ✅ | ✅ | ✅ | ⬜ | ⬜ | 15,665 | 13 | 20 | 0 |
-| 84 | Case Studies IX: Perception and Language | 3-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | 19,914 | 15 | 18 | 0 |
+| 84 | Case Studies IX: Perception and Language | 3-5 | ✅ | ✅ | ✅ | ⬜ | ⬜ | 19,914 | 15 | 18 | 0 |
 | 85 | Case Studies X: ML Platforms | 4-5 | ✅ | ✅ | ✅ | ⬜ | ⬜ | 19,681 | 14 | 18 | 0 |
 | 86 | Case Studies XI: LLM and Agent Systems | 4-5 | ✅ | ✅ | ✅ | ⬜ | ⬜ | 23,175 | 18 | 19 | 0 |
 | 87 | Interview Fundamentals | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
