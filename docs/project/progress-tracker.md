@@ -92,8 +92,8 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 82 | Case Studies VII: Risk and Trust | 3-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 83 | Case Studies VIII: Marketplace Forecasting and Optimization | 3-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 84 | Case Studies IX: Perception and Language | 3-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 85 | Case Studies X: ML Platforms | 4-5 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
-| 86 | Case Studies XI: LLM and Agent Systems | 4-5 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 85 | Case Studies X: ML Platforms | 4-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
+| 86 | Case Studies XI: LLM and Agent Systems | 4-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 87 | Interview Fundamentals | 2 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 88 | The Interview Readiness Framework | 2-5 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
 | 89 | Capacity Estimation Handbook | 2-4 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | — | — | — | — |
