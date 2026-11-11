@@ -364,3 +364,5 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-357 | 79 | Feature names for Envoy AI Gateway, LiteLLM, NVIDIA Dynamo, llm-d, Azure/Bedrock provisioned throughput; venues of Preble, DynamoLLM, GPTCache, RouteLLM | Open | |
 | UQ-358 | 82 | Stripe Radar post year (2023 assumed); PayPal graph post date and authors; RETVec Google Security Blog authors; PDQ match threshold (30–32 bits) | Open | stripe.com unreachable during drafting |
 | UQ-359 | 82 | Regulation B 25-month record retention and four-reason adverse-action guidance; card-network fraud-chargeback time limit (120 days assumed); Gmail spam-rate thresholds (omitted from text) | Open | Not legal advice |
+| UQ-360 | 83 | Uber DeepETA blog (Hu et al. 2022b) author list and asymmetric Huber loss; Bell & Smyl 2018 title/year; Chamandy 2016 Lyft post title | Open | uber.com and arXiv blocked during drafting |
+| UQ-361 | 83 | Hall, Kendrick & Nosko 2015 surge-outage descriptions (concert, New Year's Eve); Cohen et al. 2016 "inelastic demand" and rounding-discontinuity design; emergency surge-pricing rules are jurisdiction-specific and uncited | Open | |
