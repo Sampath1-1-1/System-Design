@@ -61,7 +61,7 @@ Design the recommender behind the home feed and the "up next" list of a global v
 1. **Candidate generation** is posed as extreme multiclass classification: given the viewer's history and context, predict which video they will watch next among $V \approx 5 \times 10^8$ classes. In practice it is a two-tower model (§68.6) whose item tower embeds every video once and whose user tower embeds the request; retrieval is an ANN search (Chapter 74). Label: the next watched video (implicit positive). Task: retrieval, measured by recall@K.
 2. **Ranking** scores about 500 candidates with a multi-task model that predicts several outcomes per impression: click, expected watch time given a click, like, dismissal ("not interested") and, for a small sample, a post-watch satisfaction survey response. The heads are fused into one value (§68.7.4). Labels arrive with delays from seconds (click) to minutes (watch time, known when the session ends) to days (survey).
 
-**Why ML (§59.3).** The catalog is too large and preferences too heterogeneous for rules; popularity lists serve the head but cannot find the niche video that one viewer in a million wants; and the signal (billions of watches a day) is abundant enough to learn from.
+**Why ML (§57.3.3, §59.4.3).** The catalog is too large and preferences too heterogeneous for rules; popularity lists serve the head but cannot find the niche video that one viewer in a million wants; and the signal (billions of watches a day) is abundant enough to learn from.
 
 ### 81.4.2 Functional requirements
 
@@ -73,7 +73,7 @@ Design the recommender behind the home feed and the "up next" list of a global v
 6. **Policy compliance.** Removed videos never appear; borderline content (close to but not violating policy) is demoted by a policy signal consumed from the trust-and-safety system.
 7. **Logging and experimentation.** Every impression is logged with the features used to score it; any stage can be A/B tested.
 
-Out of scope: upload, transcoding and delivery (§54.4), search ranking (§81.7), ads (§81.9), and how policy classifiers are trained (Chapter 82).
+Out of scope: upload and delivery (§54.4), search (§81.7), ads (§81.9) and policy classifiers (Chapter 82).
 
 ### 81.4.3 Non-functional requirements
 
@@ -103,7 +103,7 @@ Assumptions are illustrative and consistent with §54.4: 1 billion watch-hours a
 4. Heavy ranker on GPU: assume 200 MFLOPs per scored item (an MMoE network over hundreds of features), so $500 \times 2 \times 10^8 = 10^{11}$ FLOPs per request and $10^{11} \times 462{,}963 = 4.63 \times 10^{16}$ FLOP/s at peak. At an effective 150 TFLOP/s per GPU (batched, mixed precision, §66.6–§66.7), 309 GPUs are busy; at $u = 0.6$, **515 GPUs**.
 5. Three serving regions, any two of which must carry the global peak: $515/2 = 257.2$, so 258 GPUs per region, **774** in total.
 
-**Interpretation.** The heavy ranker's input size sets the GPU bill: halving 500 to 250 halves step 4. The CPU tiers are of the same order in cost as the GPUs. **Engineering implication.** Spend effort on the light ranker's recall of the heavy ranker's top items (distillation, §68.4.1), because that is what allows a smaller heavy-ranker input.
+**Interpretation.** The heavy ranker's input size sets the GPU bill: halving it halves step 4. **Engineering implication.** Spend effort on the light ranker's recall of the heavy ranker's top items (distillation, §68.4.1), because that is what allows a smaller heavy-ranker input.
 :::
 
 ::: example
@@ -123,7 +123,7 @@ Assumptions are illustrative and consistent with §54.4: 1 billion watch-hours a
 2. Storage: $2.76 \times 10^{10} \times 1{,}000 = 27.6$ TB per day; a 60-day training window holds 1.66 PB.
 3. Dense compute per day: $3 \times 2 \times 10^8 \times 2.76 \times 10^{10} = 1.66 \times 10^{19}$ FLOPs, about 31 GPU-hours at 150 TFLOP/s.
 
-**Interpretation.** Dense FLOPs are cheap; what dominates training time is moving sparse features and embedding rows (the all-to-all of §68.8) and reading 27.6 TB of new data per day. **Engineering implication.** Size the training cluster by input-pipeline throughput and embedding memory, not by FLOPs, and warm-start daily from yesterday's checkpoint rather than retraining on 60 days.
+**Interpretation.** Dense FLOPs are cheap; sparse-feature movement (the all-to-all of §68.8) and reading 27.6 TB a day dominate. **Engineering implication.** Size the training cluster by input-pipeline throughput and embedding memory, not by FLOPs, and warm-start daily from yesterday's checkpoint rather than retraining on 60 days.
 :::
 
 ### 81.4.5 API design
@@ -227,7 +227,7 @@ flowchart LR
 
 #### Training data: predicting the *next* watch, without leaking the future
 
-Covington et al. report two choices that matter more than architecture [Covington et al. 2016]. First, train candidate generation to predict the **next** watch from the history *before* it, rather than a randomly held-out watch from the whole history: consumption is sequential (episode 2 follows episode 1), and a held-out formulation leaks future watches into the input, which looks good offline and fails online, a form of label leakage (§57.6.3). Second, add an **example age** feature (time since the training example was logged) and set it to zero at serving: the model then learns how popularity changes with a video's age instead of averaging over the training window, which otherwise biases it toward old videos. They also cap the number of training examples per viewer so that heavy viewers do not dominate the loss.
+Covington et al. report two choices that matter more than architecture [Covington et al. 2016]. First, train candidate generation to predict the **next** watch from the history *before* it, rather than a randomly held-out watch from the whole history: consumption is sequential (episode 2 follows episode 1), and a held-out formulation leaks future watches into the input, which looks good offline and fails online, a form of label leakage (§57.6.3). Second, add an **example age** feature, set to zero at serving, so the model learns how popularity changes with time instead of averaging over the training window, which biases it toward old videos. They also cap the number of training examples per viewer so that heavy viewers do not dominate the loss.
 
 The pipeline therefore logs features as served, joins labels after the 6-hour window, writes examples partitioned by hour, and builds each training set by **time**: train on days $d-60 \ldots d-1$, validate on day $d$ (§68.14.1). The light ranker's training data includes logged *full candidate sets* for a 1% sample of requests, so it learns to imitate the heavy ranker on candidates the viewer never saw (§68.4.1).
 
@@ -284,7 +284,7 @@ Watch time alone still has failure modes: it rewards long videos and binge loops
 
 Offline: recall@500 for retrieval on next-day watches; per-head log loss, AUC and calibration ratio on a time-split day; a **watch-time-weighted** ranking metric for the fused score. All of these are computed on logs of the old policy, so they filter rather than decide (§57.13).
 
-Online: an A/B test randomized by viewer, primary metric satisfied watch time per viewer (watch time on videos with no dismissal and above a completion threshold), guardrails dismissals, survey scores, daily active viewers, and creator-side metrics (share of watch time reaching channels outside the top 1%). Run tests at least two weeks because novelty inflates week one (§57.14.3), and keep a long-term holdout of about 1% of viewers on last quarter's stack to measure slow effects such as fatigue [Hohnhold et al. 2015].
+Online: an A/B test randomized by viewer, primary metric satisfied watch time per viewer (watch time on videos with no dismissal and above a completion threshold), guardrails dismissals, survey scores, daily active viewers, and creator-side metrics (share of watch time reaching channels outside the top 1%). Run tests for at least two weeks (novelty, §57.14.3) and keep a 1% long-term holdout for slow effects such as fatigue [Hohnhold et al. 2015].
 
 ::: industry
 **YouTube's published recommender architecture.** Covington et al. describe a two-stage system in which candidate generation narrows a corpus of millions to hundreds with a deep network trained as extreme multiclass classification over videos, served by nearest-neighbor search, and a ranking network scores the candidates with hundreds of features, trained with watch-time-weighted logistic regression because ranking by click-through rate "often promotes deceptive videos". Zhao et al. later published the multitask MMoE ranker with a shallow tower for selection bias, and Chen et al. described treating the candidate generator as a policy trained with off-policy-corrected REINFORCE.
@@ -420,7 +420,6 @@ sequenceDiagram
 - *"Why not optimize clicks?"* Clicks reward misleading thumbnails; watch-time weighting makes the score approximate expected minutes, and satisfaction heads catch long-but-unhappy watches.
 - *"How does a new video get recommended?"* Content-based item tower embeds it at upload; fresh-upload source and exploration slots give it impressions; decayed counters update its engagement within minutes.
 - *"How do you keep the user tower and index consistent?"* Version them together and swap atomically per region; never mix versions.
-- *"How would you know the model got worse?"* Per-head calibration and online guardrails within hours; satisfaction surveys and holdout over weeks.
 
 **What distinguishes senior and staff answers.** A senior answer gets the funnel, the two-tower retrieval and a multi-task ranker right with numbers. A staff answer argues the objective (why watch time, why satisfaction heads, how weights are set by experiments), designs the training data against leakage and position bias, puts costs on the heavy-ranker input, and treats feedback loops and creator-side effects as first-class guardrails.
 
@@ -1274,7 +1273,7 @@ flowchart LR
 
 #### Query understanding
 
-Query understanding turns "cheap flights nyc to lax tmrw" into a plan: normalized tokens, "tmrw" expanded to tomorrow's date, "nyc" and "lax" recognized as locations, transactional and fresh intents, and an embedding. Its components are classifiers and sequence models trained on query logs: spelling correction learned from users' own reformulations (a query followed within seconds by a corrected one), intent classifiers trained on which result types satisfied past queries, and rewrites mined from queries that led to clicks on the same documents. Each output carries a confidence so that downstream stages can hedge: a low-confidence correction retrieves for both the original and the corrected query and lets ranking decide. Because head queries repeat, plans are cached; the long tail (a large share of distinct queries are new each day) needs the models.
+Query understanding turns "cheap flights nyc to lax tmrw" into a plan: normalized tokens, "tmrw" expanded to tomorrow's date, "nyc" and "lax" recognized as locations, transactional and fresh intents, and an embedding. Its components are classifiers and sequence models trained on query logs: spelling correction learned from users' own reformulations (a query followed within seconds by a corrected one), intent classifiers trained on which result types satisfied past queries, and rewrites mined from queries that led to clicks on the same documents. Each output carries a confidence so that downstream stages can hedge: a low-confidence correction retrieves for both the original and the corrected query and lets ranking decide. Because head queries repeat, plans are cached; the long tail (a large share of distinct queries are new each day) needs the models. Freshness intent deserves its own classifier: a query such as "earthquake" means "what happened in the last hour" only while query volume for it is spiking, so the classifier uses query-volume velocity from the last few minutes as a feature and is retrained hourly. When it fires, the root merges candidates from the real-time index tier (§56.4.8) and the final re-rank boosts recent documents; when it misfires, evergreen queries are flooded with news, which is why its precision is monitored on judged samples per language.
 
 #### Hybrid retrieval
 
@@ -1310,7 +1309,7 @@ $$\lambda_{ij} = \frac{\sigma\, \lvert \Delta \text{NDCG}_{ij} \rvert}{1 + e^{\s
 
 #### Position bias and click models
 
-Users click what they see, and they see the top. A document at rank 1 receives more clicks than a better document at rank 5, so raw click-through rates reproduce the current ranking: the feedback loop of §68.12. **Click models** describe how clicks arise: the **position-based model** factors a click into examination of a position times attractiveness of the document; the **cascade model** assumes users scan from the top and stop at the first satisfying result [Craswell et al. 2008; Chuklin et al. 2015]. Under the position-based model, dividing clicks by the **examination propensity** of their position gives unbiased relevance estimates (IPS, §68.12.2) [Joachims et al. 2017]. The propensities are estimated by small randomized interventions, such as swapping the result at rank 1 with the result at rank $k$ on a sliver of traffic; because the same document is observed at both positions, its relevance cancels in the ratio [Joachims et al. 2017; Wang et al. 2018].
+Users click what they see, and they see the top. A document at rank 1 receives more clicks than a better document at rank 5, so raw click-through rates reproduce the current ranking: the feedback loop of §68.12. **Click models** describe how clicks arise: the **position-based model** factors a click into examination of a position times attractiveness of the document; the **cascade model** assumes users scan from the top and stop at the first satisfying result [Craswell et al. 2008; Chuklin et al. 2015]. Under the position-based model, dividing clicks by the **examination propensity** of their position gives unbiased relevance estimates (IPS, §68.12.2) [Joachims et al. 2017]. The propensities are estimated by small randomized interventions, such as swapping the result at rank 1 with the result at rank $k$ on a sliver of traffic; because the same document is observed at both positions, its relevance cancels in the ratio [Joachims et al. 2017; Wang X. et al. 2018].
 
 ```python
 import numpy as np
@@ -1372,8 +1371,8 @@ What to notice:
 Offline, NDCG@10 on judged sets is the gate, reported per slice. Human judgments follow written guidelines, are double-rated on a sample to measure agreement (Cohen's κ, §63.6.2), and increasingly are pre-labeled by an LLM with human review (§63.14.4). Online, rankers are compared first by **interleaving**, which for search was shown to agree with A/B outcomes using far less traffic [Chapelle et al. 2012], then by A/B tests on satisfied-click sessions with abandonment and reformulation as guardrails.
 
 ::: industry
-**Learning to rank in production search at Airbnb.** Haldar et al. describe Airbnb's move from gradient-boosted tree ranking to neural networks for search ranking, including the lesson that offline NDCG gains did not always translate into online bookings and that a debiasing treatment of position was needed when training on logged search results.
-*Evidence: Primary* — [Haldar et al. 2019]
+**Learning to rank in production search at Airbnb.** Haldar et al. describe Airbnb's journey from gradient-boosted tree ranking to neural networks for search ranking and the practical lessons learned along the way; a follow-up paper by the same team addresses, among other things, the position bias in logged search results that the ranker is trained on.
+*Evidence: Primary* — [Haldar et al. 2019; Haldar et al. 2020]
 :::
 
 ### 81.7.9 Data flow
@@ -1699,7 +1698,7 @@ Amazon's own retrospective describes how item-to-item relations were refined ove
 A product listed today has no co-views and no purchases, so collaborative tables cannot contain it. Three mechanisms cover it:
 
 1. **Content embeddings.** A content tower embeds title, description, image and category into the same space as the two-tower item tower (§68.6), so a new product is retrievable by ANN within minutes and has content neighbors for the product page.
-2. **Side-information embeddings.** Alibaba described learning item embeddings from session graphs with side information (category, brand, shop) aggregated into the item embedding, so that new items inherit an embedding from their attributes [Wang et al. 2018].
+2. **Side-information embeddings.** Alibaba described learning item embeddings from session graphs with side information (category, brand, shop) aggregated into the item embedding, so that new items inherit an embedding from their attributes [Wang J. et al. 2018].
 3. **Exploration slots.** A budgeted share of widget slots, under 1% by the estimate above, goes to new products by Thompson sampling over a category prior (§68.11, §68.15).
 
 The reverse direction matters too: a new product should appear in *other* products' widgets. Insert it as a content neighbor of its nearest products, with a decaying boost until collaborative signal accumulates.
@@ -2318,7 +2317,7 @@ The distinctive hard problem is **sharing without coupling**. Shared embeddings,
 2. Dedicated clusters sized for each team's peak: $2{,}083/40 \times 3 \times 40 = 6{,}250$ GPUs.
 3. One pool sized for the pooled peak: $2{,}083 \times 1.3 = 2{,}708$ GPUs, 57% fewer.
 
-**Interpretation.** Statistical multiplexing is the platform's largest cost lever. **Engineering implication.** A shared pool needs quotas, priorities and preemption (§46, §79) so that the savings do not come with unpredictable queueing for critical retrains such as ads.
+**Interpretation.** Statistical multiplexing is the platform's largest cost lever. **Engineering implication.** A shared pool needs quotas, priorities and preemption (Chapters 46 and 79) so that the savings do not come with unpredictable queueing for critical retrains such as ads.
 :::
 
 ### 81.10.5 API design
@@ -2410,7 +2409,7 @@ flowchart TB
   OFF -.-> ANA[Experiment analysis]
 ```
 
-**Reading the diagram.** Tenant surfaces (top) declare configurations that the orchestration framework turns into request graphs (solid, synchronous): experiment assignment, embedding lookups pinned by version, retrieval from shared ANN indexes per item type, feature reads and ranking by the tenant's model on the multi-tenant ranking service. Every surface emits the unified event schema (dotted, asynchronous); a join service produces labels per surface into the offline store, from which the platform trains shared embeddings and tenants train their own models on a shared GPU pool. Shared embeddings flow to the embedding tier and the retrieval indexes as new versions; tenant models flow through the registry. Storage boundaries: event log, offline store, online feature store, embedding tier, registries. Failure points: shared tiers (embedding, retrieval, ranking) have the largest blast radius and are isolated per tenant by quotas, cells and bulkheads (§39); a bad shared embedding version affects only consumers who adopt it. Scaling: each tier independently; tenants add load through declared quotas.
+**Reading the diagram.** Tenant surfaces (top) declare configurations that the orchestration framework turns into request graphs (solid, synchronous): experiment assignment, embedding lookups pinned by version, retrieval from shared ANN indexes per item type, feature reads and ranking by the tenant's model on the multi-tenant ranking service. Every surface emits the unified event schema (dotted, asynchronous); a join service produces labels per surface into the offline store, from which the platform trains shared embeddings and tenants train their own models on a shared GPU pool. Shared embeddings flow to the embedding tier and the retrieval indexes as new versions; tenant models flow through the registry. Storage boundaries: event log, offline store, online feature store, embedding tier, registries. Failure points: shared tiers (embedding, retrieval, ranking) have the largest blast radius and are isolated per tenant by quotas, cells and bulkheads (Chapter 39); a bad shared embedding version affects only consumers who adopt it. Scaling: each tier independently; tenants add load through declared quotas.
 
 ### 81.10.8 Detailed component design
 
@@ -2463,11 +2462,11 @@ $$E = \left\lfloor \frac{f \, U}{k \, n} \right\rfloor$$
 **Interpretation.** Mature recommenders chase small effects, and small effects consume users quadratically; a single layer would allow only 44 experiments. **Engineering implication.** Layer the experiment space by component (retrieval, ranking, UI, notifications), keep interacting parameters in one layer, reserve a global long-term holdout across all layers, and use variance-reduction techniques and interleaving (§68.14.2) to lower $n$.
 :::
 
-Assignment is a hash of (user ID, layer salt), computed identically by every surface, so a user is in the same arm wherever they appear. Analysis is automated: every experiment gets the same metric definitions from the platform's metric catalog, guardrails across *all* surfaces (a notification experiment that raises notification opens but lowers home-feed sessions is caught), and sample-ratio-mismatch checks [Kohavi et al. 2020].
+Assignment is a hash of (user ID, layer salt), computed identically by every surface, so a user is in the same arm wherever they appear. Two further rules keep the system trustworthy at this scale. **Interaction checks**: the platform periodically tests for statistical interaction between experiments in different layers on shared metrics, and moves interacting parameters into one layer. **Launch reviews**: a team's launch decision cites the platform's standard analysis, not a bespoke notebook, so that 40 teams do not each choose the metric definition that flatters their result. Analysis is automated: every experiment gets the same metric definitions from the platform's metric catalog, guardrails across *all* surfaces (a notification experiment that raises notification opens but lowers home-feed sessions is caught), and sample-ratio-mismatch checks [Kohavi et al. 2020].
 
 #### Features, training templates and governance
 
-The feature platform follows Chapter 62: one definition, offline and online materialization, point-in-time backfills, and a registry with owners and consumers. Uber's Michelangelo, a single platform with a shared feature store across teams (§62.13, §69.14), is the published archetype [Hermann and Del Balso 2017]. Training templates (two-tower, multi-task ranker, sequence model) encode the lessons of the earlier cases (log features as served, time-based splits, downsampling with recalibration, per-head calibration gates) so that each new surface inherits them. Governance attaches to the registry: every model records the features, embedding versions and data windows it used, its fairness and privacy review (§71.14), and its cost.
+The feature platform follows Chapter 62: one definition, offline and online materialization, point-in-time backfills, and a registry with owners and consumers. Uber's Michelangelo, a single platform with a shared feature store across teams (§62.13, §69.14), is the published archetype [Hermann and Del Balso 2017]. Training templates (two-tower, multi-task ranker, sequence model) encode the lessons of the earlier cases (log features as served, time-based splits, downsampling with recalibration, per-head calibration gates) so that each new surface inherits them. Templates also standardize the **logging contract**: every surface logs the same impression fields (request ID, position, candidate source, model and embedding versions, experiment arms, propensity where randomized), which is what lets the shared join service produce labels for any surface and lets one skew detector (§62.9.2) watch them all. A tenant that needs a field the schema lacks adds it through review, so that the schema evolves compatibly (§61.4.4) instead of forking. Governance attaches to the registry: every model records the features, embedding versions and data windows it used, its fairness and privacy review (§71.14), and its cost.
 
 ### 81.10.9 Data flow
 
@@ -2605,3 +2604,166 @@ At **10× tenants**, onboarding and support become the bottleneck: self-service 
 - **Retraining.** Shared embeddings weekly with compatibility training; tenant models on their own cadence via templates.
 - **Responsible ML.** Platform-level fairness and privacy reviews applied by template (§71.14); data minimization in the unified event schema; deletion requests propagated to embeddings by retraining windows.
 - **Cost.** Attribute every GPU-second and request to a tenant; the platform's own cost is justified by pooling savings and onboarding speed.
+
+## 81.11 Summary and revision notes
+
+::: summary
+- **One skeleton, seven hard problems.** Every system here is a funnel (sources → filter → light ranker → heavy ranker → re-rank) plus a logging loop (Chapter 68). What differs is the dominant problem: objective and retrieval scale (video), two graphs and integrity (feed), page construction and evaluation (homepage), labels and position bias (search), sparsity and constraints (e-commerce), calibrated money (ads), and coupling (platform).
+- **Video (§81.4).** Retrieval as next-watch classification with a sampling-bias-corrected two-tower model; ranking by watch-time-weighted logistic regression, whose odds approximate expected watch time per impression; MMoE heads for engagement and satisfaction fused by experiment-tuned weights. 463k requests/s × 500 items × 200 MFLOPs ≈ 515 GPUs at $u = 0.6$. Train on the *next* watch, log features as served, version the user tower with the index.
+- **Feed and Explore (§81.5).** Connected (inbox) plus unconnected (ANN, seed accounts) candidates; a mixer with a displacement margin protects friends' posts. Integrity filtering before ranking: violating impressions $V = I \pi (1 - r)\alpha$; measure prevalence by sampled labeling of views. Real-time counters as ratios with priors, filtered for bots. The per-candidate feature fetch (184M/s) is the real load.
+- **Homepage (§81.6).** Nightly exhaustive scoring is affordable for small catalogs; context re-ranks online. Page value $\sum a_r b_j p(t)$ over first occurrences; build pages greedily by marginal value. Artwork as a contextual bandit with logged propensities and replay evaluation. Interleave first, then A/B on retention over a billing cycle, with a long-term holdout.
+- **Search (§81.7).** Query understanding first (corrections with confidence, intents, embedding); lexical + dense union per leaf; L1 → LambdaMART L2 → distilled cross-encoder L3 on the top 30. LambdaMART weights pairwise gradients by $\lvert\Delta\text{NDCG}\rvert$. Clicks = examination × relevance: estimate propensities by randomized swaps and IPS-weight clicks; anchor on graded judgments; gate per slice.
+- **E-commerce (§81.8).** Density $\sim 10^{-8}$: views supply most signal. Substitutes from co-view, complements from co-purchase ranked by **lift** with minimum support. New products via content embeddings and a sub-1% exploration budget; anonymous sessions via sequence models; constraints (stock, variants, repurchase, legal, sellers) applied before truncation.
+- **Ads (§81.9).** eCPM $= 1{,}000\, b\, \hat{p}$; GSP price $b_2 \hat{p}_2 / \hat{p}_1$; miscalibration changes winners and prices, so calibration is a contract. Online updates with calibration gates plus daily retrains; PI-controlled pacing against a traffic-shaped plan; delayed conversions observed as $\text{CVR}\cdot(1 - e^{-\tau/\mu})$; billing exactly once by signed token.
+- **Platform (§81.10).** Share embeddings, features, templates, serving tiers and experiments; isolate by quotas, cells and version pinning. Pooling cut training GPUs from 6,250 to 2,708 in the example. Layered experiments: $E = \lfloor fU/(kn) \rfloor$ per layer, and $n$ grows as $1/\delta^2$.
+:::
+
+## 81.12 Knowledge checkpoint
+
+1. Why does ranking by click-through rate promote clickbait, and how does watch-time-weighted logistic regression avoid it?
+2. In Covington et al.'s formulation, why is candidate generation trained to predict the *next* watch rather than a held-out one?
+3. Why must the user tower and the item ANN index be released as a pair?
+4. Give two reasons to filter policy-violating content before ranking rather than after.
+5. With $I = 10^{11}$ impressions, $\pi = 0.2\%$, $\alpha = 1.5$ and filter recall 0.95, how many violating impressions are served per day?
+6. Why are engagement counters for fresh posts stored as ratios with priors rather than raw counts?
+7. Using the attention values of §81.6.8, why can placing a high-scoring row second lower page value?
+8. How does the replay method evaluate a new artwork policy offline, and what does it require of the logging policy?
+9. Why does a homepage A/B test run for at least one billing cycle?
+10. What does $\lvert \Delta \text{NDCG}_{ij} \rvert$ contribute to LambdaMART's gradient?
+11. How does a randomized swap of ranks 1 and $k$ estimate the examination propensity of rank $k$?
+12. Why is "frequently bought together" ranked by lift rather than confidence?
+13. What fraction of widget slots does the §81.8.4 exploration budget consume, and how is it allocated?
+14. Ad A bids \$3.00 with $\hat{p} = 0.008$; ad B bids \$1.50 with $\hat{p} = 0.020$. Who wins and what is the price per click under GSP?
+15. A conversion model is trained on clicks labeled 12 hours after the click with mean delay 1 day. By what factor does it underpredict without correction?
+16. Why does a shared-embedding release require a consumer list?
+17. How many concurrent two-arm experiments fit in one layer with $U = 2 \times 10^8$, $f = 0.5$, $n = 10^6$?
+
+<details><summary>Answers</summary>
+
+1. CTR rewards whatever makes people click, including misleading thumbnails abandoned seconds later. Weighting clicked impressions by watch time makes the learned odds approximate expected watch time per impression, so a video that is clicked and abandoned scores low (§81.4.8).
+2. Viewing is sequential; a held-out formulation lets future watches inform the prediction, which looks good offline and fails online (label leakage).
+3. They define vectors in the same learned space only if they come from the same training run; mixing versions retrieves near-random neighbors.
+4. The ranker amplifies whatever engages, including missed violations; ranking items that can never be shown wastes compute; and impressions of violating content pollute training data.
+5. $10^{11} \times 0.002 \times 0.05 \times 1.5 = 1.5 \times 10^7$, a prevalence of 0.015%.
+6. Raw counts reward posts that already received distribution; ratios normalize by impressions, and priors keep a post with three impressions and two likes from looking exceptional.
+7. If its titles duplicate titles in a higher row, they add nothing; a lower-scoring but non-overlapping row adds more marginal value.
+8. Keep logged impressions where the new policy picks the same image as the uniformly random logging policy and average their rewards; it requires randomized (or known-propensity) logging and costs a factor $K$ in data.
+9. Retention is decided monthly, novelty effects fade over weeks, and discovery effects appear slowly.
+10. It scales each pair's logistic gradient by the metric change the swap would cause, so errors near the top receive more gradient.
+11. The same document is observed at rank 1 in normal traffic and at rank $k$ in swapped traffic; its relevance cancels in the ratio of click rates, leaving $p_k/p_1$.
+12. Confidence favors items in every basket; lift divides by the item's base rate, revealing specific association.
+13. About 0.83%; by Thompson sampling over category priors within per-category budgets.
+14. eCPM A $= \$24$, B $= \$30$; B wins and pays $3.00 \times 0.008 / 0.020 = \$1.20$ per click.
+15. $F = 1 - e^{-0.5} = 0.393$; observed rate is 39% of truth, an underprediction by a factor of 2.5.
+16. Every downstream model trained on the old version may break; the list lets the platform evaluate each consumer before release and notify owners.
+17. $\lfloor 10^8 / (2 \times 10^6) \rfloor = 50$.
+</details>
+
+## 81.13 Interview questions
+
+### Basic
+
+**Q1. Why do large recommenders use a multi-stage funnel instead of one model?** **Answer.** Scoring every item with the best model is unaffordable: in §81.4, 500 items × 200 MFLOPs already needs about 500 GPUs at peak; doing that for $5 \times 10^8$ videos is a million times more. Cheap stages with high recall narrow the set so that the expensive model sees only plausible candidates. The design rule is that each stage is judged by whether it keeps what the next stage would rank highest.
+
+**Q2. What is calibration, and which systems in this chapter need it?** **Answer.** Predicted probabilities match observed frequencies. Ads need it because probabilities multiply bids and set prices; multi-task feeds need it because heads are fused with weights; any system with negative downsampling must correct for it (§68.7.5). A single-score ranker that only orders items does not strictly need it.
+
+**Q3. What is position bias and why does it matter for training?** **Answer.** Users examine top positions more, so clicks reflect position as well as relevance. Training on raw clicks teaches a new model the old ranking. Corrections: propensity weighting with propensities from randomized swaps, or a position tower used only in training.
+
+### Intermediate
+
+**Q4. Design the objective for a short-video feed where watch time is rising but survey satisfaction is falling.** **Answer.** Add satisfaction heads (like, dismissal, survey-predicted satisfaction) beside engagement heads in a multi-task ranker, fuse with experiment-tuned weights, and make satisfaction and dismissals guardrails in A/B tests; keep a long-term holdout to see whether watch-time gains persist. Check for long or looping content inflating watch time and normalize by duration.
+
+**Q5. A new ranker improved offline NDCG by 3% but lost in interleaving. List likely causes.** **Answer.** Leakage in features (history computed over the evaluation period); position bias in training labels; mismatch between judged-set distribution and live traffic; training–serving skew; or the offline metric rewarding resemblance to the logging policy. Investigate per slice, check skew detectors, and re-estimate propensities.
+
+**Q6. How would you add a "frequently bought together" widget for a store with sparse purchases?** **Answer.** Count co-purchases over 90 days with salting for hot items, rank by lift with minimum support, exclude same-category pairs, back off to co-view and category-level rules for sparse items, personalize the order with a purchase ranker, and filter by stock before truncation.
+
+### Advanced
+
+**Q7. Your ad platform's revenue dropped 2% within ten minutes of an online model update. Walk through detection, mitigation and prevention.** **Answer.** Detection: revenue per 1,000 requests and calibration ratio on a holdout stream by segment. Mitigation: revert to the last validated snapshot, which the online trainer keeps; confirm recovery. Root cause: corrupted features (an upstream schema change), bot traffic in labels, or a learning-rate spike. Prevention: pre-push validation of calibration and log loss on a holdout stream, rate-limited deltas, invalid-traffic filtering before training, and daily full retrains as an independent check.
+
+**Q8. Design how a shared user embedding used by 50 models is upgraded.** **Answer.** Version everything; forbid unversioned reads; train the new version with a backward-compatibility loss; evaluate every registered consumer offline with the new vectors and block on regressions; serve both versions; let consumers repin and retrain on their cadence; retire the old version after a deprecation window; budget memory for two versions.
+
+**Q9. How do you measure and limit harmful content amplified by a feed ranker?** **Answer.** Define prevalence as the share of views that are violating, estimated by sampling and labeling served impressions per policy area; filter before ranking with recall targets; add negative heads for reports and "see fewer"; mark borderline content not recommendable; monitor amplification by comparing violators' share of candidates and impressions; gate classifier releases on labeled sets; propagate takedowns through a priority stream.
+
+## 81.14 Practical exercises
+
+1. Recompute §81.4.4 for 300 heavy-ranked items and 400 MFLOPs per item. Which change costs more GPUs, and by how much?
+2. Extend the page-construction code of §81.6.8 with a constraint "no two genre rows adjacent" and report the new page value.
+3. Modify the position-bias simulation of §81.7.8 so that examination follows $p_k = (1/k)^{1.5}$. How do naive and IPS NDCG change? What happens if the swap traffic is reduced to 1%?
+4. Compute support, confidence and lift for five product pairs from a dataset of your choice; show one pair where confidence and lift disagree.
+5. Change the pacing controller of §81.9.8 to bid shading (multiply price by the controller output instead of throttling). Plot spend against plan and report overspend when spend aggregation lags 10 minutes.
+6. For a layer with 100 million users and a 1% relative MDE on a 5% baseline, compute $n$ with §57.14.2 and the number of concurrent experiments with $f = 0.6$.
+
+## 81.15 Design challenges
+
+1. **Live-streaming recommendations.** Streams exist for hours and their quality changes minute by minute. Adapt §81.4 and §81.5: which features, which candidate sources, what freshness targets, and how to evaluate a stream that has ended?
+2. **QuickBite search ranking.** Apply §81.7 to QuickBite's restaurant and dish search (§68.3.2): 2,000 search requests/s at peak, restaurants that close and open, delivery-time constraints. What replaces human judgments, and how do you handle position bias on a mobile list?
+3. **Privacy-first advertising.** Redesign §81.9 when per-user conversion joins are unavailable and only aggregated, delayed, noised conversion counts are reported. How do training, calibration and pacing change?
+4. **Platform for a mid-size company.** You have five surfaces and a team of six. Which parts of §81.10 do you build, which do you buy, and which do you skip? Justify with cost and onboarding time.
+
+## 81.16 References
+
+1. Covington, P., Adams, J., Sargin, E. *Deep Neural Networks for YouTube Recommendations*. RecSys, 2016.
+2. Yi, X., Yang, J., Hong, L., Cheng, D. Z., Heldt, L., Kumthekar, A., Zhao, Z., Wei, L., Chi, E. *Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations*. RecSys, 2019.
+3. Zhao, Z., Hong, L., Wei, L., Chen, J., Nath, A., Andrews, S., Kumthekar, A., Sathiamoorthy, M., Yi, X., Chi, E. *Recommending What Video to Watch Next: A Multitask Ranking System*. RecSys, 2019.
+4. Ma, J., Zhao, Z., Yi, X., Chen, J., Hong, L., Chi, E. *Modeling Task Relationships in Multi-task Learning with Multi-gate Mixture-of-Experts*. KDD, 2018.
+5. Wilhelm, M., Ramanathan, A., Bonomo, A., Jain, S., Chi, E. H., Gillenwater, J. *Practical Diversified Recommendations on YouTube with Determinantal Point Processes*. CIKM, 2018.
+6. Chen, M., Beutel, A., Covington, P., Jain, S., Belletti, F., Chi, E. H. *Top-K Off-Policy Correction for a REINFORCE Recommender System*. WSDM, 2019.
+7. Hohnhold, H., O'Brien, D., Tang, D. *Focusing on the Long-term: It's Good for Users and Business*. KDD, 2015.
+8. Medvedev, I., Wu, H., Gordon, T. *Powered by AI: Instagram's Explore recommender system*. Facebook AI blog, November 2019.
+9. Vorotilov, V., Shugaepov, I. *Scaling the Instagram Explore recommendations system*. Engineering at Meta, August 2023.
+10. Lada, A., Wang, M., Yan, T. *How machine learning powers Facebook's News Feed ranking algorithm*. Engineering at Meta, January 2021.
+11. Mosseri, A. *Shedding More Light on How Instagram Works*. Instagram blog, June 2021.
+12. Meta Transparency Center. *Community Standards Enforcement Report* (prevalence metric definition). Meta, published quarterly.
+13. Gomez-Uribe, C. A., Hunt, N. *The Netflix Recommender System: Algorithms, Business Value, and Innovation*. ACM Transactions on Management Information Systems 6(4), 2015.
+14. Chandrashekar, A., Amat, F., Basilico, J., Jebara, T. *Artwork Personalization at Netflix*. Netflix Technology Blog, December 2017.
+15. Parks, J., Aurisset, J., Ramm, M. *Innovating Faster on Personalization Algorithms at Netflix Using Interleaving*. Netflix Technology Blog, November 2017.
+16. Alvino, C., Basilico, J. *Learning a Personalized Homepage*. Netflix Technology Blog, April 2015.
+17. Steck, H., Baltrunas, L., Elahi, E., Liang, D., Raimond, Y., Basilico, J. *Deep Learning for Recommender Systems: A Netflix Case Study*. AI Magazine 42(3), 2021.
+18. Li, L., Chu, W., Langford, J., Wang, X. *Unbiased Offline Evaluation of Contextual-bandit-based News Article Recommendation Algorithms*. WSDM, 2011.
+19. Burges, C. J. C. *From RankNet to LambdaRank to LambdaMART: An Overview*. Microsoft Research Technical Report MSR-TR-2010-82, 2010.
+20. Joachims, T., Swaminathan, A., Schnabel, T. *Unbiased Learning-to-Rank with Biased Feedback*. WSDM, 2017.
+21. Wang, X., Golbandi, N., Bendersky, M., Metzler, D., Najork, M. *Position Bias Estimation for Unbiased Learning to Rank in Personal Search*. WSDM, 2018.
+22. Craswell, N., Zoeter, O., Taylor, M., Ramsey, B. *An Experimental Comparison of Click Position-Bias Models*. WSDM, 2008.
+23. Chuklin, A., Markov, I., de Rijke, M. *Click Models for Web Search*. Morgan & Claypool, 2015.
+24. Karpukhin, V., Oğuz, B., Min, S., Lewis, P., Wu, L., Edunov, S., Chen, D., Yih, W. *Dense Passage Retrieval for Open-Domain Question Answering*. EMNLP, 2020.
+25. Cormack, G. V., Clarke, C. L. A., Büttcher, S. *Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods*. SIGIR, 2009.
+26. Chapelle, O., Joachims, T., Radlinski, F., Yue, Y. *Large-Scale Validation and Analysis of Interleaved Search Evaluation*. ACM TOIS 30(1), 2012.
+27. Haldar, M., et al. *Applying Deep Learning to Airbnb Search*. KDD, 2019.
+28. Haldar, M., et al. *Improving Deep Learning for Airbnb Search*. KDD, 2020.
+29. Linden, G., Smith, B., York, J. *Amazon.com Recommendations: Item-to-Item Collaborative Filtering*. IEEE Internet Computing 7(1), 2003.
+30. Smith, B., Linden, G. *Two Decades of Recommender Systems at Amazon.com*. IEEE Internet Computing 21(3), 2017.
+31. Agrawal, R., Srikant, R. *Fast Algorithms for Mining Association Rules*. VLDB, 1994.
+32. Hidasi, B., Karatzoglou, A., Baltrunas, L., Tikk, D. *Session-based Recommendations with Recurrent Neural Networks*. ICLR, 2016.
+33. Kang, W.-C., McAuley, J. *Self-Attentive Sequential Recommendation*. ICDM, 2018.
+34. Wang, J., Huang, P., Zhao, H., Zhang, Z., Zhao, B., Lee, D. L. *Billion-scale Commodity Embedding for E-commerce Recommendation in Alibaba*. KDD, 2018.
+35. Zhou, G., et al. *Deep Interest Network for Click-Through Rate Prediction*. KDD, 2018.
+36. He, X., et al. *Practical Lessons from Predicting Clicks on Ads at Facebook*. ADKDD, 2014.
+37. McMahan, H. B., et al. *Ad Click Prediction: a View from the Trenches*. KDD, 2013.
+38. Edelman, B., Ostrovsky, M., Schwarz, M. *Internet Advertising and the Generalized Second-Price Auction: Selling Billions of Dollars Worth of Keywords*. American Economic Review 97(1), 2007.
+39. Varian, H. R. *Position Auctions*. International Journal of Industrial Organization 25(6), 2007.
+40. Bottou, L., et al. *Counterfactual Reasoning and Learning Systems: The Example of Computational Advertising*. JMLR 14, 2013.
+41. Agarwal, D., Ghosh, S., Wei, K., You, S. *Budget Pacing for Targeted Online Advertisements at LinkedIn*. KDD, 2014.
+42. Lee, K.-C., Jalali, A., Dasdan, A. *Real Time Bid Optimization with Smooth Budget Delivery in Online Advertising*. ADKDD, 2013.
+43. Chapelle, O. *Modeling Delayed Feedback in Display Advertising*. KDD, 2014.
+44. Ktena, S. I., et al. *Addressing Delayed Feedback for Continuous Training with Neural Networks in CTR Prediction*. RecSys, 2019.
+45. Ying, R., He, R., Chen, K., Eksombatchai, P., Hamilton, W. L., Leskovec, J. *Graph Convolutional Neural Networks for Web-Scale Recommender Systems*. KDD, 2018.
+46. Baltescu, P., Chen, H., Pancha, N., Zhai, A., Leskovec, J., Rosenberg, C. *ItemSage: Learning Product Embeddings for Shopping Recommendations at Pinterest*. KDD, 2022.
+47. Satuluri, V., et al. *SimClusters: Community-Based Representations for Heterogeneous Recommendations at Twitter*. KDD, 2020.
+48. Twitter Engineering. *Twitter's Recommendation Algorithm*. Twitter Engineering Blog, March 31, 2023.
+49. Borisyuk, F., et al. *LiRank: Industrial Large Scale Ranking Models at LinkedIn*. KDD, 2024. arXiv:2402.06859.
+50. Shen, Y., Xiong, Y., Xia, W., Soatto, S. *Towards Backward-Compatible Representation Learning*. CVPR, 2020.
+51. Tang, D., Agarwal, A., O'Brien, D., Meyer, M. *Overlapping Experiment Infrastructure: More, Better, Faster Experimentation*. KDD, 2010.
+52. Kohavi, R., Tang, D., Xu, Y. *Trustworthy Online Controlled Experiments: A Practical Guide to A/B Testing*. Cambridge University Press, 2020.
+53. Hermann, J., Del Balso, M. *Meet Michelangelo: Uber's Machine Learning Platform*. Uber Engineering blog, September 2017.
+
+## 81.17 Open verification items
+
+- Medvedev et al. 2019: author list, and whether the post explicitly describes filtering policy-violating content and misinformation at candidate generation (the 500 → 150 → 50 → 25 funnel, IGQL and ig2vec were confirmed via secondary summaries).
+- Vorotilov and Shugaepov 2023: authors, date and stage names.
+- Parks et al. 2017: exact sample-size advantage of interleaving over A/B tests (chapter says only "far fewer members").
+- Gomez-Uribe and Hunt 2015: the "about 80% of hours streamed" figure.
+- Twitter Engineering 2023: Product Mixer and SimClusters roles as stated; no candidate counts or model sizes are quoted.
+- Baltescu et al. 2022 (ItemSage) and Haldar et al. 2020: author lists and the multi-surface and position-bias claims as summarized.
+- Mosseri 2021: wording of the signals and predicted actions.
+- All capacity figures (DAU, request rates, FLOPs per item, prices) are illustrative teaching assumptions, not company data.
