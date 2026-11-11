@@ -119,7 +119,7 @@ flowchart LR
 **Definition — The fourteen-step sequence.** An ordered checklist for a traditional (non-ML) system design interview: (1) clarify the problem, (2) functional requirements, (3) non-functional requirements, (4) capacity estimation, (5) API design, (6) data model, (7) high-level architecture, (8) component deep dives, (9) data flow, (10) scaling strategy, (11) bottlenecks and hot spots, (12) failure handling and reliability, (13) trade-offs and alternatives, (14) operations. The steps group into the seven phases of §52.3: scope, size, contract, shape, depth, stress and judgment.
 :::
 
-The order is the order in which uncertainty disappears. You cannot pick a store before you know the access pattern (step 6 needs step 5), you cannot know the access pattern before the requirements (steps 2–3), and you cannot judge whether a store is big enough before the numbers (step 4). Later steps can and should send you back to earlier ones.
+The order is the order in which uncertainty disappears. You cannot pick a store before you know the access pattern (step 6 needs step 5), you cannot know the access pattern before the requirements (steps 2–3), and you cannot judge whether a store is big enough before the numbers (step 4). Later steps can and should send you back to earlier ones. Popular preparation guides use a shorter sequence of the same shape [Xu 2020]; the extra steps here make data flow, hot spots, failures and operations explicit, because that is where answers most often go thin.
 
 **Figure 88.2 — The fourteen steps in seven phases.**
 
@@ -673,3 +673,345 @@ flowchart LR
 **Reading the diagram.** *Components:* the policy, its sends, the labels they generate and the training data form a closed loop (solid). *The hazard (dotted):* users the policy never chooses generate no labels, so the model never learns that some of them would have responded; the blind spot grows with each retrain. *The fix:* the exploration slice adds labeled sends chosen at random with a known propensity, enabling unbiased offline policy evaluation; the holdout measures what the notifications add over sending nothing. *Failure points:* dropping exploration to "save" sends, or computing metrics without propensity weights. *Scaling:* the exploration fraction can shrink as traffic grows, because the absolute number of random sends still suffices for estimates.
 
 **M11 — Responsible ML.** Hard caps outside the model (at most one nudge a day, quiet hours, global opt-out honored within a minute); no targeting on sensitive inferred attributes such as health-related purchases; slice gates so new and low-activity users are not systematically excluded from good deals; and a model card recording intended use and known gaps (Ch 71) [Mitchell et al. 2019].
+
+## 88.8 LLM and agent-system additions
+
+### 88.8.1 What changes when the model is an LLM
+
+LLM and agent prompts ("design a support assistant", "design a coding agent") still run the traditional steps and most of the ML extension. Five concerns become first-class, because the output is open-ended text or actions rather than a number.
+
+**Table 88.8 — LLM and agent additions and where they attach.**
+
+| Addition | Question it answers | Attaches to | Owner |
+|---|---|---|---|
+| Evaluation first | How will we know an answer is good, before building? | Step 3, M1, M6 | §78.4, §78.7 |
+| Cost per request | Tokens in and out × price; does the unit economics work? | Step 4 | §77.17, §79.15 |
+| Latency in tokens | TTFT and TPOT budgets; streaming | Step 3, M7 | §73.4 |
+| Guardrails and injection | What may enter, what may the model do, what may leave? | Steps 8, 12 | §77.11, §78.13 |
+| Knowledge versus behavior | RAG, fine-tuning or both? | Step 8, M4 | §76.14 |
+| Agent safety | Tool permissions, sandboxing, human approval, budgets | Steps 12, 14 | §77.12, §77.13 |
+| Routing and fallback | Which model per request; what if the provider fails? | Steps 10, 12 | §78.14, §78.15 |
+
+**Evaluation first.** Before any architecture, define a task-specific evaluation set (real queries with reference answers or rubrics), the metrics (task success, groundedness, safety violations) and how they are scored (programmatic checks, LLM-as-a-judge calibrated against humans). Every later choice (model, retrieval depth, prompt) is then an experiment against that set. Candidates who start with "I'd use RAG with a vector database" and never say how quality is measured show the LLM equivalent of starting with the model.
+
+**Knowledge versus behavior.** Classify each requirement: facts that change or must be cited belong in retrieval; stable behavior (format, tone, escalation rules) belongs in fine-tuning or structured output (§76.14). **Agent safety.** Give each tool the least privilege, require human approval for irreversible actions, cap steps and spend per task, and treat retrieved or tool-returned text as untrusted data (§77.13).
+
+::: formula
+**Cost per LLM request**
+
+$$C_{req} = \frac{n_{in} \cdot P_{in} + n_{cached} \cdot P_{cached} + n_{out} \cdot P_{out}}{10^6}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $C_{req}$ | Model cost of one request | dollars |
+| $n_{in}$ | Uncached input tokens | tokens |
+| $n_{cached}$ | Input tokens served from a prompt cache | tokens |
+| $n_{out}$ | Output tokens | tokens |
+| $P_{in}, P_{cached}, P_{out}$ | Prices per million tokens | dollars per $10^6$ tokens |
+:::
+
+::: example
+**Worked example — Is prompt caching worth mentioning?** Assumptions: the hosted large-model prices used in Book II (as of 2026, §77.17): $P_{in} = \$2.50$, $P_{cached} = \$0.25$, $P_{out} = \$10$ per million tokens; 3,000 input tokens (2,000 of them a fixed system prompt and tool definitions) and 400 output tokens; 1 million requests a day.
+
+1. Without caching: $(3{,}000 \times 2.50 + 400 \times 10)/10^6 = (7{,}500 + 4{,}000)/10^6 = \$0.0115$ per request, **\$11,500 a day**.
+2. With the fixed 2,000 tokens cached: $(1{,}000 \times 2.50 + 2{,}000 \times 0.25 + 400 \times 10)/10^6 = (2{,}500 + 500 + 4{,}000)/10^6 = \$0.0070$, **\$7,000 a day**.
+3. Saving: $1 - 7{,}000/11{,}500 \approx 39\%$.
+
+**Interpretation.** Output tokens are now 57% of the cost, so the next lever is shorter answers or a smaller model for easy requests (routing). **Engineering implication.** In an interview, one line of this arithmetic at step 4 shows you treat cost as a requirement, which is a staff-level signal for LLM systems.
+:::
+
+**Figure 88.10 — Evaluation-first design loop for an LLM feature.**
+
+```mermaid
+flowchart LR
+  REQ([Requirements]) --> EV[Build eval set<br/>and metrics]
+  EV --> BL[Baseline: prompt<br/>on a hosted model]
+  BL --> RUN{Meets quality,<br/>cost, latency?}
+  RUN -->|no: knowledge gap| RAG[Add or tune<br/>retrieval]
+  RUN -->|no: behavior gap| FT[Structured output<br/>or fine-tune]
+  RUN -->|no: cost| RT[Route or<br/>smaller model]
+  RAG --> RUN
+  FT --> RUN
+  RT --> RUN
+  RUN -->|yes| GR[Guardrails and<br/>red-team suite]
+  GR --> SH[Ship with online<br/>evaluation]
+  SH -.->|failures become<br/>new eval cases| EV
+```
+
+**Reading the diagram.** *Components:* the evaluation set is built before anything else; a simple prompted baseline comes next; the diamond is the decision against quality, cost and latency targets. *Direction and loops:* each failure type has its own remedy (retrieval for knowledge gaps, structured output or fine-tuning for behavior gaps, routing for cost), and every remedy returns to the same evaluation. *Asynchronous path:* after launch, production failures flow back (dotted) into the evaluation set, so it grows with real traffic. *Failure points:* skipping the evaluation set makes every later decision unmeasurable; skipping the red-team suite ships injection and safety failures. *Scaling:* the same loop runs per feature on a shared platform (Ch 79).
+
+## 88.9 Rubrics by level
+
+### 88.9.1 How to read the rubric
+
+::: warning
+**This is a general, industry-informed rubric, not any company's rubric.** *Evidence: Illustrative.* Companies publish little about how they score design interviews, and their internal ladders differ in names, number of levels and expectations. The levels below (L3 junior, L4 mid, L5 senior, L6 staff, L7 principal) are common shorthand, not a mapping of any company's titles. Chapter 90 covers what individual companies have published. Use the rubric to find your gaps, not to predict an outcome.
+:::
+
+The rubric has six dimensions. Each table gives the behavior an interviewer could observe at each level and an example signal (something you might actually say). Two patterns run through all six. First, **scope grows**: from a component, to a system, to a system plus its neighbors and evolution, to an organization's portfolio. Second, **prompting decreases**: a junior candidate reaches good answers with hints; a senior candidate raises the issues unprompted; a staff candidate raises issues the interviewer had not planned to ask about. Higher levels include all lower-level behaviors.
+
+**Table 88.9 — Dimension 1: scoping and requirements.**
+
+| Level | Observable behavior | Example signal |
+|---|---|---|
+| L3 | Asks basic questions when prompted; lists FRs | "Should users be able to delete a watch?" |
+| L4 | States FRs and some numeric NFRs unprompted | "Alert within a couple of minutes, 99.9% for the API" |
+| L5 | Prioritizes, sets non-goals, names the hard part | "The hard part is fan-out on hot products; history is P2" |
+| L6 | Questions the problem itself; ties NFRs to business cost | "Do users want real-time alerts or would a digest convert better?" |
+| L7 | Frames it within the product and platform strategy | "This and deal nudges should share one fatigue budget per user" |
+
+**Table 88.10 — Dimension 2: design breadth.**
+
+| Level | Observable behavior | Example signal |
+|---|---|---|
+| L3 | A working single-path design with guidance | Client, service, database |
+| L4 | Complete end-to-end design with caches and queues where needed | Async pipeline from catalog to notifications |
+| L5 | Covers all fourteen steps; justifies every box | "The user index exists only for the list API" |
+| L6 | Covers neighboring systems, migration and multi-team contracts | "The catalog's outbox is a contract we need versioned" |
+| L7 | Designs for reuse across products and years | "Make watch-and-alert a platform primitive for stock and price" |
+
+**Table 88.11 — Dimension 3: technical depth.**
+
+| Level | Observable behavior | Example signal |
+|---|---|---|
+| L3 | Correct use of standard components | "Index on user_id" |
+| L4 | Explains how one component works internally | Partition key and range scan explained |
+| L5 | Deep on the hard part with numbers and edge cases | CAS deduplication, debouncing, replay safety |
+| L6 | Depth across two areas; spots subtle failure interactions | "Replay plus debounce can suppress a legitimate second drop" |
+| L7 | Knows where the field's state of the art and limits are | Cites when exactly-once actually holds and when it cannot |
+
+**Table 88.12 — Dimension 4: trade-offs.**
+
+| Level | Observable behavior | Example signal |
+|---|---|---|
+| L3 | Names one option, sometimes "the best" | "Use Kafka" |
+| L4 | Compares two options when asked | "Batch is simpler; streaming is faster" |
+| L5 | States costs unprompted, tied to NFRs | "Streaming costs a pipeline; the 2-minute NFR requires it" |
+| L6 | Gives reversal conditions; weighs one-way versus two-way doors | "If a digest is acceptable, the batch join wins; the schema is the one-way door" |
+| L7 | Trades engineering cost against business and organizational cost | "One team can run this; a second pipeline doubles on-call" |
+
+**Table 88.13 — Dimension 5: reliability and operations.**
+
+| Level | Observable behavior | Example signal |
+|---|---|---|
+| L3 | Mentions replication or backups when asked | "Add a replica" |
+| L4 | Handles retries, timeouts and a failure or two | "Retry with backoff" |
+| L5 | Failure table per stateful component; idempotency; SLIs | Lag SLI, duplicate rate, replay plan |
+| L6 | Degradation strategy, blast radius, cost and security | "Cap watches per user; scrapers are the abuse case" |
+| L7 | Operational model across teams: SLOs, incident and launch process | "Error budget shared with the catalog team's outbox" |
+
+**Table 88.14 — Dimension 6: communication and leadership.**
+
+| Level | Observable behavior | Example signal |
+|---|---|---|
+| L3 | Explains own work clearly when asked | Answers questions accurately |
+| L4 | Thinks aloud; checks in at transitions | "Shall I go deeper here or move on?" |
+| L5 | Drives the session; manages time; summarizes | "I'll spend ten minutes on matching, then failures" |
+| L6 | Adapts to the interviewer; makes the discussion a design review | Turns a challenge into a shared exploration |
+| L7 | Teaches and aligns; frames decisions for stakeholders | "Here's how I'd present this choice to the product lead" |
+
+**Figure 88.11 — Rubric progression: scope widens as prompting drops.**
+
+```mermaid
+flowchart LR
+  L3["L3 Junior<br/>a component,<br/>with hints"] --> L4["L4 Mid<br/>a complete system,<br/>some prompting"]
+  L4 --> L5["L5 Senior<br/>system plus hard part,<br/>unprompted"]
+  L5 --> L6["L6 Staff<br/>system plus neighbors<br/>and evolution"]
+  L6 --> L7["L7 Principal<br/>portfolio, years,<br/>organization"]
+  L5 -.->|most common gap:<br/>reversal conditions| L6
+  L4 -.->|most common gap:<br/>numbers and depth| L5
+```
+
+**Reading the diagram.** *Components:* five levels, each labeled with its scope and how much prompting it needs. *Direction:* left to right is progression; each level includes the behaviors of the levels before it. *Dotted arrows:* the two transitions where candidates most often stall, in our general experience rather than from published data: from mid to senior, the gap is quantitative depth on the hard part; from senior to staff, it is judgment about reversibility, neighbors and evolution. *Failure points:* "level-hopping" by adding staff-sounding vocabulary (platforms, organizations) without the senior foundation; interviewers notice missing depth quickly. *Scaling:* the same progression applies to ML and LLM prompts, with ML-specific depth (labels, leakage, experimentation) in dimension 3.
+
+## 88.10 Self-assessment and gap analysis
+
+### 88.10.1 Scoring mock interviews
+
+Run each mock with a partner who scores you on the six dimensions of §88.9, writing down the *evidence* (what you said or drew) next to each score, not just a number. Score each dimension by the level whose behavior you showed, from 3 to 7. Record the session; listening back reveals silences and unstated trade-offs that neither of you noticed live. Practice deliberately: one weak dimension per week, with feedback after every attempt, rather than repeating full mocks on comfortable prompts [Ericsson et al. 1993] (§3.4). For staff and principal behaviors, which are hard to observe in a mock, Larson and Reilly describe what the role looks like in practice [Larson 2021; Reilly 2022].
+
+::: formula
+**Gap priority per dimension**
+
+$$G_d = w_d \times \max(0,\ t - \bar{s}_d)$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $G_d$ | Priority of practicing dimension $d$ | level-points (weighted) |
+| $w_d$ | Weight of dimension $d$ for your target role | dimensionless |
+| $t$ | Target level | level (3–7) |
+| $\bar{s}_d$ | Mean level shown on $d$ across recent mocks | level (3–7) |
+:::
+
+::: example
+**Worked example — Ranking gaps after three mocks.** Target $t = 5$ (senior). Depth and trade-offs weigh 1.5, the others 1.0. Mean scores: scoping 5.33, breadth 4.67, depth 4.33, trade-offs 4.00, reliability 3.33, communication 5.00.
+
+1. Reliability: $1.0 \times (5 - 3.33) = 1.67$.
+2. Trade-offs: $1.5 \times (5 - 4.00) = 1.50$.
+3. Depth: $1.5 \times (5 - 4.33) = 1.00$.
+4. Breadth: $1.0 \times (5 - 4.67) = 0.33$; scoping and communication: 0.
+
+**Interpretation.** The largest gap is reliability, even though depth "feels" weakest to many candidates. **Engineering implication.** Next week, end every practice design with steps 12–14 done properly (failure table, SLIs, cost) before anything else; re-score after three more mocks.
+:::
+
+```python
+# Mock-interview gap analysis: average three sessions, rank gaps by weight.
+TARGET = 5  # target level (senior)
+WEIGHTS = {"scoping": 1.0, "breadth": 1.0, "depth": 1.5,
+           "trade-offs": 1.5, "reliability": 1.0, "communication": 1.0}
+SESSIONS = [  # level shown per dimension in each mock (3..7)
+    {"scoping": 5, "breadth": 5, "depth": 4, "trade-offs": 4, "reliability": 3, "communication": 5},
+    {"scoping": 5, "breadth": 4, "depth": 4, "trade-offs": 4, "reliability": 4, "communication": 5},
+    {"scoping": 6, "breadth": 5, "depth": 5, "trade-offs": 4, "reliability": 3, "communication": 5},
+]
+
+def gaps(sessions, weights, target):
+    rows = []
+    for d, w in weights.items():
+        mean = sum(s[d] for s in sessions) / len(sessions)
+        rows.append((w * max(0.0, target - mean), d, mean))
+    return sorted(rows, reverse=True)
+
+for g, d, mean in gaps(SESSIONS, WEIGHTS, TARGET):
+    print(f"{d:<14} mean={mean:.2f} priority={g:.2f}")
+# reliability    mean=3.33 priority=1.67
+# trade-offs     mean=4.00 priority=1.50
+# depth          mean=4.33 priority=1.00  (then breadth 0.33, scoping 0, communication 0)
+```
+
+What to notice: scores above target contribute zero (`max(0, ...)`), so strengths do not mask weaknesses; weights encode the role (raise reliability's weight for infrastructure roles); and the output is a ranked practice list, not a pass/fail verdict.
+
+**Figure 88.12 — The gap-analysis practice loop.**
+
+```mermaid
+flowchart LR
+  MK[Mock interview,<br/>recorded] --> SC[Score 6 dimensions<br/>with evidence]
+  SC --> GP[Compute gap<br/>priorities]
+  GP --> PL[Pick top gap,<br/>targeted drills]
+  PL --> MK
+  SC -.->|after 3 mocks| TR[(Progress log)]
+  TR -.-> GP
+```
+
+**Reading the diagram.** *Components:* the recorded mock, scoring with evidence, the gap computation, targeted drills and a progress log (the only storage). *Direction:* a weekly loop; the dotted arrows are the slower path in which scores accumulate and gaps are recomputed every three mocks rather than after one noisy session. *Failure points:* scoring without evidence (scores drift upward), and drilling strengths because they feel good. *Scaling:* the same loop works alone (score your recordings against the tables) or in a study group that rotates interviewer and candidate roles.
+
+### 88.10.2 Adapting the framework
+
+**Table 88.15 — Adapting the framework to the format.**
+
+| Format | What changes | Keep no matter what |
+|---|---|---|
+| 45 minutes | Steps 9, 11, 13 merge into the deep dive; step 14 is one sentence | Numbers at step 4; one real deep dive |
+| 60 minutes | Two deep dives; full failure table; a sequence diagram | Time check at minute 30 |
+| Product-style prompt | More time on steps 1–3, 5 and user-visible behavior | A capacity estimate |
+| Infrastructure-style prompt | Less on FRs; more on steps 6, 8, 10–12 (consistency, partitioning, failure) | Stated non-goals |
+| ML prompt | Replace half of steps 5–9 with M1–M7 (Table 88.7) | API, fleet size, fallback |
+| LLM or agent prompt | Add evaluation first, cost per request, guardrails (§88.8) | Failure handling for tools |
+
+A product-style prompt ("design a shopping list app") rewards careful requirements and API shape; an infrastructure-style prompt ("design a distributed rate limiter") assumes the requirements are short and spends the time on correctness under concurrency and failure. Ask which emphasis the interviewer wants if the prompt is ambiguous; Chapter 87 covers how.
+
+## 88.11 Summary and revision notes
+
+::: summary
+- A framework is a **checklist, not a script**: it guarantees every step gets at least a sentence, while judgment decides which steps get ten minutes.
+- The **fourteen steps** follow the order in which uncertainty disappears: scope (1–3), size (4), contract (5–6), shape (7), depth (8–9), stress (10–12), judgment (13–14). Each has an artifact and a "done when" criterion.
+- In 45 minutes, protect about 14 minutes of depth starting near minute 22; in 60 minutes the extra time goes to deep dives.
+- Every number from step 4 must drive a decision; PriceWatch's 84 GB showed that **skew**, not size, shaped the design.
+- The **ML extension** adds formulation, labels and leakage, features, baseline-first modeling, offline gates, serving, experimentation, monitoring, retraining and responsible ML; it attaches to the traditional steps rather than replacing them.
+- Deal Nudge showed **selection bias** from logging only sent notifications, broken by an exploration slice and a no-send holdout.
+- LLM prompts add **evaluation first**, cost per request, guardrails, the knowledge-versus-behavior split and agent safety.
+- The **rubric** has six dimensions; scope widens and prompting drops from L3 to L7. It is illustrative, not any company's rubric.
+- Score mocks with evidence, compute weighted gaps, and drill the top gap.
+:::
+
+## 88.12 Knowledge checkpoint
+
+1. Name the seven phases and the steps in each.
+2. Why is the framework a checklist and not a script?
+3. What is the "done when" criterion for step 4?
+4. How many design minutes go to deep dives in a 45-minute and a 60-minute slot?
+5. In PriceWatch, why is the watch table clustered by target price?
+6. How does PriceWatch avoid duplicate alerts on event replay?
+7. Compute PriceWatch's peak alert rate from its assumptions.
+8. What two hazards dominate Deal Nudge's labels?
+9. Why does Deal Nudge send nothing if scoring fails?
+10. Name four LLM-specific additions to the framework.
+11. Compute the cost per request for 3,000 input and 400 output tokens at \$2.50 and \$10 per million.
+12. What two patterns run through all six rubric dimensions?
+
+<details><summary>Answers</summary>
+
+1. Scope (1–3), size (4), contract (5–6), shape (7), depth (8–9), stress (10–12), judgment (13–14).
+2. A script ignores the prompt's hard part and wastes time; a checklist guarantees coverage while letting depth and order vary.
+3. Every number is attached to a decision, and the dominant load is named.
+4. About 14 minutes (steps 8–9) in 45; about 19 in 60.
+5. A price drop triggers exactly the watches with target between the new and old price, so a range scan reads only those rows.
+6. A compare-and-set on `last_alerted_version`; only the winner enqueues, with idempotency key `watch_id:version`.
+7. $5{,}556 \times 0.4 \times 6.7 \times 0.02 \approx 300$ alerts/s.
+8. Leakage from features computed after the send, and selection bias from labels existing only for sent notifications.
+9. A missed day of nudges is cheap; falling back to the spammy heuristic would cause the opt-outs the system exists to prevent.
+10. Evaluation first, cost per request, guardrails and injection defense, RAG versus fine-tuning, agent safety, routing and fallback (any four).
+11. $(3{,}000 \times 2.50 + 400 \times 10)/10^6 = \$0.0115$.
+12. Scope widens (component to portfolio) and the need for prompting drops.
+</details>
+
+## 88.13 Interview questions
+
+### Basic
+
+**Q1. How do you approach a design question you have never seen?**
+**Answer.** *L3–L4:* "I clarify requirements, estimate, draw an architecture and then go deeper." *L5 and above:* the same steps, plus planning: "I'll confirm scope and numbers in about eight minutes, name the hard part, and spend most of the time there; I'll cover failures and operations at the end and loop back if a number changes a decision."
+
+**Q2. Why estimate capacity at all?**
+**Answer.** *L4:* to size servers and storage. *L5–L6:* to find which regime you are in and what dominates; often the result is that size is small and skew or one unexpected write path (GPS updates, click streams) shapes the design, and that is worth saying explicitly.
+
+### Intermediate
+
+**Q3. Your estimate gives 84 GB of state and 300 writes/s. The interviewer asks whether you need sharding. Answer.**
+**Answer.** *L4:* "No, it fits on one node with replicas." *L5:* "Not for size or throughput; but the hottest product has 2 million watchers, so I'd sub-partition hot products for parallel fan-out." *L6:* adds that partitioning by `product_id` is the one-way door worth getting right now, while node count is a two-way door to revisit at 10×.
+
+**Q4. Design an ML system that decides which notifications to send. Where do you start?**
+**Answer.** *L4:* features and a classifier predicting opens. *L5:* the business goal and two labels (engagement and opt-out), leakage, a heuristic baseline and an A/B test. *L6:* also the selection-bias loop, an exploration slice with logged propensities, a long-term holdout for incrementality, and hard caps outside the model.
+
+### Advanced
+
+**Q5. Mid-interview: "Assume the notification platform accepts only 1,000 messages/s from you." What changes?**
+**Answer.** *L5:* the drain time for a million-alert hot drop becomes $10^6/(1{,}000 - 300) \approx 1{,}430$ s, about 24 minutes, which breaks the 10-minute NFR; prioritize by watch age or target closeness and renegotiate the NFR for large audiences. *L6–L7:* also question the product: send in-app inbox entries immediately and push only to the most engaged watchers, and propose a shared per-user notification budget across PriceWatch and Deal Nudge.
+
+**Q6. How would you decide an LLM support assistant is ready to launch?**
+**Answer.** *L4:* manual testing on sample questions. *L5:* a task-specific evaluation set with success, groundedness and safety metrics, a gate, and a canary. *L6:* plus judge calibration against human labels, red-team and injection suites, cost and latency gates, an online metric (resolution without escalation) with guardrails, and a path for production failures to become evaluation cases.
+
+## 88.14 Practical exercises
+
+1. Run the fourteen steps on "design a ticket booking system" with a 45-minute timer, then compare with §55.8 and list missed steps.
+2. Recompute PriceWatch's capacity with $p = 0.05$ and 1 billion watches; which conclusions change?
+3. Modify the gap-analysis program to weight reliability 2.0 for an infrastructure role and report the new ranking.
+4. Score a recording of yourself against Tables 88.9–88.14, writing one piece of evidence per score.
+
+## 88.15 Design challenges
+
+1. **Back-in-stock alerts** for the same marketplace: reuse PriceWatch's steps and identify which artifacts change.
+2. **Deal Nudge for email** instead of push: redo M1, M2 and M8 when opens are measured unreliably.
+3. **A coding agent that opens pull requests:** apply §88.8 and write the evaluation-first plan and the tool-permission table.
+
+## 88.16 References
+
+1. Gawande, A. *The Checklist Manifesto: How to Get Things Right*. Metropolitan Books, 2009.
+2. Haynes, A. B., et al. *A Surgical Safety Checklist to Reduce Morbidity and Mortality in a Global Population*. New England Journal of Medicine 360(5), 2009.
+3. Sculley, D., et al. *Hidden Technical Debt in Machine Learning Systems*. NeurIPS, 2015.
+4. Paleyes, A., Urma, R.-G., Lawrence, N. D. *Challenges in Deploying Machine Learning: A Survey of Case Studies*. ACM Computing Surveys 55(6), 2022.
+5. Kaufman, S., Rosset, S., Perlich, C. *Leakage in Data Mining: Formulation, Detection, and Avoidance*. KDD, 2011.
+6. Huyen, C. *Designing Machine Learning Systems*. O'Reilly, 2022.
+7. Kohavi, R., Tang, D., Xu, Y. *Trustworthy Online Controlled Experiments: A Practical Guide to A/B Testing*. Cambridge University Press, 2020.
+8. Mitchell, M., et al. *Model Cards for Model Reporting*. FAT*, 2019.
+9. Ericsson, K. A., Krampe, R. T., Tesch-Römer, C. *The Role of Deliberate Practice in the Acquisition of Expert Performance*. Psychological Review 100(3), 1993.
+10. Larson, W. *Staff Engineer: Leadership Beyond the Management Track*. Self-published, 2021.
+11. Reilly, T. *The Staff Engineer's Path*. O'Reilly, 2022.
+12. Xu, A. *System Design Interview – An Insider's Guide*. Independently published, 2020.
+
+## 88.17 Open verification items
+
+- Haynes et al. 2009: confirm the 1.5% → 0.8% death rate and 11.0% → 7.0% complication figures and the eight-hospital setting against the paper.
+- Kaufman et al.: confirm the KDD 2011 author list (the later TKDD version adds an author).
+- Price figures (\$2.50, \$0.25, \$10 per million tokens) are Book II assumptions (§77.17), not current list prices.
+- The L3–L7 rubric and "most common gap" claims are illustrative general guidance, not measured data.

@@ -35,7 +35,7 @@ After this chapter you should be able to:
 - RDMA, InfiniBand versus RoCEv2, DCQCN, fat trees and dragonflies, parallel file systems — §49.10–§49.11 (the fabric and storage vocabulary).
 - Gang scheduling, topology-aware placement and Slurm — §46.10–§46.12 (how a 16,000-GPU gang is admitted).
 - PUE, WUE and operational carbon — §51.10–§51.11 (the facility and carbon formulas).
-- Little's law — §4.6; series reliability and correlated failures — §39.4 (used for spares and job MTBF).
+- Little's law — §4.11; series reliability and correlated failures — §39.4 (used for spares and job MTBF).
 
 ## 80.3 Why AI clusters are a distinct engineering discipline
 
@@ -858,7 +858,7 @@ What to notice:
 
 ### 80.9.3 Strategies: hot spares, in-memory checkpoints and fast restart
 
-**Hot spares.** Keep pre-validated idle nodes in the cluster so that a failed node is replaced in seconds by a scheduler action rather than in days by a repair. How many? The number of nodes out of service at any moment follows Little's law (§4.6): the rate at which nodes go to repair times how long each repair takes.
+**Hot spares.** Keep pre-validated idle nodes in the cluster so that a failed node is replaced in seconds by a scheduler action rather than in days by a repair. How many? The number of nodes out of service at any moment follows Little's law (§4.11): the rate at which nodes go to repair times how long each repair takes.
 
 ::: formula
 **Hot-spare pool size**

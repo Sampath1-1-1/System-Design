@@ -83,11 +83,11 @@
 81: {research: done, draft: done, diagrams: done, review: done, final: todo}
 82: {research: done, draft: done, diagrams: done, review: done, final: todo}
 83: {research: done, draft: done, diagrams: done, review: done, final: todo}
-84: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-85: {research: done, draft: done, diagrams: done, review: wip, final: todo}
-86: {research: done, draft: done, diagrams: done, review: wip, final: todo}
+84: {research: done, draft: done, diagrams: done, review: done, final: todo}
+85: {research: done, draft: done, diagrams: done, review: done, final: todo}
+86: {research: done, draft: done, diagrams: done, review: done, final: todo}
 87: {research: done, draft: done, diagrams: done, review: todo, final: todo}
-88: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+88: {research: done, draft: done, diagrams: done, review: todo, final: todo}
 89: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
 90: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
 91: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}

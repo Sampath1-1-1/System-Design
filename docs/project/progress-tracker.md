@@ -91,11 +91,11 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 | 81 | Case Studies VI: Recommendation, Search and Ads | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 30,837 | 21 | 39 | 0 |
 | 82 | Case Studies VII: Risk and Trust | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,068 | 12 | 19 | 0 |
 | 83 | Case Studies VIII: Marketplace Forecasting and Optimization | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,665 | 13 | 20 | 0 |
-| 84 | Case Studies IX: Perception and Language | 3-5 | ✅ | ✅ | ✅ | 🟡 | ⬜ | 19,917 | 15 | 18 | 0 |
-| 85 | Case Studies X: ML Platforms | 4-5 | ✅ | ✅ | ✅ | 🟡 | ⬜ | 19,685 | 14 | 18 | 0 |
-| 86 | Case Studies XI: LLM and Agent Systems | 4-5 | ✅ | ✅ | ✅ | 🟡 | ⬜ | 23,272 | 18 | 19 | 0 |
+| 84 | Case Studies IX: Perception and Language | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,917 | 15 | 18 | 0 |
+| 85 | Case Studies X: ML Platforms | 4-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,685 | 14 | 18 | 0 |
+| 86 | Case Studies XI: LLM and Agent Systems | 4-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 23,272 | 18 | 19 | 0 |
 | 87 | Interview Fundamentals | 2 | ✅ | ✅ | ✅ | ⬜ | ⬜ | 9,614 | 11 | 13 | 0 |
-| 88 | The Interview Readiness Framework | 2-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | 11,716 | 12 | 15 | 0 |
+| 88 | The Interview Readiness Framework | 2-5 | ✅ | ✅ | ✅ | ⬜ | ⬜ | 11,716 | 12 | 15 | 0 |
 | 89 | Capacity Estimation Handbook | 2-4 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | 7,456 | 9 | 9 | 7 |
 | 90 | Company-Level Interview Preparation | 3-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | 9,565 | 6 | 2 | 7 |
 | 91 | Interview Practice Library I: Traditional System Design | 2-5 | 🟡 | 🟡 | ⬜ | ⬜ | ⬜ | — | — | — | — |
