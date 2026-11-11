@@ -2,12 +2,12 @@
 
 > **Level:** 3–5 · **Track:** Shared · **Estimated reading time:** 4 h
 
-Candidates often prepare for a named company by collecting rumors: "they always ask a feed design", "the bar is higher for senior roles", "they want you to mention a specific database". Most of that is unverifiable, much of it is out of date, and some of it is false. This chapter takes the opposite approach. For each of fifteen companies it separates three kinds of information and labels each one: what the company itself has published about how it hires (*Evidence: Primary*, with a citation and "as of 2026"); what the company has published about its own systems, which tells you what kinds of problems its engineers think about; and general preparation advice that we infer from that public engineering focus (*Evidence: Illustrative*), which is our suggestion and never a claim about how the company interviews.
+Candidates often prepare for a named company by collecting rumors. Most of that is unverifiable, much of it is out of date, and some of it is false. This chapter takes the opposite approach. For each of fifteen companies it separates three kinds of information and labels each one: what the company itself has published about how it hires (*Evidence: Primary*, with a citation and "as of 2026"); what the company has published about its own systems, which tells you what kinds of problems its engineers think about; and general preparation advice that we infer from that public engineering focus (*Evidence: Illustrative*), which is our suggestion and never a claim about how the company interviews.
 
 The companies are Google, Amazon, Meta, Microsoft, Apple, Netflix, Uber, Airbnb, LinkedIn, Stripe, Databricks, Snowflake, OpenAI, Anthropic and NVIDIA. They vary a great deal in how much they publish about hiring. Some publish detailed preparation pages; some publish almost nothing. Where a company publishes little, this chapter says so plainly rather than filling the gap.
 
 ::: warning
-**Read this first — what this chapter does not contain.** It contains no interview-loop structures, leveling guides, hiring bars, rubrics or "questions they ask" unless the company has published them itself. It contains no content from review sites, anonymous forums or candidate reports. Hiring processes change often and vary by team, role, level and country; your recruiter's description of *your* process always overrides anything here, including the verified items.
+**Read this first — what this chapter does not contain.** It contains no interview-loop structures, leveling guides, hiring bars, rubrics or "questions they ask" unless the company has published them itself. It contains no content from review sites, anonymous forums or candidate reports. Processes change and vary by team, role, level and country; your recruiter's description of *your* process overrides anything here.
 :::
 
 ## 90.1 Learning objectives
@@ -41,11 +41,11 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of preparing for a company as preparing to visit a city you have never seen. The city's official transit map is reliable but incomplete. A friend's account of a trip five years ago is vivid but may describe a bus line that no longer runs. An anonymous review that says "the trains are always late" tells you about one traveler's bad day. A sensible traveler uses the official map for facts, the friend for color, and ignores the anonymous review. Interview preparation works the same way: the company's own words are the map, and everything else is weaker evidence.
+Think of preparing for a company as visiting a city you have never seen. The official transit map is reliable but incomplete; a friend's five-year-old account may describe a bus line that no longer runs; an anonymous review of late trains describes one traveler's bad day. Use the map for facts, the friend for color, and ignore the review. The company's own words are the map.
 
 #### Why does this exist?
 
-Interview preparation has become an industry, and much of what circulates about specific companies is presented with more confidence than its sources justify. Two failures follow. First, candidates over-fit: they memorize a "known" question list and then cannot adapt when the interviewer changes one requirement. Second, candidates under-prepare on transferable skills because they believe a company-specific trick will carry them. Both failures are avoidable if you know what can actually be known.
+Much of what circulates about specific companies is presented with more confidence than its sources justify. Two failures follow: candidates over-fit to a "known" question list and cannot adapt when one requirement changes, and they under-prepare on transferable skills. Both are avoidable if you know what can actually be known.
 
 #### How it works internally: the reliability ladder
 
@@ -80,9 +80,9 @@ Candidate reports feel like data because there are many of them. They are not a 
 
 1. **Selection bias.** People who post are not typical candidates. Very good and very bad experiences are over-represented, and the incentive to post differs between those who received offers and those who did not.
 2. **Survivorship.** "I was asked X and passed" does not mean X decided the outcome; the same candidate might have passed with any question.
-3. **Team and role variance.** Large companies run many hiring pipelines. A report from one organization tells you little about another. Several companies' own pages say exactly this (for example NVIDIA and Microsoft, §90.19 and §90.8).
+3. **Team and role variance.** Large companies run many hiring pipelines. A report from one organization tells you little about another. Some companies' own pages say so (for example NVIDIA, §90.19).
 4. **Time decay.** Processes change: new rounds are added, formats move online or back to onsite, AI-tool policies are introduced. A two-year-old report may describe a process that no longer exists.
-5. **Memory and paraphrase.** A question recalled hours later is a reconstruction. Requirements that the interviewer stated are often forgotten, so the posted "question" is a different problem.
+5. **Memory and paraphrase.** A recalled question usually omits requirements the interviewer stated, so it is a different problem.
 6. **Confidentiality.** Many candidates agree not to share interview content. Content that circulates anyway is ethically compromised, and preparing from it can expose you to disqualification.
 
 ::: mistake
@@ -119,11 +119,11 @@ flowchart LR
   C -.->|"conflict found"| B
 ```
 
-**Reading the diagram.** The flow runs left to right from the candidate. Every step is something you do synchronously, in order; the single dotted arrow is the asynchronous correction path: if the public page contradicts what your recruiter said, you go back and ask, and the recruiter's answer wins (rung 1 over rung 2). The decision node loops practice and mock interviews until you are ready, which is where most of the time goes. The "storage" across steps is your dated source log from §90.3.3. Failure points: skipping step B (preparing for the wrong format), skipping step D (having no domain vocabulary), or skipping step I (missing a late policy change). The workflow scales to several companies at once because steps E–G are shared; only steps B–D and I are per company.
+**Reading the diagram.** The flow runs left to right; each solid step is done in order. The dotted arrow is the asynchronous correction path: if the public page contradicts your recruiter, ask again, and the recruiter wins. The decision node loops practice and mocks until you are ready, which is where most time goes. The "storage" across steps is your dated source log (§90.3.3). Failure points: skipping B (wrong format), D (no domain vocabulary) or I (missing a late policy change). It scales to several companies because steps E–G are shared.
 
 ### 90.3.5 Ethics and policies on AI assistance
 
-Some companies now publish explicit rules on whether you may use AI tools during applications, take-home exercises and live interviews. Where a company publishes such rules, follow them exactly; where it does not, ask your recruiter and assume no assistance during live interviews unless told otherwise. Do not seek or use leaked interview content. Apart from the ethical problem, interviewers who recognize a memorized answer typically probe until the memorized part runs out.
+Some companies now publish rules on AI tools during applications, take-homes and live interviews. Follow them exactly; where none are published, ask your recruiter and assume no assistance in live interviews unless told otherwise. Do not seek or use leaked interview content.
 
 #### Failure scenarios
 
@@ -169,7 +169,7 @@ Company context legitimately changes three things in an interview answer:
 2. **Which examples you can cite.** If a company has published a design (Dynamo, TAO, Spanner, Kafka, H3), you may refer to it as published work, with its date, as long as you do not claim it describes today's production system.
 3. **Which follow-up questions you anticipate.** Domain constraints suggest follow-ups: multi-region consistency, abuse, privacy, hardware failure.
 
-It does not change the method. A candidate who skips requirements because "this company cares about scale" has misread the situation everywhere.
+It does not change the method.
 
 **Figure 90.3 — The transferable core and the company layer.**
 
@@ -191,7 +191,7 @@ flowchart TB
   V -.->|"behavioral<br/>preparation"| T
 ```
 
-**Reading the diagram.** The upper subgraph is the method you apply in every interview, executed synchronously from requirements to trade-offs; each solid arrow is the next step of the sequence in Chapter 88. The lower subgraph holds two stores of company knowledge, drawn as cylinders because they are reference material you consult, not steps you perform. Dotted arrows are influences rather than steps: published engineering work shapes which examples you cite in the deep dive and which failures you anticipate, and published values inform how you discuss trade-offs and past work. The storage boundary is between the two subgraphs: nothing in the company layer replaces a step of the core. The failure point is drawing a solid arrow from the layer into the core, that is, skipping a core step because of a company belief. This structure scales to any number of companies because the core is shared and only the lower subgraph is swapped.
+**Reading the diagram.** The upper subgraph is the method applied in every interview, step by step (solid arrows, Chapter 88). The lower subgraph holds two stores of company knowledge, drawn as cylinders because you consult them rather than perform them. Dotted arrows are influences: published engineering work shapes the examples and failures you raise, and published values inform how you discuss trade-offs and past work. The storage boundary between the subgraphs means nothing in the company layer replaces a core step; skipping a step because of a company belief is the failure point. It scales to any number of companies because only the lower subgraph changes.
 
 ### 90.4.3 How the company sections are organized
 
@@ -222,7 +222,7 @@ flowchart LR
   AP --> P2["Sync and push<br/>at scale, 9.8, 54.7"]
 ```
 
-**Reading the diagram.** Each stadium node is a company; each rectangle is an engineering theme visible in that company's own publications, with the book chapters that teach it. Arrows mean "public work suggests practicing", not "the interview contains". All edges are drawn solid because this is a static reference map with no runtime flow; there are no storage boundaries or failure points in the systems sense. The practical failure point is reading the map as a question list. To scale your use of it, pick one theme per company for a deep dive and treat the rest as vocabulary.
+**Reading the diagram.** Each stadium node is a company; each rectangle is an engineering theme visible in its own publications, with the sections that teach it. Arrows mean "public work suggests practicing", not "the interview contains". All edges are solid because this is a static map with no runtime flow, storage boundary or failure point in the systems sense; the practical failure is reading it as a question list. To scale your use of it, pick one theme per company for a deep dive.
 
 **Figure 90.5 — Focus map: Netflix, Uber, Airbnb, LinkedIn, Stripe (general advice).**
 
@@ -240,7 +240,7 @@ flowchart LR
   ST --> T2["Payments, ledgers,<br/>fraud, 55.9, 82.4"]
 ```
 
-**Reading the diagram.** The layout matches Figure 90.4: companies on the left, published engineering themes on the right, labeled with the sections that teach them. All arrows are solid and static. The map shows two recurring clusters across these five companies: correctness of money movement (Airbnb, Stripe) and event streams feeding many consumers (LinkedIn, and the real-time marketplace at Uber). The failure point is again misreading it as a statement about interviews; it summarizes published engineering focus only.
+**Reading the diagram.** Same conventions as Figure 90.4: static, solid edges from company to published theme. Two clusters recur: correctness of money movement (Airbnb, Stripe) and event streams feeding many consumers (LinkedIn, Uber's real-time marketplace). It summarizes published engineering focus only.
 
 **Figure 90.6 — Focus map: Databricks, Snowflake, OpenAI, Anthropic, NVIDIA (general advice).**
 
@@ -258,7 +258,7 @@ flowchart LR
   NV --> V2["Collectives and<br/>clusters, 65.7, 80.5"]
 ```
 
-**Reading the diagram.** Same conventions as the previous two maps. The five data and AI companies split into two groups: data-platform companies (Databricks, Snowflake), whose publications concern query engines, table formats and the separation of storage from compute; and AI companies (OpenAI, Anthropic, NVIDIA), whose publications concern accelerators, large-scale training and serving, and agent systems. Expect the second group's themes to change fastest; re-check publications within weeks of an interview.
+**Reading the diagram.** Same conventions as the previous maps. Data-platform companies (Databricks, Snowflake) publish on query engines, table formats and storage–compute separation; AI companies (OpenAI, Anthropic, NVIDIA) publish on accelerators, training, serving and agents. Expect the second group's themes to change fastest.
 
 ## 90.5 Google
 
@@ -281,11 +281,6 @@ Google has published more foundational distributed-systems papers than almost an
 - **Borg** (2015) — cluster management for a large fleet, the ancestor of Kubernetes [Verma et al. 2015]. See §46.5.
 - **Site Reliability Engineering** — Google's freely available SRE books define SLOs, error budgets and postmortem culture [Beyer et al. 2016]. See §39.6–§39.7 and §39.12.
 
-::: industry
-**Google's published papers as design vocabulary.** The papers above are Google's own descriptions of systems at the time of publication. They are useful because they show the reasoning behind a design: Bigtable's choice of a sorted key space enables range scans and creates hot-spot risk; Spanner's commit wait trades a few milliseconds of latency for external consistency. In an interview, cite them as published designs with their dates, not as descriptions of current production.
-*Evidence: Primary* — [Ghemawat et al. 2003; Dean and Ghemawat 2004; Chang et al. 2006; Corbett et al. 2012; Verma et al. 2015; Beyer et al. 2016]
-:::
-
 ### 90.5.3 Preparation focus areas
 
 ::: recommendation
@@ -307,8 +302,6 @@ Google has published more foundational distributed-systems papers than almost an
 **Amazon — Leadership Principles and interview preparation (as of 2026).** Amazon publishes sixteen Leadership Principles on its jobs site: Customer Obsession; Ownership; Invent and Simplify; Are Right, A Lot; Learn and Be Curious; Hire and Develop the Best; Insist on the Highest Standards; Think Big; Bias for Action; Frugality; Earn Trust; Dive Deep; Have Backbone, Disagree and Commit; Deliver Results; Strive to be Earth's Best Employer; and Success and Scale Bring Broad Responsibility [Amazon LP]. The last two were added in 2021 [Amazon 2021]. Amazon also publishes role-specific interview-preparation pages. Its system design preparation page for SDE III candidates states that half of the interview time is spent on questions about the Leadership Principles and half on coding problems and system design, and that the interviewer will ask questions about your design while you should ask questions to complete and validate it [Amazon SDE III Prep]. A separate SDE II preparation page exists [Amazon SDE II Prep].
 *Evidence: Primary* — [Amazon LP; Amazon 2021; Amazon SDE III Prep; Amazon SDE II Prep]. Confirmed through search-engine excerpts of the pages; direct fetch was blocked (§90.28).
 :::
-
-The published statement that the candidate "should ask questions to complete and validate" the design is worth noting because it is the same behavior Chapter 87 recommends everywhere: requirements are negotiated, not given.
 
 ### 90.6.2 Engineering context worth knowing
 
@@ -736,3 +729,302 @@ Anthropic's hiring pages could be read directly during research, so this section
 - **Case studies:** distributed model training platform (§85.5), multi-tenant ML serving platform (§85.6), LLM inference platform (§86.5).
 - **Chapter 91 families:** high-performance and HPC-style systems, schedulers.
 - **Chapter 92 families:** training infrastructure, GPU serving, inference optimization.
+
+## 90.20 Comparison table: domain focus and suggested practice topics
+
+Table 90.3 condenses §90.5–§90.19. The second column summarizes only what each company has published about hiring; the remaining columns are **general advice** inferred from public engineering work (*Evidence: Illustrative*), not statements about interview content.
+
+**Table 90.3 — Domain focus and suggested practice per company (general advice, as of 2026).**
+
+| Company | Published hiring material found | Public engineering focus | Suggested practice topics | Key case studies |
+|---|---|---|---|---|
+| Google | How we hire page; re:Work guides | Global storage, consistency, scheduling, SRE | Consistency trade-offs, sorted partitioning, SLOs | §54.4, §55.6, §56.4 |
+| Amazon | 16 Leadership Principles; SDE prep pages | Availability, safe retries, cells | Retries and idempotency, cells, leaderless KV | §52.8, §55.7, §55.9 |
+| Meta | Full-loop prep page; 2022 blog post | Social graph, caching, messaging | Feed fan-out, cache invalidation, chat | §53.4–§53.7, §81.5 |
+| Microsoft | Interview tips; culture page | Cloud storage, enterprise SaaS | Consistency levels, multi-tenancy, sync | §53.4, §54.7, §86.4 |
+| Apple | Interview tips only | Privacy, devices, push, sync | Privacy by design, push, on-device ML | §52.7, §54.7, §84.4 |
+| Netflix | Culture memo only | Video delivery, resilience | CDN arithmetic, fault injection | §54.5, §81.6 |
+| Uber | Interview guides by role | Geospatial marketplace, ML platform | Proximity search, matching, ETA | §55.4, §55.5, §83.5 |
+| Airbnb | Core values only | Payments, search, features | Reservations, idempotent payments | §55.8, §55.9, §81.7 |
+| LinkedIn | How we hire page; 2021 blog | Logs, Kafka, CDC, feed | Event streams, CDC, typeahead | §53.7, §56.5, §56.7 |
+| Stripe | Operating principles only | API design, payments | Idempotent APIs, ledgers, webhooks | §52.6, §55.9, §82.4 |
+| Databricks | Interview-prep page and guides | Spark, lakehouse tables | Shuffle and skew, table commits | §56.7, §85.5 |
+| Snowflake | Little found | Storage–compute separation | Elastic warehouses, columnar pruning | §56.6, §56.7 |
+| OpenAI | Interview guide | LLM serving, large clusters | KV cache, token limits, goodput | §86.5, §86.6, §86.8 |
+| Anthropic | How we hire; AI-use guidance | Multi-accelerator serving, agents, evals | Output-quality monitoring, agents | §86.5, §86.7 |
+| NVIDIA | How we hire page | GPUs, collectives, clusters | Roofline, collectives, serving | §85.5, §85.6, §86.5 |
+
+Two patterns stand out. First, Netflix and Stripe publish little about interviews but a great deal about systems. Second, the practice topics cluster into four families that overlap heavily: storage and consistency (Google, Amazon, Microsoft, Snowflake), real-time consumer products (Meta, LinkedIn, Netflix, Uber), money movement (Stripe, Airbnb, Uber), and accelerators and AI serving (OpenAI, Anthropic, NVIDIA, Databricks for ML platforms). If you interview with several companies, prepare by family, not by company.
+
+## 90.21 A four-week company-targeted preparation plan
+
+This plan assumes you have already worked through Chapters 87–89 once and can complete a 45-minute design on a familiar problem. It is general advice.
+
+### 90.21.1 Budgeting the hours
+
+::: formula
+**Preparation hour budget**
+
+$$H = W \times h, \qquad H_k = p_k \times H, \qquad \sum_k p_k = 1, \qquad M = \left\lfloor \frac{H_\text{mock}}{t_\text{mock}} \right\rfloor$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $H$ | Total preparation hours | hours |
+| $W$ | Weeks available | weeks |
+| $h$ | Hours available per week | hours/week |
+| $p_k$ | Share of time for block $k$ (core method, company context, mock interviews, behavioral) | dimensionless |
+| $H_k$ | Hours for block $k$ | hours |
+| $H_\text{mock}$ | Hours for the mock-interview block | hours |
+| $t_\text{mock}$ | Time per mock including debrief | hours/mock |
+| $M$ | Number of full mock interviews | mocks |
+:::
+
+::: example
+**Worked example — four weeks, two target companies.**
+
+1. Available time: $W = 4$ weeks, $h = 10$ hours per week, so $H = 4 \times 10 = 40$ hours.
+2. Shares: core method $p = 0.40$, company context $p = 0.25$, mock interviews $p = 0.25$, behavioral and values $p = 0.10$. Check: $0.40 + 0.25 + 0.25 + 0.10 = 1.00$.
+3. Hours: core $0.40 \times 40 = 16$ h; company $0.25 \times 40 = 10$ h; mocks $0.25 \times 40 = 10$ h; behavioral $0.10 \times 40 = 4$ h. Total $16 + 10 + 10 + 4 = 40$ h.
+4. Mocks: a 45-minute mock plus a 30-minute debrief is $t_\text{mock} = 1.25$ h, so $M = \lfloor 10 / 1.25 \rfloor = 8$ mocks, two per week.
+5. Company context: $10$ h across two companies is $5$ h each, for example 1 h on hiring pages and policies, 2 h on two primary papers or posts, and 2 h working one domain case study from this book.
+
+**Interpretation.** Company-specific work is a quarter of the budget, and even that quarter is mostly spent on engineering material that also improves general design skill. **Engineering implication.** If your mock scores on fundamentals are weak after week 2, move hours from company context to the core block; the reverse move is rarely justified.
+:::
+
+### 90.21.2 The weekly plan
+
+**Table 90.4 — Four-week plan (general advice).**
+
+| Week | Core method (≈4 h) | Company context (≈2.5 h) | Mocks (≈2.5 h) | Behavioral (≈1 h) |
+|---|---|---|---|---|
+| 1 | Re-run the Chapter 88 sequence on two familiar cases; refresh Chapter 89 estimates | Recruiter questions; read hiring pages; start source log | 2 mocks on general problems | List 6–8 past projects with decisions and results |
+| 2 | Weakest dimensions from week 1 mocks (Table 90.2) | Read two primary papers or posts per company; write one-page summaries | 2 mocks on family-shaped problems (§90.20) | Map stories to published values where companies publish them |
+| 3 | Deep dives: storage, consistency, caching, or ML serving as relevant | Work one domain case study per company end to end | 2 mocks with changed requirements mid-way | Rehearse aloud, 2 minutes per story |
+| 4 | Light review; estimation drills | Re-check hiring pages and AI-use policies; update log | 2 full mocks in the real format | Final rehearsal; prepare questions for interviewers |
+
+**Figure 90.7 — The four-week plan as a schedule.**
+
+```mermaid
+gantt
+  title Four-week company-targeted plan
+  dateFormat YYYY-MM-DD
+  axisFormat %d %b
+  section Core method
+  Sequence and estimation refresh :c1, 2026-01-05, 7d
+  Fix weakest dimensions          :c2, after c1, 7d
+  Deep dives                      :c3, after c2, 7d
+  Light review                    :c4, after c3, 7d
+  section Company context
+  Recruiter and hiring pages      :k1, 2026-01-05, 3d
+  Primary papers and posts        :k2, 2026-01-12, 7d
+  Domain case studies             :k3, 2026-01-19, 7d
+  Re-check pages and policies     :k4, 2026-01-26, 2d
+  section Mocks
+  General mocks                   :m1, 2026-01-08, 4d
+  Family-shaped mocks             :m2, 2026-01-15, 4d
+  Changed-requirement mocks       :m3, 2026-01-22, 4d
+  Real-format mocks               :m4, 2026-01-29, 4d
+```
+
+**Reading the diagram.** Each section is a budget line from §90.21.1; time runs left to right (dates are placeholders). Core-method tasks run back to back. Company context front-loads the recruiter conversation, because everything depends on knowing the format, and ends with a re-check for late policy changes. Mocks recur weekly so feedback reaches the next week's core work. The failure point is company-context tasks expanding into core time. To scale to more companies, lengthen only the company rows, or prepare by family (§90.20).
+
+::: tip
+**Interview tip — Use company context as a constraint, not a claim.** A sentence such as "For a payments product I would make retries safe before optimizing latency; Stripe's published idempotency-key design is one example" shows domain judgment and cites a primary source. A sentence such as "I believe your team uses X internally" invites a follow-up you cannot answer and adds nothing.
+:::
+
+## 90.22 Summary and revision notes
+
+::: summary
+- Rank interview information on a ladder: recruiter (for your process) > company hiring pages > company engineering publications > reputable secondary sources > anonymous reports. Prepare from the top rungs and log the date of every item.
+- Hearsay is unreliable because of selection bias, survivorship, team variance, time decay, imperfect recall and confidentiality obligations.
+- What companies evaluate in design interviews generalizes: framing, numbers, architecture, data modeling, depth on the hard part, failure and scale, trade-offs, communication and judgment (Chapters 87–88).
+- Companies differ greatly in what they publish about hiring. Amazon, Anthropic, OpenAI, Uber, LinkedIn, NVIDIA, Meta, Microsoft and Databricks publish preparation or process pages; Netflix, Stripe and Airbnb publish culture or principles pages; Apple and Snowflake publish little.
+- A company's published engineering work tells you which constraints it cares about (global consistency, safe retries, money correctness, accelerator memory), not which questions it asks. Cite papers with dates and never present them as today's production.
+- Prepare by problem family (storage and consistency, real-time consumer products, money movement, AI and accelerators) when targeting several companies.
+- Spend about a quarter of preparation time on company context; spend the rest on transferable method and realistic mock interviews.
+- Follow published AI-use policies exactly; re-check them, and the hiring page, in the week of the interview.
+:::
+
+## 90.23 Knowledge checkpoint
+
+1. Name the five rungs of the information-reliability ladder in order.
+2. Give three reasons why a frequently reported interview question may still be poor evidence.
+3. Which source wins if a company's careers page and your recruiter disagree about the format?
+4. What does Amazon's published SDE III system design preparation page say about how interview time is divided?
+5. How many Leadership Principles does Amazon publish, and which two were added in 2021?
+6. What does Anthropic's published guidance say about AI use in take-home assessments and in live interviews?
+7. What does NVIDIA's careers page say is required before an offer can be considered?
+8. Why is it a mistake to describe DynamoDB using the 2007 Dynamo paper?
+9. What design pattern does TAO illustrate, and why does it suit social products?
+10. What problem does Airbnb's published idempotency framework address?
+11. What does OpenAI's interview guide say it generally looks for in engineering interviews?
+12. In the worked example of §90.21.1, how many mock interviews fit in a 10-hour mock budget, and why?
+
+<details><summary>Answers</summary>
+
+1. Recruiter for your process; company hiring pages and published values; company engineering publications; reputable secondary sources; anonymous or candidate-reported content.
+2. Any three of: posts are self-selected; repetition is often copying from one origin; reports come from different teams and roles; reports go stale as processes change; recalled questions omit stated requirements; content may breach confidentiality.
+3. The recruiter (rung 1), because it describes your role, level, team and date.
+4. Half on questions about the Leadership Principles and half on coding problems and system design; the page also says to ask questions to complete and validate the design.
+5. Sixteen; Strive to be Earth's Best Employer and Success and Scale Bring Broad Responsibility.
+6. Complete take-homes without Claude unless told otherwise; live interviews are without AI assistance unless the interviewer indicates otherwise. Using Claude to prepare and to refine self-drafted materials is encouraged.
+7. An onsite, in-person interview at an NVIDIA office.
+8. The 2022 DynamoDB paper describes a different system: leader-based partitions replicated with Multi-Paxos and a focus on predictable performance, not Dynamo's leaderless sloppy quorums.
+9. A graph-shaped caching tier over sharded relational storage; most social queries are one-hop reads with a very high read-to-write ratio.
+10. Safe retries of payment requests: avoiding double charges when calls fail or time out, using idempotency keys and phased request handling.
+11. Well-designed solutions, high-quality code, optimal performance and good test coverage.
+12. Eight: each mock with debrief takes 1.25 h, and $\lfloor 10 / 1.25 \rfloor = 8$.
+</details>
+
+## 90.24 Interview questions
+
+All model answers below are *Evidence: Illustrative*: they show reasoning about company-type constraints and make no claim about any company's internal systems or interview content.
+
+### Basic
+
+**Q1.** You cite Dynamo while designing a key-value store. The interviewer asks whether that is how DynamoDB works today. How do you answer?
+
+**Answer.** Separate the two published systems and their dates. The 2007 Dynamo paper describes a leaderless design with consistent hashing, sloppy quorums, hinted handoff and vector clocks. The 2022 DynamoDB paper describes a managed service whose partitions each have a leader and are replicated with Multi-Paxos, with heavy emphasis on admission control and predictable latency. Then return to your own design: say which of those properties your requirements need (for example always-writable carts versus predictable single-digit-millisecond reads) and choose accordingly. Never claim to know the current internals beyond what is published.
+
+**Q2.** Why should a payments API make retries safe before optimizing latency, and how?
+
+**Answer.** Networks fail after the server has acted but before the client hears back, so clients must retry; without idempotency a retry can charge twice, which is a correctness and trust failure, whereas extra latency is only a cost. Give each mutating request an idempotency key; store key, request fingerprint and result atomically with the side effect; on retry, return the stored result; reject a reused key with a different payload; expire keys after a bounded window. Downstream, use idempotent consumers and a transactional outbox (§22.15, §32.5, §32.10).
+
+### Intermediate
+
+**Q3.** You are designing video delivery for a global streaming service with 10 million concurrent streams at peak and an average bitrate of 5 Mbps. What is the peak egress, and what does it imply?
+
+**Answer.** $10^7 \times 5 \times 10^6$ b/s $= 5 \times 10^{13}$ b/s $= 50$ Tb/s. No single origin or region can serve that, so the design must place caches close to viewers, fill them ahead of demand where popularity is predictable, and steer each client to a nearby cache with headroom. Then quantify the cache hit ratio needed: at 95% offload the origin and mid-tier still serve $0.05 \times 50 = 2.5$ Tb/s. Published examples of the pattern include Netflix Open Connect (§21.10); the design itself is ours.
+
+**Q4.** For a multi-tenant LLM API, why are request-per-second limits insufficient, and what replaces them?
+
+**Answer.** Requests differ in cost by orders of magnitude: a 100-token prompt and a 100,000-token prompt are both one request, but the second uses far more prefill compute and KV-cache memory. Limit in tokens per minute (input and output separately, since their costs differ), plus concurrent-request caps to bound KV-cache occupancy, plus admission control that estimates a request's cost before scheduling it. Return clear limit headers so clients can back off (§79.9, §73.14).
+
+### Advanced
+
+**Q5.** The same model is served on three accelerator platforms. How would you detect that one platform is producing subtly worse outputs while latency and error rates look normal?
+
+**Answer.** Health checks only see availability. Add output-quality monitoring per platform: route a small fixed set of canary prompts with known-good references through every platform continuously and compare scores; run deterministic or low-temperature probes whose outputs can be compared across platforms; track quality proxies from production traffic (user feedback, refusal rates, output-length distributions, judge-model scores) segmented by platform, compiler version and configuration; and gate every infrastructure change behind an evaluation run. Anthropic's 2025 postmortem is a published case where quality regressions came from infrastructure bugs that were hard to detect with ordinary signals (§78.11, §79.13).
+
+**Q6.** When would you accept a commit-wait cost for globally consistent writes?
+
+**Answer.** When the business invariant spans regions and a stale read or lost update is expensive: global inventory, account balances, unique usernames. With clock uncertainty $\bar{\varepsilon}$ of a few milliseconds, commit wait adds roughly $2\bar{\varepsilon}$ to each write, and cross-region consensus adds tens of milliseconds more; that is acceptable for low-rate, high-value writes and unacceptable for high-rate, low-value ones such as view counters, which should use per-region counters merged asynchronously (§28.8, §44.12).
+
+**Q7.** An interviewer asks, "How do you think we built this at our company?" How do you answer well?
+
+**Answer.** State what is published and when ("the 2013 TAO paper described a read-through graph cache over sharded MySQL"), say you cannot know whether it still holds, then design from the requirements in front of you, using the published design as one alternative among several with its trade-offs. This shows you read primary sources, respects the limits of public knowledge and keeps the discussion on reasoning.
+
+## 90.25 Practical exercises
+
+1. Build a source log for one target company: at least eight items, each with URL, ladder rung and date read. Delete any item you cannot trace to its origin.
+2. Read one primary paper from your target company's list and write a one-page design summary: problem, key decision, numbers, trade-off, failure mode. Then name the book section that teaches the idea.
+3. Take one case study from Table 90.3 and re-run it twice: once with a payments-style first requirement (correctness under retries) and once with an AI-serving first requirement (cost per token). Note what changes.
+4. Apply the budget formula in §90.21.1 to your own calendar and schedule the mocks.
+
+## 90.26 Design challenges
+
+1. **Two families at once.** You interview with a payments company and an AI lab in the same month. Design a single four-week plan that covers both, and justify which shared topics (rate limiting, multi-tenancy, observability) let one block of practice serve both.
+2. **Published design, new constraint.** Take a company's published system (Dynamo, TAO, Spanner, Kafka or the Snowflake architecture) and change one requirement (ten times the write rate, a new data-residency rule, or a strict cost cap). Redesign it, stating what in the published design breaks first.
+3. **Quality monitoring for multi-platform serving.** Design the monitoring and release-gating system described in §90.24 Q5 for a model served on three hardware types in four regions, including its capacity estimate and alerting thresholds.
+
+## 90.27 References
+
+Hiring pages were read in 2026. Items marked † were confirmed through search-engine excerpts because the site could not be fetched directly (see §90.28).
+
+1. Google. *How we hire*. Google Careers. https://www.google.com/about/careers/applications/how-we-hire/ † [Google How We Hire]
+2. Google re:Work. *Train your interviewers*. https://rework.withgoogle.com/en/guides/hiring-train-your-interviewers † [Google re:Work]
+3. Amazon. *Leadership Principles*. https://www.amazon.jobs/content/en/our-workplace/leadership-principles † [Amazon LP]
+4. Amazon. *Two new Leadership Principles*. About Amazon, 2021. https://aboutamazon.com/news/company-news/two-new-leadership-principles † [Amazon 2021]
+5. Amazon. *System Design Interview Prep* (SDE III). https://amazon.jobs/content/en/how-we-hire/sde-iii-interview-prep † [Amazon SDE III Prep]
+6. Amazon. *SDE II Interview Prep*. https://www.amazon.jobs/content/en/how-we-hire/sde-ii-interview-prep † [Amazon SDE II Prep]
+7. Meta. *Preparing for Your Full Loop Interview at Meta*. https://metacareers.com/careers/SWE-prep-onsite † [Meta Full Loop Prep]
+8. Meta. *Preparing for your software engineering interview at Meta*. Meta Careers blog, 2022. https://www.metacareers.com/blog/preparing-for-your-software-engineering-interview-at-meta/ † [Meta 2022]
+9. Microsoft. *Interview tips*. https://careers.microsoft.com/v2/global/en/hiring-tips/interview-tips.html † [Microsoft Interview Tips]
+10. Microsoft. *Technical interviewing*. https://careers.microsoft.com/v2/global/en/hiring-tips/technical-interviewing.html † [Microsoft Technical Interviewing]
+11. Microsoft. *Culture*. https://careers.microsoft.com/us/en/culture † [Microsoft Culture]
+12. Apple. *Interview tips*. https://www.apple.com/careers/us/interview_tips.html † [Apple Interview Tips]
+13. Netflix. *Netflix Culture Memo*. https://jobs.netflix.com/culture † [Netflix Culture]
+14. Netflix. *Sharing our latest culture memo*. 2024. https://about.netflix.com/en/news/sharing-our-latest-culture-memo † [Netflix 2024]
+15. Uber. *Uber Interview Guide: Engineering*. https://jobs.uber.com/en/uber-interview-guide/engineering/ † [Uber Engineering Guide]
+16. Uber. *Engineering Manager Interview Guide*. https://jobs.uber.com/en/uber-interview-guide/engineering-manager-interview-guide/ † [Uber EM Guide]
+17. Airbnb. *Life at Airbnb*. https://careers.airbnb.com/life-at-airbnb/ † [Airbnb Life]
+18. LinkedIn. *How We Hire*. https://careers.linkedin.com/Howwehire † [LinkedIn How We Hire]
+19. LinkedIn Engineering. *Career stories: Welcoming LinkedIn's largest engineering class*. 2021. https://engineering.linkedin.com/blog/2021/recruiting-update † [LinkedIn 2021]
+20. Stripe. *How Stripe works*. https://stripe.com/jobs/culture † [Stripe Culture]
+21. Databricks. *Interview prep*. https://www.databricks.com/company/careers/interview-prep † [Databricks Interview Prep]
+22. Databricks. Engineering interview preparation guide (PDF), April 2025. https://www.databricks.com/sites/default/files/2025-04/engineering-careers-site-interview-prep-april-2025-002.pdf † [Databricks Engineering Prep 2025]
+23. Databricks. *Engineering Interviews: A Hiring Manager's Guide to Standing Out*. Databricks Blog, 2020. https://www.databricks.com/blog/2020/01/22/engineering-intervews-a-hiring-managers-guide.html † [Databricks 2020]
+24. OpenAI. *Interview guide*. https://openai.com/interview-guide/ † [OpenAI Interview Guide]
+25. Anthropic. *Careers*. https://www.anthropic.com/careers [Anthropic Careers]
+26. Anthropic. *How to collaborate with Claude during our hiring process* (candidate AI guidance), updated 10 July 2025. https://www.anthropic.com/candidate-ai-guidance [Anthropic AI Guidance]
+27. Hume, T. *Designing AI-resistant technical evaluations*. Anthropic Engineering, 2026. https://www.anthropic.com/engineering/AI-resistant-technical-evaluations [Anthropic 2026a]
+28. NVIDIA. *Want to Be an NVIDIAN?* (how we hire). https://www.nvidia.com/en-eu/about-nvidia/careers/how-we-hire/ † [NVIDIA How We Hire]
+29. Ghemawat, S., Gobioff, H., Leung, S.-T. *The Google File System*. SOSP, 2003.
+30. Dean, J., Ghemawat, S. *MapReduce: Simplified Data Processing on Large Clusters*. OSDI, 2004.
+31. Chang, F., et al. *Bigtable: A Distributed Storage System for Structured Data*. OSDI, 2006.
+32. Corbett, J. C., et al. *Spanner: Google's Globally-Distributed Database*. OSDI, 2012.
+33. Verma, A., et al. *Large-scale cluster management at Google with Borg*. EuroSys, 2015.
+34. Beyer, B., Jones, C., Petoff, J., Murphy, N. R. (eds.). *Site Reliability Engineering*. O'Reilly, 2016. https://sre.google/sre-book/table-of-contents/
+35. DeCandia, G., et al. *Dynamo: Amazon's Highly Available Key-value Store*. SOSP, 2007. https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf
+36. Elhemali, M., et al. *Amazon DynamoDB: A Scalable, Predictably Performant, and Fully Managed NoSQL Database Service*. USENIX ATC, 2022. https://www.usenix.org/conference/atc22/presentation/elhemali
+37. Amazon Builders' Library. *Making retries safe with idempotent APIs*. https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-apis/ [Amazon Builders' Library]
+38. Bronson, N., et al. *TAO: Facebook's Distributed Data Store for the Social Graph*. USENIX ATC, 2013. https://www.usenix.org/conference/atc13/technical-sessions/presentation/bronson
+39. Nishtala, R., et al. *Scaling Memcache at Facebook*. USENIX NSDI, 2013. https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala
+40. Pan, S., et al. *Facebook's Tectonic Filesystem: Efficiency from Exascale*. USENIX FAST, 2021. https://www.usenix.org/conference/fast21/presentation/pan
+41. Dubey, A., et al. *The Llama 3 Herd of Models*. arXiv:2407.21783, 2024. https://arxiv.org/abs/2407.21783
+42. Calder, B., et al. *Windows Azure Storage: A Highly Available Cloud Storage Service with Strong Consistency*. SOSP, 2011.
+43. Microsoft Learn. *Consistency levels in Azure Cosmos DB*. https://learn.microsoft.com/azure/cosmos-db/consistency-levels [Microsoft Learn: Cosmos DB]
+44. Microsoft. *Azure Well-Architected Framework*. https://learn.microsoft.com/azure/well-architected/ [Azure Well-Architected]
+45. Apple. *Private Cloud Compute: A new frontier for AI privacy in the cloud*. 2024. https://security.apple.com/blog/private-cloud-compute/ † [Apple PCC]
+46. Zhou, J., et al. *FoundationDB: A Distributed Unbundled Transactional Key Value Store*. SIGMOD, 2021. https://doi.org/10.1145/3448016.3457559
+47. Apple. *Sending notification requests to APNs*. https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns [Apple APNs]
+48. Netflix. *Open Connect*. https://openconnect.netflix.com [Netflix Open Connect]
+49. Izrailevsky, Y., Tseitlin, A. *The Netflix Simian Army*. Netflix Tech Blog, 2011. https://techblog.netflix.com/2011/07/netflix-simian-army.html
+50. Basiri, A., et al. *Chaos Engineering*. IEEE Software 33(3), 2016.
+51. Gomez-Uribe, C. A., Hunt, N. *The Netflix Recommender System: Algorithms, Business Value, and Innovation*. ACM TMIS 6(4), 2015.
+52. Brodsky, I. *H3: Uber's Hexagonal Hierarchical Spatial Index*. Uber Engineering Blog, 2018. https://www.uber.com/blog/h3/
+53. Hermann, J., Del Balso, M. *Meet Michelangelo: Uber's Machine Learning Platform*. Uber Engineering Blog, 2017. https://www.uber.com/blog/michelangelo-machine-learning-platform/
+54. Hu, X., Cirit, O., Binaykiya, T., Hora, R. *DeepETA: How Uber Predicts Arrival Times Using Deep Learning*. Uber Engineering Blog, 2022. https://www.uber.com/blog/deepeta-how-uber-predicts-arrival-times/
+55. Chew, J. *Avoiding Double Payments in a Distributed Payments System*. Airbnb Engineering, 2019. https://medium.com/airbnb-engineering/avoiding-double-payments-in-a-distributed-payments-system-2981f6b070bb
+56. Haldar, M., et al. *Applying Deep Learning to Airbnb Search*. ACM KDD, 2019.
+57. Airbnb. *Chronon, Airbnb's ML Feature Platform, Is Now Open Source*. The Airbnb Tech Blog, 2024. [Airbnb 2024]
+58. Kreps, J., Narkhede, N., Rao, J. *Kafka: a Distributed Messaging System for Log Processing*. NetDB, 2011.
+59. Kreps, J. *The Log: What every software engineer should know about real-time data's unifying abstraction*. LinkedIn Engineering, 2013. https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying
+60. Das, S., et al. *All Aboard the Databus! LinkedIn's Scalable Consistent Change Data Capture Platform*. ACM SoCC, 2012.
+61. Stripe. *Idempotent requests*. Stripe API Reference. https://docs.stripe.com/api/idempotent_requests [Stripe Docs: Idempotency]
+62. Leach, B. *Designing robust and predictable APIs with idempotency*. Stripe Blog, 2017. https://stripe.com/blog/idempotency
+63. Tarjan, P. *Scaling your API with rate limiters*. Stripe Blog, 2017. https://stripe.com/blog/rate-limiters [Stripe 2017]
+64. Stripe. *Webhooks*. Stripe Docs. https://docs.stripe.com/webhooks [Stripe Docs: Webhooks]
+65. Zaharia, M., et al. *Resilient Distributed Datasets: A Fault-Tolerant Abstraction for In-Memory Cluster Computing*. USENIX NSDI, 2012. https://www.usenix.org/conference/nsdi12/technical-sessions/presentation/zaharia
+66. Armbrust, M., et al. *Delta Lake: High-Performance ACID Table Storage over Cloud Object Stores*. PVLDB 13(12), 2020. https://vldb.org/pvldb/vol13/p3411-armbrust.pdf
+67. Armbrust, M., Ghodsi, A., Xin, R., Zaharia, M. *Lakehouse: A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics*. CIDR, 2021.
+68. Snowflake. *SIGMOD Paper: The Snowflake Elastic Data Warehouse* (resource page). https://www.snowflake.com/resource/sigmod-2016-paper-snowflake-elastic-data-warehouse/ † [Snowflake SIGMOD resource]
+69. Dageville, B., et al. *The Snowflake Elastic Data Warehouse*. SIGMOD, 2016. https://doi.org/10.1145/2882903.2903741
+70. Vuppalapati, M., et al. *Building An Elastic Query Engine on Disaggregated Storage*. USENIX NSDI, 2020. https://www.usenix.org/conference/nsdi20/presentation/vuppalapati
+71. OpenAI. *Scaling Kubernetes to 7,500 nodes*. 2021. https://openai.com/index/scaling-kubernetes-to-7500-nodes/ † [OpenAI 2021]
+72. Kaplan, J., et al. *Scaling Laws for Neural Language Models*. arXiv:2001.08361, 2020. https://arxiv.org/abs/2001.08361
+73. Brown, T., et al. *Language Models are Few-Shot Learners*. NeurIPS, 2020.
+74. OpenAI. *Prompt caching*. OpenAI API documentation. https://platform.openai.com/docs/guides/prompt-caching [OpenAI Docs: Prompt Caching]
+75. Anthropic. *A postmortem of three recent issues*. Anthropic Engineering, 2025. https://www.anthropic.com/engineering/a-postmortem-of-three-recent-issues [Anthropic 2025a]
+76. Anthropic. *Building effective agents*. Anthropic Engineering, 2024. https://www.anthropic.com/engineering/building-effective-agents [Anthropic 2024]
+77. Anthropic. *How we built our multi-agent research system*. Anthropic Engineering, 2025. https://www.anthropic.com/engineering/multi-agent-research-system [Anthropic 2025b]
+78. Bai, Y., et al. *Constitutional AI: Harmlessness from AI Feedback*. 2022. https://www.anthropic.com/research/constitutional-ai-harmlessness-from-ai-feedback
+79. Anthropic. *Prompt caching*. Claude documentation. https://platform.claude.com/docs/en/build-with-claude/prompt-caching [Anthropic Docs: Prompt Caching]
+80. NVIDIA. *CUDA C++ Programming Guide*. https://docs.nvidia.com/cuda/cuda-c-programming-guide/ [NVIDIA CUDA Guide]
+81. NVIDIA. *NCCL Developer Guide*. https://docs.nvidia.com/deeplearning/sdk/nccl-developer-guide/index.html [NVIDIA NCCL Guide]
+82. NVIDIA. *DGX SuperPOD Reference Architecture* (DGX H100). [NVIDIA DGX SuperPOD RA]
+83. NVIDIA. *Triton Inference Server User Guide*. https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/ [NVIDIA Triton Docs]
+
+## 90.28 Open verification items
+
+- **Direct access.** Only anthropic.com could be fetched during research; every item marked † in §90.27 was confirmed from search-engine excerpts of the company's own page. Re-read each page directly before publication.
+- **Google.** The current wording of the How we hire page, including any list of assessed attributes widely attributed to it, is unconfirmed and deliberately not repeated.
+- **Amazon.** Confirm the SDE III page title and the "half and half" statement verbatim; confirm the full Leadership Principles list wording.
+- **Meta.** Content of the full-loop preparation page unconfirmed; the 2022 blog statements may be outdated.
+- **Microsoft.** Culture attribute names and technical-interviewing page content need direct confirmation.
+- **Apple, Netflix, Stripe, Airbnb, Snowflake.** Interview-tips excerpt (Apple), current culture memo structure (Netflix), full operating-principles list (Stripe), core-values wording (Airbnb); no Snowflake interview or values page found.
+- **Databricks.** Title and content of the April 2025 engineering PDF and the 2020 blog post.
+- **OpenAI.** Other sections of the interview guide, including any statements about stage length.
+- **NVIDIA.** Confirm the US-locale URL and wording of the how-we-hire page.
+- **References without URLs** (29–33, 42, 50–51, 56–58, 60, 67, 73, 82): add verified URLs; confirm FoundationDB paper affiliations.
+- **Chapters 87, 88, 91, 92** were not yet written; cross-references name chapters and problem families, not section or question numbers, and should be updated.
