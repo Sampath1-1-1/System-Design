@@ -101,7 +101,7 @@ Assumptions are illustrative and consistent with §54.4: 1 billion watch-hours a
 2. Light ranker on CPU at 5 µs per item: $1{,}500 \times 5\ \mu\text{s} = 7.5$ ms of CPU per request; by the funnel formula of §68.4.1 at 50% utilization, $462{,}963 \times 0.0075 / 0.5 = 6{,}944$ cores.
 3. Retrieval: three ANN sources at about 2 ms of CPU each: $462{,}963 \times 0.006 / 0.5 = 5{,}556$ cores.
 4. Heavy ranker on GPU: assume 200 MFLOPs per scored item (an MMoE network over hundreds of features), so $500 \times 2 \times 10^8 = 10^{11}$ FLOPs per request and $10^{11} \times 462{,}963 = 4.63 \times 10^{16}$ FLOP/s at peak. At an effective 150 TFLOP/s per GPU (batched, mixed precision, §66.6–§66.7), 309 GPUs are busy; at $u = 0.6$, **515 GPUs**.
-5. Three serving regions, any two of which must carry the global peak: $515/2 = 257.2$, so 258 GPUs per region, **774** in total.
+5. Three serving regions, any two of which must carry the global peak: $515/2 = 257.5$, so 258 GPUs per region, **774** in total.
 
 **Interpretation.** The heavy ranker's input size sets the GPU bill: halving it halves step 4. **Engineering implication.** Spend effort on the light ranker's recall of the heavy ranker's top items (distillation, §68.4.1), because that is what allows a smaller heavy-ranker input.
 :::

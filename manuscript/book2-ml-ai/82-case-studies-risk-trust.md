@@ -353,7 +353,7 @@ sequenceDiagram
   LJ->>LJ: map reason code to fraud or not fraud
 ```
 
-**Reading the diagram.** All hops are asynchronous except the stream processor's write into the online store, which it retries until acknowledged. Events are keyed by card token, so one card's updates arrive in order; device and IP aggregates are computed in a second keyed stage (repartitioning by the other entity), which adds a second or so of lag. The lakehouse receives decisions with the features that were actually served. Labels arrive days to weeks later and are appended, never overwriting the decision; the reason-code mapping matters because many chargebacks are service disputes, not fraud (Table 63.3). Failure points: consumer lag (stale counters), duplicate events after a processor restart (counters double-count unless updates are idempotent per event ID, §31.11), and label joins that miss because the auth ID was not propagated. Scaling: event-log partitions and stream-processor parallelism grow with transaction rate.
+**Reading the diagram.** All hops are asynchronous except the stream processor's write into the online store and the label joiner's append to the lakehouse, which are retried until acknowledged. Events are keyed by card token, so one card's updates arrive in order; device and IP aggregates are computed in a second keyed stage (repartitioning by the other entity), which adds a second or so of lag. The lakehouse receives decisions with the features that were actually served. Labels arrive days to weeks later and are appended, never overwriting the decision; the reason-code mapping matters because many chargebacks are service disputes, not fraud (Table 63.3). Failure points: consumer lag (stale counters), duplicate events after a processor restart (counters double-count unless updates are idempotent per event ID, §31.11), and label joins that miss because the auth ID was not propagated. Scaling: event-log partitions and stream-processor parallelism grow with transaction rate.
 
 **Figure 82.3 — Read path: one authorization decision.**
 
@@ -570,7 +570,7 @@ What to notice: the decision record points to an immutable snapshot of its input
 
 ### 82.5.6 Data model and database schema
 
-Decisions need transactions and audit, so a relational database holds the decision records; raw bureau responses and feature snapshots go to immutable object storage, referenced by hash (§15.9).
+Decisions need transactions and audit, so a relational database holds the decision records; raw bureau responses and feature snapshots go to immutable object storage, referenced by hash (§15.4).
 
 ```sql
 CREATE TABLE decisions (
@@ -1360,7 +1360,7 @@ Output (`python3`):
 What to notice:
 
 - A small queue (one less common language at 60 items an hour) needs 5 reviewers for 2 reviewers' worth of work, 40% occupancy, because the service level, not the workload, sets staffing. Fragmenting queues by language and policy is expensive; cross-train reviewers and pool small queues where policy and law allow (§4.10.4).
-- For the largest queue the occupancy cap, not the service level, decides: 54 reviewers instead of the 41 that Erlang C alone would allow.
+- For the largest queue the occupancy cap, not the service level, decides: 54 reviewers instead of the 44 that Erlang C alone would allow.
 - These are peak-hour numbers for one queue; a 24-hour, 7-day roster multiplies headcount by shift coverage and shrinkage.
 
 **Reviewer well-being** is a design requirement, not a perk. Measures include exposure limits and rotation off graphic queues, tools that blur or gray-scale images and mute audio by default until the reviewer chooses to see more, hash and classifier pre-screening so that people see fewer severe items, and access to counseling (§63.14.3). Research has documented psychological harm among moderators [Steiger et al. 2021]. Well-being also affects quality: tired reviewers disagree more, which shows up in agreement metrics.
@@ -1415,7 +1415,7 @@ sequenceDiagram
   end
 ```
 
-**Reading the diagram.** Pre-publish work is synchronous and limited to what fits in 300 ms: hash matching and a fast model for the most severe policies, run in parallel. If either times out, the item is published and the post-publish tier acts as a backstop, except on surfaces with higher risk (for example, livestreams to large audiences), where the item is held. Post-publish classification is asynchronous and event-driven (Chapter 30), producing per-policy scores tied to policy versions. The routing service either acts automatically or creates a review task with a deadline. Failure points: the hash index (fail to post-publish backstop), classification stream lag (detection slower, prevalence rises), and routing thresholds misconfigured after a policy change. Scaling: GPU fleets per modality; the stream partitions by item ID.
+**Reading the diagram.** Pre-publish work is synchronous and limited to what fits in 300 ms: hash matching and a fast model for the most severe policies, run in parallel. If either times out, the item is published and the post-publish tier acts as a backstop, except on surfaces with higher risk (for example, livestreams to large audiences), where the item is held. Post-publish classification is asynchronous and event-driven (Chapter 32), producing per-policy scores tied to policy versions. The routing service either acts automatically or creates a review task with a deadline. Failure points: the hash index (fail to post-publish backstop), classification stream lag (detection slower, prevalence rises), and routing thresholds misconfigured after a policy change. Scaling: GPU fleets per modality; the stream partitions by item ID.
 
 **Figure 82.12 — Read path: report, review, enforcement and appeal.**
 

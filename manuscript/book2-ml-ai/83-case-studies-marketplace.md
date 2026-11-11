@@ -531,7 +531,7 @@ Out of scope: the routing algorithm (§55.6.8), dispatch optimization (§55.5) a
 | Latency (model only) | p99 ≤ 5 ms per batch of up to 50 | Dispatch and pricing call ETA inside their own 100–300 ms budgets |
 | Latency (routing + model) | p99 ≤ 40 ms for a batch | Router many-to-one queries dominate |
 | Availability | 99.99%; on model failure, serve routing ETA with a correction table | ETA is on the path of every quote and dispatch |
-| Throughput | ~230,000 predictions/s at peak (§83.5.4) | Five consumers, see estimate |
+| Throughput | ~230,000 predictions/s at peak (§83.5.4) | Four consumers, see estimate |
 | Accuracy | Trip-leg MAE ≤ 10% of duration; bias within ±2% per city and hour | Fares and promises depend on it |
 | Calibration | 80% interval coverage 0.77–0.83 per city, hour band and leg type | Promises and pricing use the interval |
 | Traffic freshness | Segment speeds ≤ 2 min old | Congestion changes within minutes |

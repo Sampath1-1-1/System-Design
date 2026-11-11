@@ -708,7 +708,7 @@ score(driver, request) = road_eta_seconds(driver -> pickup)
                        - c * fairness_bonus(driver)          # lower is better; a, b, c tuned by experiment
 ```
 
-The weights are business decisions, tuned by experiments; the learned acceptance probability and ETA corrections are Chapter 83 material. The system-design point is the two-stage funnel: a cheap geometric filter to about 20 candidates, then an expensive but accurate road ETA only for those. In-flight drivers enter the same funnel with $\text{ETA} = \text{remaining trip time} + \text{ETA from drop-off to pickup}$.
+The weights are business decisions, tuned by experiments; the learned ETA corrections are Chapter 83 material (§83.5), and an acceptance-probability model is an ordinary classifier (§57.10). The system-design point is the two-stage funnel: a cheap geometric filter to about 20 candidates, then an expensive but accurate road ETA only for those. In-flight drivers enter the same funnel with $\text{ETA} = \text{remaining trip time} + \text{ETA from drop-off to pickup}$.
 
 #### Component 3: greedy versus batched assignment
 
@@ -987,7 +987,7 @@ flowchart TD
 | Greedy nearest (distance) | Nearest idle driver by straight line | Simplest; no extra latency | Ignores roads; myopic | Prototypes; very low volume |
 | Greedy by ETA | Best road ETA on arrival | Correct notion of "near" | Still myopic | Low density, where batches are tiny |
 | Batched assignment | Window, bipartite graph, min-cost solver | Lower total ETA; handles contention | Adds up to one window of latency | Dense cities, high demand |
-| Batched with future value | Assignment weights include learned driver value | Accounts for where drivers end up | Needs ML, offline replay to tune | Mature marketplaces (Chapter 83) |
+| Batched with future value | Assignment weights include learned driver value | Accounts for where drivers end up | Needs ML, offline replay to tune | Mature marketplaces (demand forecasts, §83.4) |
 | Broadcast, first to accept | Offer to N drivers at once | Fast in low-acceptance areas | Driver frustration; more claim conflicts | Sparse supply, long-distance trips |
 | Pickup queue (FIFO) | Drivers queue at a venue; riders take the head | Fair; trivial to compute | Only for fixed pickup points | Airports, stadiums |
 
