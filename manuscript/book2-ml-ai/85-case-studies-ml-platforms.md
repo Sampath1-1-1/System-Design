@@ -1,0 +1,1179 @@
+# Chapter 85 — Case Studies X: ML Platforms
+
+> **Level:** 4–5 · **Track:** B (ML/AI) · **Estimated reading time:** 4 h
+
+The cases in Chapters 81–84 each designed one ML product: a recommender, a fraud model, an ETA predictor. This chapter designs the **platforms** underneath them. A platform has a different customer: not an end user who wants a prediction, but hundreds of ML engineers in dozens of teams who want to ship models without rebuilding the same pipelines, schedulers and servers each time. The design is judged by what those teams can do with it (how fast a feature reaches production, how long a training job waits, what a rarely used model costs) and by how well it keeps one team's mistake or burst from hurting the others.
+
+Each case emphasizes a different hard problem, summarized in Table 85.1.
+
+**Table 85.1 — The four cases and their distinctive hard problems.**
+
+| Case | Distinctive hard problem |
+|---|---|
+| §85.4 Feature store | Point-in-time-correct training sets over years of history, online reads that fan out to hundreds of keys at more than 100,000 requests/s, and streaming aggregates that count each event once |
+| §85.5 Distributed training platform | Sharing a few thousand GPUs among 80 teams: quotas, fair share, gang scheduling, preemption with checkpoints, and honest utilization and cost accounting |
+| §85.6 Multi-tenant serving platform | Serving 5,000 models of wildly different popularity: packing, loading and evicting models, scaling to zero, isolating tenants and pricing each model |
+| §85.7 Real-time inference platform | Meeting a p99 budget for high-stakes decisions: budget decomposition, hedging and deadlines, CPU versus GPU economics, safe rollout, online/offline consistency and multi-region placement |
+
+## 85.1 Learning objectives
+
+After this chapter you should be able to:
+
+- Design a company-wide feature store: declarative definitions, batch and streaming materialization, backfills, point-in-time training-set generation at the scale of billions of rows, and an online read path whose fan-out you can quantify.
+- Design a self-service training platform: job API, quota and fair-share policy for GPUs, gang admission, preemption with checkpoint-on-signal, experiment tracking, and chargeback; estimate checkpoint bandwidth and the GPU-hours lost to preemption.
+- Design a multi-tenant serving platform that packs thousands of models onto a shared fleet, routes by model affinity, loads and evicts models, scales idle models to zero, enforces per-tenant quotas and computes the cost of each model.
+- Design a real-time inference platform for fraud-, ads- and ETA-style decisions: decompose a p99 budget, size hedging and timeouts, choose CPU or GPU by cost per prediction, roll models out through shadow and canary stages, verify online/offline consistency and place the system in several regions.
+- Explain which concept chapter owns each mechanism these platforms use and apply its formulas rather than re-deriving them.
+- Run each design as a 45-minute interview and recognize the follow-ups that separate senior from staff answers.
+
+## 85.2 Prerequisites
+
+**Table 85.2 — Concept chapters each case applies.**
+
+| Case | Concept chapters it leans on |
+|---|---|
+| All | ML system architecture and latency budgets — §60.10–§60.11; MLOps, registry and CI/CD — Chapter 69; ML monitoring — Chapter 70; multi-tenancy — Chapter 47; cost — Chapter 51 |
+| §85.4 Feature store | Feature stores (the owner) — Chapter 62, especially §62.7–§62.11 and §62.15; data engineering for ML — Chapter 61; stream processing and exactly-once — §29.8–§29.9, §31.11; fan-out and hedging — §23.6–§23.7 |
+| §85.5 Training platform | Distributed training, checkpointing and fault tolerance — §65.15–§65.18; cluster scheduling, fairness and gang scheduling — §46.8–§46.12; GPU utilization — §64.11, §64.15; large clusters — Chapter 80 |
+| §85.6 Serving platform | Model serving, multi-model serving, autoscaling and cold start — §66.8–§66.10; fair queuing and isolation — §47.7–§47.9; LLM-specific gateways and token quotas — Chapter 79 |
+| §85.7 Real-time inference | Latency budgets — §60.10; dynamic batching and CPU versus GPU — §66.6–§66.7; safe deployment and reliability — §66.12, §66.14; model optimization — Chapter 67; training–serving skew — §62.9; multi-region systems — Chapter 44 |
+
+## 85.3 How to use these case studies
+
+Work through each case with the method of §52.3: read the problem statement, close the book, produce your own requirements, estimates and architecture, and only then compare; treat every number as an assumption to challenge; and follow the cross-references wherever a mechanism is summarized in a sentence. Platform cases differ from the product cases of Chapters 81–84 in three ways. The "ML formulation" in each N.x.1 is a set of representative workloads the platform must serve, not one prediction target, so state them explicitly. Model-quality targets become platform guarantees: no label leakage, bounded skew, identical scores online and offline. And every requirement has a tenant dimension: for each resource, ask who gets it when two teams want it at once, and who pays for it.
+
+## 85.4 Feature Store (company-wide, for hundreds of models)
+
+### 85.4.1 Problem statement
+
+A consumer marketplace with 100 million active user profiles, 40 million listed items and 2 million merchants runs about 400 production models built by 90 teams; 150 of them serve online. Each team has built its own feature pipelines. The result is the list of §62.6: the same "orders in the last 7 days" computed five different ways, training sets built with naive joins that leak future values, online values that disagree with the offline values the model was trained on, and no record of who reads what. Design a company-wide **feature platform** that lets a team define a feature once, use it for training and serving, and discover and reuse other teams' features.
+
+The ML formulation is a set of representative consumers with very different access patterns:
+
+- **Fraud and risk scoring**: a few entity keys per request (user, card, device, merchant), streaming velocity counters that must be seconds fresh.
+- **Ranking**: one user plus 150 candidate items per request, so one request reads hundreds of keys.
+- **Forecasting and lifetime-value models**: batch only, but training sets with hundreds of millions of rows and years of history.
+
+Why a platform rather than per-team code: features are shared across models, skew and leakage are platform-wide failure modes that one team cannot fix alone, and the online store is expensive infrastructure that is cheaper to run once. The concepts (as-of joins, online store layout, freshness budgets, governance) are owned by Chapter 62; this case applies them at a scale where the hard problems become **point-in-time correctness at billions of rows**, **online fan-out** and **streaming correctness**.
+
+### 85.4.2 Functional requirements
+
+1. **Define.** Engineers declare entities, sources, feature views (batch, streaming or on-demand) and feature services in code reviewed in Git; the registry stores every version.
+2. **Materialize.** The platform schedules batch jobs and runs streaming jobs that write both the offline history and the online store from the same definition.
+3. **Backfill.** A new or changed definition can be computed over up to two years of history, and the online store bootstrapped, without a hand-written second pipeline.
+4. **Generate training sets.** Given a spine (entity keys, label timestamps, labels) and a feature service, return a point-in-time-correct table (§62.8).
+5. **Serve online.** Return feature vectors for a batch of entity keys within milliseconds, with value ages and defaults for missing values.
+6. **Log and compare.** Record served feature values for sampled requests and compare them with offline recomputation (§62.9.2).
+7. **Discover and govern.** Search features by name, entity, owner and usage; show lineage, freshness and quality; enforce access control and personal-data tags (§62.15).
+
+### 85.4.3 Non-functional requirements
+
+**Table 85.3 — Feature store non-functional requirements.**
+
+| Requirement | Target |
+|---|---|
+| Online read latency (serving API, one call) | p99 ≤ 10 ms, p99.9 ≤ 25 ms, measured at the client |
+| Online availability | 99.99% of read calls return values or declared defaults |
+| Streaming freshness | p99 feature age ≤ 60 s for streaming views; batch views published by 04:00 local |
+| Point-in-time correctness | Zero use of values unavailable at label time; ≥ 99.5% of logged served values reproduced exactly by the training-set builder |
+| Streaming aggregate accuracy | Within 0.1% of a batch recompute over the same events ("exactly-once-ish") |
+| Training-set generation | 500 million rows × 400 features in under 2 hours |
+| Backfill | One year of a new streaming view in under 6 hours |
+| Durability | Offline history on object storage with eleven-nines durability (§15.6) |
+| Scale | 30,000 features, 2,000 views, 40 entity types, 90 teams |
+
+### 85.4.4 Capacity estimation
+
+Decimal units throughout; all numbers are illustrative assumptions for a teaching design.
+
+::: example
+**Worked example — Online read load and fan-out.** Assumptions: 120,000 serving-API requests/s at peak. 100,000/s are "small" (fraud, pricing, ETA-type): 4 keys in 3 view groups. 20,000/s are ranking requests: 1 user key and 150 item keys in 2 view groups. Apply the read-load formula of §62.11.1.
+
+1. Keys: $100{,}000 \times 4 + 20{,}000 \times 151 = 400{,}000 + 3{,}020{,}000 = 3.42$ million keys/s. Ranking is 17% of requests and 88% of keys.
+2. Batched calls (one multi-get per view group): $100{,}000 \times 3 + 20{,}000 \times 2 = 340{,}000$ calls/s.
+3. But a multi-get is split by partition. With the item view hash-partitioned over $S = 48$ partitions, 150 random keys touch on average $S\,(1 - (1 - 1/S)^{150}) = 48 \times (1 - 0.0425) = 45.96$ partitions.
+4. Ranking alone therefore issues $20{,}000 \times 45.96 = 919{,}190$ sub-requests/s, and one ranking read waits for 46 of them. If each sub-request meets its deadline with probability 0.999, the whole read does so with probability $0.999^{46} = 0.955$, against $0.999^{3} = 0.997$ for a small request.
+
+**Interpretation.** Batching by view group (§62.11) is not enough when one request's keys are spread over the whole cluster: the partition count, not the key count, becomes the fan-out. **Engineering implication.** Store the item view differently from the user view: replicate it in full on a small set of item-serving nodes so a ranking read is one call to one node (§85.4.8).
+:::
+
+::: example
+**Worked example — Online store memory.** Apply the memory formula of §62.11.1 with 80 bytes of per-key overhead, replication $r = 3$ and memory utilization $u = 0.6$.
+
+1. User view group: $10^8 \times (1{,}200 + 80) = 128$ GB.
+2. Item view group: $4 \times 10^7 \times (400 + 80) = 19.2$ GB.
+3. Merchant: $2 \times 10^6 \times (1{,}000 + 80) = 2.16$ GB.
+4. User × category affinity: $5 \times 10^8 \times (64 + 80) = 72$ GB.
+5. One copy: 221.4 GB; provisioned $221.4 \times 3 / 0.6 = 1{,}107$ GB, about 18 nodes with 64 GB usable each.
+
+**Interpretation.** The whole online store fits in about a terabyte of memory, and the item view is small enough (19.2 GB) to hold complete copies. The affinity table is a third of the bytes and is read by few models. **Engineering implication.** Tier the store as in §62.11: in-memory partitioned storage for user and merchant views, full replicas for items, and a disk-backed key-value store for the large, cold affinity view.
+:::
+
+::: example
+**Worked example — Streaming and offline volume.** Assumptions: events average 700,000/s (1.5 million/s at peak), 300 bytes each; streaming jobs update 5 million entity-window keys per minute; batch views write 3 billion changed rows per day at 150 bytes compressed; logged streaming values take 60 bytes each.
+
+1. Events: $700{,}000 \times 86{,}400 = 60.5$ billion/day, 18.1 TB/day raw.
+2. Online writes from streaming: $5 \times 10^6 / 60 = 83{,}333$/s, which is 7.2 billion values/day.
+3. Offline growth: $3 \times 10^9 \times 150 + 7.2 \times 10^9 \times 60 = 450 + 432 = 882$ GB/day; two years of history is 644 TB.
+
+**Interpretation.** Writes to the online store are 2.4% of key reads, and the offline history grows by under a terabyte a day, small next to the raw event lake. **Engineering implication.** The online store is read-optimized; the offline store is cheap object storage, and the expensive operation is not storing history but joining it.
+:::
+
+The expensive operation is the training-set build. A typical request is a spine of 500 million labeled rows asking for 400 features from 25 views over 180 days. The spine is $5 \times 10^8 \times 40$ B = 20 GB, the output $5 \times 10^8 \times 400 \times 4$ B = 800 GB, but if each view holds 2 GB of history per day, the join reads $25 \times 180 \times 2$ GB = 9 TB. Sixty such builds a day would scan 0.54 PB. Windowed aggregates add a second cost: computing "events in the last 30 days" at each label time from raw events reads every event in the window, once per spine row. **Tiling** (§62.3.5) stores partial aggregates per hour and per day so a window is assembled from a few tiles plus raw events at its two ragged edges.
+
+::: formula
+**Reads per spine row for a windowed aggregate, raw versus two-level tiles**
+
+$$R_{\text{raw}} = \rho\,W \qquad R_{\text{tiled}} \approx \left(\frac{W}{\Delta_2} - 1\right) + \left(\frac{\Delta_2}{\Delta_1} - 1\right) + \rho\,\Delta_1$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $\rho$ | Event rate of one entity | events/h |
+| $W$ | Window length | h |
+| $\Delta_1$, $\Delta_2$ | Fine and coarse tile sizes (for example 1 h and 24 h) | h |
+| $R_{\text{raw}}$ | Raw events read to compute the window for one spine row | reads |
+| $R_{\text{tiled}}$ | Expected coarse tiles, fine tiles and edge events read | reads |
+:::
+
+The three terms of $R_{\text{tiled}}$ are the full coarse tiles inside the window, the fine tiles in the two partial coarse periods (on average half a coarse period at each edge), and the raw events in the two partial fine periods (on average half a fine period at each edge).
+
+::: example
+**Worked example — A 30-day count for typical and heavy users.** $W = 720$ h, $\Delta_1 = 1$ h, $\Delta_2 = 24$ h. A typical user produces 200 events in 30 days ($\rho = 0.278$/h); a heavy user (a reseller, a bot under investigation) 50,000 ($\rho = 69.4$/h).
+
+1. Typical user: $R_{\text{raw}} = 200$; $R_{\text{tiled}} = 29 + 23 + 0.28 = 52.3$. A 3.8× saving.
+2. Heavy user: $R_{\text{raw}} = 50{,}000$; $R_{\text{tiled}} = 29 + 23 + 69.4 = 121$. A 411× saving.
+3. A 500-million-row spine at the typical rate: $10^{11}$ raw reads versus $2.6 \times 10^{10}$ tile reads.
+
+**Interpretation.** Tiles help most exactly where raw scans hurt most: the heavy-tailed entities that also cause skew in a distributed join. **Engineering implication.** Materialize hourly and daily tiles for every windowed aggregate as part of the view's definition; the training-set builder and the backfill both read tiles, and the tile size bounds how precisely a window edge can be placed unless edge events are also read.
+:::
+
+### 85.4.5 API design
+
+Definitions live in Git and are compiled into the registry by CI; the runtime APIs are gRPC for online serving and a job API for offline work.
+
+```python
+# illustrative feature definition (Feast-like Python DSL)
+user = Entity(name="user", join_keys=["user_id"])
+
+user_orders_7d = StreamFeatureView(
+    name="user_orders_7d", version=3, entities=[user],
+    source=KafkaSource(topic="orders", timestamp_field="event_ts"),
+    aggregations=[Aggregation(column="order_id", function="count", window="7d"),
+                  Aggregation(column="amount", function="sum", window="7d")],
+    tiles=["1h", "1d"], ttl="2d", default=0,
+    owner="risk-features", pii="none", freshness_budget_s=60)
+
+fraud_v12 = FeatureService(name="fraud_v12",
+    features=[user_orders_7d, card_velocity_10m, device_profile, merchant_risk])
+```
+
+```protobuf
+service FeatureServing {
+  rpc GetOnlineFeatures(GetOnlineFeaturesRequest) returns (GetOnlineFeaturesResponse);
+  rpc PushFeatures(PushRequest) returns (PushResponse);          // request-time sources
+}
+message GetOnlineFeaturesRequest {
+  string feature_service = 1;              // "fraud_v12", resolved to a pinned version
+  map<string, KeyList> entity_keys = 2;    // "user" -> [u1], "item" -> [i1..i150]
+  int64 deadline_ms = 3;                   // remaining budget from the caller
+  bool log_served_values = 4;              // sampled by the caller
+}
+message GetOnlineFeaturesResponse {
+  repeated FeatureVector vectors = 1;      // values, event_ts and age per view
+  repeated string defaulted = 2;           // features that fell back to defaults
+  string registry_version = 3;
+}
+```
+
+Offline APIs are asynchronous jobs: `POST /v1/training-sets` with a spine table, a feature service and an output location returns a job ID; `POST /v1/backfills` with a view version and a time range; `GET /v1/catalog/search?q=` for discovery. Every response carries the registry version used, so a training set can be traced to exact definitions.
+
+### 85.4.6 Data model and database schema
+
+The registry is a small relational database (Chapter 11), the single source of truth for definitions, ownership and consumption.
+
+```sql
+CREATE TABLE feature_view (
+  view_id         BIGINT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  version         INT  NOT NULL,
+  entity          TEXT NOT NULL,               -- user, item, merchant, ...
+  kind            TEXT NOT NULL,               -- batch | stream | on_demand
+  definition_sha  TEXT NOT NULL,               -- Git commit of the definition
+  ttl_s           INT  NOT NULL,
+  freshness_budget_s INT NOT NULL,
+  owner_team      TEXT NOT NULL,
+  pii_class       TEXT NOT NULL,
+  state           TEXT NOT NULL,               -- draft | active | deprecated | retired
+  UNIQUE (name, version)
+);
+CREATE TABLE feature_service_member (
+  service_name TEXT, service_version INT, view_id BIGINT REFERENCES feature_view,
+  PRIMARY KEY (service_name, service_version, view_id)
+);
+CREATE TABLE consumption (                      -- written by the serving API and job API
+  view_id BIGINT, consumer TEXT, model_name TEXT, last_read DATE,
+  PRIMARY KEY (view_id, consumer, model_name)
+);
+```
+
+**Offline store.** One Iceberg- or Delta-style table per view version (§61.8), partitioned by event date and bucketed into 1,024 buckets by hash of the entity key, sorted by `(entity_key, event_ts)` within each file. Columns: `entity_key`, `event_ts`, `created_ts` (availability time, §62.8.1), feature columns. Tile tables have the same layout with `tile_start` and `tile_size`. Bucketing every view by the same hash of the same entity key is what lets the builder join without a full shuffle (§85.4.8).
+
+**Online store.** Keys follow `{view_group}:{version}:{entity_key}`; values are a packed float array with one event timestamp per member view (§62.11.1). User and merchant groups are hash-partitioned in an in-memory store; the item group is fully replicated; the affinity view lives on a disk-backed key-value store.
+
+**Labels** never enter the feature store; they arrive with the spine and their own timestamps and delays (§63.4).
+
+### 85.4.7 High-level architecture
+
+**Figure 85.1 — Company-wide feature platform.**
+
+```mermaid
+flowchart LR
+  subgraph Control[Control plane]
+    GIT[(Definitions<br/>in Git)] -->|CI compile| REG[(Registry)]
+    REG --> ORCH[Materialization<br/>orchestrator]
+    REG --> CAT[Catalog and<br/>lineage UI]
+  end
+  subgraph Compute
+    EV[[Kafka event streams]] --> FL[Streaming jobs<br/>Flink]
+    LAKE[(Lakehouse<br/>source tables)] --> SP[Batch and backfill<br/>jobs, Spark]
+    ORCH --> SP
+    ORCH --> FL
+  end
+  subgraph Storage
+    OFF[(Offline store<br/>bucketed history, tiles)]
+    ONU[(Online: user, merchant<br/>partitioned, in memory)]
+    ONI[(Online: items<br/>full replicas)]
+    ONC[(Online: affinity<br/>disk-backed KV)]
+  end
+  FL -->|upsert| ONU
+  FL -->|upsert| ONI
+  FL -.->|log values, tiles| OFF
+  SP --> OFF
+  SP -->|bulk load| ONU
+  SP -->|bulk load| ONI
+  SP -->|bulk load| ONC
+  OFF --> TSB[Training-set<br/>builder]
+  MS([Model services]) -->|gRPC| API[Serving API]
+  API --> ONU
+  API --> ONI
+  API --> ONC
+  API -.->|sampled served values| LOG[[Feature log]]
+  LOG -.-> MON[Skew, freshness,<br/>quality monitors]
+  OFF -.-> MON
+```
+
+**Reading the diagram.** The **control plane** compiles reviewed definitions from Git into the registry, which drives the orchestrator and the catalog; nothing on the request path reads the registry directly (the serving API caches it). **Compute** has two engines fed by one definition: streaming jobs consume Kafka and upsert the online store synchronously while logging values and tiles to the offline store asynchronously (dotted); batch and backfill jobs read lakehouse tables, write the offline history and bulk-load the online store. **Storage** is split by access pattern: the offline store is bucketed, append-only history on object storage; the online store has three tiers chosen in §85.4.4. The **training-set builder** reads only the offline store. **Model services** call the stateless serving API over gRPC; it logs sampled served values to Kafka for the skew monitor, which compares them with offline recomputation. Failure points: a streaming job stalls (ages grow, caught at read time), an online partition is slow (hedge or default), a definition change breaks consumers (caught by the registry's consumption records). Scaling: online by partitions and replicas, streaming by Kafka partitions and job parallelism, offline by buckets and cluster size.
+
+### 85.4.8 Detailed component design
+
+#### Point-in-time training sets at billions of rows
+
+The as-of join and the availability timestamp are defined in §62.8; here the problem is running it on 500 million spine rows against 9 TB of history in under two hours.
+
+1. **Prune.** From the feature service, list the views and their TTLs. For each view, read only partitions from `min(label_ts) − TTL` to `max(label_ts)`; that is why the TTL is part of every definition.
+2. **Bucket the spine.** Hash the spine's entity keys into the same 1,024 buckets as the offline tables. Only the spine moves over the network (20 GB), never the history.
+3. **Merge per bucket.** For each bucket, a task streams the spine rows and the view's history, both sorted by `(entity_key, ts)`, and emits for each spine row the last history row with `created_ts ≤ label_ts` and age within TTL. This is a single linear merge, the same idea as the sort-merge join of §29.4.4, with no shuffle of history.
+4. **Windowed aggregates** are assembled from tiles per the formula above, inside the same merge.
+5. **Skew.** Heavy entities (the reseller with 50,000 events) make some buckets slow. Split hot keys' spine rows by time range across several tasks; each needs only its own slice of history (§29.6.3).
+6. **Reuse.** Cache the joined result per (view version, spine partition); a retrain that adds one feature joins only that view and reuses the rest (§69.9.3).
+
+The illustrative program below checks the key property of step 4 on toy data: assembling a 7-day window from daily tiles, hourly tiles and raw edge events gives exactly the raw-scan answer while reading far less.
+
+```python
+import numpy as np
+
+rng = np.random.default_rng(7)
+H, D = 3600, 86_400
+DAYS, USERS, N_EVENTS, N_SPINE = 30, 50, 600_000, 2_000
+WINDOW = 7 * D                                   # feature: events in [t - 7 days, t)
+
+ev_user = rng.integers(0, USERS, N_EVENTS)
+ev_ts = rng.integers(0, DAYS * D, N_EVENTS)
+sp_user = rng.integers(0, USERS, N_SPINE)        # training spine: (entity, label time)
+sp_ts = rng.integers(WINDOW, DAYS * D, N_SPINE)
+
+events = {u: np.sort(ev_ts[ev_user == u]) for u in range(USERS)}
+hourly = np.zeros((USERS, DAYS * 24), dtype=np.int64)
+np.add.at(hourly, (ev_user, ev_ts // H), 1)      # partial aggregates per hour
+daily = hourly.reshape(USERS, DAYS, 24).sum(axis=2)  # and per day
+
+def raw(u, a, b):                                # count raw events in [a, b)
+    e = events[u]
+    n = int(np.searchsorted(e, b) - np.searchsorted(e, a))
+    return n, n
+
+def tiled(u, a, b):
+    """Raw events for partial hours, hourly tiles for partial days, daily tiles."""
+    h0, h1 = -(-a // H), b // H                  # full hours inside [a, b)
+    d0, d1 = -(-h0 // 24), h1 // 24              # full days inside them
+    n_e, r_e = raw(u, a, h0 * H)
+    n_t, r_t = raw(u, h1 * H, b)
+    if d0 < d1:
+        val = hourly[u, h0:d0 * 24].sum() + daily[u, d0:d1].sum() + hourly[u, d1 * 24:h1].sum()
+        reads = (d0 * 24 - h0) + (d1 - d0) + (h1 - d1 * 24)
+    else:
+        val, reads = hourly[u, h0:h1].sum(), h1 - h0
+    return n_e + val + n_t, r_e + r_t + reads
+
+stats = np.zeros(3)
+for u, t in zip(sp_user, sp_ts):
+    v1, r1 = raw(u, t - WINDOW, t)
+    v2, r2 = tiled(u, t - WINDOW, t)
+    stats += (v1 != v2, r1, r2)
+print(f"spine rows {N_SPINE}, mismatches {int(stats[0])}")
+print(f"reads per row: raw events {stats[1] / N_SPINE:,.0f}, "
+      f"tiled {stats[2] / N_SPINE:,.1f} (ratio {stats[1] / stats[2]:.0f}x)")
+```
+
+Output:
+
+```text
+spine rows 2000, mismatches 0
+reads per row: raw events 2,797, tiled 45.6 (ratio 61x)
+```
+
+What to notice:
+
+- The window is half-open, `[t − 7 days, t)`, so an event at exactly the label time is excluded; the same convention must hold online, or the first skew check will fail.
+- The measured 45.6 reads matches the formula: $(7 - 1) + (24 - 1) + \rho \times 1 = 6 + 23 + 16.7 = 45.7$ with $\rho = 600{,}000 / (50 \times 720) = 16.7$ events/h.
+- Zero mismatches is the property to test in CI for every aggregate function: tiles must be **mergeable** (count, sum, min, max, and sketches such as HyperLogLog); a mean is stored as a sum and a count.
+
+#### The online read path: layout against fan-out
+
+The serving API resolves the feature service from its cached registry and issues one call per view group in parallel, as in Figure 62.6. Three design decisions follow from the fan-out arithmetic of §85.4.4.
+
+- **Partitioned groups for large, few-key entities.** The user group (128 GB) is hash-partitioned; a request reads one user key, so it touches one partition.
+- **Full replicas for small, many-key entities.** The item group (19.2 GB) is replicated in full on 10 item-serving nodes with 32 GB of memory each. A ranking request sends its 150 keys to one node, chosen by least outstanding requests: one sub-request instead of 46. At 3.02 million item keys/s, each node serves about 302,000 keys/s at peak; with an assumed capacity of 500,000 batched in-memory key reads/s per node (illustrative; benchmark yours), losing two nodes leaves 377,000 keys/s per node, still within capacity. Streaming updates are broadcast to all replicas through a Kafka topic with one consumer group per replica.
+- **Hedged reads with deadlines.** The API hedges a partition read after its p95 (§23.7) and stops waiting at the caller's `deadline_ms` minus a reserve, returning declared defaults flagged in `defaulted`. Defaults must equal those used in training (§62.11.2).
+
+Hot keys (a viral item, a merchant on the home page) are absorbed by the item replicas and by a per-process cache whose TTL counts against the view's freshness budget (§62.10).
+
+#### Streaming features with exactly-once-ish semantics
+
+A velocity feature such as "card transactions in the last 10 minutes" must count each event once even though Kafka delivers at least once and jobs restart. End-to-end exactly-once is not available across Kafka, Flink and an external key-value store, so the platform composes three weaker guarantees (§29.8.4, §31.11.3, §61.4.5):
+
+1. **Deduplicate at the source.** Producers attach an event ID; the job keeps a keyed set of recent IDs (24 hours) in Flink state and drops repeats.
+2. **Exactly-once state.** Window state lives in Flink and is restored from checkpoints (asynchronous barrier snapshots, §29.9.2), so a restart replays from the checkpointed Kafka offsets and recomputes the same aggregates.
+3. **Idempotent sink.** Each online write is an upsert of the full window value, tagged `(entity, view_version, window_end)`, and the store keeps the value with the larger `window_end`. Replaying a write after a restart rewrites the same value instead of adding to it. Writes of increments ("+1") are forbidden for this reason.
+
+Late events beyond the watermark's allowed lateness (§29.8.3) are not reflected online but are in the offline log; the nightly batch recompute of the same definition is the yardstick for the 0.1% accuracy target, and a drift between the two is an alert, not a silent correction.
+
+#### Backfill and bootstrap
+
+A new streaming view has no history. The orchestrator compiles the same definition into a Spark job that reads the raw events from the lakehouse, builds hourly and daily tiles for the requested range, and writes them to the offline store with `created_ts` set to when the streaming job *would* have published each value (event time plus the view's measured publication delay), so training sets built from backfilled history behave like served values. Then it bootstraps the online store from the latest tiles and starts the streaming job from the Kafka offset that corresponds to the backfill's end, overlapping by one window so no events are missed and idempotent upserts absorb the overlap. One year of a view fed by 5 billion events/day is $1.8 \times 10^{12}$ events; at an assumed 20,000 events/s per vCPU that is 25,347 vCPU-hours, about \$1,270 at \$0.05 per vCPU-hour, run on 4,500 vCPUs to meet the 6-hour target.
+
+#### Governance, discovery and evaluation of the platform
+
+The catalog indexes every view with owner, entity, freshness, null rate, lineage to source tables and the list of consuming models from the `consumption` table, so engineers can find "orders in the last 7 days" before writing an eighth version; a nightly job flags near-duplicates by correlation of values on a sample. Lifecycle, access control and personal-data handling follow §62.15. The platform is evaluated like a product: share of online models served from it, median time from definition to first training set, number of skew incidents per quarter, and the served-versus-recomputed match rate in Table 85.3.
+
+::: industry
+**Published feature platforms.** Uber's 2017 Michelangelo post describes a shared feature store with batch features loaded to Cassandra and near-real-time features computed from Kafka streams, logged back to HDFS for training; Airbnb's Zipline talks describe declarative aggregations that produce both point-in-time backfills and online values, using partial-aggregate tiles, a design continued in the open-source Chronon (2024). Feast's documentation separates `get_historical_features` (point-in-time joins over an offline store) from `materialize` and `get_online_features`. Section 62.13 compares these systems in detail; this case's design is a composite for teaching.
+*Evidence: Primary* — [Hermann and Del Balso 2017; Feast Docs]; *Secondary* for Zipline — [Zanoyan and Shapiro 2019]
+:::
+
+### 85.4.9 Data flow
+
+**Figure 85.2 — Write path: one order event becomes a streaming feature.**
+
+```mermaid
+sequenceDiagram
+  participant P as Order service
+  participant K as Kafka
+  participant F as Flink job
+  participant O as Online store
+  participant L as Offline store
+  P->>K: order event with event_id, event_ts
+  K->>F: consume, partitioned by user_id
+  F->>F: drop if event_id seen in 24 h
+  F->>F: add to hourly tile and window state
+  F->>O: upsert user_orders_7d, window_end
+  O-->>F: ack, keep larger window_end
+  F--)L: append value and tile, created_ts
+  Note over F: checkpoint offsets and state every 30 s
+```
+
+**Reading the diagram.** The producer writes the event to Kafka with an event ID and event time. The streaming job consumes it from a partition keyed by user, discards duplicates using keyed state, updates the tile and window state, and upserts the full window value to the online store, which keeps whichever value has the later `window_end`; that makes a replay after a crash harmless. The append to the offline store is asynchronous and records `created_ts`, the availability time that point-in-time joins need. Checkpoints bind Kafka offsets and state together. Failure points: consumer lag (freshness), a crash between upsert and checkpoint (replayed, absorbed by idempotence), the offline append falling behind (training sees gaps; alert on it). Scaling: more Kafka partitions and job parallelism.
+
+**Figure 85.3 — Read path: a ranking request reads one user and 150 items.**
+
+```mermaid
+sequenceDiagram
+  participant R as Ranking service
+  participant A as Serving API
+  participant U as User partition
+  participant I as Item replica
+  participant G as Feature log
+  R->>A: GetOnlineFeatures ranker_v8, 1 user, 150 items, deadline 12 ms
+  par user group
+    A->>U: GET user key
+    U-->>A: values, event_ts
+  and item group
+    A->>I: MGET 150 item keys
+    I-->>A: values, event_ts
+  end
+  Note over A: hedge to another replica after p95 if no reply
+  A->>A: TTL check, defaults, on-demand transforms
+  A-->>R: 150 vectors, ages, defaulted list
+  A--)G: sampled served values
+```
+
+**Reading the diagram.** One synchronous call becomes two parallel reads: one key to the user's partition and one batched read to a single full item replica, instead of 46 partition sub-requests. If either read has not answered by its p95, the API hedges to another replica; at the deadline it substitutes declared defaults and lists them. The feature log write is asynchronous and sampled. Storage boundaries: user partitions and item replicas. Failure points: a slow partition (hedged), an item replica that lags the update stream (bounded by the freshness alert), a stale registry cache (version returned in the response). Scaling: replicas for read throughput, partitions for user memory.
+
+**Figure 85.4 — Training-set generation as a bucketed merge.**
+
+```mermaid
+flowchart LR
+  SP[(Spine: keys,<br/>label_ts, labels)] -->|hash into 1,024 buckets| SB[Bucketed spine]
+  REG[(Registry)] -->|views, TTLs, versions| PL[Planner]
+  PL -->|partition pruning| OFF[(Offline store<br/>same 1,024 buckets)]
+  SB --> MG[Per-bucket merge tasks<br/>as-of join and tiles]
+  OFF --> MG
+  MG -->|hot keys split by time| MG
+  MG --> OUT[(Training set<br/>plus registry version)]
+  OUT -.-> CACHE[(Join cache per<br/>view version)]
+```
+
+**Reading the diagram.** The planner reads view versions and TTLs from the registry and prunes offline partitions to the label-time range plus TTL. The spine is the only data that is shuffled, into the buckets the offline tables already use; each merge task then joins one bucket of spine with the same bucket of every view in a single sorted pass, assembling windows from tiles. Tasks for heavy keys are split by time range. The output records the registry version; per-view results are cached for reuse. All steps are batch and asynchronous with respect to serving. Failure points: a view not bucketed the standard way (falls back to a shuffle, slow), a missing `created_ts` (cannot join on availability), stragglers on hot buckets. Scaling: more tasks per bucket, more buckets as history grows.
+
+### 85.4.10 Bottlenecks
+
+1. **Item fan-out on the read path.** Solved by full replicas; if the item catalog grows past one node's memory, split items into a few large range groups so a request touches at most a few nodes.
+2. **Training-set scans.** 9 TB per build; pruning, bucketing, tiles and the join cache are the levers, plus a queue with per-team quotas so one team's nightly sweep of 50 builds does not starve others.
+3. **Streaming hot keys.** One merchant with 5% of all orders overloads one Flink subtask; pre-aggregate per (key, salt) and combine (§29.6.3).
+4. **Backfills competing with production jobs.** Run them in a separate low-priority queue with a vCPU cap.
+5. **Registry as a write bottleneck** is not one: it changes a few hundred times a day; only its availability for CI and job planning matters.
+
+### 85.4.11 Failure scenarios
+
+**Table 85.4 — Feature store failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Label leakage: view joined on event time though published hours later | Offline metrics inflated; online accuracy drops at launch | Served-versus-recomputed match rate below 99.5% for that view | Rebuild training set joining on `created_ts`; retrain | Require `created_ts`; builder refuses event-time joins for batch views |
+| Streaming job stalled | Values age; fraud model sees old velocities | Read-side age histogram over budget (§62.10) | Restart from checkpoint; TTL turns stale values into defaults | Age alerts per view; TTL in every definition |
+| Duplicate events after replay | Inflated counters, false fraud flags | Streaming versus nightly batch differ by more than 0.1% | Recompute window from the offline log; republish | Event-ID dedupe; idempotent upserts |
+| Online partition slow or down | p99.9 breach for requests touching it | Per-partition latency; defaulted-feature rate | Hedge to replicas; fail over primary | Replicas across zones; capacity headroom |
+| Training–serving skew from a transform mismatch | Silent accuracy loss | Skew monitor on logged values (§62.9.2) | Roll back feature version or model | One definition compiled to both paths; parity tests in CI |
+| Breaking change to a shared view | Other teams' models degrade | Consumers listed in `consumption`; canary of new version | Pin consumers to old version | Immutable versions; deprecation workflow (§62.15) |
+| Feedback loop through features | A model's own outputs (for example, items it promoted) inflate popularity features | Feature distribution drift correlated with model launches | Exclude model-driven exposure or add exposure as a feature | Document feature provenance; drift monitors (Chapter 70) |
+| Backfill overwrote good history | Training sets change silently | Row-count and checksum diff per partition | Time-travel restore of the table (§61.8) | Backfills write new table versions; promote after validation |
+
+### 85.4.12 Scaling strategy
+
+**At 10×** (1.2 million requests/s, 4,000 models): the user group grows to 1.3 TB, so 60 or more partitions; item replicas grow in count, not size, until the catalog outgrows one node; the serving API becomes a sidecar library to save a hop. Training-set builds become the cost center: make the join cache shared across teams and materialize popular feature services as daily "training tables" that many models read.
+
+**At 100×**, regional online stores fed by per-region streaming jobs, with batch views replicated from one offline store; definitions stay global. Offline, history beyond a year moves to cheaper storage tiers (§15.9) and tiles replace raw events for old periods.
+
+### 85.4.13 Trade-offs
+
+**Table 85.5 — Feature store design trade-offs.**
+
+| Decision | Choice | Alternative | Why |
+|---|---|---|---|
+| Item view layout | Full replicas | Hash partitions | One sub-request per ranking read instead of 46; costs 10 copies of 19 GB |
+| Streaming semantics | Dedupe + checkpointed state + idempotent upsert | Transactional exactly-once end to end | The online store cannot join a Kafka transaction; idempotence is enough |
+| Windowed aggregates | Hourly and daily tiles | Raw-event scans | 4–400× fewer reads; mergeable functions only |
+| Join | Bucketed sort-merge on availability time | Warehouse SQL as-of join | No history shuffle; needs a standard table layout |
+| Serving API | Separate service | In-process library | Central upgrades and caching; one extra hop of about 1 ms |
+| Definition style | Declarative aggregations | Arbitrary user code | Platform can tile, backfill and verify parity; less flexible |
+
+### 85.4.14 Alternative designs
+
+- **Feast on existing infrastructure.** Definitions in Python, offline store in the warehouse, online store in Redis or DynamoDB, pipelines owned by teams. Cheapest start; the platform does not own streaming correctness or tiling, so §85.4.8's guarantees become each team's job.
+- **Managed platforms** (as of 2026) such as Databricks feature engineering, SageMaker Feature Store or Tecton (§62.13) trade control for lower operational load; check whether their point-in-time join semantics use availability time.
+- **Log-and-wait.** Instead of point-in-time joins, log the exact feature vectors served and train only on logged data. It eliminates skew by construction but every new feature needs weeks of logging before it can be trained on; most platforms combine both.
+
+### 85.4.15 Interview discussion
+
+**Table 85.6 — 45-minute pacing plan for the feature store.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Scope | Consumers (fraud, ranking, batch), batch and streaming views, discovery |
+| 5–12 | Estimates | 3.42 M keys/s; 46-partition fan-out; 1.1 TB online; 9 TB per training build |
+| 12–20 | Architecture | Figure 85.1; one definition, two engines, tiered online store |
+| 20–32 | Deep dive: offline | Availability-time as-of join, bucketing, tiles, skewed keys |
+| 32–40 | Deep dive: online and streaming | Item replicas, hedging, defaults; dedupe and idempotent upserts |
+| 40–45 | Wrap-up | Failures (leakage, stalled job), governance, 10× |
+
+**Likely follow-ups.**
+
+- *"Why not just use the warehouse's as-of join?"* It works at small scale; at 500 million rows it shuffles 9 TB of history, and most warehouses join on event time, not availability time.
+- *"How do you know the online value equals the offline value?"* Log sampled served values and recompute them with the builder; the match rate is an SLO.
+- *"Exactly once?"* No: at-least-once delivery, deduplicated, with idempotent writes; measured against a batch recompute.
+- *"How do you stop teams creating duplicates?"* Catalog search with usage and quality, near-duplicate detection, and review before activation.
+
+**What distinguishes senior and staff answers.** A senior answer gets the offline/online split, the as-of join and batching right. A staff answer quantifies partition fan-out and changes the layout per entity, joins on availability time and explains why, makes streaming correctness measurable against batch, treats backfill as part of the definition, and runs the platform with adoption and skew metrics.
+
+### 85.4.16 Production considerations
+
+- **Observability.** Per view: age at read, materialization lag, null and default rates, drift (Chapter 70); per serving call: latency by view group, hedge rate, defaulted count; per build: bytes scanned and duration.
+- **Security and privacy.** Per-view access control in both stores; personal-data tags drive retention and deletion in offline history and online keys (§62.15, §71.9).
+- **Cost.** Training-set scans and always-on streaming jobs dominate; report cost per view and per consuming team (§47.11.2).
+- **Operations.** Definitions change through review and CI with parity tests; online-store rollouts are per zone; on-call is split between the platform (stores, API, jobs) and view owners (correctness of their features).
+
+## 85.5 Distributed Model Training Platform (self-service for many teams)
+
+### 85.5.1 Problem statement
+
+A company owns 4,096 GPUs: 384 nodes of 8 H100-class GPUs (3,072) and 128 nodes of 8 A100-class GPUs (1,024). Eighty teams share them. Today each team owns a fixed slice: some slices sit idle at night while other teams queue for days, every team writes its own launch scripts, failed jobs are restarted by hand, and nobody can say what a model cost to train. Design a self-service **training platform**: engineers submit jobs through one API; the platform admits, places, runs, restarts, tracks and bills them, and keeps the fleet busy without letting one team monopolize it.
+
+The representative workloads span three orders of magnitude:
+
+- **Small** (1–8 GPUs): notebooks, debugging runs, hyperparameter-search trials and fine-tunes. 80% of jobs.
+- **Medium** (16–128 GPUs): recommendation and vision models, larger fine-tunes. 18% of jobs.
+- **Large** (256–1,024 GPUs): foundation-model pre-training. 0.1% of jobs, but the largest share of GPU-hours.
+
+Published traces show why this is hard. Microsoft's analysis of its Philly cluster found that although most GPUs were allocated, the hardware utilization of GPUs in use averaged only about 52%; that about 30% of jobs were killed or ended unsuccessfully; and that gang scheduling with locality constraints caused queueing, so the authors advised trading some queueing delay for locality [Jeon et al. 2019]. Alibaba's study of a two-month trace from its PAI MLaaS cluster of over 6,000 GPUs reported low GPU utilization, long queueing delays, tasks needing high-end GPUs that were hard to schedule, load imbalance across heterogeneous machines and CPU bottlenecks [Weng et al. 2022]. The distinctive hard problem is therefore **sharing**: quotas and fair share for gangs, preemption that does not waste work, failures handled automatically, and utilization and cost measured honestly. Gang scheduling, fairness and preemption mechanisms are owned by Chapter 46; checkpointing and fault tolerance by §65.15–§65.16.
+
+### 85.5.2 Functional requirements
+
+1. **Submit** batch jobs and interactive sessions with an image, command, GPU type and count, gang minimum and maximum (for elastic jobs), priority class and queue.
+2. **Sweep.** Submit hyperparameter searches as one object that expands into many trials.
+3. **Quota and fair share.** Each team has a guaranteed GPU quota per GPU type; idle capacity is lent to teams with demand and reclaimed when the owner needs it.
+4. **Gang admission and topology-aware placement** for multi-node jobs (§46.10–§46.11).
+5. **Preemption with notice**: a preempted job receives a signal and a grace period to checkpoint.
+6. **Automatic recovery**: restart failed or preempted jobs from their latest complete checkpoint, excluding bad nodes.
+7. **Experiment tracking**: parameters, metrics, artifacts, code and data versions per run, with comparison views (§69.7).
+8. **Cost and utilization reports** per job, team and project; promotion of artifacts to the model registry (§69.8).
+
+### 85.5.3 Non-functional requirements
+
+**Table 85.7 — Training platform non-functional requirements.**
+
+| Requirement | Target |
+|---|---|
+| Queue wait, jobs ≤ 8 GPUs | Median ≤ 10 min, p90 ≤ 1 h |
+| Guaranteed quota | A team below its quota gets it back within 15 min (by reclaiming borrowed capacity) |
+| Large jobs | Start within 4 h of submission through reservations |
+| Allocation | ≥ 85% of GPU-hours allocated over a week |
+| Goodput | ≥ 95% for jobs of 256 GPUs or more (§65.16) |
+| Checkpoint stall | ≤ 1 s per checkpoint with asynchronous writes |
+| Control-plane availability | 99.9%; running jobs continue if the control plane is down |
+| Durability | Checkpoints and tracked artifacts on replicated object storage |
+| Experiment tracking | 5,000 metric points/s ingest; query a run's metrics in ≤ 2 s |
+| Model-quality guardrails | Not owned by the platform; it records data and code versions so results can be reproduced (§69.10) |
+
+### 85.5.4 Capacity estimation
+
+::: example
+**Worked example — GPU-hours by job class.** Assumptions: 25,000 jobs/week. Small: 20,000 jobs × 3 GPUs × 2 h. Medium: 4,500 jobs × 32 GPUs × 1.5 h. Large: 25 jobs × 512 GPUs × 20 h.
+
+1. Capacity: $4{,}096 \times 168 = 688{,}128$ GPU-hours/week.
+2. Demand: $120{,}000 + 216{,}000 + 256{,}000 = 592{,}000$ GPU-hours, an allocation of $592{,}000 / 688{,}128 = 86.0\%$.
+3. Shares of GPU-hours: small 20.3%, medium 36.5%, large 43.2%; shares of jobs: 80%, 18% and 0.1%.
+4. Average concurrent GPUs: small 714, medium 1,286 (about 40 jobs of 32), large 1,524 (about three 512-GPU jobs).
+5. Submission rate: $25{,}000 / 604{,}800 = 0.041$ jobs/s, 0.12/s in busy hours, plus bursts of hundreds when a sweep is submitted.
+
+**Interpretation.** One job in a thousand uses 43% of the GPU-hours, while four in five jobs are small and latency-sensitive (an engineer waiting). **Engineering implication.** Run two policies on one fleet: fast backfilling for small jobs and reservations for large gangs (§46.12.2), and size the scheduler for bursts of submissions, not for the trivial average rate.
+:::
+
+::: example
+**Worked example — Checkpoint bandwidth and storage.** Assumptions: large jobs train 30-billion-parameter models and save 14 bytes per parameter (§65.15); medium jobs save 14 GB; both checkpoint every 30 minutes asynchronously; each large job may take 30 s to drain a checkpoint.
+
+1. Large checkpoint: $14 \times 30 \times 10^9 = 420$ GB. Burst: $420 / 30 = 14$ GB/s per job, 42 GB/s if three coincide.
+2. Average: $3 \times 420 \text{ GB} / 1{,}800 \text{ s} = 0.7$ GB/s for large jobs and $40 \times 14 \text{ GB} / 1{,}800 = 0.31$ GB/s for medium jobs.
+3. Rolling checkpoints (three per running job): $9 \times 420 \text{ GB} + 40 \times 3 \times 14 \text{ GB} = 5.5$ TB.
+4. Retained: two milestones per large job for 13 weeks, $25 \times 2 \times 420 \text{ GB} \times 13 = 273$ TB; the final checkpoint of every medium job for 30 days, $4{,}500 \times 14 \text{ GB} \times 30 / 7 = 270$ TB.
+
+**Interpretation.** The burst is 40 times the average; retention, not the rolling set, sizes storage, and medium jobs' forgotten final checkpoints cost as much as the large jobs' milestones. **Engineering implication.** Size the checkpoint tier for bursts (§80.6.2), stagger large jobs' checkpoint times, and apply lifecycle rules: keep only registered or tagged checkpoints beyond 30 days (§15.9).
+:::
+
+Preemption is how the platform reclaims lent capacity, and every preemption throws away work.
+
+::: formula
+**GPU-hours lost to one preemption**
+
+$$L_{\text{pre}} = G \times \left( t_{\text{lost}} + R \right) \qquad t_{\text{lost}} = \begin{cases} \tau / 2 & \text{no checkpoint on signal} \\ t_{\text{save}} & \text{checkpoint within the grace period} \end{cases}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $G$ | GPUs held by the preempted job | GPUs |
+| $\tau$ | Interval between periodic checkpoints | h |
+| $t_{\text{save}}$ | Time to write a checkpoint after the preemption signal | h |
+| $R$ | Restart time: requeue, reschedule, reload, warm up | h |
+| $L_{\text{pre}}$ | GPU-hours of work lost | GPU-h |
+:::
+
+::: example
+**Worked example — Reclaiming borrowed GPUs 200 times a week.** A typical borrowed job holds $G = 32$ GPUs, checkpoints every $\tau = 30$ min, restarts in $R = 5$ min, and can save in $t_{\text{save}} = 1$ min when signaled.
+
+1. Without checkpoint-on-signal: $32 \times (15 + 5) / 60 = 10.7$ GPU-h per preemption; 200 per week is 2,133 GPU-h, 0.31% of capacity.
+2. With checkpoint-on-signal: $32 \times (1 + 5) / 60 = 3.2$ GPU-h; 640 GPU-h per week, 0.09%.
+3. A 512-GPU job preempted without notice would lose $512 \times 20 / 60 = 171$ GPU-h each time.
+
+**Interpretation.** Preemption is cheap when jobs checkpoint on signal and small when only small jobs borrow. **Engineering implication.** Make checkpoint-on-SIGTERM part of the platform's training library, give a grace period longer than $t_{\text{save}}$, and never lend capacity to large gangs that cannot be preempted cheaply.
+:::
+
+::: example
+**Worked example — What a utilization point is worth.** Internal prices: \$2.50 per H100-hour and \$1.40 per A100-hour.
+
+1. Weekly fleet cost: $3{,}072 \times 168 \times 2.50 + 1{,}024 \times 168 \times 1.40 = 1{,}290{,}240 + 240{,}845 = \$1.53$ million.
+2. One percentage point of allocation is \$15,300 a week, about \$0.8 million a year.
+3. Effective utilization multiplies allocation, goodput and the useful fraction of each allocated GPU's compute: with 86%, 95% and an MFU of 45% (§64.11), $0.86 \times 0.95 \times 0.45 = 0.37$.
+
+**Interpretation.** Allocation is the easiest number to report and the least informative; the Philly finding of about 52% hardware utilization of allocated GPUs is the same warning. **Engineering implication.** Report all three factors per team; most of the money is recovered by raising the third (input pipelines, communication overlap, right-sizing) rather than squeezing allocation from 86% to 90%.
+:::
+
+Other loads are modest: 1,000 concurrent runs logging 50 metrics every 10 s is 5,000 points/s (13 GB/day at 30 bytes each); reading training data at 0.1 GB/s per GPU is 410 GB/s across the fleet, which the storage tier must serve (§80.6.1).
+
+### 85.5.5 API design
+
+```yaml
+# POST /v1/jobs  (illustrative job spec)
+name: ranker-dlrm-v14
+team: ads-ranking
+queue: ads-ranking/default          # resolves to the team's quota
+priority_class: standard            # interactive | standard | preemptible
+image: registry.internal/ads/trainer@sha256:...
+command: ["torchrun", "train.py", "--config", "configs/v14.yaml"]
+resources: {gpu_type: h100, gpus_per_node: 8, nodes: {min: 2, max: 4}}  # elastic
+gang: true
+checkpoint: {dir: "s3://ckpt/ads-ranking/ranker-dlrm-v14", interval_min: 30,
+             on_preempt: true, grace_s: 120}
+retries: {max: 5, exclude_failed_nodes: true}
+tracking: {experiment: "dlrm-v14", log_code_version: true, data_version: "clicks@2026-11-01"}
+```
+
+Other endpoints: `POST /v1/sweeps` (search space, trial template, parallelism); `GET /v1/jobs/{id}` (state, attempts, nodes, queue position); `POST /v1/jobs/{id}:cancel`; `POST /v1/sessions` (interactive, priority `interactive`, idle timeout); `POST /v1/runs/{id}/metrics` (batched points); `GET /v1/usage?team=&from=&to=` (GPU-hours by type and tier, cost). All are authenticated per user and authorized per team queue.
+
+### 85.5.6 Data model and database schema
+
+```sql
+CREATE TABLE queue (                       -- one per team and GPU type
+  queue_id TEXT PRIMARY KEY, team TEXT NOT NULL, gpu_type TEXT NOT NULL,
+  nominal_gpus INT NOT NULL,               -- guaranteed quota
+  borrow_limit INT NOT NULL,               -- max GPUs it may borrow
+  weight REAL NOT NULL                     -- share of idle capacity
+);
+CREATE TABLE job (
+  job_id UUID PRIMARY KEY, queue_id TEXT REFERENCES queue, owner TEXT,
+  spec JSONB NOT NULL, priority_class TEXT, state TEXT,   -- pending|admitted|running|...
+  submitted_at TIMESTAMPTZ, admitted_at TIMESTAMPTZ, finished_at TIMESTAMPTZ
+);
+CREATE TABLE attempt (                     -- one per (re)start
+  job_id UUID, attempt INT, nodes TEXT[], gpus INT, borrowed BOOLEAN,
+  started_at TIMESTAMPTZ, ended_at TIMESTAMPTZ, end_reason TEXT,  -- done|failed|preempted
+  resumed_from_step BIGINT, PRIMARY KEY (job_id, attempt)
+);
+CREATE TABLE usage_ledger (                -- append-only, per minute per attempt
+  job_id UUID, attempt INT, minute TIMESTAMPTZ, gpu_type TEXT, gpus INT,
+  tier TEXT, sm_active_avg REAL, PRIMARY KEY (job_id, attempt, minute)
+);
+CREATE TABLE checkpoint_manifest (
+  job_id UUID, step BIGINT, uri TEXT, bytes BIGINT, complete BOOLEAN,
+  created_at TIMESTAMPTZ, retain_until DATE, PRIMARY KEY (job_id, step)
+);
+```
+
+Job and queue state lives in the orchestrator (Kubernetes objects managed by Kueue in this design, §46.10.2) and is mirrored into this relational store for history and billing. Experiment metrics go to a tracking store (MLflow-style, §69.7.2): run metadata in a relational database, metric points in a time-series table, artifacts and checkpoints in object storage. The usage ledger is the source of truth for cost.
+
+### 85.5.7 High-level architecture
+
+**Figure 85.5 — Self-service training platform.**
+
+```mermaid
+flowchart LR
+  ENG([ML engineer]) -->|CLI, SDK, UI| API[Job API and<br/>policy checks]
+  API -->|create suspended job| K8S[(Kubernetes API)]
+  K8S -.->|watch| KQ[Kueue: queues,<br/>quota, borrowing]
+  KQ -->|admit whole gang| K8S
+  K8S --> SCH[Scheduler with<br/>topology plugin]
+  SCH -->|bind pods| GPU[GPU node pools<br/>H100 and A100]
+  GPU -->|rendezvous| RDZV[(c10d store)]
+  GPU -->|read shards| DATA[(Training data<br/>object store, cache)]
+  GPU -.->|async checkpoints| CKPT[(Checkpoint store)]
+  GPU -.->|metrics, artifacts| TRK[Experiment<br/>tracking]
+  GPU -.->|DCGM telemetry| MET[(Metrics)]
+  HC[Node health<br/>checker] -->|cordon bad nodes| K8S
+  MET -.-> LED[(Usage ledger<br/>and cost reports)]
+  TRK -.->|promote| MR[(Model registry)]
+```
+
+**Reading the diagram.** Engineers submit through a job API that validates the spec against team policy (allowed GPU types, maximum size, image provenance) and creates a **suspended** job, so no GPU is held while it waits. **Kueue** watches jobs asynchronously, checks the team's quota and borrowing limits, and admits a whole gang at once; the scheduler then places the pods with topology awareness (§46.11.2). Running pods meet at a rendezvous store, stream data from object storage through a cache, and write checkpoints, metrics and telemetry asynchronously (dotted). A health checker cordons failing nodes, which sends affected jobs back through admission to restart from their last checkpoint. Telemetry feeds the usage ledger and cost reports; tracked artifacts can be promoted to the model registry. Storage boundaries: Kubernetes state, rendezvous, data, checkpoints, tracking, ledger. Failure points: the control plane (running jobs continue), the checkpoint store under burst, a bad node hanging a collective. Scaling: node pools by GPU type; admission is per job, so thousands of pods do not overload the scheduler.
+
+### 85.5.8 Detailed component design
+
+#### Quotas, fair share and borrowing
+
+Each team's queue has a **nominal quota** per GPU type, sized by budget, and the sum of quotas equals the fleet. Admission has two phases, which map onto Kueue's ClusterQueues and cohorts (§46.10.2):
+
+1. **Guaranteed.** A team's jobs are admitted, whole gangs only, while the team stays within its quota.
+2. **Borrowing.** Idle GPUs are lent to teams with pending jobs, choosing the team with the lowest ratio of allocation to quota whose next gang fits (weighted max-min fairness, §46.9.1). Borrowed jobs are marked preemptible.
+3. **Reclaim.** When a team below its quota submits work, the platform preempts borrowed gangs, newest first, until the owner's job fits. Gangs are preempted whole: preempting one worker stalls the rest at the next collective (§46.10).
+
+The program below models the policy on a 512-GPU pool with four teams.
+
+```python
+CLUSTER = 512                                       # GPUs
+QUOTA = {"search": 192, "ads": 128, "vision": 128, "speech": 64}  # nominal = weight
+
+def admit(queues, quota, capacity):
+    """Phase 1: whole gangs within nominal quota. Phase 2: lend idle GPUs,
+    always to the team with the lowest allocation/quota whose next gang fits."""
+    alloc = {t: 0 for t in quota}
+    running = []                                    # (team, gpus, borrowed?)
+    pending = {t: list(q) for t, q in queues.items()}
+    for t in quota:                                 # phase 1: guaranteed share
+        while pending[t] and alloc[t] + pending[t][0] <= quota[t]:
+            g = pending[t].pop(0); alloc[t] += g; running.append((t, g, False))
+    free = capacity - sum(alloc.values())
+    while True:                                     # phase 2: weighted borrowing
+        cands = [t for t in quota if pending[t] and pending[t][0] <= free]
+        if not cands:
+            break
+        t = min(cands, key=lambda x: alloc[x] / quota[x])
+        g = pending[t].pop(0); alloc[t] += g; free -= g; running.append((t, g, True))
+    return alloc, running, free
+
+def show(title, alloc, running, free):
+    print(title)
+    for t in QUOTA:
+        b = sum(g for tt, g, br in running if tt == t and br)
+        print(f"  {t:<7} quota {QUOTA[t]:>3}  allocated {alloc[t]:>3}  borrowed {b:>3}")
+    print(f"  idle GPUs: {free}")
+
+# Speech is quiet; the other teams queue gangs (GPUs per job, FIFO order).
+queues = {"search": [64, 64, 64, 32, 32], "ads": [32] * 6, "vision": [8] * 20, "speech": []}
+before = admit(queues, QUOTA, CLUSTER)
+show("Before speech submits:", *before)
+
+# Speech submits a 64-GPU gang. Recompute: borrowed gangs that no longer fit are preempted.
+queues["speech"] = [64]
+after = admit(queues, QUOTA, CLUSTER)
+show("After reclaiming for speech:", *after)
+lost = [r for r in before[1] if r[2] and r not in after[1]]
+print("  preempted (borrowed) gangs:", [(t, g) for t, g, _ in lost])
+```
+
+Output:
+
+```text
+Before speech submits:
+  search  quota 192  allocated 224  borrowed  32
+  ads     quota 128  allocated 160  borrowed  32
+  vision  quota 128  allocated 128  borrowed   0
+  speech  quota  64  allocated   0  borrowed   0
+  idle GPUs: 0
+After reclaiming for speech:
+  search  quota 192  allocated 192  borrowed   0
+  ads     quota 128  allocated 128  borrowed   0
+  vision  quota 128  allocated 128  borrowed   0
+  speech  quota  64  allocated  64  borrowed   0
+  idle GPUs: 0
+  preempted (borrowed) gangs: [('search', 32), ('ads', 32)]
+```
+
+What to notice:
+
+- With speech idle, its 64 GPUs are not wasted: search and ads borrow 32 each, and allocation stays at 100%.
+- Vision's 8-GPU jobs lost the borrowing tie-break even though they would also have fitted; a real policy adds queue age or DRF across GPUs, CPU and memory (§46.9.3) so a team with small jobs is not always last.
+- Reclaim preempts exactly the borrowed gangs, never a team's guaranteed work. The model recomputes from scratch for brevity; a real scheduler preempts only what is needed and keeps running jobs in place.
+
+#### Gang admission, placement and preemption
+
+Jobs are admitted whole and placed inside one network domain where possible, following the Philly lesson that waiting a little for locality beats running spread out [Jeon et al. 2019]. Large jobs get **reservations**: the scheduler drains a rack-aligned block for a 512-GPU job over at most a few hours while backfilling it with small jobs whose declared run time ends before the reservation starts (§46.12.2). Preemption uses priority classes: `interactive` above `standard` above `preemptible`; within a class, only borrowed work can be preempted. The platform sends SIGTERM, waits the grace period (120 s) while the training library saves a checkpoint, then kills the pods and requeues the job with `resume: latest`.
+
+#### Elastic, fault-tolerant training and checkpoint storage
+
+The platform's training library wraps `torchrun` (§65.16.2): data-parallel jobs declare `nodes: {min, max}` and continue on fewer nodes after a failure or partial preemption; tensor- and pipeline-parallel jobs restart on hot spares with the same layout. Checkpoints are sharded and asynchronous, committed with a manifest (§65.15.1); the interval follows Young/Daly from the job's size and the fleet's measured failure rate (§65.15.2), recomputed by the platform rather than guessed by each team. A node health pipeline (DCGM diagnostics, NCCL tests, error counters) cordons suspect nodes and feeds the scheduler's exclusion list (§80.11.2). The checkpoint tier is a parallel file system or object store sized for 42 GB/s bursts, with lifecycle rules from §85.5.4.
+
+#### Experiment tracking, utilization and cost attribution
+
+Each attempt's pods report metrics and artifacts to the tracking service, keyed by run ID, with code commit, image digest and data version recorded automatically (§69.7). The **usage ledger** records per minute: GPUs held, GPU type, tier (guaranteed, borrowed, interactive) and average SM activity from DCGM. Chargeback (§47.11.2, §51.5.2) bills a team for GPU-hours it held, at full price for guaranteed and interactive use and at a discount (for example 60%) for borrowed, preemptible use, which encourages teams to soak up idle capacity. Idle time inside an allocation is billed to the job, so an interactive session left open overnight shows up on its owner's bill; unallocated capacity is platform overhead. Ledger reports show allocation, goodput (from attempt records) and SM activity side by side.
+
+The platform's own "model" choices are libraries, not models: a supported image per framework version, the training wrapper above, and templates for DDP, FSDP and 3D parallelism (§65.13). Its evaluation is operational: queue-wait percentiles by job class, allocation, goodput, effective utilization, and the share of jobs that ran without manual intervention.
+
+::: industry
+**Published cluster schedulers for deep learning.** Research systems built on traces like Philly's explored the policy space this design simplifies: Gandiva time-slices and migrates jobs using the iterative nature of training [Xiao et al. 2018]; Tiresias schedules without knowing job durations, using attained service [Gu et al. 2019]; Themis targets finish-time fairness [Mahajan et al. 2020]; Gavel makes policies heterogeneity-aware across GPU types [Narayanan et al. 2020]; Pollux adapts each job's resources and batch size to maximize goodput [Qiao et al. 2021]. Alibaba's PAI study motivated GPU sharing and a reserving-and-packing policy that separates large-GPU tasks from small ones [Weng et al. 2022].
+*Evidence: Primary* — the cited papers
+:::
+
+### 85.5.9 Data flow
+
+**Figure 85.6 — Write path: submitting and starting a multi-node job.**
+
+```mermaid
+sequenceDiagram
+  participant E as Engineer
+  participant A as Job API
+  participant Q as Kueue
+  participant S as Scheduler
+  participant N as GPU nodes
+  participant T as Tracking
+  E->>A: POST job spec, 16 GPUs, gang
+  A->>A: validate policy, image, quota exists
+  A->>Q: create suspended job in team queue
+  A-->>E: job_id, queue position
+  Q->>Q: wait until quota or borrowable GPUs cover all 16
+  Q->>S: admit, unsuspend with node selectors
+  S->>N: bind 2 pods to one rack
+  N->>N: torchrun rendezvous, load latest checkpoint if any
+  N--)T: run started, code and data versions
+  N--)T: metrics every 10 s
+```
+
+**Reading the diagram.** The API answers immediately with a job ID; everything after that is asynchronous from the engineer's point of view. Kueue holds the job suspended until the whole gang is covered by quota or borrowable capacity, then admits it; the scheduler binds both pods within one rack. Workers rendezvous and resume from a checkpoint if this is a restart. Tracking writes are asynchronous and never block a training step. Failure points: admission waiting forever on fragmentation (requeue timeout), a pod failing to start (gang released), tracking unavailable (metrics buffered locally). Scaling: admission is per job; the API is stateless.
+
+**Figure 85.7 — Reclaiming borrowed GPUs with checkpoint-on-signal.**
+
+```mermaid
+sequenceDiagram
+  participant O as Owner team job
+  participant Q as Kueue
+  participant B as Borrowed job pods
+  participant C as Checkpoint store
+  O->>Q: new job, team below quota
+  Q->>Q: choose borrowed gangs to preempt, newest first
+  Q->>B: evict whole gang, SIGTERM, 120 s grace
+  B->>B: finish step, stage shard to host memory
+  B->>C: write sharded checkpoint and manifest
+  C-->>B: manifest committed
+  B-->>Q: pods exit
+  Q->>O: admit owner job on freed GPUs
+  Q->>Q: requeue borrowed job with resume latest
+```
+
+**Reading the diagram.** A team below its quota submits work; Kueue selects borrowed gangs to preempt and evicts each whole gang with a grace period. The training library finishes the current step, stages its shard and commits a checkpoint manifest before exiting, so the work lost is about one minute instead of half a checkpoint interval. The owner's job is admitted on the freed GPUs and the preempted job is requeued to resume later. Failure points: a checkpoint that does not finish within the grace period (the previous periodic checkpoint is used), a job that ignores SIGTERM (killed, loses up to $\tau/2$). Scaling: reclaim is incremental; only as many gangs as needed are preempted.
+
+### 85.5.10 Bottlenecks
+
+1. **Fragmentation.** Free GPUs scattered over many nodes cannot host a gang; pack small jobs onto partially used nodes (bin-packing, §46.7) and defragment with reservations.
+2. **Checkpoint bursts.** Three large jobs checkpointing together need 42 GB/s; stagger them and keep staging in host memory.
+3. **Input pipelines.** GPUs starved by data loading or CPU preprocessing, a bottleneck the Alibaba study also reports [Weng et al. 2022]; provision CPUs per GPU and cache hot datasets near the nodes.
+4. **Scheduler throughput during sweeps.** Hundreds of trial submissions per minute; admit sweeps as one object with bounded parallelism.
+5. **Heterogeneity.** Jobs that insist on H100s queue while A100s idle; use flavor fallback lists and price A100s lower.
+
+### 85.5.11 Failure scenarios
+
+**Table 85.8 — Training platform failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Partial gang placed | GPUs held idle, possible deadlock | Admitted-but-not-running time | Requeue after timeout | Gang admission, `waitForPodsReady` (§46.10) |
+| Hang in a collective | Job stops progressing, GPUs burn | No step progress; NCCL watchdog | Kill, cordon node, restart from checkpoint | Collective timeouts; health checks |
+| Silent data corruption | Loss spike or NaN, wrong model | Loss and gradient-norm monitors | Roll back to earlier checkpoint, exclude node | Burn-in tests; cross-replica checks (§80.8.3) |
+| Corrupt latest checkpoint | Resume fails | Missing manifest | Use previous complete checkpoint | Manifest commit; keep three |
+| Quota hoarding | Interactive sessions idle on GPUs | Low SM activity on held GPUs | Idle timeout, reclaim | Bill idle time; session limits |
+| Starvation of large jobs | Pre-training waits days | Head-of-queue age | Reservation | Backfill with declared run times |
+| Control plane down | No new admissions | API health | Fail over; running jobs unaffected | Replicated etcd; jobs do not depend on API at run time |
+| Data or label leakage in a team's pipeline | Model looks good offline, fails online | Not visible to the platform | Owner's evaluation | Record data versions; offer validated dataset templates (§69.4) |
+
+### 85.5.12 Scaling strategy
+
+**At 10×** (40,000 GPUs) the largest jobs exceed one network domain and failures arrive hourly; Chapter 80's techniques take over: rail-optimized fabrics, hot spares, in-memory checkpoints and goodput budgets (§80.9). The control plane splits into several clusters (cells) behind one job API, each with its own Kueue, and teams' quotas span cells. **At 100×**, pre-training gets dedicated clusters and the shared platform serves the long tail of medium jobs; capacity planning becomes power- and facility-limited (§80.7).
+
+### 85.5.13 Trade-offs
+
+**Table 85.9 — Training platform design trade-offs.**
+
+| Decision | Choice | Alternative | Why |
+|---|---|---|---|
+| Orchestrator | Kubernetes + Kueue | Slurm | Shares fleet and tooling with serving and pipelines; Slurm is simpler for a pre-training-only cluster (§65.18) |
+| Sharing | Quotas with borrowing and reclaim | Static team slices | Idle slices lent out; owner guarantees kept |
+| Preemption unit | Whole gang | Single pod | One missing worker stalls the rest |
+| Lost work | Checkpoint on signal | Periodic only | 3.2 instead of 10.7 GPU-h per reclaim |
+| Large jobs | Reservations + backfill | Strict FIFO | Large jobs start in hours; small ones fill holes |
+| Billing | Held GPU-hours, discounted when borrowed | Bill used compute only | Simple, rewards releasing GPUs, prices idle sessions |
+
+### 85.5.14 Alternative designs
+
+- **Slurm with fair-share and preemption** (§46.12) for research-heavy organizations; simpler for large MPI-style jobs, weaker for mixed workloads.
+- **Ray-based platform** (§65.18) when data loading, tuning and training are one Python program.
+- **Managed cloud training** (SageMaker, Vertex AI) for bursty demand; pay per use, less control over topology.
+- **Adaptive schedulers** such as Pollux that change job sizes automatically; higher utilization in research results, but jobs must tolerate resizing [Qiao et al. 2021].
+
+### 85.5.15 Interview discussion
+
+**Table 85.10 — 45-minute pacing plan for the training platform.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Scope | Job classes, teams, GPU types; self-service and billing |
+| 5–12 | Estimates | 688k GPU-h/week; 0.1% of jobs use 43%; checkpoint bursts; cost of a point |
+| 12–20 | Architecture | Figure 85.5; suspended jobs, admission, placement |
+| 20–32 | Deep dive: sharing | Quotas, borrowing, reclaim, gang preemption, reservations |
+| 32–40 | Deep dive: reliability | Checkpoint-on-signal, elastic restart, health pipeline |
+| 40–45 | Wrap-up | Utilization honesty, chargeback, 10× |
+
+**Likely follow-ups.**
+
+- *"How do you keep GPUs busy without starving owners?"* Lend idle quota as preemptible capacity and reclaim it with checkpoint-on-signal.
+- *"Why is 90% allocation not 90% utilization?"* Allocation ignores idle sessions, input stalls and low MFU; Philly measured about 52% hardware utilization of GPUs in use [Jeon et al. 2019].
+- *"How do large jobs ever start?"* Reservations on a rack-aligned block, backfilled with jobs that finish in time.
+- *"What happens when a node fails mid-run?"* Health check cordons it; the job restarts from the last manifest on a spare or fewer nodes.
+
+**What distinguishes senior and staff answers.** A senior answer explains gang scheduling, quotas and checkpointing. A staff answer quantifies the cost of preemption and of a utilization point, separates allocation from effective utilization, designs incentives through billing, and explains how the policy differs for 8-GPU and 512-GPU jobs.
+
+### 85.5.16 Production considerations
+
+- **Observability.** Queue-wait percentiles by class and team; allocation, goodput and SM activity per team (§64.11); preemptions and restarts per job; checkpoint duration; node health events.
+- **Security.** Signed images, per-team namespaces and storage credentials, no shared writable volumes across teams; training data access audited (§50.8).
+- **Cost.** Ledger-based chargeback; reserved capacity for the base load and spot or on-demand for bursts of preemptible work (§51.6).
+- **Operations.** Scheduler-policy changes are tested by replaying recorded job traces in a simulator before rollout; GPU node burn-in before joining the pool; quarterly quota reviews against usage.
+
+## 85.6 Multi-tenant ML Serving Platform
+
+### 85.6.1 Problem statement
+
+A company's 300 teams have 5,000 models deployed for online inference: gradient-boosted trees, linear models, scikit-learn pipelines, small PyTorch and ONNX networks, and 200 vision and language models that need GPUs. Many are per-market or per-customer variants (a churn model per enterprise customer, a demand model per city), so the catalog grows faster than traffic. Each model today runs as its own deployment with two replicas for availability. Design a **multi-tenant serving platform** that serves all of them from a shared fleet at a fraction of the cost, while each team keeps its own latency objective, quota and bill.
+
+The ML formulation is a popularity distribution, not a prediction target. Peak traffic is 300,000 predictions/s, and it is extremely skewed:
+
+- **Hot**: 50 models carry 85% of traffic, about 5,100 predictions/s each.
+- **Warm**: 950 models carry 14.9%, about 47/s each.
+- **Cold**: 4,000 models share 0.1%, an average of 0.075/s each; half of them see fewer than one request every ten minutes.
+
+The distinctive hard problem is **density with isolation**: pack thousands of models onto shared servers, load and evict them by demand, scale idle models to zero, and still keep one tenant's burst, slow model or bad artifact from hurting the others, while charging each model its share. Single-model serving mechanics (dynamic batching, autoscaling signals, cold-start anatomy) are owned by §66.6–§66.10; LLM-specific gateways, token quotas and multi-LoRA serving by Chapter 79.
+
+### 85.6.2 Functional requirements
+
+1. **Deploy** a registered model version (§69.8) with a runtime (XGBoost, scikit-learn, ONNX Runtime, Triton, custom container), resource hints and an SLO class.
+2. **Predict** over REST and gRPC by model name and alias; batch requests of many rows.
+3. **Route** to a server holding the model; load it on demand if none does.
+4. **Scale** each model with its traffic, including to zero resident copies.
+5. **Roll out** new versions by alias change with shadow and canary support (§66.12).
+6. **Quota** per tenant: deployed models, resident memory, request rate, concurrency.
+7. **Log** predictions (sampled) for monitoring and training (§60.6.2).
+8. **Report** latency, errors and cost per model and tenant.
+
+### 85.6.3 Non-functional requirements
+
+**Table 85.11 — Multi-tenant serving non-functional requirements.**
+
+| Requirement | Target |
+|---|---|
+| Latency, warm or hot model (platform overhead, excluding model compute) | p99 ≤ 5 ms added by router and server |
+| Latency, cold model (first request) | p99 ≤ 2 s for models under 500 MB on CPU; ≤ 15 s for GPU models |
+| Availability | 99.95% per hot or warm model; cold models 99.9% |
+| Isolation | One tenant at 10× its quota raises others' p99 by ≤ 10% |
+| Density | Platform cost ≤ 25% of one-deployment-per-model |
+| Rollout | Alias change effective within 60 s; instant rollback |
+| Correctness | Served model version recorded on every logged prediction; artifacts verified by digest |
+| Model-quality hooks | Prediction and feature logs feed drift monitoring (Chapter 70) per model |
+
+### 85.6.4 Capacity estimation
+
+::: example
+**Worked example — One deployment per model versus a shared fleet.** Assumptions: model files have a median of 150 MB and a mean of 246 MB; a model needs about 1.5× its file size in memory once deserialized; 2 ms of CPU per prediction on average; prices \$0.04 per vCPU-hour and \$0.005 per GB-hour.
+
+1. **Dedicated baseline:** 2 pods per model, each 1 vCPU and $0.5 + 2 \times$ size GB: 10,000 pods, 10,000 vCPU and $2 \times 5{,}000 \times (0.5 + 2 \times 0.246) = 9{,}920$ GB. Cost: $10{,}000 \times 0.04 + 9{,}920 \times 0.005 = \$449.6$/h, \$3.94 million a year.
+2. **Busy CPU at peak:** $300{,}000 \times 0.002 = 600$ vCPU. The baseline reserves 17 times that.
+3. **Hot tier, dedicated and autoscaled:** $255{,}000 \times 0.002 / 0.5 = 1{,}020$ vCPU, 255 pods of 4 vCPU and 8 GB: $1{,}020 \times 0.04 + 2{,}040 \times 0.005 = \$51.0$/h.
+4. **Multi-model fleet for warm and cold:** warm models resident in two copies, $950 \times 0.246 \times 1.5 \times 2 = 701$ GB; about 800 cold models resident at a time, $800 \times 0.246 \times 1.5 = 295$ GB; total 996 GB, or 1,423 GB at 70% memory utilization. Warm CPU: $44{,}700 \times 0.002 / 0.5 = 179$ vCPU. Sixteen servers of 16 vCPU and 128 GB cover both with zone spread: $16 \times (16 \times 0.04 + 128 \times 0.005) = \$20.5$/h.
+5. **Shared total:** $51.0 + 20.5 = \$71.5$/h, \$0.63 million a year: 6.3 times cheaper, 16% of the baseline.
+
+**Interpretation.** In the baseline the cost is redundancy floors for models nobody calls; in the shared design it is CPU for the hot models, and the long tail costs only memory. **Engineering implication.** Give hot models dedicated, autoscaled deployments, put everything else on multi-model servers sized by memory, and treat "resident copies" as the unit that scales.
+:::
+
+::: example
+**Worked example — Cold-start time for an unloaded model.** Apply the cold-start formula of §66.10 to a warm server (no node provisioning, no image pull). CPU model of 300 MB: object store at 0.4 GB/s, deserialization at 1 GB/s, initialization 0.2 s, warm-up 0.3 s.
+
+1. From the object store: $0.3/0.4 + 0.3/1 + 0.2 + 0.3 = 0.75 + 0.3 + 0.2 + 0.3 = 1.55$ s.
+2. From a node-local NVMe cache at 2 GB/s: $0.15 + 0.3 + 0.2 + 0.3 = 0.95$ s.
+3. A 2 GB GPU model from the object store, host-to-device at 4 GB/s, 2 s initialization and 3 s warm-up: $5 + 0.5 + 2 + 3 = 10.5$ s.
+4. If no server has free memory and a new pod must start on a new node, add the minutes of node provisioning from §66.10.
+
+**Interpretation.** Scaling a model to zero *resident copies* on a running fleet costs about a second; scaling the *fleet* to zero costs minutes. **Engineering implication.** Scale models to zero, not servers: keep the multi-model fleet warm with memory headroom, cache popular artifacts on local disks, and meet the 2 s cold target only for models below a size limit.
+:::
+
+For **GPU models**, 200 models with two dedicated GPUs each would need 400 GPUs (\$800/h at \$2.00 per GPU-hour). Their summed busy time is about 18 GPUs at peak; packing them on multi-model GPU servers, about 46 models of 1.5 GB per 80 GB GPU by memory (§66.8), with MIG slices for the few with strict latency objectives, needs about 40 GPUs (\$80/h).
+
+### 85.6.5 API design
+
+```yaml
+# PUT /v1/tenants/{tenant}/deployments/{name}   (illustrative)
+model: registry://payments/merchant-churn@7     # registry version, verified by digest
+runtime: xgboost-cpu                           # or sklearn, onnx-cpu, triton-gpu, custom
+slo_class: standard                            # critical | standard | best_effort
+scaling: {min_copies: 0, max_copies: 8, target_inflight_per_copy: 4}
+aliases: {prod: 7, canary: {version: 8, weight: 0.05}}
+logging: {sample_rate: 0.02, log_features: true}
+```
+
+```text
+POST /v2/models/{tenant}.{name}[:{alias}]/infer       # KServe v2 inference protocol shape
+  {"inputs": [{"name": "features", "shape": [20, 64], "datatype": "FP32", "data": [...]}]}
+  -> {"model_version": "7", "outputs": [...], "served_by": "mm-server-12", "cold": false}
+GET  /v1/tenants/{tenant}/usage?from=&to=             # copies, GB-hours, vCPU-hours, cost
+PUT  /v1/tenants/{tenant}/quota                      # admins only
+```
+
+Every response names the version served and whether it was a cold load, so clients and the prediction log can explain a slow request.
+
+### 85.6.6 Data model and database schema
+
+```sql
+CREATE TABLE deployment (
+  tenant TEXT, name TEXT, model_uri TEXT, digest TEXT, runtime TEXT,
+  slo_class TEXT, tier TEXT,                 -- hot | warm | cold, set by the controller
+  min_copies INT, max_copies INT, mem_bytes BIGINT,   -- measured at validation
+  PRIMARY KEY (tenant, name)
+);
+CREATE TABLE placement (                     -- desired and actual copies
+  tenant TEXT, name TEXT, version INT, server_id TEXT,
+  state TEXT,                                -- loading | warming | serving | draining
+  loaded_at TIMESTAMPTZ, last_request TIMESTAMPTZ,
+  PRIMARY KEY (tenant, name, version, server_id)
+);
+CREATE TABLE tenant_quota (
+  tenant TEXT PRIMARY KEY, max_models INT, max_resident_gb REAL,
+  max_rps INT, max_concurrency INT, weight REAL
+);
+```
+
+Placement is high-churn, small state kept in a replicated key-value store with watches (etcd-class, §26.6) so routers learn of new copies within a second; deployments and quotas are low-churn configuration; artifacts live in object storage addressed by digest; per-minute usage records feed the cost ledger.
+
+### 85.6.7 High-level architecture
+
+**Figure 85.8 — Multi-tenant serving platform.**
+
+```mermaid
+flowchart LR
+  C([Client services]) -->|REST or gRPC| GW[Gateway: auth,<br/>tenant quotas]
+  GW --> RT[Model-aware router]
+  RT -->|hot models| HOT[Dedicated deployments<br/>autoscaled]
+  RT -->|warm and cold| MM[Multi-model servers<br/>CPU fleet]
+  RT -->|GPU models| GMM[Multi-model GPU<br/>servers, MIG]
+  PL[(Placement store<br/>etcd-class)] -.->|watch| RT
+  CTRL[Placement and<br/>tiering controller] --> PL
+  MM -->|load on demand| NC[(Node-local<br/>model cache)]
+  NC -->|miss| OBJ[(Artifact store<br/>object storage)]
+  REG[(Model registry)] -.->|aliases, versions| CTRL
+  MM -.->|load, memory, latency| CTRL
+  MM -.->|sampled predictions| LOG[[Prediction log]]
+  MM -.->|usage per minute| LED[(Cost ledger)]
+```
+
+**Reading the diagram.** Clients call a gateway that authenticates the tenant and enforces its rate and concurrency quotas (§22.3), then a **model-aware router** that knows, from a watched placement store, which servers hold which models. Hot models go to their own autoscaled deployments; warm and cold models to **multi-model servers**, each holding dozens to hundreds of models in memory; GPU models to multi-model GPU servers, some partitioned with MIG. The **placement controller** decides copies per model from load and memory reports and writes desired placement; servers load artifacts from a node-local cache backed by object storage. Prediction logs and per-minute usage leave asynchronously (dotted). Storage boundaries: placement store, artifact store and node caches, registry, ledger. Failure points: the router's placement view going stale (requests sent to a server that just evicted the model, which reloads or redirects), load storms on the artifact store, a model that exhausts a server's memory. Scaling: routers are stateless; multi-model servers scale by memory.
+
+### 85.6.8 Detailed component design
+
+#### Placement, tiering and model-affinity routing
+
+The controller recomputes each model's desired copies every 30 seconds:
+
+1. **Tier.** A model is hot if its sustained rate needs more than a few full servers; it graduates to a dedicated deployment with its own autoscaler (§66.9). Otherwise it lives on the multi-model fleet.
+2. **Copies.** For multi-model residents, copies $= \lceil \text{rate} \times c / (k_{\text{copy}} \, u) \rceil$, at least 2 for `critical` and `standard` warm models (zone spread), and 0 for idle models after a TTL of 15 minutes without requests.
+3. **Where.** Candidate servers are ranked by rendezvous hashing of the model ID (§14.8.6), so a model returns to the same servers and finds its artifact in their local cache; among the top candidates, the controller picks those with free memory and low load, a bounded-load rule that keeps a few heavy models from piling onto one server.
+4. **Route.** For each request, the router picks the holder with the fewest in-flight requests; if there is none, it sends the request to the top rendezvous candidate, which loads the model while the request waits up to its deadline. Duplicate loads of one model on one server are coalesced (single flight, §20.11.1).
+
+This is the design KServe's ModelMesh documents: serving pods managed as a distributed LRU cache of models, copies loaded and unloaded by recency and request volume, and placement balanced by cache age and load [KServe ModelMesh Docs].
+
+#### Loading and eviction
+
+Each multi-model server keeps a memory budget for models and evicts when a load needs room. Which models to evict decides how many requests pay a cold start. The simulation below replays a 300,000-request trace over 2,000 models with Zipf popularity and log-normal sizes against one server's 48 GB budget.
+
+```python
+from collections import OrderedDict
+import heapq
+import numpy as np
+
+rng = np.random.default_rng(42)
+M, N_REQ, CAP = 2_000, 300_000, 48e9                 # models, requests, bytes of RAM
+size = np.clip(rng.lognormal(np.log(150e6), 1.0, M), 5e6, 4e9)   # model sizes, bytes
+pop = 1.0 / np.arange(1, M + 1) ** 1.05              # Zipf popularity by rank
+pop /= pop.sum()
+trace = rng.choice(M, N_REQ, p=pop)
+
+def lru(trace):
+    cache, used, misses, loaded = OrderedDict(), 0.0, 0, 0.0
+    for m in trace:
+        if m in cache:
+            cache.move_to_end(m); continue
+        misses += 1; loaded += size[m]
+        while used + size[m] > CAP:
+            _, s = cache.popitem(last=False); used -= s
+        cache[m] = size[m]; used += size[m]
+    return misses, loaded
+
+def gdsf(trace, cost):
+    """GreedyDual-Size-Frequency: evict the lowest L + freq * cost / size."""
+    prio, freq, heap = {}, {}, []
+    used, L, misses, loaded = 0.0, 0.0, 0, 0.0
+    for m in trace:
+        freq[m] = freq.get(m, 0) + 1
+        if m not in prio:
+            misses += 1; loaded += size[m]
+            while used + size[m] > CAP:
+                p, v = heapq.heappop(heap)
+                if prio.get(v) == p:                 # skip stale heap entries
+                    L = p; used -= size[v]; del prio[v]
+            used += size[m]
+        prio[m] = L + freq[m] * cost(m) / size[m]
+        heapq.heappush(heap, (prio[m], m))
+    return misses, loaded
+
+print(f"catalog {size.sum() / 1e9:.0f} GB, cache {CAP / 1e9:.0f} GB")
+policies = [("LRU", lru),
+            ("GDSF, cost = 1 (hits)", lambda t: gdsf(t, lambda m: 1.0)),
+            ("GDSF, cost = size (bytes)", lambda t: gdsf(t, lambda m: size[m]))]
+for name, fn in policies:
+    miss, loaded = fn(trace)
+    print(f"{name:<26} hit ratio {1 - miss / N_REQ:.3f}  "
+          f"loads {miss:>6,}  GB loaded {loaded / 1e9:>6,.0f}")
+```
+
+Output:
+
+```text
+catalog 465 GB, cache 48 GB
+LRU                        hit ratio 0.671  loads 98,737  GB loaded 23,000
+GDSF, cost = 1 (hits)      hit ratio 0.780  loads 66,067  GB loaded 19,230
+GDSF, cost = size (bytes)  hit ratio 0.738  loads 78,590  GB loaded 18,861
+```
+
+What to notice:
+
+- Size-aware eviction beats LRU: weighting frequency by $1/\text{size}$ keeps many small popular models instead of a few large ones, raising the hit ratio from 0.67 to 0.78 (§20.9 compares general cache policies).
+- The cost term chooses the objective: cost $= 1$ maximizes hits (fewest slow requests); cost $=$ size minimizes bytes loaded (least load on the artifact store). Platforms usually optimize hits within a cap on load bandwidth.
+- Even the best policy misses 22% of requests when one server tries to cache a 465 GB catalog in 48 GB. The fix is not a better policy but **affinity routing**: with rendezvous placement, each of 20 servers caches only its own share of models, the fleet's 960 GB holds the whole catalog, and misses fall to genuinely cold models.
+
+Two further rules prevent thrashing. A model must stay resident for a minimum time (60 s) before it can be evicted, and a server limits concurrent loads (for example 4) and the artifact store limits loads per tenant, so a deploy of 500 per-customer models does not saturate the store.
+
+#### Scaling to zero and the cold request
+
+A model with no requests for its TTL drops to zero resident copies but stays deployed: its placement entry, artifact and rendezvous candidates remain. The first request then costs the 1–1.6 s of §85.6.4. Tenants choose per deployment between `min_copies: 0` (cheapest; first request slow), `min_copies: 1` (one copy always resident) and `critical` (two copies in two zones). The router can also answer a cold request with a declared fallback, such as a tenant-level default model or a cached prediction, when the caller's deadline is shorter than the load time.
+
+#### Tenant isolation and quotas
+
+Isolation is layered, following §47.7–§47.9:
+
+- **Admission.** Token-bucket rate limits and concurrency limits per tenant at the gateway (§22.4), with `429` and `Retry-After` beyond quota; resident-memory quota enforced by the controller (a tenant over its GB quota has its own least valuable models evicted first).
+- **Fair queuing on each server.** Requests queue per tenant, served by weighted fair queuing (§47.8.2), so a tenant sending 10× its share waits in its own queue.
+- **Per-model limits.** Maximum concurrency and timeout per model; a model whose p99 exceeds its class limit is moved to a quarantine server rather than slowing its neighbors.
+- **Process and sandbox boundaries.** Standard runtimes load only formats that do not execute code on load (ONNX, XGBoost JSON, TorchScript); pickled scikit-learn models and custom pre-processing run in per-tenant containers under a sandboxing runtime such as gVisor (§47.9.2), because a pickle is a program. `critical` tenants can request dedicated servers or MIG slices.
+
+#### Cost per model
+
+::: formula
+**Cost of one model on a shared fleet**
+
+$$C_m = p_{\text{mem}} \sum_{i} M_{m} \, T_{m,i} + \frac{p_{\text{cpu}}}{u} \cdot \frac{N_m \, c_m}{3{,}600}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $M_m$ | Resident memory of one copy of model $m$ | GB |
+| $T_{m,i}$ | Hours copy $i$ was resident in the period | h |
+| $p_{\text{mem}}$, $p_{\text{cpu}}$ | Price per GB-hour and per vCPU-hour | \$/GB-h, \$/vCPU-h |
+| $N_m$, $c_m$ | Predictions served and CPU-seconds per prediction | count, s |
+| $u$ | Fleet CPU utilization target, spreading idle capacity over users | dimensionless |
+| $C_m$ | Cost charged to the model for the period | \$ |
+:::
+
+::: example
+**Worked example — A cold per-customer model and a warm model.** Prices as in §85.6.4; $u = 0.5$.
+
+1. **Cold model**, 300 MB file (0.45 GB resident), resident 3 h/day, 500 predictions/day at 5 ms: memory $0.45 \times 3 \times 0.005 = \$0.0068$; CPU $(0.04/0.5) \times 500 \times 0.005 / 3{,}600 = \$0.00006$; total \$0.0068/day, \$2.48 a year.
+2. Its dedicated baseline: $2 \times 24 \times (0.04 + 1.1 \times 0.005) = \$2.18$/day, \$797 a year, 321 times more.
+3. **Warm model**, 0.45 GB, two copies all day, 47 predictions/s at 2 ms: memory $2 \times 0.45 \times 24 \times 0.005 = \$0.108$; CPU $(0.04/0.5) \times 47 \times 86{,}400 \times 0.002 / 3{,}600 = \$0.180$; total \$0.288/day, \$0.071 per million predictions.
+
+**Interpretation.** On a shared fleet, idle models cost memory-hours and busy models cost CPU; both are small compared with dedicated redundancy floors. **Engineering implication.** Bill tenants by this formula through the ledger (§47.11.2) so a team with 2,000 rarely used models sees what they cost, and let them choose `min_copies` knowing the price of a warm first request.
+:::
+
+The platform is evaluated on density (cost against the dedicated baseline), cold-request rate and latency per tier, isolation incidents, and the share of models deployed self-service. Model-quality evaluation stays with each team, fed by the platform's prediction logs and shadow/canary routing (§66.12).
+
+::: industry
+**Published multi-model serving systems.** Clipper placed a model abstraction layer, with one container per model framework, under a selection layer that could combine or choose among models, and introduced adaptive batching and prediction caching for online serving [Crankshaw et al. 2017]. INFaaS made serving "model-less": clients state latency and accuracy requirements, and the system chooses among model variants (hardware, batch size, precision), shares hardware among models and scales variants automatically [Romero et al. 2021]. KServe's ModelMesh treats a pool of serving pods as a distributed LRU cache of models, loading and unloading copies by recency and request volume [KServe ModelMesh Docs].
+*Evidence: Primary* — the cited papers and documentation
+:::
