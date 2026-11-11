@@ -259,3 +259,480 @@ flowchart LR
 ```
 
 **Reading the diagram.** Same conventions as the previous two maps. The five data and AI companies split into two groups: data-platform companies (Databricks, Snowflake), whose publications concern query engines, table formats and the separation of storage from compute; and AI companies (OpenAI, Anthropic, NVIDIA), whose publications concern accelerators, large-scale training and serving, and agent systems. Expect the second group's themes to change fastest; re-check publications within weeks of an interview.
+
+## 90.5 Google
+
+### 90.5.1 Verified public information
+
+::: industry
+**Google — hiring pages (as of 2026).** Google publishes a "How we hire" page on its careers site describing its application and interview process, with interview tips for candidates [Google How We Hire]. Separately, Google's re:Work site publishes general guidance for organizations on structured interviewing and interviewer training, such as the guide "Train your interviewers" [Google re:Work]; that is advice to other employers, not a description of any specific Google loop.
+*Evidence: Primary* — [Google How We Hire; Google re:Work]. The careers page could not be fetched directly during research; its current wording, including any list of assessed attributes, is an open verification item (§90.28).
+:::
+
+Many secondary sources describe a set of attributes that Google is said to assess. We have not been able to confirm the current wording on Google's own page, so this chapter does not repeat it. Read the page itself.
+
+### 90.5.2 Engineering context worth knowing
+
+Google has published more foundational distributed-systems papers than almost any other company, and several of them define vocabulary used in every design interview:
+
+- **GFS** (2003) and **MapReduce** (2004) — a single-master distributed file system with large chunks and a batch programming model that moves computation to data [Ghemawat et al. 2003; Dean and Ghemawat 2004]. See §15.5 and §29.4.
+- **Bigtable** (2006) — a sparse, sorted, multi-dimensional map partitioned into tablets over GFS; the origin of the wide-column model [Chang et al. 2006]. See §12.6.1.
+- **Spanner** (2012) — a globally distributed database with externally consistent transactions using TrueTime and commit wait [Corbett et al. 2012]. See §28.8.
+- **Borg** (2015) — cluster management for a large fleet, the ancestor of Kubernetes [Verma et al. 2015]. See §46.5.
+- **Site Reliability Engineering** — Google's freely available SRE books define SLOs, error budgets and postmortem culture [Beyer et al. 2016]. See §39.6–§39.7 and §39.12.
+
+::: industry
+**Google's published papers as design vocabulary.** The papers above are Google's own descriptions of systems at the time of publication. They are useful because they show the reasoning behind a design: Bigtable's choice of a sorted key space enables range scans and creates hot-spot risk; Spanner's commit wait trades a few milliseconds of latency for external consistency. In an interview, cite them as published designs with their dates, not as descriptions of current production.
+*Evidence: Primary* — [Ghemawat et al. 2003; Dean and Ghemawat 2004; Chang et al. 2006; Corbett et al. 2012; Verma et al. 2015; Beyer et al. 2016]
+:::
+
+### 90.5.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Google's published engineering focus.** Google's public work concentrates on planet-scale storage, global consistency, cluster scheduling and reliability engineering. Practice: (1) choosing between strong and eventual consistency and quantifying the latency cost of a global commit (§28.8, §44.12); (2) partitioning a sorted key space and handling hot ranges (§14.6, §14.10); (3) SLO-driven design, where you state an availability target, compute the error budget and design to it (§39.6–§39.7); (4) estimating at very large scale, where you should say which resource saturates first (Ch 89). This is our inference from published papers, not a statement about Google's interviews.
+*Evidence: Illustrative*
+:::
+
+### 90.5.4 Practice mapping
+
+- **Case studies:** YouTube (§54.4), Google Drive (§54.7), Google Maps tiles and routing (§55.6), web-scale search engine (§56.4), web crawler (§52.10), YouTube-style recommendations (§81.4), search ranking (§81.7).
+- **Chapter 91 families:** storage and indexing systems, globally replicated data, schedulers and batch pipelines.
+- **Chapter 92 families:** large-scale recommendation and search ranking; training-infrastructure problems that touch accelerators (Google's published TPU work is summarized in §80.12).
+
+## 90.6 Amazon
+
+### 90.6.1 Verified public information
+
+::: industry
+**Amazon — Leadership Principles and interview preparation (as of 2026).** Amazon publishes sixteen Leadership Principles on its jobs site: Customer Obsession; Ownership; Invent and Simplify; Are Right, A Lot; Learn and Be Curious; Hire and Develop the Best; Insist on the Highest Standards; Think Big; Bias for Action; Frugality; Earn Trust; Dive Deep; Have Backbone, Disagree and Commit; Deliver Results; Strive to be Earth's Best Employer; and Success and Scale Bring Broad Responsibility [Amazon LP]. The last two were added in 2021 [Amazon 2021]. Amazon also publishes role-specific interview-preparation pages. Its system design preparation page for SDE III candidates states that half of the interview time is spent on questions about the Leadership Principles and half on coding problems and system design, and that the interviewer will ask questions about your design while you should ask questions to complete and validate it [Amazon SDE III Prep]. A separate SDE II preparation page exists [Amazon SDE II Prep].
+*Evidence: Primary* — [Amazon LP; Amazon 2021; Amazon SDE III Prep; Amazon SDE II Prep]. Confirmed through search-engine excerpts of the pages; direct fetch was blocked (§90.28).
+:::
+
+The published statement that the candidate "should ask questions to complete and validate" the design is worth noting because it is the same behavior Chapter 87 recommends everywhere: requirements are negotiated, not given.
+
+### 90.6.2 Engineering context worth knowing
+
+- **Dynamo** (2007) — a leaderless, always-writable key-value store using consistent hashing, sloppy quorums, hinted handoff, vector clocks and Merkle-tree anti-entropy [DeCandia et al. 2007]. See §27.7–§27.9 and the full design in §52.8.
+- **DynamoDB** (2022 paper) — a managed service that differs from the 2007 Dynamo design, with Multi-Paxos-replicated partitions and an emphasis on predictable performance [Elhemali et al. 2022]. See §12.4.3.
+- **Amazon Builders' Library** — articles by Amazon engineers on timeouts, retries with jitter, idempotent APIs, shuffle sharding, static stability and load shedding [Amazon Builders' Library]. See §22.11–§22.15 and §44.10.
+
+::: industry
+**Dynamo versus DynamoDB.** A common interview error is to describe DynamoDB as the 2007 Dynamo design. The 2022 paper describes a different architecture: each partition is replicated with Multi-Paxos and has a leader, and much of the paper concerns admission control and predictable latency for a multi-tenant service. Citing the two correctly, with dates, signals that you read primary sources.
+*Evidence: Primary* — [DeCandia et al. 2007; Elhemali et al. 2022]
+:::
+
+### 90.6.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Amazon's published engineering focus and principles.** Amazon's publications emphasize availability under failure, safe retries and blast-radius reduction. Practice: (1) designing for partial failure with timeouts, retries, backoff, jitter and idempotency keys (§22.11–§22.15); (2) cell-based architecture and static stability across availability zones (§44.10); (3) leaderless versus leader-based replication and when each fits (§27.4, §27.7); (4) an e-commerce checkout path that stays correct when inventory, payment and order services fail independently (§55.7, §32.7). Because Amazon publishes that its design interviews sit alongside Leadership Principles questions, prepare specific, honest stories about past technical decisions, framed so a listener can see your own actions and their results. This is our inference, not a statement about how answers are scored.
+*Evidence: Illustrative*
+:::
+
+### 90.6.4 Practice mapping
+
+- **Case studies:** distributed key-value store (§52.8), rate limiter (§52.6), notification system (§52.7), Amazon-style e-commerce platform (§55.7), payment system (§55.9), product recommendation (§81.8).
+- **Chapter 91 families:** key-value and storage services, rate limiting and traffic management, order and inventory workflows.
+- **Chapter 92 families:** product recommendations and personalized ranking; fraud and abuse detection.
+
+## 90.7 Meta
+
+### 90.7.1 Verified public information
+
+::: industry
+**Meta — interview preparation pages (as of 2026).** Meta's careers site hosts a page titled "Preparing for Your Full Loop Interview at Meta" for software engineering candidates [Meta Full Loop Prep]. A Meta careers blog post dated 6 October 2022, "Preparing for your software engineering interview at Meta", describes the full onsite interview as consisting of three parts and states that the design interview is 45 minutes long and almost never involves coding [Meta 2022].
+*Evidence: Primary* — [Meta Full Loop Prep; Meta 2022]. The 2022 post is several years old and may not describe the current loop; the content of the full-loop page could not be confirmed directly (§90.28).
+:::
+
+### 90.7.2 Engineering context worth knowing
+
+- **TAO** (2013) — a geographically distributed, read-optimized graph store of objects and typed associations, implemented as a two-tier cache (followers and leaders) over sharded MySQL [Bronson et al. 2013]. See §12.7.3 and the feed case in §53.7.
+- **Scaling Memcache at Facebook** (2013) — look-aside caching at very large scale, leases to prevent thundering herds and stale sets, and cross-region invalidation [Nishtala et al. 2013]. See §20.10–§20.11.
+- **Tectonic** (2021) — an exabyte-scale distributed file system consolidating several storage systems into one multitenant service [Pan et al. 2021]. See §49.4.2.
+- **Llama 3** (2024) — the model report includes training-infrastructure detail: up to 16,384 H100 GPUs, the network topology and interruption statistics [Dubey et al. 2024]. See §80.5.2 and §80.12.
+
+::: industry
+**Graph-shaped API, relational storage.** TAO's published design is a useful interview pattern: the data model is a graph, but the storage is sharded MySQL, because most queries are one hop and the read-to-write ratio is very high. A caching tier shaped like the API absorbs reads, and writes go through to the database. The lesson generalizes to any read-heavy social product.
+*Evidence: Primary* — [Bronson et al. 2013]
+:::
+
+### 90.7.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Meta's published engineering focus.** Meta's public engineering work concentrates on read-heavy social systems, caching at extreme scale, messaging and large-scale ML infrastructure. Practice: (1) feed generation with an explicit fan-out-on-write versus fan-out-on-read decision and its capacity arithmetic (§53.7); (2) cache consistency, leases and invalidation across regions (§20.10–§20.11); (3) real-time messaging with delivery guarantees and ordering (§53.4–§53.5); (4) ranking systems with candidate generation and multi-stage scoring (§81.5, §81.9). Because Meta's own 2022 post separates design from coding, practice design answers that contain no code and stay at the level of components, data and trade-offs. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.7.4 Practice mapping
+
+- **Case studies:** chat application (§53.4), WhatsApp (§53.5), Instagram (§53.6), Facebook News Feed (§53.7), Instagram-style feed and Explore recommendations (§81.5), personalized advertising (§81.9), content moderation (§82.7).
+- **Chapter 91 families:** feeds and timelines, messaging and presence, distributed caches.
+- **Chapter 92 families:** feed ranking, ads ranking, integrity and moderation pipelines.
+
+## 90.8 Microsoft
+
+### 90.8.1 Verified public information
+
+::: industry
+**Microsoft — hiring tips and culture pages (as of 2026).** Microsoft's careers site publishes interview tips covering preparation and what to expect during and after interviews, framing the interview as a two-way conversation and saying that your recruiter will explain the format and timeline [Microsoft Interview Tips]. It also publishes a page on technical interviewing [Microsoft Technical Interviewing] and a culture page naming growth mindset, being customer obsessed, being diverse and inclusive, and One Microsoft [Microsoft Culture].
+*Evidence: Primary* — [Microsoft Interview Tips; Microsoft Technical Interviewing; Microsoft Culture]. Confirmed through search-engine excerpts; the technical-interviewing page's detailed content could not be read directly (§90.28).
+:::
+
+### 90.8.2 Engineering context worth knowing
+
+- **Windows Azure Storage** (2011) — a stream layer, partition layer and front ends providing strong consistency within a storage stamp, with asynchronous geo-replication between stamps [Calder et al. 2011]. See §49.4.4.
+- **Azure Cosmos DB consistency levels** — official documentation of five consistency levels between strong and eventual, a widely cited illustration of the consistency spectrum [Microsoft Learn: Cosmos DB]. See §25.10 and §44.12.
+- **Azure Well-Architected Framework** — Microsoft's published guidance on reliability, security, cost, operations and performance [Azure Well-Architected]. See Ch 39 and Ch 51.
+
+### 90.8.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Microsoft's published engineering focus.** Microsoft's public engineering material spans cloud infrastructure, enterprise SaaS and developer tools. Practice: (1) explaining a consistency spectrum and choosing a level per use case (§25.3–§25.7); (2) multi-tenant SaaS with tenant isolation, quotas and per-tenant cost (Ch 47); (3) real-time collaboration and chat for enterprises, including presence and message ordering (§53.4); (4) file sync and sharing (§54.7–§54.8); (5) enterprise AI assistants with permission-aware retrieval (§86.4). Because Microsoft's tips say the recruiter explains the format, ask early whether your loop includes a design round and at what depth. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.8.4 Practice mapping
+
+- **Case studies:** chat application (§53.4), Google Drive and Dropbox as file-sync references (§54.7–§54.8), enterprise RAG assistant (§86.4), AI coding assistant (§86.6), LLM inference platform (§86.5).
+- **Chapter 91 families:** collaboration and messaging, file storage and sync, multi-tenant platforms.
+- **Chapter 92 families:** enterprise retrieval and assistants, model-serving platforms.
+
+## 90.9 Apple
+
+### 90.9.1 Verified public information
+
+::: industry
+**Apple — interview tips (as of 2026).** Apple's careers site publishes an interview-tips page. It says candidates should expect open-ended questions about how they have performed in past roles and should contact their recruiter with questions about the process [Apple Interview Tips]. We found no Apple-published description of engineering or system design interviews.
+*Evidence: Primary* — [Apple Interview Tips]. Confirmed through a search-engine excerpt only (§90.28).
+:::
+
+Apple publishes little about its engineering interviews. Treat any detailed claim about an "Apple loop" as unverified.
+
+### 90.9.2 Engineering context worth knowing
+
+- **Private Cloud Compute** (2024) — Apple's security blog describes a cloud system for AI requests built on Apple silicon and a hardened operating system, with design requirements that include no privileged runtime access for staff and verifiability of software images by independent researchers [Apple PCC]. See §50.8 and §50.12.
+- **FoundationDB** (2021 paper) — an open-source, strictly serializable transactional key-value store with an unbundled architecture and deterministic simulation testing [Zhou et al. 2021]. See §12.11, and compare the distributed SQL systems in §28.10.
+- **Apple Push Notification service** — official developer documentation for sending notification requests [Apple APNs]. See §9.8 and §52.7.
+- **Apple Machine Learning Research** publishes on on-device ML, including face detection and people recognition in Photos (cited in Ch 84).
+
+### 90.9.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Apple's published engineering focus.** Apple's public material emphasizes privacy, on-device computation and services that serve very large device populations. Practice: (1) privacy-by-design trade-offs, such as data minimization, on-device versus server processing, and end-to-end encryption effects on features (§50.8–§50.10); (2) push notification and device-sync systems at large scale (§9.8, §52.7, §54.7); (3) on-device ML serving constraints such as model size, battery and offline operation (Ch 67, §84.4–§84.6); (4) strong transactional storage for metadata (§28.10). Because Apple publishes little about interviews, rely on your recruiter for format. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.9.4 Practice mapping
+
+- **Case studies:** notification system (§52.7), Google Drive and Dropbox as sync references (§54.7–§54.8), face recognition (§84.4), image classification (§84.5), speech recognition (§84.6).
+- **Chapter 91 families:** push and notification systems, sync and storage, metadata services.
+- **Chapter 92 families:** on-device and privacy-preserving ML, perception models.
+
+## 90.10 Netflix
+
+### 90.10.1 Verified public information
+
+::: industry
+**Netflix — culture memo (as of 2026).** Netflix publishes its culture memo on its jobs site [Netflix Culture]. Netflix announced a revised version in 2024 [Netflix 2024]. We found no Netflix-published description of its engineering interview process.
+*Evidence: Primary* — [Netflix Culture; Netflix 2024]. Read the memo itself; this chapter does not summarize its principles because the current wording could not be read directly (§90.28).
+:::
+
+### 90.10.2 Engineering context worth knowing
+
+- **Open Connect** — Netflix's own content delivery network, with appliances placed inside or near internet service providers and filled with content ahead of demand [Netflix Open Connect]. See §21.10 and §54.5.
+- **Chaos engineering** — the Simian Army post (2011) introduced Chaos Monkey and related failure-injection tools [Izrailevsky and Tseitlin 2011]; Netflix engineers later formalized the discipline [Basiri et al. 2016]. See §39.11.
+- **Recommendations** — a published overview of the Netflix recommender system and its business value [Gomez-Uribe and Hunt 2015]. See §81.6.
+
+### 90.10.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Netflix's published engineering focus.** Netflix's public work centers on video delivery, resilience in the cloud, experimentation and personalization. Practice: (1) video delivery with a CDN hierarchy, pre-positioning and bitrate ladders, with bandwidth arithmetic (§21.8, §54.5); (2) resilience patterns such as timeouts, circuit breakers, bulkheads and fallbacks, and how to verify them by fault injection (§22.13–§22.14, §39.11); (3) homepage personalization and its online experimentation (§81.6); (4) estimating peak egress for a global streaming service (Ch 89). Since the culture memo is the main published hiring document, read it and be ready to discuss how you work, honestly. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.10.4 Practice mapping
+
+- **Case studies:** YouTube (§54.4), Netflix (§54.5), Spotify (§54.6), Netflix-style homepage recommendations (§81.6).
+- **Chapter 91 families:** video and media delivery, CDNs, resilience under dependency failure.
+- **Chapter 92 families:** personalization, ranking with experimentation.
+
+## 90.11 Uber
+
+### 90.11.1 Verified public information
+
+::: industry
+**Uber — interview guides (as of 2026).** Uber's jobs site publishes an Uber Interview Guide with role-specific guides, including an engineering guide [Uber Engineering Guide] and an engineering manager guide; the latter states that Uber's values guide how people behave and decide, and that hiring teams assess every candidate with those values in mind [Uber EM Guide].
+*Evidence: Primary* — [Uber Engineering Guide; Uber EM Guide]. Confirmed through search-engine excerpts; the engineering guide's detailed content could not be read directly (§90.28).
+:::
+
+### 90.11.2 Engineering context worth knowing
+
+- **H3** (2018) — a hexagonal hierarchical spatial index, open-sourced by Uber, used for bucketing locations [Brodsky 2018]. See §17.9 and §55.5.
+- **Michelangelo** (2017) — Uber's published ML platform covering data management, training, evaluation, deployment and prediction [Hermann and Del Balso 2017]. See §62.13 and §85.4.
+- **DeepETA** (2022) — a deep-learning model for arrival-time prediction layered on a routing engine's estimate [Hu et al. 2022]. See §83.5.
+
+### 90.11.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Uber's published engineering focus.** Uber's public work centers on real-time, location-based marketplaces and ML at platform scale. Practice: (1) location ingestion and nearest-driver search with a geospatial index, including update-rate arithmetic (§17.9, §55.4–§55.5); (2) dispatch and matching under consistency constraints, so that one driver never receives two trips (§55.5); (3) ETA prediction, demand forecasting and dynamic pricing as ML systems (§83.4–§83.6); (4) payments and fraud in a two-sided market (§55.9, §82.4). This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.11.4 Practice mapping
+
+- **Case studies:** Uber ride-hailing platform (§55.4), ride matching (§55.5), payment system (§55.9), demand forecasting (§83.4), ETA prediction (§83.5), surge pricing (§83.6), real-time payment fraud (§82.4), feature store (§85.4).
+- **Chapter 91 families:** geospatial and proximity services, real-time dispatch, payments.
+- **Chapter 92 families:** marketplace ML, forecasting, ETA, fraud.
+
+## 90.12 Airbnb
+
+### 90.12.1 Verified public information
+
+::: industry
+**Airbnb — core values (as of 2026).** Airbnb's careers site lists four core values: Champion the Mission, Be a Host, Embrace the Adventure, and Be a Cereal Entrepreneur [Airbnb Life]. We found no Airbnb-published description of its engineering interview process.
+*Evidence: Primary* — [Airbnb Life]. Confirmed through a search-engine excerpt (§90.28).
+:::
+
+### 90.12.2 Engineering context worth knowing
+
+- **Avoiding double payments** (2019) — Airbnb's engineering blog describes an idempotency framework for its payments services that splits each request into pre-RPC, RPC and post-RPC phases so that retries are safe [Chew 2019]. See §22.15 and §55.9.
+- **Search ranking with deep learning** (2019) — a KDD paper on applying neural networks to Airbnb search ranking [Haldar et al. 2019]. See §81.7.
+- **Chronon** (2024) — Airbnb's ML feature platform, open-sourced in 2024 [Airbnb 2024]. See §62.13 and §85.4.
+
+::: industry
+**Idempotency as a payments primitive.** The Airbnb post is a good primary source to cite when a design involves retries of money movement: each payment request carries an idempotency key, local database work and the remote call are separated into phases, and a retry either replays a recorded result or resumes safely.
+*Evidence: Primary* — [Chew 2019]
+:::
+
+### 90.12.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Airbnb's published engineering focus.** Practice: (1) a booking and reservation system that prevents double-booking under concurrency (§55.8; isolation levels and locking, §11.13 and §11.15); (2) payments with idempotency keys and reconciliation (§22.15, §55.9); (3) search and ranking for a two-sided marketplace with availability and price filters (§81.7); (4) feature pipelines that keep training and serving consistent (§62.8–§62.9). Prepare to discuss how your past work reflected the published values, honestly and specifically. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.12.4 Practice mapping
+
+- **Case studies:** ticket booking (§55.8, as a reservation-consistency analog), payment system (§55.9), search ranking (§81.7), feature store (§85.4), real-time payment fraud (§82.4).
+- **Chapter 91 families:** reservations and inventory, payments, search.
+- **Chapter 92 families:** marketplace ranking, feature platforms.
+
+## 90.13 LinkedIn
+
+### 90.13.1 Verified public information
+
+::: industry
+**LinkedIn — how we hire (as of 2026).** LinkedIn's careers site publishes a "How We Hire" page describing four stages: application, conversation, interview and decision [LinkedIn How We Hire]. A 2021 LinkedIn Engineering blog post states that the engineering interview process typically includes an introductory conversation with an engineering recruiter and a technical interview, followed by interviews with several LinkedIn engineers and leaders [LinkedIn 2021].
+*Evidence: Primary* — [LinkedIn How We Hire; LinkedIn 2021]. The 2021 post may be out of date; both were confirmed through search-engine excerpts (§90.28).
+:::
+
+### 90.13.2 Engineering context worth knowing
+
+- **Kafka** (2011) — LinkedIn engineers described Kafka as a distributed messaging system for log processing [Kreps et al. 2011]. See Chapter 31.
+- **"The Log"** (2013) — Jay Kreps's essay on the log as the unifying abstraction for data integration, replication and stream processing [Kreps 2013]. See §31.3 and §32.3.
+- **Databus** (2012) — LinkedIn's change-data-capture platform [Das et al. 2012]. See §32.6.
+
+### 90.13.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from LinkedIn's published engineering focus.** Practice: (1) event streaming with partitions, consumer groups, ordering and retention, with throughput arithmetic (Ch 31); (2) change data capture feeding search indexes, caches and analytics from one source of truth (§32.5–§32.6); (3) a professional feed and notifications (§53.7, §52.7); (4) graph-based recommendations such as connection suggestions, and typeahead search over people (§56.5, §16.9). This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.13.4 Practice mapping
+
+- **Case studies:** notification system (§52.7), Facebook News Feed as a feed reference (§53.7), recommendation system (§56.5), logging and monitoring platform (§56.6), real-time analytics (§56.7).
+- **Chapter 91 families:** event streaming and pipelines, feeds, search and typeahead.
+- **Chapter 92 families:** people and job recommendations, feed ranking.
+
+## 90.14 Stripe
+
+### 90.14.1 Verified public information
+
+::: industry
+**Stripe — operating principles (as of 2026).** Stripe's jobs site publishes "How Stripe works", a set of operating principles that includes "Users first" and "Move with urgency and focus" [Stripe Culture]. We found no Stripe-published description of its engineering interview process.
+*Evidence: Primary* — [Stripe Culture]. Confirmed through search-engine excerpts; the full list of principles could not be read directly (§90.28).
+:::
+
+### 90.14.2 Engineering context worth knowing
+
+Stripe's public documentation and engineering blog are unusually relevant to API design interviews:
+
+- **Idempotent requests** — Stripe's API reference documents idempotency keys on requests [Stripe Docs: Idempotency], and a 2017 blog post explains the design [Leach 2017]. See §22.15.
+- **Rate limiters** — a 2017 post describes the rate limiters and load shedders Stripe runs in production [Stripe 2017]. See §22.3–§22.9 and §52.6.
+- **Webhooks** — official documentation of event delivery to merchants, including signature verification [Stripe Docs: Webhooks]. See §55.9.
+
+::: industry
+**API design as a published product.** Stripe's documentation is a public example of decisions interviewers often probe in API design: how a client retries safely, how errors are classified, how rate limits are signaled and how asynchronous events are delivered and verified. Reading it is a fast way to learn the vocabulary of production APIs.
+*Evidence: Primary* — [Stripe Docs: Idempotency; Leach 2017; Stripe 2017; Stripe Docs: Webhooks]
+:::
+
+### 90.14.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Stripe's published engineering focus.** Practice: (1) a payments API end to end: resources, idempotency keys, pagination, versioning and webhooks (§8.6, §8.15, §22.15); (2) exactly-once effects in an at-least-once world, using idempotent consumers and transactional outboxes (§32.5, §32.9–§32.10); (3) a double-entry ledger with reconciliation (§55.9); (4) per-merchant rate limiting and load shedding (§52.6); (5) real-time fraud scoring with a strict latency budget (§82.4). This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.14.4 Practice mapping
+
+- **Case studies:** rate limiter (§52.6), notification system for webhook-style delivery (§52.7), payment system (§55.9), real-time payment fraud detection (§82.4).
+- **Chapter 91 families:** API design, payments and ledgers, rate limiting.
+- **Chapter 92 families:** fraud and risk scoring.
+
+## 90.15 Databricks
+
+### 90.15.1 Verified public information
+
+::: industry
+**Databricks — interview preparation (as of 2026).** Databricks publishes an interview-preparation page on its careers site that links to role-specific guides, including one for engineering [Databricks Interview Prep]. The engineering guide is a PDF dated April 2025 [Databricks Engineering Prep 2025]; its text, as excerpted by a search engine, describes an open-ended design interview for engineering roles on the storage-layer team with deliberately broad requirements. Databricks also published a 2020 engineering blog post on engineering interviews written from a hiring manager's perspective [Databricks 2020].
+*Evidence: Primary* — [Databricks Interview Prep; Databricks Engineering Prep 2025; Databricks 2020]. The PDF and blog post could not be read in full (§90.28).
+:::
+
+### 90.15.2 Engineering context worth knowing
+
+- **Spark and RDDs** (2012) — resilient distributed datasets: immutable, partitioned collections recovered by recomputing lineage [Zaharia et al. 2012]. See §29.5–§29.6.
+- **Delta Lake** (2020) — ACID tables over cloud object stores using a transaction log with optimistic concurrency, compacted into Parquet checkpoints [Armbrust et al. 2020]. See §61.8.
+- **Lakehouse** (2021) — the argument for warehouse features on open data formats in object storage [Armbrust et al. 2021]. See §49.5 and §61.8.
+
+### 90.15.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Databricks' published engineering focus.** Practice: (1) distributed query execution: partitioning, shuffle, skew and spill, with data-volume arithmetic (§29.6, §14.10); (2) transactional table formats on object storage: commit protocols, conflicts, compaction and time travel (§61.8, §13.13); (3) batch and streaming pipelines sharing one storage layer (§29.10, §56.7); (4) multi-tenant compute clusters and autoscaling (Ch 46–47); (5) ML platforms built on a data platform (§85.4–§85.5). Because the published engineering guide mentions an open-ended design interview for storage-layer roles, be comfortable designing storage systems from first principles. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.15.4 Practice mapping
+
+- **Case studies:** real-time analytics platform (§56.7), logging and monitoring platform (§56.6), distributed job scheduler (§52.9), feature store (§85.4), distributed training platform (§85.5).
+- **Chapter 91 families:** data pipelines, analytics engines, storage engines.
+- **Chapter 92 families:** ML platforms, feature and training infrastructure.
+
+## 90.16 Snowflake
+
+### 90.16.1 Verified public information
+
+::: industry
+**Snowflake — what is published about hiring (as of 2026).** We did not find a Snowflake-published description of its engineering interview process or a values list that we could confirm from Snowflake's own pages. Snowflake does host a resource page for its SIGMOD 2016 paper [Snowflake SIGMOD resource].
+*Evidence: Primary* — [Snowflake SIGMOD resource]. Snowflake publishes little about engineering interviews; rely on your recruiter (§90.28).
+:::
+
+### 90.16.2 Engineering context worth knowing
+
+- **The Snowflake Elastic Data Warehouse** (SIGMOD 2016) — a multi-cluster, shared-data architecture that separates storage (in cloud object storage) from compute (elastic virtual warehouses) and from a cloud-services layer that manages metadata, transactions and optimization [Dageville et al. 2016]. See §49.5.2 and §49.6.2.
+- **Building an Elastic Query Engine on Disaggregated Storage** (NSDI 2020) — a study by Cornell and Snowflake authors of about 70 million queries over 14 days, focusing on the ephemeral storage system used for intermediate data and on elasticity [Vuppalapati et al. 2020]. See §49.5.2.
+
+::: industry
+**Disaggregation as the central decision.** Both papers present the separation of storage and compute as the decision from which elasticity, isolation between workloads and per-second scaling follow, and they discuss its costs: remote-storage latency, caching on local SSDs and the need for a separate store for intermediate data.
+*Evidence: Primary* — [Dageville et al. 2016; Vuppalapati et al. 2020]
+:::
+
+### 90.16.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Snowflake's published engineering focus.** Practice: (1) the storage–compute separation trade-off with numbers: scan bandwidth from object storage versus local cache hit ratio (§49.5.2, §20.3); (2) columnar storage, pruning with min/max metadata and compression (§13.13); (3) multi-tenant query services with workload isolation, quotas and cost attribution (Ch 47); (4) metadata services that must be strongly consistent while data is immutable (§15.7). This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.16.4 Practice mapping
+
+- **Case studies:** real-time analytics platform (§56.7), logging and monitoring platform (§56.6), web-scale search engine for index-serving contrast (§56.4).
+- **Chapter 91 families:** analytics and warehouse design, metadata services, multi-tenant platforms.
+- **Chapter 92 families:** data platforms for ML, feature computation.
+
+## 90.17 OpenAI
+
+### 90.17.1 Verified public information
+
+::: industry
+**OpenAI — interview guide (as of 2026).** OpenAI publishes an interview guide on its website. It states that OpenAI wants all candidates to go through a consistent interview process, that it is not credential-driven, and that for engineering interviews it generally looks for well-designed solutions to the challenge, high-quality code, optimal performance and good test coverage [OpenAI Interview Guide].
+*Evidence: Primary* — [OpenAI Interview Guide]. Confirmed through search-engine excerpts; other sections of the guide could not be read directly (§90.28).
+:::
+
+### 90.17.2 Engineering context worth knowing
+
+- **Scaling Kubernetes to 7,500 nodes** (2021) — OpenAI's account of running very large Kubernetes clusters for research workloads, including networking, API-server and scheduling issues [OpenAI 2021]. See Chapter 42 and §46.6.
+- **Scaling laws** (2020) and **GPT-3** (2020) — papers by OpenAI researchers on how loss scales with compute, data and parameters, and on few-shot learning in large language models [Kaplan et al. 2020; Brown et al. 2020]. See Chapter 72 and §65.4.
+- **API documentation** — official documentation of platform features that shape serving design, such as prompt caching [OpenAI Docs: Prompt Caching]. See §73.8 and §79.12.
+
+### 90.17.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from OpenAI's published engineering focus.** Practice: (1) LLM serving: GPU memory budgets, KV-cache sizing, continuous batching, and the TTFT/TPOT trade-off (§73.4–§73.7); (2) token-based rate limits, quotas and admission control for a multi-tenant API (§79.9, §73.14); (3) streaming responses to clients and handling disconnects (§9.5–§9.6); (4) large-cluster training reliability and goodput (§80.8–§80.9); (5) retrieval and agent systems built on model APIs (Ch 75, Ch 77). Because OpenAI's guide names code quality, performance and test coverage for engineering interviews, keep coding practice in your plan alongside design. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.17.4 Practice mapping
+
+- **Case studies:** LLM inference platform (§86.5), AI coding assistant (§86.6), AI-powered search (§86.8), enterprise RAG assistant (§86.4), rate limiter (§52.6).
+- **Chapter 91 families:** API platforms, rate limiting, streaming delivery.
+- **Chapter 92 families:** LLM serving, RAG, agents, training infrastructure.
+
+## 90.18 Anthropic
+
+### 90.18.1 Verified public information
+
+Anthropic's hiring pages could be read directly during research, so this section can be more specific than most.
+
+::: industry
+**Anthropic — how we hire (as of 2026).** Anthropic's careers page says it cares about what candidates can do rather than where they learned it, and notes that engineers do research and researchers do engineering. It states that interviews are conducted over Google Meet; that technical roles use live coding tools such as Colab and CodeSignal; that candidates can look things up but should be comfortable with basic syntax and standard libraries; and that interviewers ask about experience and motivation and leave time for the candidate's questions [Anthropic Careers]. The same page lists principles under which employees work: act for the global good; hold light and shade; be good to our users; ignite a race to the top on safety; do the simple thing that works; be helpful, honest, and harmless; and put the mission first.
+*Evidence: Primary* — [Anthropic Careers]
+:::
+
+::: industry
+**Anthropic — published AI-use guidance for candidates (last updated 10 July 2025; read 2026).** Anthropic publishes guidance on using AI during its hiring process. It encourages candidates to use Claude to refine application materials they drafted themselves and to prepare for interviews; it asks candidates to complete take-home assessments without Claude unless told otherwise; and it states that live interviews are without AI assistance unless the interviewer indicates otherwise. The page also states that Anthropic does not let Claude make hiring decisions [Anthropic AI Guidance].
+*Evidence: Primary* — [Anthropic AI Guidance]
+:::
+
+::: industry
+**Anthropic — a published account of a take-home (January 2026).** An Anthropic engineering post describes a performance-engineering take-home, in use since early 2024, in which candidates optimize code for a simulated accelerator; it reports that over 1,000 candidates had completed it and describes redesigning it as successive Claude models solved earlier versions within the time limit [Anthropic 2026a]. This describes one team's assessment at one time; it is not a description of other roles' interviews.
+*Evidence: Primary* — [Anthropic 2026a]
+:::
+
+### 90.18.2 Engineering context worth knowing
+
+- **Serving across hardware platforms** — a September 2025 postmortem states that Anthropic serves Claude through its first-party API, Amazon Bedrock and Google Cloud Vertex AI, on AWS Trainium, NVIDIA GPUs and Google TPUs, and analyzes three infrastructure bugs that degraded output quality, including why they were hard to detect [Anthropic 2025a]. See §79.8 and §78.15.
+- **Agent systems** — engineering posts on building effective agents (December 2024) and on a multi-agent research system with an orchestrator and parallel subagents (June 2025) [Anthropic 2024; Anthropic 2025b]. See §77.6 and §77.9.
+- **Constitutional AI** (2022) — training a harmless assistant from AI feedback guided by a list of principles [Bai et al. 2022]. See §76.10 (preference alignment) and Chapter 71.
+- **API documentation** — for example prompt caching [Anthropic Docs: Prompt Caching]. See §73.8.
+
+### 90.18.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from Anthropic's published engineering focus.** Practice: (1) LLM serving where correctness of outputs must be monitored, not only latency and errors, since the 2025 postmortem shows quality regressions that ordinary health checks missed (§78.11, §79.13); (2) the same model served on several accelerator types and clouds: capacity planning, routing and consistency of results (§79.6, §79.8); (3) agent orchestration with tool calls, retries, state and evaluation (§77.8–§77.10, §77.14); (4) evaluation pipelines and safety testing (§78.4, §78.12); (5) since the careers page names live coding in Colab or CodeSignal, keep practical coding fluency in your plan. Follow the published AI-use rules exactly. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.18.4 Practice mapping
+
+- **Case studies:** LLM inference platform (§86.5), customer-support agent (§86.7), AI coding assistant (§86.6), enterprise RAG assistant (§86.4).
+- **Chapter 91 families:** API platforms, multi-tenant rate limiting, observability.
+- **Chapter 92 families:** LLM serving, agents, evaluation, safety systems.
+
+## 90.19 NVIDIA
+
+### 90.19.1 Verified public information
+
+::: industry
+**NVIDIA — how we hire (as of 2026).** NVIDIA's careers site ("Want to Be an NVIDIAN?") states that for full-time roles candidates are typically asked to take part in phone interviews followed by virtual or in-person interviews, that some teams use a slightly different process, that candidates complete an onsite, in-person interview at an NVIDIA office before they can be considered for an offer, and that most candidates have a decision within weeks of their first interview [NVIDIA How We Hire].
+*Evidence: Primary* — [NVIDIA How We Hire]. Confirmed through search-engine excerpts of the page (§90.28).
+:::
+
+### 90.19.2 Engineering context worth knowing
+
+- **CUDA** — the CUDA C++ Programming Guide defines the thread, block and grid model and the memory hierarchy [NVIDIA CUDA Guide]. See §64.4–§64.6.
+- **NCCL** — the NVIDIA Collective Communication Library implements all-reduce, all-gather and related collectives across GPUs and nodes [NVIDIA NCCL Guide]. See §65.7 and §80.5.3.
+- **DGX SuperPOD reference architecture** — NVIDIA's published design for clusters built from scalable units with a rail-optimized InfiniBand compute fabric [NVIDIA DGX SuperPOD RA]. See §80.12.
+- **Inference software** — Triton Inference Server documentation, including dynamic batching [NVIDIA Triton Docs]. See §66.5–§66.6.
+
+### 90.19.3 Preparation focus areas
+
+::: recommendation
+**General advice — inferred from NVIDIA's published engineering focus.** Practice: (1) roofline reasoning: is a kernel or a model layer compute-bound or memory-bound, with FLOPs and bytes computed (§64.9, §64.12); (2) collective communication cost for data, tensor and pipeline parallelism (§49.9.2, §65.6–§65.11); (3) cluster networking and failure handling for large training jobs (§80.5, §80.8); (4) inference serving with batching and GPU sharing (§66.6, §64.15, Ch 73). NVIDIA states that teams' processes vary, so ask which skills your team assesses. This is our inference.
+*Evidence: Illustrative*
+:::
+
+### 90.19.4 Practice mapping
+
+- **Case studies:** distributed model training platform (§85.5), multi-tenant ML serving platform (§85.6), LLM inference platform (§86.5).
+- **Chapter 91 families:** high-performance and HPC-style systems, schedulers.
+- **Chapter 92 families:** training infrastructure, GPU serving, inference optimization.
