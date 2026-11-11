@@ -1272,7 +1272,7 @@ sequenceDiagram
 
 ### 85.6.14 Alternative designs
 
-- **Serverless per model** (Knative-style scale to zero of pods, §48): simple and isolated, but cold starts of tens of seconds and per-pod overhead.
+- **Serverless per model** (Knative-style scale to zero of pods, Chapter 48): simple and isolated, but cold starts of tens of seconds and per-pod overhead.
 - **Batch-scored predictions** for models whose inputs are known in advance (§60.8): many cold per-customer models need no online serving at all.
 - **One generalized model** in place of thousands of variants: fewer artifacts, shared capacity, but per-customer behavior must be learned from features.
 - **Managed multi-model endpoints** in cloud ML services (as of 2026) offer similar load-on-demand behavior with less control over routing and isolation.
@@ -1305,3 +1305,205 @@ sequenceDiagram
 - **Security.** Signed artifacts, digest checks, safe formats, sandboxes, per-tenant credentials for feature and data access (§47.12).
 - **Cost.** Ledger with memory-hours and CPU per model; show teams their cold models' cost and the price of `min_copies`.
 - **Operations.** Staged fleet restarts with cache preservation; quotas reviewed against usage; monitoring and retraining remain the tenant's responsibility, with platform-provided drift dashboards (Chapter 70).
+
+## 85.7 Real-time ML Inference Platform (low-latency decisioning)
+
+### 85.7.1 Problem statement
+
+A payments-and-marketplace company makes three kinds of decision in the request path, each with a model at its core:
+
+- **Payment risk** at authorization: approve, decline or step up (ask for extra authentication). Binary classification; the label is a chargeback or confirmed fraud, arriving 30–90 days later (§63.4). 8,000 decisions/s at peak; the decision must return within 60 ms at p99 inside a 300 ms authorization.
+- **Promotion and ad ranking**: score 300 candidates per request for click and conversion probability; labels arrive within minutes. 25,000 requests/s, 7.5 million predictions/s at peak; the model stage gets 25 ms at p99.
+- **ETA-style regression**: 40,000 predictions/s from small tree models, as in §66.16.
+
+Each team built its own service. They disagree on how to fetch features, time out, fall back, log and roll out, and two incidents last year came from models that scored differently online than in the notebook that approved them. Design a shared **real-time inference platform** that gives these decisions a common, fast and safe path. Unlike §85.6, there are few models but each is critical: the distinctive hard problem is **the tail**: decomposing a p99 budget and defending it with hedging, deadlines and fallbacks, choosing CPU or GPU per workload by cost, rolling out models without risking money, proving that online scores equal offline scores, and running in three regions.
+
+### 85.7.2 Functional requirements
+
+1. **Decide/score API** per use case, taking request context and entity keys and returning scores, a decision and reason codes.
+2. **Feature assembly** from the online feature store (§85.4), streaming counters and request-time features, with defaults on timeout.
+3. **Model execution** in-process on CPU or on GPU model servers with dynamic batching.
+4. **Post-processing**: calibration, policy thresholds per segment, rules, reason codes (§71.8).
+5. **Fallback ladder**: full model, model without slow features, simpler model, rules only.
+6. **Rollout**: shadow, canary and A/B by stable hash, automatic rollback (§66.12).
+7. **Logging** of decisions with feature vectors, model version and fallback level, for training, monitoring and consistency checks.
+8. **Multi-region** active–active serving with regional failover.
+
+### 85.7.3 Non-functional requirements
+
+**Table 85.15 — Real-time inference non-functional requirements.**
+
+| Requirement | Payment risk | Ranking | ETA |
+|---|---|---|---|
+| Latency objective | 60 ms p99 end to end in the service | 25 ms p99 model stage; 80 ms p99 service | 100 ms p99 for 20 rows (§60.10) |
+| Availability | 99.99% decisions (any fallback level counts) | 99.95% | 99.95% |
+| Fallback rate | ≤ 0.5% below full model | ≤ 1% | ≤ 1% |
+| Online/offline score parity | Trees bit-identical; ≤ 0.1% of samples beyond $10^{-5}$ | ≤ 0.1% beyond $10^{-4}$ | Bit-identical |
+| Model-quality guardrail | Decline rate and step-up rate within ±10% of control during canary | CTR within ±2% | MAE within 3% |
+| Freshness | Velocity counters ≤ 5 s old at p99 | Model retrained daily | Streaming features ≤ 60 s |
+| Regions | Three, each able to carry half of global peak | Same | Same |
+
+### 85.7.4 Capacity estimation
+
+**Figure 85.11 — Payment-risk p99 budget of 60 ms.**
+
+```mermaid
+gantt
+  title Payment risk decision budget, p99 in ms
+  dateFormat x
+  axisFormat %L
+  section Network
+  Ingress, auth, decode        :n1, 0, 3
+  section Features
+  Five parallel feature calls  :f1, 3, 23
+  section Model
+  Transforms, trees, small DNN :m1, 23, 33
+  section Post
+  Calibrate, policy, reasons   :p1, 33, 38
+  section Return
+  Encode and respond           :n2, 38, 40
+  section Slack
+  Queueing, GC, one hedge      :s1, 40, 60
+```
+
+**Reading the diagram.** Time runs left to right in milliseconds from arrival. Stages are sequential and synchronous; the feature bar hides five parallel calls (three feature-store view groups, the velocity-counter store and a device-reputation service), and the slowest sets its length. Logging is asynchronous and not drawn. One third of the budget is slack, reserved for variance rather than for a bigger model, following §60.10. Failure point: the feature stage, which crosses the network to stateful stores; the model stage runs in-process with no network hop.
+
+::: example
+**Worked example — Does the 20 ms feature stage hold, with and without hedging?** Apply the fan-out rule of §60.10. Assumed per-call latency: p95 = 6 ms; 1.5% of calls exceed 20 ms and 2.5% exceed 14 ms (a tail from compactions and garbage collection).
+
+1. Required per-call probability for the stage to meet 20 ms at p99 with five calls: $0.99^{1/5} = 0.998$.
+2. Without hedging: $P(\text{stage} \le 20) = 0.985^5 = 0.927$; the stage misses its budget on 7.3% of requests.
+3. Hedge each call after 6 ms to another replica (§23.7). A call is late only if the original exceeds 20 ms *and* the hedge, sent at 6 ms, takes more than 14 ms: $0.015 \times 0.025 = 0.000375$, so $p = 0.999625$ per call and $0.999625^5 = 0.998$ per stage.
+4. Cost: hedges fire on at most 5% of calls: $8{,}000 \times 5 \times 0.05 = 2{,}000$ extra calls/s on top of 40,000.
+
+**Interpretation.** The tail of five independent calls, not their median, decides the budget; hedging at the p95 buys a 37-fold reduction in late stages for 5% more load, assuming the slow events on two replicas are independent. **Engineering implication.** Hedge feature reads by default, cap hedges per client at a few percent of traffic (so an overloaded store is not doubled), and give every call a deadline after which the platform uses declared defaults.
+:::
+
+::: example
+**Worked example — CPU or GPU for each workload?** Apply the cost-per-prediction comparison of §66.7. Prices: \$0.04 per vCPU-hour, \$1.00 per inference-GPU-hour including its host share; planned utilization 0.5 for both. Ranking DNN: one vCPU scores 2,000 candidates/s; one GPU 250,000/s at the batch size the 25 ms budget allows (10 ms batching window). Regions are each sized for half of global peak at $u = 0.6$.
+
+1. Break-even speedup: $S^{*} = (1.00/0.04) \times (0.5/0.5) = 25$; the GPU's speedup is $250{,}000/2{,}000 = 125$.
+2. Cost per 1,000 predictions: CPU $1{,}000 \times 0.04 / (3{,}600 \times 2{,}000 \times 0.5) = \$0.0000111$; GPU $1{,}000 \times 1.00 / (3{,}600 \times 250{,}000 \times 0.5) = \$0.00000222$, five times cheaper.
+3. Ranking fleet: per region $3.75 \times 10^6 / (250{,}000 \times 0.6) = 25$ GPUs, 75 in total, \$75/h; on CPU, $3.75 \times 10^6 / (2{,}000 \times 0.6) = 3{,}125$ vCPU per region, \$375/h in total. In normal operation each region runs at $2.5 \times 10^6 / (25 \times 250{,}000) = 0.4$.
+4. Payment risk: 5 ms of CPU per decision. Per region $4{,}000 \times 0.005 / 0.5 = 40$ vCPU, 120 in total, \$4.80/h, about \$0.42 per million decisions at an average of 40% of peak. A GPU path would need at least two GPUs per region (\$6/h) for a model that runs in 3 ms on CPU and would add a network hop.
+
+**Interpretation.** Heavy arithmetic at high volume (ranking) belongs on GPUs; small models at modest volume (risk, ETA) belong in-process on CPUs, where the cost is trivial and the hop is avoided. **Engineering implication.** The platform offers both paths behind one API and chooses per model from measured throughput at the budget's batch size, re-evaluated as traffic changes.
+:::
+
+**Logging volume.** Payment risk logs every decision with 400 features at 4 bytes: $8{,}000 \times 1{,}600$ B = 12.8 MB/s at peak, 0.44 TB/day at an average of 40% of peak. Logging every ranking prediction with 200 features would be 6 GB/s; a 1% sample of requests with all candidates is 60 MB/s at peak, 2.1 TB/day, enough for consistency checks and training-data augmentation.
+
+### 85.7.5 API design
+
+```protobuf
+service Decisioning {
+  rpc Decide(DecideRequest) returns (DecideResponse);
+}
+message DecideRequest {
+  string use_case = 1;                    // "payment_risk", "promo_rank", "eta"
+  string request_id = 2;                  // idempotency and log join key
+  int64 deadline_unix_ms = 3;             // absolute; propagated to every call
+  map<string, string> entity_keys = 4;    // card, user, device, merchant
+  repeated Candidate candidates = 5;      // ranking only
+  bytes request_features = 6;             // amount, currency, channel, ...
+}
+message DecideResponse {
+  repeated float scores = 1;
+  string decision = 2;                    // approve | decline | step_up (risk)
+  repeated string reason_codes = 3;
+  string model_version = 4;
+  int32 fallback_level = 5;               // 0 = full model ... 3 = rules only
+  repeated string defaulted_features = 6;
+}
+```
+
+Labels and outcomes come back through `POST /v1/outcomes` (chargebacks, clicks, delivery times) keyed by `request_id`; the platform joins them with decision logs for training and monitoring.
+
+### 85.7.6 Data model and database schema
+
+```sql
+-- Decision log (lakehouse table, partitioned by date and use_case)
+CREATE TABLE decision_log (
+  request_id TEXT, use_case TEXT, region TEXT, decided_at TIMESTAMP,
+  model_version TEXT, shadow_versions TEXT[], fallback_level INT,
+  features BINARY,               -- serialized vector exactly as scored
+  feature_ages_ms INT[],         -- per view group
+  scores FLOAT[], shadow_scores FLOAT[], decision TEXT, latency_ms REAL
+);
+-- Outcomes arrive late and are joined by request_id
+CREATE TABLE outcome (
+  request_id TEXT, use_case TEXT, label TEXT, label_value REAL, observed_at TIMESTAMP
+);
+```
+
+Model deployments are registry entries with aliases per region (`payment_risk.prod.us`, `.canary.eu`) (§69.8). Velocity counters live in a regional in-memory store keyed `{counter}:{entity}:{window_end}` with a TTL equal to the window; features otherwise come from the feature store's layout (§85.4.6).
+
+### 85.7.7 High-level architecture
+
+**Figure 85.12 — Real-time inference platform in one region.**
+
+```mermaid
+flowchart LR
+  CL([Payments, ads, search]) -->|gRPC with deadline| GW[Regional gateway]
+  GW --> DS[Decision service<br/>per use case]
+  DS -->|parallel, hedged| FS[(Online feature<br/>store, 85.4)]
+  DS -->|parallel, hedged| VC[(Velocity counters<br/>in memory)]
+  DS -->|in-process| CPU[Trees and small DNNs<br/>CPU, compiled]
+  DS -->|gRPC, batched| GPU[GPU model servers<br/>dynamic batching]
+  DS --> POL[Policy and rules<br/>calibration, reasons]
+  DS -.->|mirror| SH[Shadow models]
+  DS -.->|decision log| K[[Kafka]]
+  K -.-> LAKE[(Lakehouse)]
+  K -.-> FL[Streaming counters]
+  FL --> VC
+  LAKE -.-> CHK[Consistency and<br/>drift checks]
+  REG[(Registry)] -.->|pinned versions| DS
+  K <-.->|async replication| OTHER{{Other regions}}
+```
+
+**Reading the diagram.** Clients call a regional gateway with an absolute deadline; a **decision service** per use case (a deployment of shared platform code plus the use case's configuration) fans out in parallel to the feature store and the velocity-counter store, hedging slow calls. It runs small models in-process on CPU and sends heavy ranking models to **GPU servers** that batch across requests, then applies policy and returns. Asynchronously (dotted) it mirrors requests to shadow models and logs decisions to Kafka, which feeds the lakehouse, the streaming counter jobs and other regions. Consistency and drift checks run over the logs; the registry supplies pinned model versions. Storage boundaries: feature store, counter store, Kafka, lakehouse. Failure points: feature stores (hedge, defaults), the GPU pool (fallback to a CPU model), a bad model version (rollback), cross-region replication lag (counter undercount). Scaling: decision services by RPS, GPU servers by in-flight requests (§66.9), stores by partitions.
+
+### 85.7.8 Detailed component design
+
+#### Deadlines, hedging and the fallback ladder
+
+Every request carries an absolute deadline. The decision service computes each stage's timeout as the smaller of its budget and the remaining time minus a reserve for post-processing and response (5 ms here), so a slow feature stage cannot push the model stage past the end (§22.11). Feature calls are hedged after their p95, with a token budget limiting hedges to 5% of calls per client. When a deadline expires, the stage degrades instead of failing:
+
+1. **Level 0**: full model with all features.
+2. **Level 1**: missing features replaced by training-time defaults; the model was trained with the same defaults and a missingness indicator.
+3. **Level 2**: a fallback model trained without the slowest feature groups (for risk, without the device-reputation service).
+4. **Level 3**: rules only. For payment risk this is a deliberate policy: below a configured amount the payment is approved (fail open), above it the customer is stepped up (fail safe), because declining every payment during an outage costs more than the fraud it would stop.
+
+The fallback level is logged and has its own SLO (Table 85.15); a rising level-1 rate is usually the first sign of a degrading store.
+
+#### Model execution: CPU in-process and GPU with batching
+
+Tree ensembles and small networks are compiled (Treelite-style tree compilation, ONNX Runtime, §67.10) and run inside the decision service: 1,000 trees over 400 features take about 1–2 ms, with no hop and no batching delay. The ranking DNN runs on GPU model servers with dynamic batching (§66.6): the decision service sends one request of 300 candidates; the server combines requests up to a 2,048-row batch or a 10 ms window. Models are optimized before deployment (FP16 or INT8 where accuracy holds, §67.5), and the optimization step is part of the CI gate so the served artifact is the one evaluated.
+
+#### Rollout: shadow, canary and delayed labels
+
+A new risk model cannot be judged by its true metric during a canary, because chargebacks arrive weeks later (§70.8). Rollout therefore runs in stages with proxy guardrails:
+
+1. **Offline gate**: AUC and recall at the operating point on a recent, point-in-time-correct holdout, sliced by segment (§71.5); score parity of the packaged artifact.
+2. **Shadow, 100% of traffic, 7 days**: the candidate scores every request; nothing it says is used. Compare score distributions (PSI, §70.5.1), decision rates at the proposed threshold, and agreement with the incumbent per segment; manual review of the largest disagreements.
+3. **Canary by stable hash of the card**, 1% → 5% → 25%: guardrails on decline rate, step-up rate, manual-review queue and payment conversion, with automatic rollback on breach (§66.12, §43.6.4).
+4. **A/B at 50%** for ranking models, judged on clicks and conversions within days (§57.14); risk models instead keep a small long-running holdout to measure fraud loss when labels mature.
+
+#### Online/offline consistency checks
+
+Two continuous checks catch the incident class that motivated the platform:
+
+- **Score parity.** A job replays a sample of logged feature vectors through the exact registered artifact offline and compares scores with the logged ones. Trees must match bit for bit; networks within a tolerance set by numerical precision. A failure means the served artifact, runtime or pre-processing differs from what was evaluated.
+- **Feature parity.** For a sample of decisions, the feature store's training-set builder recomputes features as of the decision time (on availability time, §62.8) and compares them with the logged vector; mismatch rates per feature are tracked against the 99.5% match target of §85.4.3. A failure means training data will not look like serving data: skew (§62.9).
+
+Both also run in CI on a frozen set of recorded requests before any model or feature change ships.
+
+#### Regional deployment and global counters
+
+The platform is active–active in three regions, each sized for half of global peak so that two regions carry everything if one fails (§44.6.2). Models and batch features are replicated everywhere; the hard part is **streaming counters**. A card used in two regions within a minute must be counted once globally. Routing each card's updates to a home region would add a cross-region round trip of tens of milliseconds to a 60 ms budget (§44.4). Instead each region counts locally and replicates its per-window increments asynchronously; the served value is the local count plus the latest remote counts, a grow-only counter per region (§27.14.3). The undercount is bounded by the replication lag, about one second; a rule flags transactions when a card's regions differ within that window. Data-residency rules can pin some use cases' features and logs to one region (§44.9).
+
+The platform's own evaluation is operational: per use case, p99 against budget, fallback rate by level, parity pass rates, rollback count and time to roll back, and cost per million decisions.
+
+::: industry
+**Published prediction services.** DoorDash described Sibyl, a prediction service built to handle its real-time predictions: it loads models from a model store, fetches features from a low-latency feature store, supports shadowing and A/B tests, and writes prediction logs; a later post describes logging every prediction with its feature values and model identifiers for monitoring [DoorDash 2020; DoorDash 2021]. Facebook's ad click-prediction paper combined boosted decision trees with a linear model and reported that prediction accuracy depends strongly on data freshness, which motivated online training of the linear layer [He et al. 2014]. Hedged requests to tame fan-out tails were described by Dean and Barroso [Dean and Barroso 2013].
+*Evidence: Primary* — the cited posts and papers
+:::
