@@ -2,7 +2,7 @@
 
 > **Level:** 4–5 · **Track:** B (ML/AI) · **Estimated reading time:** 5 h
 
-The five systems in this chapter are built from the same parts: a model gateway, retrieval over an index, a large language model (LLM) served from GPUs, tools that change the world, and an evaluation loop. What separates them is which part breaks first. An enterprise assistant fails by showing someone a document they may not open. An inference platform fails by running out of GPU memory when prompts grow. A coding assistant fails by being 300 ms late, because by then the developer has typed past the suggestion. A support agent fails by refunding the wrong order twice. An answer engine fails by stating something its sources never said, to millions of people, at a cost per query a hundred times that of the search page it replaced. Each case is designed around that first failure.
+The five systems in this chapter are built from the same parts: a model gateway, retrieval over an index, a large language model (LLM) served from GPUs, tools that change the world, and an evaluation loop. What separates them is which part breaks first. An enterprise assistant fails by showing someone a document they may not open. An inference platform fails by running out of GPU memory when prompts grow. A coding assistant fails by being 300 ms late, because by then the developer has typed past the suggestion. A support agent fails by refunding the wrong order twice. An answer engine fails by stating something its sources never said, to millions of people, at a cost per query tens to hundreds of times that of the search page it replaced. Each case is designed around that first failure.
 
 **Table 86.1 — The five cases and their distinctive hard problems.**
 
@@ -1465,7 +1465,7 @@ The distinctive hard problem is doing all of this **at web query rates within a 
 2. Generations: $50 \times 10^6 \times 0.6 \times 0.8 = 24$ million a day; at peak $1{,}157 \times 0.6 \times 0.8 = 556$/s.
 3. Tokens: $24 \times 10^6 \times 4{,}300 = 103$ billion a day.
 
-**Interpretation.** A modest search engine by query count is a large LLM workload: 103 billion tokens a day is two-thirds of the whole generic platform of §86.5. **Engineering implication.** Answer eligibility and caching are the first cost levers, before any model choice.
+**Interpretation.** A modest search engine by query count is a large LLM workload: 103 billion tokens a day is about 60% of the whole generic platform of §86.5. **Engineering implication.** Answer eligibility and caching are the first cost levers, before any model choice.
 :::
 
 ::: example

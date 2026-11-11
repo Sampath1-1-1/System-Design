@@ -155,7 +155,7 @@ message FeedbackEvent {
 }
 ```
 
-Watch progress is reported by the player's heartbeats (§54.4.8), not by this API; the logging pipeline joins them to impressions by `rec_token`. `degraded` lets dashboards separate fallback traffic from model traffic.
+Watch progress comes from the player's heartbeats (§54.4.8) and is joined to impressions by `rec_token`; `degraded` separates fallback traffic in dashboards.
 
 ### 81.4.6 Data model and database schema
 
@@ -192,7 +192,7 @@ CREATE TABLE rec_examples (
 ) PARTITIONED BY (date STRING, hour INT);
 ```
 
-The ANN index is laid out by region (each regional index holds videos eligible there), versioned with the candidate model, and receives incremental inserts from the item-tower service. Features are logged *as served* to avoid training–serving skew (§62.9).
+The ANN index is partitioned by region, versioned with the candidate model and updated incrementally; features are logged *as served* (§62.9).
 
 ### 81.4.7 High-level architecture
 
@@ -245,7 +245,7 @@ The pipeline therefore logs features as served, joins labels after the 6-hour wi
 
 The two-tower model is trained with in-batch sampled softmax, whose bias toward popular items is corrected by subtracting the log of each item's sampling probability, estimated by a streaming frequency estimator; Yi et al. describe exactly this correction for YouTube's retrieval [Yi et al. 2019] (§68.6.1 owns the mathematics). The viewer's history enters the user tower as the average of watched-video embeddings, weighted by watch fraction, plus recent search tokens, which is how Covington et al. folded search into recommendation.
 
-Merging is by rank within each source's quota, with provenance logged, and every source must answer within 25 ms or be dropped (§56.5.8). A source's value is its **marginal recall**: the share of eventually-watched videos only it retrieved.
+Merging is by rank within quotas, with provenance logged; a source that misses its 25 ms deadline is dropped (§56.5.8).
 
 #### Ranking: watch time instead of clicks
 
@@ -363,7 +363,6 @@ sequenceDiagram
 2. **ANN index updates.** 83 inserts per second plus deletions for removed videos; graph indexes degrade with deletes, so rebuild hourly and serve a small delta index for fresh uploads (§74.12).
 3. **Viewer embedding row fetch.** 463,000 reads per second from a 512 GB table; shard by viewer and cache per region.
 4. **Streaming join state.** Six hours of impressions at $4 \times 10^{11}$ per day is $10^{11}$ pending impressions; keep only keys and a small payload in the join state and the full features in the lakehouse, joined later by `rec_token`.
-5. **Hot videos.** A viral video appears in millions of candidate lists; its features must come from the in-process cache, not the feature store.
 
 ### 81.4.11 Failure scenarios
 
@@ -382,7 +381,7 @@ sequenceDiagram
 
 ### 81.4.12 Scaling strategy
 
-**At 10× requests** (4.6 million per second), the funnel scales linearly; the levers are cheaper heavy-ranker inference (quantization, distillation to a smaller student), caching the user-side part of the network for a session, and precomputing home-feed candidates for active viewers between sessions. **At 10× corpus** ($5 \times 10^9$ videos), the index moves to SSD-resident graphs or IVF-PQ with re-scoring (§74.10), retrieval shards by region and language, and more candidate sources run per shard. **At 100×**, the funnel itself is reconsidered: generative retrieval and sequence models over long histories replace some sources, and training moves to continuous fine-tuning with checkpoint promotion every hour, with the risk controls of §68.13.
+**At 10× requests** (4.6 million per second), the funnel scales linearly; the levers are cheaper heavy-ranker inference (quantization, distillation to a smaller student), caching the user-side part of the network for a session, and precomputing home-feed candidates for active viewers between sessions. **At 10× corpus** ($5 \times 10^9$ videos), the index moves to SSD-resident graphs or IVF-PQ with re-scoring (§74.10), retrieval shards by region and language, and more candidate sources run per shard. **At 100×**, sequence models over long histories replace some sources and training moves to continuous fine-tuning with hourly checkpoint promotion, under the risk controls of §68.13.
 
 ### 81.4.13 Trade-offs
 
@@ -402,7 +401,6 @@ sequenceDiagram
 - **Single-stage brute-force ranking** works for catalogs up to about $10^5$ items (QuickBite, §68.4) but costs 10⁶× more here.
 - **Pure item-to-item recommendations** (co-watch only) are cheap and explainable but cannot serve the home feed of a viewer with no seed.
 - **Reinforcement learning for slate optimization** treats the session, not the impression, as the unit of reward; it is promising for long-term objectives but harder to evaluate offline [Chen et al. 2019].
-- **Precomputing all feeds nightly** reduces serving cost but loses in-session adaptation, the main quality lever for video.
 
 ### 81.4.15 Interview discussion
 
