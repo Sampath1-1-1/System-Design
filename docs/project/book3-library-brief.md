@@ -64,3 +64,13 @@ Sections: 93.1 Beginner · 93.2 Intermediate | **part B:** 93.3 Advanced · 93.4
 Per-project format (`### 93.s.k <Project>`): Goal and learning outcomes · Prerequisites (chapter refs) · Specification (FR, NFR with measurable targets) · Architecture (Mermaid figure + "Reading the diagram") · Milestones (3–5, each with "done when") · Starter code (short, runnable Python core — run it, quote output; fixed seeds) · Test plan and load-test targets · Failure-injection exercises · Extensions · Self-assessment rubric. ~1,800–2,300 words each.
 
 Length: part A 19,000–23,000 words; part B 21,000–25,000 words.
+
+## Measuring your part alone
+
+`qa_check.py` reports the two parts combined. To count one file:
+
+```
+python3 -c 'import sys,pathlib;sys.path.insert(0,"build");import qa_check;print(qa_check.check_chapter(int(sys.argv[1]),[pathlib.Path(sys.argv[2])])[0]["words"])' 91 manuscript/book3-interviews/91b-practice-library-traditional.md
+```
+
+Until both parts exist, qa_check will report missing end matter (part A) or a missing H1 (part B) and non-sequential figure/table numbers — those findings are expected; fix every other finding. Check builds: `python3 build/build.py --chapters N --name checkNN<a|b> --formats html`, then remove `dist/checkNN*` and `git checkout -- manuscript/appendices`.
