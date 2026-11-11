@@ -49,11 +49,11 @@ After this chapter you should be able to:
 
 Picture a rowing crew of 16,000. The boat moves at the pace of the slowest stroke, and if one rower drops an oar the whole boat stops. A web fleet is instead a taxi company: one slow taxi delays one passenger. Everything distinctive about AI infrastructure follows from that coupling:
 
-1. **The slowest device sets the pace.** Step time is the maximum over ranks, so the tail of the per-device distribution, not its mean, decides throughput (§65.17).
-2. **One failure stops everyone.** With 16,384 GPUs in one job, a fault anywhere is a fault of the job (§80.8).
-3. **Power moves in unison.** Thousands of GPUs start and stop computing at the same instant, so the facility sees load swings of tens of megawatts (§80.7).
-4. **The network carries the program.** Collectives run every step at hundreds of gigabits per GPU, so the fabric is part of the computer, not plumbing.
-5. **Density is extreme.** An 8-GPU server draws about 10 kW, a liquid-cooled rack of 72 GPUs about 120 kW, against roughly 5–15 kW for a traditional enterprise rack (§80.7).
+1. **The slowest device sets the pace.** Step time is the maximum over ranks, so the tail, not the mean, decides throughput (§65.17).
+2. **One failure stops everyone** (§80.8).
+3. **Power moves in unison**, so the facility sees load swings of tens of megawatts (§80.7).
+4. **The network carries the program.** Collectives run every step at hundreds of gigabits per GPU.
+5. **Density is extreme.** About 10 kW per 8-GPU server and 120 kW per 72-GPU liquid-cooled rack, against 5–15 kW for an enterprise rack.
 
 **Figure 80.1 — One synchronous training step: the slowest rank sets the pace.**
 
@@ -115,8 +115,6 @@ The $\sqrt{2\ln N}$ factor is the standard large-$N$ approximation for the maxim
 | Storage pattern | Many small random reads | Sequential streaming plus periodic multi-terabyte write bursts |
 | Scheduling unit | Pod or task | Gang of thousands of GPUs, topology-constrained |
 | Key metric | Availability, latency | Goodput × MFU |
-
-The rest of the chapter takes these rows one at a time.
 
 ::: mistake
 **Treating a training cluster as a big web fleet.** Oversubscribed frontend networks, rolling maintenance that drains one node at a time, and "N+1" thinking all assume independent replicas. In a synchronous job, draining one node *is* stopping the job, so maintenance must be batched into planned restarts.
@@ -182,7 +180,7 @@ Sources: [NVIDIA 2022b; NVIDIA GB200 NVL72; Jouppi et al. 2023; Google Cloud 202
 
 ### 80.4.2 Bandwidth tiers
 
-Bandwidth per GPU falls about tenfold at each step outward: HBM about 3 TB/s, NVLink 900 GB/s bidirectional, backend 50 GB/s per direction, frontend a few GB/s per GPU, and inter-datacenter links less still (§64.14). A parallel layout is good when its most frequent communication rides the fastest tier: tensor parallelism inside the scale-up domain, pipeline and data parallelism across the backend, and nothing synchronous across buildings unless it is the infrequent outermost data-parallel reduction (Gemini's multi-datacenter training, §80.12).
+Bandwidth per GPU falls about tenfold at each step outward: HBM about 3 TB/s, NVLink 900 GB/s, backend 50 GB/s, frontend a few GB/s (§64.14). Put the most frequent communication on the fastest tier: tensor parallelism inside the scale-up domain, pipeline and data parallelism across the backend, and across buildings only the infrequent outermost data-parallel reduction (§80.12).
 
 ## 80.5 Networking for training
 
@@ -340,7 +338,7 @@ Chapter 49 compared the fabrics in principle (Table 49.3). The largest published
 | Operational complexity | Lower for a dedicated cluster | Higher initially; lower if Ethernet is the house standard |
 | Choose when | You buy a reference design and want it to work on day one | You operate Ethernet at scale and want vendor choice |
 
-Both work at this scale; the decision is operational more than physical. The Ultra Ethernet Consortium's specification (version 1.0 published in 2025) aims to bring packet spraying and loss-tolerant transport to Ethernet, as AWS's SRD already does in its cloud (§49.10.2).
+Both work at this scale; the decision is operational more than physical.
 
 ### 80.5.5 Congestion and load balancing
 
@@ -471,10 +469,6 @@ $$S_\text{ckpt} = N_p\,(b_\text{state} + b_\text{w}) \qquad B_\text{write} = \fr
 | Node-local NVMe tier | Each node writes its shard locally, drains later | Burst absorbed at local speed | Lost with the node unless replicated | First stage of asynchronous checkpoints |
 | Peer host memory | Shards replicated to other nodes' RAM | Restart without storage reads | Bounded by host RAM; lost in a correlated outage | Very large jobs needing minute-scale restarts |
 
-::: mistake
-**Sizing training storage from dataset size.** A 15-trillion-token text corpus is tens of terabytes and streams at megabytes per second. The checkpoint burst, the restart read storm and the metadata load of 16,000 simultaneous file creates are what size the tier.
-:::
-
 ## 80.7 Power, cooling and facilities
 
 ### 80.7.1 Rack power density
@@ -563,7 +557,7 @@ flowchart LR
 *Evidence: Primary* — [Dubey et al. 2024]
 :::
 
-Mitigations include on-site battery storage that smooths ramps, firmware that keeps GPUs drawing a floor of power while idle in a collective, staggered job starts, and contracts with the utility that specify ramp rates. Site selection now begins with "where can we get 100–1,000 MW, and when?", and the answer drives where clusters are built.
+Mitigations include on-site batteries that smooth ramps, firmware that holds a power floor during collectives, staggered job starts and utility contracts that specify ramp rates. Site selection now starts from where 100–1,000 MW can be obtained, and when.
 
 ### 80.7.4 Power budget
 
@@ -646,7 +640,7 @@ The formula assumes independent failures with constant rates (exponential lifeti
 | Silent data corruption | 1.4% |
 | Confirmed or suspected hardware, all categories | About 78% |
 
-Three lessons follow. Accelerators and their memory dominate, so GPU health checks matter most. Software is the second-largest single cause, so the training stack's own robustness counts. And the network contributes a steady share through thousands of optics and cables.
+Accelerators and their memory dominate, software is the second-largest single cause, and the network contributes a steady share through thousands of optics and cables.
 
 ### 80.8.3 Silent data corruption
 
@@ -861,7 +855,6 @@ What to notice:
 - The simulation and Daly's exact expression agree to within 0.3 points everywhere, which validates both; the first-order formula of §65.15 is accurate to 16,384 GPUs and turns pessimistic at 65K and beyond, where $\tau + R$ is no longer small against $M$ (it predicts 40.0% at 131K against a true 54.6%).
 - With a 10-minute restart, goodput falls from 98% at 1K GPUs to 55% at 131K: the job spends nearly half its time recovering. Cutting restart to 2 minutes and the checkpoint stall to 1 s holds 88% at 131K. Recovery speed, not device reliability, is what lets jobs grow.
 - Part 2 shows a flat optimum: anywhere from 5 to 30 minutes is within 3 points of the best at 16K GPUs, so the interval can be rounded to an operational convenience, but checkpointing hourly costs 9 points.
-- The 16,384-GPU baseline loses 259 runs' worth of restarts in 30 days, about one every 2.8 hours of wall time, consistent with Llama 3's experience.
 
 ### 80.9.3 Strategies: hot spares, in-memory checkpoints and fast restart
 
@@ -928,7 +921,7 @@ A **straggler** is a rank that is persistently or intermittently slower than its
 - **Slow hosts.** A bad DIMM, a CPU core busy with a runaway daemon, host-side Python garbage collection pauses, or a data loader starved by a slow storage client.
 - **Software and placement.** An unlucky rank ordering that sends a ring across an oversubscribed tier (§80.5.2), or a collective that a misconfigured process group runs on the wrong fabric.
 
-#### Detection
+### 80.10.1 Detection
 
 Detection compares ranks with each other, since a straggler is defined relative to its peers. Each rank records per-step compute time and per-collective wait time; the rank that arrives last at collectives, while others wait for it, is the straggler. Llama 3 describes tooling that traces collective operations to locate stragglers and hangs quickly among thousands of ranks [Dubey et al. 2024], and MegaScale describes collecting fine-grained timing from CUDA events on every rank, visualized across the job, to find slow machines [Jiang et al. 2024].
 
@@ -1014,7 +1007,7 @@ stateDiagram-v2
 
 ## 80.12 Publicly documented infrastructure
 
-Only what each organization has published is reported here; anything not in a cited source is outside this section.
+Only what each organization has published is reported here.
 
 **Table 80.7 — Published large-training infrastructure (as reported; as of 2026).**
 
@@ -1026,7 +1019,6 @@ Only what each organization has published is reported here; anything not in a ci
 | Google Gemini training | Multiple TPU SuperPods across datacenters | Model parallel within, data parallel across pods | In-memory replicas lifted goodput from 85% to 97% |
 | NVIDIA DGX SuperPOD (H100) | 32-node scalable units; 4 SUs = 128 nodes; larger by design | Rail-optimized non-blocking NDR InfiniBand | Separate compute, storage and management fabrics |
 | ByteDance MegaScale | 12,288 GPUs | Megatron-style 3D parallelism | 55.2% MFU on a 175B model |
-| Microsoft supercomputer for OpenAI (2020) | 10,000 GPUs, 285,000 CPU cores | 400 Gb/s per GPU server | Announced by Microsoft |
 
 ::: industry
 **Llama 3 training infrastructure.** Meta trained Llama 3 405B on up to 16,384 H100 GPUs (700 W TDP, 80 GB HBM3) in Grand Teton servers of 8 GPUs and 2 CPUs joined by NVLink, scheduled by MAST. The 405B model used the RoCE fabric of Figure 80.4; smaller models used an InfiniBand fabric. The paper reports 38–43% BF16 MFU, 466 interruptions in a 54-day snapshot of which 419 were unexpected, about 78% attributed to confirmed or suspected hardware, only three needing significant manual intervention, and effective training time above 90% [Dubey et al. 2024].
@@ -1060,17 +1052,17 @@ flowchart TB
 **Reading the diagram.** Each cube of 64 chips is wired electrically inside; optical links on its faces go to the 48 OCSes. A slice manager (dotted, control path) programs the switches to connect chosen cubes into a torus-shaped slice for each job; cube 3, with a failed host, is simply left out. Traffic inside a slice is synchronous ICI traffic. Failure points: an OCS failure affects the light paths through it; a failed cube costs 64 chips until repaired, but no job needs to wait for that specific cube. Scaling: cubes can be added before the whole pod is built. The slice sizes shown are illustrative.
 
 ::: industry
-**Gemini training reliability.** The Gemini report describes training Gemini Ultra on TPU v4 across multiple datacenters, combining TPU SuperPods of 4,096 chips with model parallelism inside SuperPods and data parallelism across them. It reports that conventional periodic checkpointing to persistent storage could not sustain high goodput at that scale; using redundant in-memory copies of model state and recovering from an intact replica after failures raised goodput for the largest job from 85% to 97%. It also reports SDC events expected every week or two, handled with deterministic replay and proactive SDC scanners [Gemini Team 2023].
+**Gemini training reliability.** The Gemini report describes training Gemini Ultra on TPU v4 across multiple datacenters, with model parallelism inside 4,096-chip SuperPods and data parallelism across them, and the in-memory recovery and SDC handling summarized in §80.8.3 and §80.9.3 [Gemini Team 2023].
 *Evidence: Primary* — [Gemini Team 2023]
 :::
 
 ::: industry
-**NVIDIA DGX SuperPOD reference architecture (DGX H100).** NVIDIA's reference design builds clusters from scalable units (SUs) of 32 DGX H100 systems (256 GPUs). The compute fabric is rail-optimized, non-blocking (full fat tree) NDR 400 Gb/s InfiniBand on QM9700 switches, with eight compute connections per system; a separate InfiniBand storage fabric, an in-band Ethernet management network and an out-of-band management network complete it. The documented reference configuration has 4 SUs (128 systems, 1,024 GPUs), with 48 compute-fabric switches and 16 storage-fabric switches, and the document states that the design scales to far larger configurations [NVIDIA DGX SuperPOD RA].
+**NVIDIA DGX SuperPOD reference architecture (DGX H100).** NVIDIA's reference design builds clusters from scalable units (SUs) of 32 DGX H100 systems (256 GPUs). The compute fabric is rail-optimized, non-blocking NDR 400 Gb/s InfiniBand on QM9700 switches, eight connections per system, beside separate storage, in-band and out-of-band management networks. The reference configuration has 4 SUs (128 systems, 1,024 GPUs) with 48 compute-fabric switches, and the design scales further [NVIDIA DGX SuperPOD RA].
 *Evidence: Primary* — [NVIDIA DGX SuperPOD RA]
 :::
 
 ::: industry
-**ByteDance MegaScale.** Jiang et al. describe a production system for training LLMs on more than 10,000 GPUs, reporting 55.2% MFU training a 175B model on 12,288 GPUs, 1.34× the MFU of Megatron-LM in their comparison. Its robustness design includes heartbeats from every node to a driver, automated diagnostic tests that isolate faulty nodes, fast checkpointing and recovery, and fine-grained performance monitoring to find stragglers [Jiang et al. 2024].
+**ByteDance MegaScale.** Jiang et al. describe a production system for training LLMs on more than 10,000 GPUs, reporting 55.2% MFU training a 175B model on 12,288 GPUs, 1.34× the MFU of Megatron-LM in their comparison. Its robustness design includes node heartbeats, automated diagnostics that isolate faulty nodes, fast checkpoint recovery and straggler monitoring [Jiang et al. 2024].
 *Evidence: Primary* — [Jiang et al. 2024]
 :::
 
@@ -1094,21 +1086,7 @@ Large inference fleets now rival training clusters in size, but they are differe
 | Location | Few very large sites, power-driven | Many regions, latency- and residency-driven |
 | Utilization lever | Goodput and MFU | Batching and autoscaling (§73.6) |
 
-Sharing capacity between them is attractive but constrained. A synchronous pre-training job cannot shrink by night and grow by day; the shareable work is the flexible kind: evaluation, fine-tuning, reinforcement-learning rollouts (which are themselves inference) and batch inference. Hardware also differs at the margin: inference fleets favor memory capacity and bandwidth per dollar and need no backend fabric for models that fit one scale-up domain, so a cluster built for training is an expensive inference fleet.
-
-**Figure 80.15 — Sharing accelerator capacity between serving and flexible training work.**
-
-```mermaid
-flowchart LR
-  U([User traffic]) --> SRV["Inference fleet<br/>autoscaled replicas"]
-  SRV -.->|"spare capacity off-peak"| POOL[["Preemptible pool"]]
-  POOL --> FT["Fine-tuning and eval jobs"]
-  POOL --> RL["RL rollouts and<br/>batch inference"]
-  PT["Pre-training cluster<br/>dedicated, synchronous"] -.->|"checkpoints for eval"| FT
-  SRV -.->|"peak demand reclaims"| POOL
-```
-
-**Reading the diagram.** User traffic reaches autoscaled inference replicas synchronously. Off-peak, spare serving capacity is lent asynchronously (dotted) to a preemptible pool running fine-tuning, evaluation, rollouts and batch inference; at peak, serving reclaims it, so those jobs must checkpoint on preemption. The pre-training cluster stays dedicated and only exports checkpoints. Failure point: reclaim that is slower than the traffic ramp violates serving SLOs, so reclaim must be fast and preemption unconditional. Scaling: the pool grows with the serving fleet's diurnal amplitude.
+Sharing capacity between them is constrained. A synchronous pre-training job cannot shrink by night and grow by day; what can share is flexible work (evaluation, fine-tuning, reinforcement-learning rollouts, batch inference) running in a preemptible pool that borrows serving capacity off-peak and is reclaimed instantly at peak. Hardware also differs at the margin: inference fleets favor memory capacity and bandwidth per dollar and need no backend fabric for models that fit one scale-up domain, so a cluster built for training is an expensive inference fleet.
 
 ## 80.14 Economics
 
@@ -1144,7 +1122,7 @@ $$c_\text{GPU-h} = \frac{1}{u}\left(\frac{K}{L_h} + p_\text{GPU}\,c_e + f + o\ri
 **Interpretation.** Capex dominates, so idle hours are the most expensive hours; one point of goodput on the reference run is worth about \$0.8 million. **Engineering implication.** Track utilization ($u$), goodput and MFU as one product. A company of QuickBite's size should rent GPU-hours, not build clusters: its training needs fit in a day on 64 rented GPUs.
 :::
 
-**Utilization targets.** Owned clusters aim for allocation above 80–90% and goodput above 90%, because the alternative, renting, is priced with the provider's own utilization and margin built in. Build-versus-rent follows the total-cost-of-ownership method of §51.9: building wins with sustained, predictable demand and the staff to run it; renting wins for bursty demand, early-stage teams and anyone who cannot secure power and hardware quickly.
+**Utilization targets.** Owned clusters aim for allocation above 80–90% and goodput above 90%. Build versus rent follows the total-cost-of-ownership method of §51.9: building wins with sustained demand and the staff to run it; renting wins for bursty demand and anyone who cannot secure power and hardware quickly.
 
 ## 80.15 Sustainability at AI scale
 
@@ -1184,7 +1162,7 @@ $$E = H_\text{GPU} \cdot \bar p_\text{IT} \cdot \text{PUE} \qquad C = E \cdot I 
 
 Patterson et al. also show that choices of model architecture, processor, datacenter efficiency and location can change a run's footprint by 100–1,000 times [Patterson et al. 2021]; BLOOM's low emissions come mostly from a low-carbon grid.
 
-#### Limits of carbon-aware scheduling for synchronous training
+### 80.15.1 Limits of carbon-aware scheduling for synchronous training
 
 Chapter 51 shows how flexible jobs shift in time and place to cleaner hours (§51.11.2). Large synchronous training resists both:
 
@@ -1194,6 +1172,133 @@ Chapter 51 shows how flexible jobs shift in time and place to cleaner hours (§5
 
 The levers that work are therefore structural: choose sites with low-carbon power and contract new clean supply; raise goodput and MFU, since every wasted GPU-hour carries its full carbon cost; extend hardware lifetimes to spread embodied carbon; use dry or warm-water cooling in water-stressed regions; and reserve temporal shifting for the flexible work of §80.13.
 
-::: mistake
-**Comparing footprints across boundaries.** "552 tonnes" and "zero market-based" are both correct statements about different things. Compare only figures that share boundary, PUE and accounting method.
+## 80.16 Summary and revision notes
+
+::: summary
+- Synchronous training couples every device: the slowest rank sets step time ($\mu + \sigma\sqrt{2\ln N}$ for Gaussian jitter), any failure stops the job, and power swings in unison.
+- A cluster has six layers: nodes, scale-up domain (8–72 GPUs or TPU pods), a dedicated RDMA backend with one 400 Gb/s NIC per GPU, storage, frontend and control plane.
+- Rail-optimized, non-blocking fat trees keep same-rank traffic one hop apart; oversubscription (Llama 3: 1:7 above 3,072-GPU pods) is a placement contract. Hierarchical, topology-aware collectives cut both bytes and latency at 16K GPUs.
+- Elephant flows collide under ECMP (8 flows on 8 links: 39% efficiency); more flows, adaptive routing or spraying fix it. RoCE and InfiniBand both work at 24K GPUs after tuning.
+- Storage is sized by checkpoint bursts and restart reads: 5.67 TB for 405B, 2.8 s at 2 TB/s; avoid 128× restart read amplification.
+- A 16K-GPU H100 cluster is about 25–30 MW (1.7 kW per GPU all-in); dense racks need liquid cooling ($Q = \dot m c_p \Delta T$).
+- $M_\text{job} \approx M_\text{device}/N$: 3.1 h at 16K, 30 min at 100K. GPUs and HBM cause most interruptions; SDC needs scanning, replica hashes and replay.
+- Goodput $= \tau/(M e^{R/M}(e^{(\tau+\delta)/M} - 1))$; restart time dominates at scale. Async checkpoints, hot spares (Little's law sizing), in-memory replicas (Gemini: 85% to 97%) and fast restart keep goodput high.
+- Evict a straggler when its slowdown exceeds $(R+\delta)/M_\text{job}$.
+- Cost per run $= 6ND/(R\,\text{MFU}) \times c_\text{GPU-h}/\Gamma$: about \$73 million for the reference run. Quote energy and carbon with boundary, PUE and accounting method.
 :::
+
+## 80.17 Knowledge checkpoint
+
+1. Why does one throttled GPU slow a 16,384-GPU job but not a web fleet?
+2. Name the six layers of a training cluster.
+3. What does rail-optimized mean, and how does NCCL use it?
+4. Compute cross-pod per-GPU bandwidth with 400 Gb/s NICs and 1:7 oversubscription.
+5. Why does a flat ring all-reduce perform poorly at 16,384 GPUs even for large messages?
+6. What fraction of uplinks carry traffic when 8 flows hash onto 8 uplinks?
+7. Size a 405B checkpoint at 14 bytes/parameter and its write time at 1 TB/s.
+8. Water flow to remove 60 kW with $\Delta T = 10$ K?
+9. Job MTBF of 32,768 GPUs at 50,700 GPU-hours per failure?
+10. Why can ECC not rule out silent data corruption?
+11. At 131,072 GPUs, why does the first-order waste formula fail?
+12. Spares needed (mean) if 4 nodes/day fail and repairs take 2 days?
+13. Break-even straggler slowdown with $R = 300$ s, $\delta = 5$ s, $M = 6$ h?
+14. Why is temporal carbon shifting hard for pre-training?
+
+<details><summary>Answers</summary>
+
+1. Collectives complete only when every rank arrives; web replicas never wait for each other.
+2. Compute nodes, scale-up domain, backend fabric, storage, frontend, control plane.
+3. NIC $i$ of every server goes to the same leaf; NCCL runs a ring per rail and moves cross-rail data over NVLink first.
+4. $400/7 = 57$ Gb/s.
+5. Its latency term, $2(p-1)\alpha$, is 0.33 s at 10 µs per step.
+6. $8(1 - 0.875^8) = 5.25$ uplinks, 66%.
+7. 5.67 TB; 5.7 s.
+8. $60{,}000/(4{,}186 \times 10) = 1.43$ kg/s, about 86 L/min.
+9. 1.55 h.
+10. ECC covers stored bits, not logic errors in compute units.
+11. $\tau + R$ is no longer small against $M$; it double-counts failures during restarts.
+12. $L = 4 \times 2 = 8$ nodes on average, more for a high quantile.
+13. $305/21{,}600 = 1.4\%$.
+14. Capex accrues while paused, power swings stress the grid, and jobs cannot move cheaply.
+
+</details>
+
+## 80.18 Interview questions
+
+### Basic
+
+**Q1. Why do AI clusters have a separate backend network?**
+**Answer.** Collectives run every step at hundreds of gigabits per GPU and need RDMA, low loss and predictable latency. Isolating them from storage, logging and user traffic avoids interference, and the backend can be built non-blocking without paying for that everywhere.
+
+**Q2. What is goodput and why is it not 100%?**
+**Answer.** The fraction of wall time producing kept progress. Checkpoint stalls, work lost since the last checkpoint, restarts, stragglers and maintenance reduce it.
+
+### Intermediate
+
+**Q3. Your 16K-GPU job reaches 60% of the bus bandwidth that one scalable unit achieves. Diagnose it.**
+**Answer.** Check rank ordering against topology (cross-pod rings), ECMP collisions in per-uplink counters, latency terms (ring versus tree), and one slow rail or link via per-rail `nccl-tests`. Fix with topology-aware placement, more QPs per connection or adaptive routing, and draining bad links.
+
+**Q4. Size checkpoint storage for a 405B job on 16K GPUs.**
+**Answer.** 5.67 TB per checkpoint; with async checkpoints the write may take a minute (95 GB/s), but restart reads must avoid amplification: read once per shard and broadcast. Keep several checkpoints plus retention copies; provision for burst, not average.
+
+### Advanced
+
+**Q5. Design reliability for a 100,000-GPU training run.**
+**Answer.** Job MTBF about 30 minutes, so periodic storage checkpoints and 10-minute restarts would give roughly 60% goodput. Use in-memory peer replicas, sub-second async snapshots, 1–2% hot spares across failure domains, second-scale detection, pre-warmed relaunch, straggler eviction by rule, SDC scanning and replica hashing, and a measured goodput budget.
+
+**Q6. A utility allows 30 MW. How many H100-class GPUs can you install, and what changes with liquid-cooled 72-GPU racks?**
+**Answer.** At 1.74 kW per GPU all-in, about 17,000. Liquid cooling may lower PUE and enables larger NVLink domains, but newer GPUs draw more, so recompute from server specifications; power, not floor space, is the limit.
+
+## 80.19 Practical exercises
+
+1. Extend the Monte Carlo of §80.9.2 with hot spares that run out: when the pool is empty, restart waits for a repair. Find the pool size where goodput stops improving.
+2. Add correlated failures (a leaf switch takes out 32 servers) and compare goodput with the independent model.
+3. Simulate ECMP with 16 flows per GPU on 8 uplinks over many steps and plot the distribution of collective efficiency.
+4. Recompute §80.7.4 for 72-GPU racks at 132 kW and PUE 1.15.
+
+## 80.20 Design challenges
+
+1. **A 32K-GPU cluster on a 60 MW site.** Choose rack type, cooling, fabric tiers and oversubscription; size storage and spares; produce a goodput budget.
+2. **Shared research and production cluster.** Design quotas, preemption and reservations so a 16K-GPU flagship run starts within a day while research keeps 30% of capacity.
+3. **QuickBite's GPU strategy.** Decide between renting and building for its chatbot, ETA and recommendation training and serving, with cost and carbon estimates.
+
+## 80.21 References
+
+1. Dubey, A., et al. (Llama Team, Meta). *The Llama 3 Herd of Models*. arXiv:2407.21783, 2024.
+2. Lee, K., Gangidi, A., Oldham, M. *Building Meta's GenAI Infrastructure*. Meta Engineering blog, March 2024. https://engineering.fb.com/2024/03/12/data-center-engineering/building-metas-genai-infrastructure/ (cited as Meta Engineering 2024)
+3. Gangidi, A., et al. *RDMA over Ethernet for Distributed Training at Meta Scale*. ACM SIGCOMM, 2024.
+4. Jouppi, N. P., et al. *TPU v4: An Optically Reconfigurable Supercomputer for Machine Learning with Hardware Support for Embeddings*. ISCA, 2023.
+5. Jiang, Z., et al. *MegaScale: Scaling Large Language Model Training to More Than 10,000 GPUs*. USENIX NSDI, 2024.
+6. Hochschild, P. H., et al. *Cores That Don't Count*. HotOS, 2021.
+7. Dixit, H. D., et al. *Silent Data Corruptions at Scale*. arXiv:2102.11245, 2021.
+8. Gemini Team, Google. *Gemini: A Family of Highly Capable Multimodal Models*. arXiv:2312.11805, 2023.
+9. NVIDIA. *NVIDIA DGX SuperPOD: Next Generation Scalable Infrastructure for AI Leadership, Reference Architecture (DGX H100)*. docs.nvidia.com, accessed 2026. (cited as NVIDIA DGX SuperPOD RA)
+10. NVIDIA. *DGX H100 User Guide* and *H100 Tensor Core GPU Architecture* whitepaper, 2022. (cited as NVIDIA DGX H100 User Guide; NVIDIA 2022b)
+11. NVIDIA. *GB200 NVL72* product specifications, accessed 2026. (cited as NVIDIA GB200 NVL72)
+12. Supermicro. *SuperCluster GB200 NVL72* datasheet, 2025.
+13. Google Cloud. *Introducing Cloud TPU v5p and AI Hypercomputer*. Google Cloud blog, December 2023.
+14. Amazon Web Services. Announcement of Trn2 UltraServers and Project Rainier, re:Invent, December 2024. (cited as AWS 2024)
+15. Anthropic. *Anthropic to Expand Use of Google Cloud TPUs and Services*. Announcement, October 2025.
+16. Microsoft. *Microsoft announces new supercomputer, lays out vision for future AI work*. Microsoft Source, May 2020.
+17. OpenAI. *Scaling Kubernetes to 7,500 nodes*. OpenAI blog, 2021.
+18. OpenAI. *GPT-4*. OpenAI research announcement, March 2023.
+19. Chowdhery, A., et al. *PaLM: Scaling Language Modeling with Pathways*. JMLR 24, 2023.
+20. Choudhury, A., et al. *MAST: Global Scheduling of ML Training across Geo-Distributed Datacenters at Hyperscale*. USENIX OSDI, 2024.
+21. Young, J. W. *A First Order Approximation to the Optimum Checkpoint Interval*. CACM 17(9), 1974.
+22. Daly, J. T. *A Higher Order Estimate of the Optimum Checkpoint Interval for Restart Dumps*. Future Generation Computer Systems 22(3), 2006.
+23. Patterson, D., et al. *Carbon Emissions and Large Neural Network Training*. arXiv:2104.10350, 2021.
+24. Luccioni, A. S., Viguier, S., Ligozat, A.-L. *Estimating the Carbon Footprint of BLOOM, a 176B Parameter Language Model*. JMLR 24(253), 2023.
+25. Li, P., Yang, J., Islam, M. A., Ren, S. *Making AI Less "Thirsty": Uncovering and Addressing the Secret Water Footprint of AI Models*. arXiv:2304.03271, 2023.
+26. Meta. *Llama 3.1 model card* (training energy and emissions). GitHub meta-llama, 2024. (cited as Meta 2024)
+27. Barroso, L. A., Hölzle, U., Ranganathan, P. *The Datacenter as a Computer*, 3rd ed. Morgan & Claypool, 2018.
+28. Uptime Institute. *Global Data Center Survey 2024*.
+
+## 80.22 Open verification items
+
+- Llama 3 Table 5: the paper lists 148 faulty-GPU interruptions at 30.1%, inconsistent with 419 total; only percentages are used. Confirm network, storage (240 PB, 7,500 servers, 2/7 TB/s) and the 16M-token final batch.
+- Gemini "85% to 97%" goodput and "SDC every week or two" wording; the brief's "Wang et al. 2023" is cited as Gemini Team 2023.
+- Gangidi et al.: receiver-driven admission versus DCQCN details.
+- DGX SuperPOD switch counts (48/16); GB200 NVL72 rack power (120–132 kW, vendor sheets).
+- Llama 3.1 model card GPU-hours and emissions; Li et al. 700,000 L figure.
+- Titles and dates of AWS 2024, Microsoft 2020, OpenAI 2021/2023, Google Cloud 2023 posts; Ultra Ethernet 1.0 (2025).
+- Server, switch, capex and price figures are illustrative.
