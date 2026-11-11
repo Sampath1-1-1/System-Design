@@ -517,7 +517,7 @@ Other systems implement the same idea: SGLang's router combines cache-aware and 
 
 #### Why does this exist?
 
-An AI platform accumulates models faster than traffic: fine-tuned variants per team, older versions kept for rollback, evaluation candidates, embedding and reranking encoders. QuickBite's tenants T1–T3 each have their own fine-tune of the same 7B base. Three dedicated pools would hold three copies of 13.5 GB of weights and three sets of idle redundancy; one pool with three adapters holds one copy.
+Platforms accumulate models faster than traffic: team fine-tunes, rollback versions, evaluation candidates, encoders. QuickBite's T1–T3 each fine-tune the same 7B base; three dedicated pools would hold three copies of 13.5 GB of weights and three sets of idle redundancy; one pool with three adapters holds one copy.
 
 #### How it works internally
 
@@ -583,7 +583,7 @@ $$S_\text{LoRA} = L \cdot n_\text{mat} \cdot r \cdot (d_\text{in} + d_\text{out}
 
 #### Why does this exist?
 
-Inference models span four orders of magnitude: a 33M-parameter reranker, a 110M-parameter query encoder, a 7B chat model, a 70B model that needs four GPUs joined by NVLink. Giving each its own whole GPU wastes most of the small ones' GPUs; packing a 70B shard group onto nodes without NVLink ruins its tensor parallelism (§73.11). Node pools separate the shapes; bin-packing and MIG fill them.
+Inference models span from a 33M-parameter reranker to a 70B model needing four NVLink-joined GPUs. Whole GPUs for small models waste them; a 70B group split across nodes ruins tensor parallelism (§73.11). Node pools separate the shapes; bin-packing and MIG fill them.
 
 #### How it works internally
 
@@ -678,7 +678,7 @@ gantt
 
 #### First-principles explanation
 
-A restaurant that limits tables per hour, not diners, is easily gamed by a party of forty. A per-request limit on an LLM is the same: one request with a 100,000-token prompt costs as much GPU time as a thousand short ones. Limiting tokens charges by the diner. But the bill for each table arrives only after the meal, so the host must guess at the door and settle at the till.
+Limiting tables per hour, not diners, is gamed by a party of forty: one 100,000-token prompt costs as much as a thousand short ones. Limiting tokens charges by the diner, but the bill arrives after the meal, so the host guesses at the door and settles at the till.
 
 #### How it works internally
 
@@ -822,10 +822,10 @@ estimate_reconcile        71%         99,987       112,495  (112% of limit)
 
 What to notice:
 
-- **Input only** never charges output, so the tenant consumes 113% of its limit on average: every gateway that counts only prompt tokens has this leak.
-- **Post-debit** (charge input at admission, output afterwards, as gateways that meter provider-reported usage do) is accurate on average (99,944) but lets bursts run ahead of the debit.
-- **Reserve max** never under-charges in-flight work but holds 4,096 tokens per request: it admits only 64% of requests and uses 93% of the limit, rejecting traffic it could have served.
-- **Estimate and reconcile** admits nearly as much as post-debit, uses exactly the limit on average, and has a lower worst minute (112%) because in-flight output is partly reserved. The worst minutes above 100% are the 15-second burst allowance, which is policy, not leakage.
+- **Input only** never charges output: the tenant consumes 113% of its limit.
+- **Post-debit** (output charged afterwards) is accurate on average but lets bursts run ahead of the debit (worst minute 116%).
+- **Reserve max** holds 4,096 tokens per request in flight: it admits only 64% and uses 93% of the limit, rejecting traffic it could have served.
+- **Estimate and reconcile** uses exactly the limit on average with a lower worst minute (112%). Minutes above 100% are the 15-second burst allowance, policy rather than leakage.
 
 ::: industry
 **Token limits in gateways and provisioned capacity.** LiteLLM documents TPM and RPM limits per virtual key, team and model deployment [LiteLLM Docs]. Envoy AI Gateway extracts token usage from model responses into request metadata and applies Envoy Gateway's global rate limits to it, so the debit happens after the response, the post-debit mode above [Envoy AI Gateway Docs]. For guaranteed capacity, Azure OpenAI sells provisioned throughput units and Amazon Bedrock sells provisioned throughput for selected models (as of 2026) [Microsoft Learn: Provisioned throughput; AWS Docs: Bedrock Provisioned Throughput].
@@ -851,7 +851,7 @@ What to notice:
 
 #### Why does this exist?
 
-GPUs make noisy neighbors worse than CPUs do. Requests from all tenants share one continuous batch, so a batch tenant that floods a replica raises *everyone's* decode step time (step time grows with batch size, §73.6) and fills the KV cache, forcing preemptions. Rate limits do not prevent this: every tenant can be within its limit while their sum exceeds capacity (§47.8). And the prefix cache is a side channel: if tenant B's request runs faster because tenant A recently sent the same prefix, B can probe A's prompts by timing.
+All tenants share one continuous batch, so a flooding batch tenant raises *everyone's* decode step time (§73.6) and fills the KV cache, forcing preemptions, even while every tenant is within its rate limit (§47.8). And a shared prefix cache is a timing side channel: tenant B can probe whether tenant A recently sent a prefix.
 
 #### How it works internally
 
@@ -921,7 +921,7 @@ $$s_i \mathrel{+}= \frac{c_\text{in}\, n_\text{in}^\text{uncached} + c_\text{out
 
 #### Why does this exist?
 
-Three properties make AI traffic different from ordinary web traffic across regions. **GPU capacity is scarce and uneven**: the newest GPUs may be available in some regions only, and on-demand capacity in a region can run out, so "scale out in the failover region" may simply fail. **Prompts are personal data**: an EU customer's chat contains their name, address and order, so routing it to a US region or a provider endpoint outside the EU may be unlawful under the platform's residency policy. **Latency is forgiving**: an extra 90 ms round trip (Frankfurt–Virginia, §44.4) matters little against a 1 s TTFT objective, and streamed tokens are pipelined, so distance is rarely the binding constraint; residency and capacity are.
+**GPU capacity is scarce and uneven**: a region's on-demand capacity can run out, so "scale out in the failover region" may fail. **Prompts are personal data**: sending an EU customer's chat to a US region may break residency policy. **Latency is forgiving**: an extra 90 ms round trip (§44.4) matters little against a 1 s TTFT, so residency and capacity, not distance, are binding.
 
 #### How it works internally
 
@@ -984,7 +984,7 @@ $$C_\text{standby} = n_\text{gpu}\, H\, p_\text{gpu} \qquad C_\text{spill} = f\,
 
 #### Why does this exist?
 
-Model calls are the most expensive requests most platforms serve, and many are repeated: chains list the same dish in hundreds of branches; agents resend the same growing context at every step; search users type the same queries. But a generated answer is not a static resource: it depends on the full prompt, the model version and the sampling settings, and an answer correct for one customer can be wrong for another. Each cache type trades savings against that risk differently.
+Model calls are expensive and often repeated: chains list the same dish in many branches, agents resend growing contexts, search users repeat queries. But an answer correct for one customer can be wrong for another, and each cache type trades savings against that risk differently.
 
 ::: formula
 **Expected saving of a response cache, with false hits**
@@ -1014,9 +1014,9 @@ $$S = h\,C_\text{gen} - C_\text{lookup} - h\,f\,C_\text{err} \qquad f^\star = \f
 **Interpretation.** When answers are cheap and mistakes are expensive, a semantic cache of *answers* loses money at any realistic false-hit rate. **Engineering implication.** Use exact caches for deterministic, non-personalized calls; use semantic caching for retrieval results or for platform-owned, non-personal content with a strict threshold; and spend most effort on prefix caching, which saves compute without ever returning a wrong answer.
 :::
 
-**Prefix caching across requests** is the safest large saving. Inside self-hosted engines it depends on prefix affinity (§79.6). External providers publish prompt-caching features in which repeated prompt prefixes are billed at a discount, with conditions on minimum length and cache lifetime (as of 2026) [Anthropic Docs: Prompt caching; OpenAI Docs: Prompt caching]. Prompts must be laid out for it: stable content (system prompt, tool definitions, documents) first, variable content (user message, timestamps) last. A timestamp at the top of a system prompt silently disables every prefix cache downstream.
+**Prefix caching across requests** is the safest large saving. Inside self-hosted engines it depends on prefix affinity (§79.6). External providers publish prompt-caching features in which repeated prompt prefixes are billed at a discount, with conditions on minimum length and cache lifetime (as of 2026) [Anthropic Docs: Prompt caching; OpenAI Docs: Prompt caching]. Put stable content (system prompt, tools, documents) first and variable content last; a timestamp at the top of a system prompt silently disables every prefix cache.
 
-**Embedding caches** are almost free wins for search: query distributions are heavy-tailed, so a cache keyed on the normalized query string and the embedding-model version serves a large share of T5's traffic, and a wrong hit is impossible as long as the model version is in the key. GPTCache is one open-source library for semantic and exact LLM caching [Bang 2023].
+**Embedding caches** are nearly free wins for search: heavy-tailed queries keyed by normalized text and model version serve much of T5's traffic with no wrong hits. GPTCache is one open-source library for semantic and exact LLM caching [Bang 2023].
 
 **Table 79.4 — Cache types compared.**
 
@@ -1037,7 +1037,7 @@ $$S = h\,C_\text{gen} - C_\text{lookup} - h\,f\,C_\text{err} \qquad f^\star = \f
 
 #### Why does this exist?
 
-HTTP dashboards report a support-chat call as "200 OK in 6.2 s" and say nothing useful. Was the 6.2 s queueing, a slow first token or a 900-token answer? Which adapter version answered? Did prefix caching hit? How much did it cost, and whose budget pays? An agent task makes eight model calls and five tool calls; without a trace tying them together, nobody can tell which step looped.
+"200 OK in 6.2 s" says nothing useful: was it queueing, a slow first token or a 900-token answer? Which adapter answered, did the prefix cache hit, and whose budget pays? Without a trace across an agent's calls, nobody can tell which step looped.
 
 #### How it works internally
 
@@ -1116,7 +1116,7 @@ $$c_\text{call} = n_\text{in}^\text{new}\,p_\text{in} + n_\text{in}^\text{cached
 
 #### Why does this exist?
 
-A support prompt contains a customer's name, address, phone number and order history; an ops-agent prompt may contain a courier's location trail or a fraud case. Every place that text lands is a copy to protect: gateway logs, the usage stream, the prompt log store, the response cache, the prefix cache, evaluation datasets, the provider's abuse-monitoring logs and any fine-tuning set built from logs. GDPR access and erasure requests (§50.9) reach all of them.
+Support prompts contain names, addresses and orders; agent prompts may hold courier location trails. Every copy needs protection: gateway logs, prompt stores, caches, evaluation sets, provider logs and fine-tuning sets. GDPR erasure requests (§50.9) reach all of them.
 
 #### How it works internally
 
@@ -1166,7 +1166,7 @@ flowchart LR
 
 #### Why does this exist?
 
-External API costs are easy to attribute: the invoice is in tokens, and the gateway knows whose tokens they were. Self-hosted cost is not: a GPU-hour serves several tenants at once and sits idle between peaks, and somebody must pay for the idle hours. The allocation rule is also an incentive: it decides whether a team that moves its batch job to 3 a.m. saves money, and whether a team asking for a dedicated pool sees its true cost.
+API costs are easy to attribute: the invoice is in tokens. A GPU-hour serves several tenants and idles between peaks, and someone must pay for idle hours. The allocation rule is also an incentive: it decides whether moving a batch job to 3 a.m. saves a team money.
 
 #### How it works internally
 
@@ -1229,9 +1229,6 @@ $$c_\text{1M} = \frac{p_\text{gpu}\, g_\text{tok}\, 10^6}{3{,}600\, u} \qquad A_
 **Interpretation.** The rule moves T2's pool bill by 9× (\$1,903 versus \$213). Under usage share, the menu team subsidizes support chat's idle peak capacity and gains nothing by running at night; under cost driver, support chat sees its true cost, \$0.0027 per query, and the menu team is rewarded for filling valleys. **Engineering implication.** Allocate idle capacity to the tenants whose peaks and SLOs create it, charge valley tenants the busy rate, publish per-alias rates, and review the rule when the tenant mix changes. Overhead by requests over-charges batch tenants with many small calls; by tokens is the alternative.
 :::
 
-::: mistake
-**Misconception — "A low loaded rate means a cheap model."** The loaded output rate (\$3.52 per million) is 9× the busy rate because the pool is 11% utilized, not because the model is expensive. Compare deployment options at the utilization each would actually reach.
-:::
 
 ## 79.16 Build versus buy for AI platforms
 
@@ -1243,7 +1240,7 @@ $$c_\text{1M} = \frac{p_\text{gpu}\, g_\text{tok}\, 10^6}{3{,}600\, u} \qquad A_
 
 #### Why does this exist?
 
-Self-hosting looks cheap per token when GPUs are busy and expensive when they are not; APIs look expensive per token but charge nothing when idle. The decision turns on volume, utilization, the model you need (a custom fine-tune cannot be bought from a provider that does not host it), data controls and the cost of the people who operate GPUs at 3 a.m.
+Self-hosting is cheap per token only when GPUs are busy; APIs charge nothing when idle. The decision turns on volume, utilization, whether the model can be bought at all, data controls and the people who run GPUs at 3 a.m.
 
 ::: formula
 **Break-even volume between self-hosting and an API**
