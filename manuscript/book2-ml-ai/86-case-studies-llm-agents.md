@@ -1685,3 +1685,120 @@ At **10×** (500 million queries a day), generation needs about 4,000 GPUs even 
 
 **Monitoring.** TTFT by stage, answer coverage and shed rates, verifier rejection rate, sentence support and citation precision on rater samples, source diversity, freshness lag per tier, cache hit ratio, and cost per 1,000 queries (§70, §79.13). **Retraining cadence.** Rerankers and the eligibility model monthly on fresh rater labels; the answer model quarterly by distillation and fine-tuning, gated on side-by-side preference and support metrics. **Security.** Spam and injection defenses in retrieval, abuse monitoring for coordinated attempts to manipulate answers, and red-teaming of high-stakes categories (§78.12). **Responsible ML.** Medical, legal and financial answers carry sources and caveats or are not generated; contested topics present multiple sourced views; publisher attribution is reported (§71). **Cost.** The routed design costs about \$0.37 per 1,000 queries in GPU time plus about 0.07 for reranking; the levers in order are eligibility, caching, prompt length and model size.
 
+## 86.9 Summary and revision notes
+
+::: summary
+- **Count tokens by class first.** Every cost, GPU and latency number in these cases follows from input, cached input and output tokens per call class; averages across classes hide the KV-limited batch.
+- **Enterprise RAG:** permissions are enforced inside retrieval, by storing unexpanded ACL principals on chunks and expanding the user at query time, so group changes touch one mirror row; a live check on the final documents covers sync lag. The revocation window $W_\text{rev}$ is a sum of detection, queueing, apply and cache terms, and an unpurged cache can dominate it. Evaluate per tenant with synthetic sets built inside the tenant boundary.
+- **Inference platform:** long RAG prompts make prefill 80% of a 70B fleet's GPU time; prompt length is the first capacity lever. Disaggregation does not cut GPU-seconds per call; it raises the utilization at which TTFT and TPOT SLOs both hold.
+- **QuickBite re-sized:** Chapter 73's 1,510-token plan (2 GPUs) is replaced by a per-class plan: with RAG-length contexts only 24 sequences fit an FP16 KV cache, each output token costs 1.11 ms, and the pool needs 6 GPUs for §79.8's tenants and 7 for the whole workload; with an FP8 KV cache, 5 GPUs (72 GPU-hours, \$180 a day), at 8.9% utilization. The \$0.20/\$0.60 internal token price recovers only 55–67% of that cost; the gap is idle redundancy.
+- **Coding assistant:** inline completion lives in a ~200 ms budget in which network and debounce take half; a small FIM model, speculative decoding, prefix affinity and client-side cancellation make it fit. Acceptance rate tracks perceived productivity but can be gamed; pair it with retention and accepted characters per hour.
+- **Support agent:** the model proposes, the policy engine decides, idempotent tools execute, and confirmations come only from tool results. Escalations dominate cost per contact; roll out by intent and risk, with agent-assist mode as the evidence stage.
+- **Answer engine:** results first, answer streamed; eligibility, caching and routing keep cost near \$0.37 per 1,000 queries against about \$0.013 for classic search; measure sentence support and citation precision, not click-through.
+:::
+
+## 86.10 Knowledge checkpoint
+
+1. Why does storing expanded user lists on chunks fail for enterprise RAG, and what replaces it?
+2. A polled source has a 10-minute interval and a 5-minute unpurged retrieval cache. What is its worst-case revocation window, and which change helps most?
+3. Why does post-filtering ANN results fail when a user may read 2% of a tenant's corpus?
+4. How should a vendor evaluate answer quality for 2,000 tenants without reading their documents?
+5. Why does a 4,250-token RAG call cost more GPU time per *output* token than a 1,588-token chat call on the same 7B model?
+6. Under what conditions does prefill–decode disaggregation pay, and what does it actually save?
+7. QuickBite's 7B pool: how many GPUs does the combined workload need with an FP16 KV cache and with an FP8 KV cache, and why?
+8. Name four terms of the inline completion latency budget and the technique that shrinks each.
+9. Why must client cancellations propagate to the inference engine?
+10. Why is acceptance rate alone a dangerous objective for a completion model?
+11. In the support agent, which component decides whether a refund is allowed, and why not the model?
+12. What makes a retried refund safe after a timeout?
+13. Using the blended cost formula, why is escalation rate a stronger lever than token price?
+14. Why does an answer engine return classic results on a separate path from the answer?
+15. Why is click-through rate a poor online metric for generated answers, and what replaces it?
+
+<details><summary>Answers</summary>
+
+1. A group change (adding one person to a group that reads millions of documents) would rewrite millions of chunks. Store the principals named in the source ACL (users, groups) and expand the user into principals at query time from a membership mirror.
+2. $600 + 20 + 10 + 300 = 930$ s (with 20 s queueing and 10 s apply). Purging caches on ACL events removes 300 s; polling ACL endpoints more often reduces detection; a live check covers the rest.
+3. The top candidates are mostly forbidden: from the top 50, about one survives, so fewer than $k$ results return and recall collapses; the filter must run inside the search (§74.11).
+4. Generate questions from sampled documents automatically inside the tenant boundary, judge groundedness with a calibrated LLM judge (about 456 items per tenant for ±2 points), and run tenant-stratified online experiments.
+5. Each sequence holds 2.7 times more KV cache, so only 24 sequences fit instead of 64, and each decode step's weight read is shared by fewer tokens: 1.11 ms instead of 0.42 ms per output token.
+6. When prefill dominates GPU time, TPOT SLOs are tight with long prompts mixed in, KV transfer is small relative to prefill, and the pool is large enough that per-pool redundancy is cheap. It raises attainable utilization, not GPU-seconds per call: 896 versus 1,244 GPUs in the generic example.
+7. FP16: 6 GPUs for §79.8's support-chat tenant and 7 with plain chatbot turns and agent calls (3.10 busy GPUs). FP8: 5 GPUs (2.13 busy), because the RAG batch doubles to 48.
+8. Debounce (tune per editor, local reuse), network round trip (nearest region), prefill (prefix cache with session affinity), decode (small model and speculative decoding).
+9. About 40% of requests are abandoned; without propagation the engine spends prefill and decode on suggestions nobody will see, inflating the fleet.
+10. A model can raise acceptance by suggesting shorter, safer completions that save less work; accepted characters per hour and retention must not fall.
+11. A deterministic, versioned policy engine with facts fetched by the orchestrator. Instructions to a model are not controls, and a model's statement can be legally binding.
+12. An idempotency key derived from the logical action, persisted before the first call and reused on retry, plus reconciliation with the provider from the unknown state.
+13. Escalated contacts cost \$4.05 each; one point of escalation costs \$0.026 per contact, more than the whole difference between two models' token prices.
+14. So that the results page never waits for or fails with the model; the answer streams on a separate connection and degrades to results only.
+15. A good answer reduces clicks. Use reformulation and follow-up rates, explicit feedback, citation clicks, return visits and side-by-side rater preference.
+</details>
+
+## 86.11 Interview questions
+
+### Basic
+
+**Q1.** What is the difference between filtering retrieval results after the search and filtering inside the search?
+**Answer.** Post-filtering takes the top candidates and removes forbidden ones, so users with access to a small fraction of the corpus get few or no results and lower recall. Pre-filtering, or filtered ANN, restricts the candidate set inside the index so the top $k$ permitted results are returned (§74.11).
+
+**Q2.** Why does inline code completion use fill-in-the-middle?
+**Answer.** Most edits happen inside a file; the text after the cursor constrains what belongs in the middle. FIM training lets the model condition on both prefix and suffix without losing left-to-right ability [Bavarian et al. 2022].
+
+### Intermediate
+
+**Q3.** A team adds retrieval to its chatbot, tripling prompt length. What happens to the shared inference pool, and how should the platform catch it?
+**Answer.** Prefill time triples, the KV-limited batch shrinks (64 to 24 sequences in the QuickBite example), per-output-token cost roughly doubles or more, and the pool runs out of KV memory, causing preemptions and TTFT breaches for every tenant. Catch it with declared token shapes at onboarding, drift alerts on per-team token histograms, per-team token quotas and a capacity re-plan.
+
+**Q4.** How would you compute cost per resolution for a support agent, and what dominates it?
+**Answer.** Agent-side cost per contact (tokens, auxiliary calls, infrastructure, approvals, expected wrong-action loss) divided by the resolution rate; the blended cost per contact adds escalations at human cost. With realistic numbers, escalations dominate, so resolution quality is the main lever.
+
+### Advanced
+
+**Q5.** Design the permission model for an assistant over SharePoint and Google Drive for 2,000 tenants, with a 5-minute revocation target.
+**Answer.** Mirror groups and document ACLs per tenant; store unexpanded principals on chunks; expand users at query time with an epoch-keyed cache; filter inside both lexical and vector search; consume webhooks, poll ACL endpoints frequently and reconcile weekly; purge caches on ACL events; live-check the final documents, against the source API for sensitive sites; measure revocation lag per source and alert on the p99.
+
+**Q6.** An answer engine's cost per 1,000 queries is \$5.59 on a frontier API. Bring it under \$0.50 without losing quality.
+**Answer.** Answer only eligible queries (60%), cache head queries (20% hits), self-host and route 70% of answers to a fine-tuned 8B model and 30% to a 70B model, shorten prompts, cascade the reranker. The routed self-hosted design costs about \$0.37 plus \$0.07 for reranking, validated by side-by-side preference and sentence-support metrics.
+
+## 86.12 Practical exercises
+
+1. Extend the permission-filtered retrieval program of §86.4.8 with nested groups (groups that contain groups) and measure how query-time expansion depth affects latency on 10,000 chunks.
+2. Rerun the fleet calculator of §86.5.4 with a 4-bit-weight 7B model and an FP8 KV cache. How many GPUs does QuickBite need, and what parity tests would you require?
+3. Simulate inline completion requests with exponential inter-keystroke times (mean 200 ms), a 50 ms debounce and a 180 ms service time. What fraction of requests is canceled, and how does the debounce trade cancellations against latency?
+4. For the support agent, compute the blended cost per contact as coverage rises from 45% to 85% and escalation falls from 35% to 20%. Where is the next intent worth automating?
+5. Build a 200-query evaluation set for an answer engine with sentence-level support labels, and compute citation precision and sentence support with 95% confidence intervals (§78.4.2).
+
+## 86.13 Design challenges
+
+1. **Cross-tenant assistant for a holding company.** Subsidiaries are separate tenants with separate identity providers, but executives may search across them. Design the identity mapping, permission model and audit so that no subsidiary's restricted content reaches another's employees.
+2. **Air-gapped coding assistant.** A defense contractor requires completion, chat and agents with no network egress. Size the on-premises fleet for 5,000 developers, choose models, and describe how updates and evaluation work without internet access.
+3. **Agent for B2B order management.** Extend the support agent to business customers who place orders worth \$50,000 and need credit-limit checks, approval chains and contractual pricing. Redesign the policy engine, approval gates and compensation logic.
+
+## 86.14 References
+
+1. Pang, R., Cáceres, R., Burrows, M., et al. *Zanzibar: Google's Consistent, Global Authorization System*. USENIX ATC, 2019.
+2. Microsoft. *Data, Privacy, and Security for Microsoft 365 Copilot*. Microsoft Learn. https://learn.microsoft.com/copilot/microsoft-365/microsoft-365-copilot-privacy (Cited as Microsoft Learn: Copilot data, privacy and security.)
+3. Zhong, Y., Liu, S., Chen, J., et al. *DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving*. USENIX OSDI, 2024.
+4. Patel, P., Choukse, E., Zhang, C., et al. *Splitwise: Efficient Generative LLM Inference Using Phase Splitting*. ACM/IEEE ISCA, 2024.
+5. Character.AI. *Optimizing AI Inference at Character.AI*. Character.AI research blog, June 2024. https://research.character.ai/optimizing-inference/
+6. Bavarian, M., Jun, H., Tezak, N., et al. *Efficient Training of Language Models to Fill in the Middle*. arXiv:2207.14255, 2022.
+7. Leviathan, Y., Kalman, M., Matias, Y. *Fast Inference from Transformers via Speculative Decoding*. ICML, 2023.
+8. Chen, M., et al. *Evaluating Large Language Models Trained on Code*. arXiv:2107.03374, 2021.
+9. Jimenez, C. E., et al. *SWE-bench: Can Language Models Resolve Real-World GitHub Issues?* ICLR, 2024.
+10. Ziegler, A., Kalliamvakou, E., Li, X. A., et al. *Productivity Assessment of Neural Code Completion*. ACM SIGPLAN International Symposium on Machine Programming (MAPS), 2022.
+11. Ziegler, A., Kalliamvakou, E., Li, X. A., et al. *Measuring GitHub Copilot's Impact on Productivity*. Communications of the ACM 67(3), 2024.
+12. Peng, S., Kalliamvakou, E., Cihon, P., Demirer, M. *The Impact of AI on Developer Productivity: Evidence from GitHub Copilot*. arXiv:2302.06590, 2023.
+13. *Moffatt v. Air Canada*, 2024 BCCRT 149. British Columbia Civil Resolution Tribunal, February 2024.
+14. Klarna. *Klarna AI Assistant Handles Two-Thirds of Customer Service Chats in Its First Month*. Press release, February 2024. (Cited as Klarna 2024; figures company-reported.)
+15. Liu, N. F., Zhang, T., Liang, P. *Evaluating Verifiability in Generative Search Engines*. Findings of EMNLP, 2023.
+16. Google. *An Update on Web Publisher Controls*. The Keyword (Google blog), September 2023.
+
+## 86.15 Open verification items
+
+- Character.AI 2024 blog: confirm the URL, the "more than 20,000 inference queries per second" figure and the list of KV-cache techniques as published.
+- Klarna February 2024 press release: confirm exact title and the company-reported figures (2.3 million conversations, two-thirds of chats, 700 full-time-agent equivalent, under 2 minutes versus 11, 25% fewer repeat inquiries, \$40 million profit improvement); check whether later company statements qualified them.
+- Liu et al. 2023: confirm the 51.5% sentence-support and 74.5% citation-precision averages.
+- Microsoft Learn Copilot privacy page: confirm current URL and wording on permission-based access and oversharing guidance.
+- Ziegler et al. 2022 and 2024: confirm full author lists and that the CACM 2024 article restates the acceptance-rate finding.
+- Google-Extended: confirm the 2023 announcement title and which AI uses the token controls as of 2026.
+- All capacity figures are illustrative teaching assumptions; Ch 79 §79.8 now flags its 5-GPU plan as optimistic, and §86.5.4 is the reconciled QuickBite plan of record (6–7 GPUs with FP16 KV, 5 with FP8 KV subject to the parity gate).
