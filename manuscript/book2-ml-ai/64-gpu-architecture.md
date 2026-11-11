@@ -655,7 +655,7 @@ $$W_\text{GEMM} = 2MNK \qquad Q_\text{GEMM} = b\,(MK + KN + MN) \qquad I_\text{G
 2. *Thin GEMM*, $M = 16$ tokens through a $4{,}096 \times 4{,}096$ weight: $W = 5.4 \times 10^8$; $Q \approx 2 \times 4{,}096^2 = 3.4 \times 10^7$ bytes (the weight dominates); $I \approx 16$. Memory-bound at $16 \times 3.35 = 53$ TFLOP/s, 5% of peak. When the weight dominates, $I \approx M$: intensity equals the number of rows sharing each weight.
 3. *Elementwise add* of two BF16 tensors: 1 FLOP per element, 6 bytes (two reads, one write): $I = 1/6 = 0.17$; attainable $0.17 \times 3.35 = 0.56$ TFLOP/s.
 4. *Attention*, one head, sequence $s = 4{,}096$, head dimension $d = 128$: $W = 4s^2d = 8.6 \times 10^9$ FLOPs ($QK^\top$ and $PV$). A naive kernel writes the $s \times s$ score matrix and the softmax output to HBM and reads them back: $Q \approx 2(4sd + 4s^2) = 1.38 \times 10^8$ bytes, $I = 62$: memory-bound. A fused, tiled kernel keeps scores on-chip: $Q \approx 2 \times 4sd = 4.2 \times 10^6$, $I = s/2 = 2{,}048$ in this idealized count: compute-bound [Dao et al. 2022].
-5. *LLM decode* step for a 7B model, batch 1: each step reads all 14 GB of BF16 weights for $2N = 1.4 \times 10^{10}$ FLOPs: $I = 1$. Time per token $\ge 14 \times 10^9 / 3.35 \times 10^{12} = 4.2$ ms, at most 239 tokens/s, no matter how fast the tensor cores are. At batch $B$ the same weight read serves $B$ sequences, so $I \approx B$; decoding becomes compute-bound only near $B \approx 295$, ignoring the KV-cache reads that grow with batch (Chapter 73).
+5. *LLM decode* step for a 7B model, batch 1: each step reads all 14 GB of BF16 weights for $2N = 1.4 \times 10^{10}$ FLOPs: $I = 1$. Time per token $\ge 14 \times 10^9 / 3.35 \times 10^{12} = 4.2$ ms, at most 239 tokens/s, no matter how fast the tensor cores are. At batch $B$ the same weight read serves $B$ sequences, so $I \approx B$; decoding becomes compute-bound only near $B \approx 295$, ignoring the KV-cache reads that grow with batch (§73.3).
 
 **Interpretation.** Intensity spans four orders of magnitude across operations of the same model. **Engineering implication.** Before optimizing, compute $I$ for the operations that dominate time. Below the ridge, cut bytes or raise reuse (batch, fuse, tile); above it, use faster formats and better kernels.
 :::
@@ -1053,7 +1053,7 @@ flowchart TB
 
 **Batch size moves the bound.** A weight layer's intensity is roughly the number of rows sharing each weight read (§64.9.2). Growing the batch is nearly free until the ridge (about 300 rows on an H100 in BF16), then time grows linearly. Hence QuickBite's GPU-served ETA model needs batches of 64 (§60.11), and inference servers batch dynamically (§66.6).
 
-**LLM prefill versus decode (preview of Chapter 73).** **Prefill** processes a 2,000-token prompt at once: intensity about 2,000, compute-bound. **Decode** generates one token per sequence per step: intensity about the batch size, memory-bound unless hundreds of sequences are batched, and burdened further by KV-cache reads. The phases want different settings, motivating continuous batching and disaggregated prefill/decode (Chapter 73).
+**LLM prefill versus decode (preview of Chapter 73).** **Prefill** processes a 2,000-token prompt at once: intensity about 2,000, compute-bound. **Decode** generates one token per sequence per step: intensity about the batch size, memory-bound unless hundreds of sequences are batched, and burdened further by KV-cache reads. The phases want different settings, motivating continuous batching and disaggregated prefill/decode (§73.6, §73.12).
 
 ## 64.13 Memory optimization
 
@@ -1080,7 +1080,7 @@ sequenceDiagram
   SM->>HBM: write O block i and softmax statistics
 ```
 
-**Reading the diagram.** A thread block loads its query rows once, then streams key and value blocks from HBM. Each score tile is computed, normalized with a running maximum and sum (so the softmax is exact) and multiplied by its value block on-chip; only the output and two statistics per row return to HBM. Blocks run in parallel across SMs. The storage boundary is the point: the quadratic matrix exists only in SRAM, one tile at a time. Failure points: tiles exceeding shared memory, generation-specific kernels. Scaling: memory grows linearly with sequence length; later versions exploit Hopper's asynchronous features and FP8 (Chapter 73).
+**Reading the diagram.** A thread block loads its query rows once, then streams key and value blocks from HBM. Each score tile is computed, normalized with a running maximum and sum (so the softmax is exact) and multiplied by its value block on-chip; only the output and two statistics per row return to HBM. Blocks run in parallel across SMs. The storage boundary is the point: the quadratic matrix exists only in SRAM, one tile at a time. Failure points: tiles exceeding shared memory, generation-specific kernels. Scaling: memory grows linearly with sequence length; later versions exploit Hopper's asynchronous features and FP8 (§73.9).
 
 ::: example
 **Worked example — Attention memory for QuickBite's chatbot at $s = 8{,}192$.** 32 heads, BF16, one sequence, one layer.

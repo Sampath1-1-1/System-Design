@@ -1168,7 +1168,7 @@ A shared catalog of thousands of features is an asset only if each entry is trus
 2. **Documentation.** Description, entity, window, source, freshness budget, default value, units, and lineage to source tables, generated into a searchable catalog.
 3. **Versioning and deprecation.** Definitions are immutable once consumed; a change creates a new version. The registry records which feature services (and so which models) use each version, so a deprecation can name every consumer and set a removal date. Sculley et al.'s **undeclared consumers** are the risk this removes [Sculley et al. 2015].
 4. **Access control.** Read permissions per view, enforced by the serving API and the offline store; fraud features may be visible to fraud models only.
-5. **Personal data (PII).** Tag views containing personal data, keep raw identifiers out of features where possible (derive "orders in last 30 days" rather than storing addresses), honor deletion requests in both stores, and record the purpose of use for each consumer. Chapter 71 covers privacy techniques.
+5. **Personal data (PII).** Tag views containing personal data, keep raw identifiers out of features where possible (derive "orders in last 30 days" rather than storing addresses), honor deletion requests in both stores, and record the purpose of use for each consumer. §71.9–§71.11 cover privacy techniques.
 
 **Figure 62.13 — Lifecycle of a feature view.**
 

@@ -696,7 +696,7 @@ flowchart LR
   O -->|n x d| N([To MLP block])
 ```
 
-**Reading the diagram.** All $n$ token vectors are projected into queries, keys and values by three matrix multiplies. The score matrix compares every query with every key at once, softmax turns each row into weights, and a final matrix multiply blends the values. Every arrow is a batched matrix operation over all positions simultaneously, so there is no chain over time as in Figure 58.7. The storage cost is the $n \times n$ score matrix per head, and at inference the keys and values of past tokens are cached (the **KV cache**, Chapter 73). Failure point: memory and compute grow with $n^2$ for long inputs. Scaling: shard heads and matrices across devices (Chapter 65).
+**Reading the diagram.** All $n$ token vectors are projected into queries, keys and values by three matrix multiplies. The score matrix compares every query with every key at once, softmax turns each row into weights, and a final matrix multiply blends the values. Every arrow is a batched matrix operation over all positions simultaneously, so there is no chain over time as in Figure 58.7. The storage cost is the $n \times n$ score matrix per head, and at inference the keys and values of past tokens are cached (the **KV cache**, §72.11). Failure point: memory and compute grow with $n^2$ for long inputs. Scaling: shard heads and matrices across devices (Chapter 65).
 
 ### 58.9.2 Why attention parallelizes
 
@@ -928,7 +928,7 @@ $$M_\text{train} \approx \underbrace{16\, N}_{\text{weights, grads, optimizer}} 
 
 1. 7B: $16 \times 7 \times 10^9 = 112$ GB already exceeds an 80 GB accelerator before any activations.
 2. At $b = 8$ the 7B activations (245 GB) are more than twice the fixed 112 GB: **activations dominate at large batch**.
-3. Attention kernels that never materialize the $s \times s$ matrix (FlashAttention, Chapter 73) remove the $5as/h$ term: $34/114 \approx 30\%$ of the original, about 9.1 GB per 2,048-token sequence for 7B.
+3. Attention kernels that never materialize the $s \times s$ matrix (FlashAttention, §73.9) remove the $5as/h$ term: $34/114 \approx 30\%$ of the original, about 9.1 GB per 2,048-token sequence for 7B.
 4. Pure FP32 Adam is also 16 bytes per parameter (4 + 4 + 8): mixed precision does not shrink the fixed part; it halves activation memory and lets matrix multiplies use the much faster 16-bit tensor-core paths (Chapter 64).
 
 **Interpretation.** A 1B model trains on one 80 GB accelerator at small batch; a 7B model cannot be trained on one without sharding or offloading, even though its 14 GB of BF16 weights serve comfortably on one. **Engineering implication.** Size training clusters from $16N$ plus activations, divided by the sharding degree: with ZeRO stage 3 over 8 GPUs, the 112 GB fixed part becomes 14 GB per GPU, leaving room for activations, which you then trim with activation checkpointing (recompute instead of store, at about one extra forward pass, roughly 33% more compute) and smaller micro-batches with gradient accumulation. Chapter 65 develops each technique; Chapter 89 collects the sizing formulas.
@@ -1127,7 +1127,7 @@ What a system designer needs to know: (1) compile time is real, sometimes minute
 - Verify custom gradients with a numerical gradient check; in double precision, correct gradients give relative errors of about $10^{-7}$ or smaller.
 - SGD+momentum keeps 1 extra state copy; Adam/AdamW keeps 2. Warmup protects early training; cosine decay anneals. Learning rates do not transfer between optimizers or batch sizes.
 - Embedding tables ($V \times d$) turn IDs into learned vectors; 100M users × 64 dims is 25.6 GB in FP32. Such models are memory-bound, partitioned by row and cached.
-- Convolutions share weights (few parameters, many FLOPs); RNNs cannot parallelize over time and suffer vanishing/exploding gradients; attention is a parallel content-based lookup with $n^2$ cost (Chapter 72).
+- Convolutions share weights (few parameters, many FLOPs); RNNs cannot parallelize over time and suffer vanishing/exploding gradients; attention is a parallel content-based lookup with $n^2$ cost (§72.6).
 - Read loss curves: NaN/explosion = divergence; flat = plateau; both high = underfitting; validation gap rising = overfitting. Use clipping, normalization, dropout and early stopping accordingly.
 - Training memory ≈ $16N$ bytes (mixed-precision Adam) plus activations, which dominate at large batch: 7B needs 112 GB before activations.
 - Training compute ≈ $6ND$: 7B on $10^{12}$ tokens is $4.2 \times 10^{22}$ FLOPs, about 29,000 GPU-hours at 40% MFU on a $10^{15}$ FLOP/s device.

@@ -7,7 +7,7 @@ A QuickBite customer types "spicy vegetarian noodles" into the search box. No di
 The idea is simple. Doing it fast is not. Comparing one query with 5 million dish vectors means billions of multiply-adds; at 100 million vectors a single query reads 300 GB of memory. This chapter is about the data structures and systems that make "find the nearest vectors" take a few milliseconds instead of a second: **approximate nearest neighbor (ANN)** indexes (HNSW graphs, IVF clustering, product quantization, SSD-resident graphs), filtering, updates, and the architecture of the **vector databases** built around them. It owns these topics for the book. Hybrid lexical-plus-vector retrieval, reranking and the rest of retrieval-augmented generation (RAG) are in Chapter 75; two-tower recommendation models, which produce vectors for this machinery, are in §68.6.
 
 ::: note
-**QuickBite assumptions used in this chapter.** Teaching assumptions, not measurements of a real company. Reused: 50,000 restaurants with about 5 million dishes (§58.6), spread over 20 cities and 4,000 delivery zones (Ch 62, Ch 70), so about 250,000 dishes per city; about 1,200 restaurants (120,000 dishes) can deliver to a typical address at dinner time (§68.3); search peaks at 2,000 requests per second (RPS) with a 300 ms p99 target (§2.4, §2.11); peak-to-average traffic ratio 9.6 (§18.11); the support chatbot of Chapter 65. **New in this chapter:** dish and support text is embedded by a 768-dimension text model; the vector part of dish search gets 30 ms of the 300 ms search budget; the help center holds 8,000 articles split into about 60,000 chunks; the chatbot issues about 15 retrieval queries per second at peak. Sizes use SI units (1 GB = 10⁹ bytes); one multiply-add counts as 2 floating-point operations (FLOPs), as in Chapters 58 and 64.
+**QuickBite assumptions used in this chapter.** Teaching assumptions, not measurements of a real company. Reused: 50,000 restaurants with about 5 million dishes (§58.6), spread over 20 cities and 4,000 delivery zones (Ch 62, Ch 70), so about 250,000 dishes per city; about 1,200 restaurants (120,000 dishes) can deliver to a typical address at dinner time (§68.3); search peaks at 2,000 requests per second (RPS) with a 300 ms p99 target (§2.4, §2.11); peak-to-average traffic ratio 9.6 (§18.11); the support chatbot of Chapter 65. **New in this chapter:** dish and support text is embedded by a 768-dimension text model; the vector part of dish search gets 30 ms of the 300 ms search budget; the support knowledge corpus is about 25,800 chunks and the chatbot issues about 8 retrieval queries per second at peak (both from Chapter 75). Sizes use SI units (1 GB = 10⁹ bytes); one multiply-add counts as 2 floating-point operations (FLOPs), as in Chapters 58 and 64.
 :::
 
 ## 74.1 Learning objectives
@@ -130,7 +130,7 @@ flowchart TB
 | Dimension | Memory $N d s$ and distance cost $\propto d$ | 768, truncatable (below) |
 | Latency and cost | Query encoding time on target hardware | Must fit about 10 ms of the 30 ms vector budget |
 | Hosting and license | Self-hosted or API; data residency; terms | Self-hosted, so queries stay internal |
-| Max input length | Tokens per input; longer text is truncated or chunked | Dish text is short; help articles are chunked (Ch 75) |
+| Max input length | Tokens per input; longer text is truncated or chunked | Dish text is short; help articles are chunked (§75.6) |
 
 Public leaderboards are a starting point, not a decision: they mix tasks, some models were trained on data close to the benchmarks, and none contains your queries. The only decisive test is recall on your own labeled queries.
 
@@ -258,7 +258,7 @@ $$\text{FLOPs} = 2 N d B \qquad \text{bytes} = N d s \qquad T \approx \max\!\lef
 
 Exact search wins when the work per query is small or the query rate is low. Two QuickBite cases qualify:
 
-- **Support chatbot retrieval.** 60,000 chunks × 768 × 4 B = 184 MB. One query reads it once: about 9 ms at a single core's roughly 20 GB/s, or 2–3 ms across a few cores. At 15 queries per second this is a fraction of one server, with perfect recall and no index to build or tune.
+- **Support chatbot retrieval.** 25,800 chunks × 768 × 4 B = 79 MB. One query reads it once: about 4 ms at a single core's roughly 20 GB/s, or about 1 ms across a few cores. At 8 queries per second this is a fraction of one server, with perfect recall and no index to build or tune.
 - **Similar restaurants.** All 50,000 × 50,000 pairs at 768 dimensions are $2 \times 5 \times 10^4 \times 5 \times 10^4 \times 768 = 3.8 \times 10^{12}$ FLOPs, one matrix multiply: seconds on a GPU, minutes on CPUs. Compute the top 50 per restaurant nightly and store them in a key–value table.
 
 Dish search does not qualify. Even after filtering to the 120,000 deliverable dishes, each query would read $1.2 \times 10^5 \times 768 \times 4 = 369$ MB, and 2,000 queries per second would need 737 GB/s. A practical rule: exact search is fine while $N \times d \times \text{QPS}$ stays below about $10^{11}$ to $10^{12}$ multiply-adds per second per server, and when filters cut the candidate set to a few thousand vectors (§74.11).
@@ -1155,7 +1155,7 @@ $$\text{shards} = \left\lceil \frac{N\,(b_v + b_g + b_{id})}{R\,u} \right\rceil 
 4. ANN: $2{,}000 \times 0.001 / 0.5 = 4$ cores.
 5. Query encoder: $2{,}000 \times 0.005 / 0.5 = 20$ cores, or a small GPU with dynamic batching (§66.7).
 6. Three replicas across availability zones, each a 32 GB, 16-vCPU node holding all 20 city indexes; a lost zone leaves two replicas, each able to carry peak load.
-7. Support chunks (184 MB, 15 QPS) and similar restaurants (nightly batch) need no ANN infrastructure.
+7. Support chunks (79 MB, 8 QPS) and similar restaurants (nightly batch) need no ANN infrastructure.
 
 **Interpretation.** At QuickBite's scale the index is small; the *query encoder* costs five times the search. At 100 million vectors, memory dominates and compression choices decide the node count. **Engineering implication.** Size memory first, then throughput, then add replicas for zone failure; measure $t_\text{cpu}$ on the harness at the target recall rather than trusting benchmark numbers.
 :::
@@ -1179,7 +1179,7 @@ flowchart TB
   D3 -->|no| VDB["Dedicated vector DB:<br/>managed or self-hosted"]
 ```
 
-**Reading the diagram.** Each diamond is a decision; the first branch that applies wins. Small collections need no index. Data already in PostgreSQL at moderate scale is best served next to the rows, with transactional consistency and joins. A team that already runs a search cluster adds vector fields there and gets hybrid retrieval (Chapter 75) in one system. A static corpus rebuilt periodically fits an in-process library, which is the fastest option but leaves durability, updates, filtering and replication to you. Everything else, especially large, frequently updated, filter-heavy, multi-tenant workloads, justifies a dedicated database. The thresholds are rough guides, not limits.
+**Reading the diagram.** Each diamond is a decision; the first branch that applies wins. Small collections need no index. Data already in PostgreSQL at moderate scale is best served next to the rows, with transactional consistency and joins. A team that already runs a search cluster adds vector fields there and gets hybrid retrieval (§75.8.3) in one system. A static corpus rebuilt periodically fits an in-process library, which is the fastest option but leaves durability, updates, filtering and replication to you. Everything else, especially large, frequently updated, filter-heavy, multi-tenant workloads, justifies a dedicated database. The thresholds are rough guides, not limits.
 
 **When pgvector is enough.** Vectors fit one node's RAM with their HNSW graph (tens of millions at most, fewer at high dimension); writes fit a single primary; filters are either selective enough for an ordinary B-tree index plus exact scan, or few-valued enough for partial indexes or partitioning, as its documentation recommends; and you value transactions, joins, backups and one operational stack over the last increment of QPS. Enable iterative index scans (available since pgvector 0.8.0) for filtered queries so that the scan continues until enough rows pass [pgvector Docs]. QuickBite's support chunks and even its 5-million-dish index fit this profile; a 100-million-vector multimodal index updated continuously does not.
 
@@ -1255,7 +1255,7 @@ flowchart TB
 ### Advanced
 
 **Q5. Design the vector index for QuickBite dish search.**
-**Answer.** 768-dimension text model; per-city HNSW over int8 vectors (about 4.5 GB in total) with FP32 re-ranking; filter-aware search for deliverability and dietary tags; CDC feeding growing segments for minute-level freshness; three zone replicas; query encoder batched on GPU or about 20 cores; recall@10 ≥ 0.95 tuned on logged queries; hybrid fusion with BM25 (Chapter 75); index and encoder versioned together with blue/green re-embedding.
+**Answer.** 768-dimension text model; per-city HNSW over int8 vectors (about 4.5 GB in total) with FP32 re-ranking; filter-aware search for deliverability and dietary tags; CDC feeding growing segments for minute-level freshness; three zone replicas; query encoder batched on GPU or about 20 cores; recall@10 ≥ 0.95 tuned on logged queries; hybrid fusion with BM25 (§75.8.3); index and encoder versioned together with blue/green re-embedding.
 
 **Q6. How do you upgrade the embedding model with no downtime?**
 **Answer.** Re-embed the corpus into a new index version while dual-writing new items; evaluate recall and product metrics offline and in an A/B test; switch query encoder and index together atomically by version; keep the old pair for rollback; budget GPU time and double memory during the overlap.

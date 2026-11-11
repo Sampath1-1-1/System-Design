@@ -6,10 +6,10 @@ A QuickBite customer types into the support chat at 8:12 p.m.: "my order came 35
 
 **Retrieval-augmented generation (RAG)** is the architecture that does this. Before the model writes, a retrieval system finds the few passages that bear on the question and places them in the prompt; the model then answers from that evidence. This chapter treats RAG as a system with two pipelines: an offline **ingestion pipeline** that turns documents into a searchable index, and an online **query pipeline** that retrieves, reranks, builds a context and generates a grounded, cited answer. You will size each stage, implement a chunker, a hybrid retriever and the retrieval metrics, and learn where RAG systems fail in production.
 
-The chapter builds on others. Inverted indexes and BM25 are Chapter 16 (§16.3, §16.5); embedding models, approximate nearest neighbor (ANN) indexes and vector databases, including filtered search, are Chapter 74 (§74.11 for filtering); tokens and context windows are Chapter 72; prefix caching and serving cost are Chapter 73; ranking metrics are §57.12; ingestion pipelines are Chapter 61. LLM evaluation methodology (LLM-as-a-judge, hallucination detection, prompt-injection defenses) belongs to Chapter 78, the choice between fine-tuning and RAG to Chapter 76, and agent orchestration to Chapter 77; this chapter previews each and cross-references the owner.
+The chapter builds on others. Inverted indexes and BM25 are Chapter 16 (§16.3, §16.5); embedding models, approximate nearest neighbor (ANN) indexes and vector databases, including filtered search, are Chapter 74 (§74.11 for filtering); tokens and context windows are Chapter 72; prefix caching and serving cost are Chapter 73 (§73.8, §73.15); ranking metrics are §57.12; ingestion pipelines are Chapter 61. LLM evaluation methodology (LLM-as-a-judge, hallucination detection, prompt-injection defenses) belongs to Chapter 78, the choice between fine-tuning and RAG to Chapter 76, and agent orchestration to Chapter 77; this chapter previews each and cross-references the owner.
 
 ::: note
-**QuickBite assumptions used in this chapter.** These reuse the Book II design point and are teaching assumptions, not measurements of a real company: 500,000 orders a day; the support chatbot is a 7B model (§58.11) adapted by continued pre-training on 50 billion tokens (§65.9.1) with an 8,192-token context window (§64); GPUs cost \$2.50 per GPU-hour and a 16-vCPU node \$0.77 per hour (§60.11); the reference GPU is an H100 with 989 TFLOP/s dense BF16 (Chapter 67). **New in this chapter:** 6% of orders open a support chat, so 30,000 conversations a day with 2.5 user messages each, about **75,000 RAG queries a day**, peaking at **8 queries per second** (an average of 0.87/s times a peak-to-average ratio of about 9.6, as in §60.6; consistent with the 200 concurrent conversations of Chapter 64 sending a message every 25 s). The knowledge corpus is 3,000 help-center articles (about 900 tokens each), 400 policy documents (about 6,000 tokens) and 5,000 internal support runbooks (about 700 tokens): 8,400 documents and **8.6 million tokens**. A separate **resolved-case corpus** for the human-agent assistant holds two years of one-paragraph case summaries: 21.9 million cases of about 250 tokens. Embeddings have 768 dimensions. LLM token prices are an illustrative internal transfer price for the self-hosted 7B model: \$0.20 per million input tokens and \$0.60 per million output tokens (Chapter 73 derives such prices from GPU-hours). Sizes use SI units (1 GB = 10⁹ bytes).
+**QuickBite assumptions used in this chapter.** These reuse the Book II design point and are teaching assumptions, not measurements of a real company: 500,000 orders a day; the support chatbot is a 7B model (§58.11) adapted by continued pre-training on 50 billion tokens (§65.9.1) with an 8,192-token context window (§64.13); GPUs cost \$2.50 per GPU-hour and a 16-vCPU node \$0.77 per hour (§60.11); the reference GPU is an H100 with 989 TFLOP/s dense BF16 (Table 64.4). **New in this chapter:** 6% of orders open a support conversation, 30,000 a day: the 10,000 chatbot conversations of Chapters 72–73 (2% of orders, Table 61.1) and 20,000 handled by human agents with a retrieval assistant. At 2.5 retrieval queries per conversation on average (six per chatbot conversation, fewer for agents), that is about **75,000 RAG queries a day**, peaking at **8 queries per second** (an average of 0.87/s times a peak-to-average ratio of about 9.6, as in §60.6). The knowledge corpus is 3,000 help-center articles (about 900 tokens each), 400 policy documents (about 6,000 tokens) and 5,000 internal support runbooks (about 700 tokens): 8,400 documents and **8.6 million tokens**. A separate **resolved-case corpus** for the human-agent assistant holds two years of one-paragraph case summaries: 21.9 million cases of about 250 tokens. Embeddings have 768 dimensions. LLM token prices are an illustrative internal transfer price for the self-hosted 7B model: \$0.20 per million input tokens and \$0.60 per million output tokens (§73.15.1 derives per-token costs from GPU-hours; a dedicated 7B fleet at QuickBite's volume costs about \$1.26 per million tokens, so these prices assume a shared, well-utilized platform, Chapter 79). Sizes use SI units (1 GB = 10⁹ bytes).
 :::
 
 ## 75.1 Learning objectives
@@ -427,7 +427,7 @@ $$N = \sum_{i=1}^{D} \max\!\left(1, \left\lceil \frac{L_i - o}{c - o} \right\rce
 6. Chunk text at about 4 bytes per token: $25{,}800 \times 400 \times 4 = 41.3$ MB.
 7. The resolved-case corpus, one 250-token chunk per case: $N = 21.9$ million. FP32: $21.9 \times 10^6 \times 3{,}400 = 74.5$ GB. INT8 vectors ($b = 1$): $21.9 \times 10^6 \times (768 + 328) = 24.0$ GB.
 
-**Interpretation.** The knowledge corpus fits in the memory of one small node, and even exact (brute-force) search is cheap: $25{,}800 \times 768 \approx 2 \times 10^7$ multiply–adds, a few milliseconds on one core. The case corpus is 850 times larger and needs an ANN index, quantization and probably partitioning (Chapter 74). **Engineering implication.** Do not reach for a distributed vector database because the system "does RAG"; size it first. For QuickBite's chatbot, the hard problems are ingestion quality and access control, not vector scale.
+**Interpretation.** The knowledge corpus fits in the memory of one small node, and even exact (brute-force) search is cheap: $25{,}800 \times 768 \approx 2 \times 10^7$ multiply–adds, a few milliseconds on one core. The case corpus is 850 times larger and needs an ANN index, quantization and probably partitioning (§74.9, §74.14). **Engineering implication.** Do not reach for a distributed vector database because the system "does RAG"; size it first. For QuickBite's chatbot, the hard problems are ingestion quality and access control, not vector scale.
 :::
 
 ### 75.6.4 Choosing chunk size
@@ -610,7 +610,7 @@ $$T = \frac{T_\text{emb}}{G \times r} \qquad C_\text{self} = G \times \frac{T}{3
 :::
 
 ::: example
-**Worked example — Embedding QuickBite's two corpora.** Assumptions: a 300-million-parameter encoder sustains $r = 200{,}000$ tokens/s per H100 (a forward pass costs about $2 \times 3 \times 10^8 = 6 \times 10^{11}$ FLOPs per token, so this is 12% of 989 TFLOP/s; short sequences and padding keep utilization low). $p_\text{GPU} = \$2.50$; an illustrative hosted price $p_\text{tok} = \$0.05$ per million tokens. Header $h = 30$ tokens.
+**Worked example — Embedding QuickBite's two corpora.** Assumptions: a 300-million-parameter encoder sustains $r = 200{,}000$ tokens/s per H100 (a forward pass costs about $2 \times 3 \times 10^8 = 6 \times 10^{8}$ FLOPs per token, so this is 12% of 989 TFLOP/s; short sequences and padding keep utilization low). $p_\text{GPU} = \$2.50$; an illustrative hosted price $p_\text{tok} = \$0.05$ per million tokens. Header $h = 30$ tokens.
 
 1. Knowledge corpus: overlap inflates 8.6M tokens by $400/350$ to 9.83M; headers add $25{,}800 \times 30 = 0.77$M; $T_\text{emb} = 10.6$M tokens.
 2. On one GPU: $T = 10.6 \times 10^6 / 2 \times 10^5 = 53$ s; $C_\text{self} = 53/3{,}600 \times 2.50 = \$0.04$. Via API: $10.6 \times 0.05 = \$0.53$.
@@ -618,7 +618,7 @@ $$T = \frac{T_\text{emb}}{G \times r} \qquad C_\text{self} = G \times \frac{T}{3
 4. On 8 GPUs: $T = 6.13 \times 10^9 / (8 \times 2 \times 10^5) = 3{,}833$ s $= 64$ min; $C_\text{self} = 8 \times 1.065 \times 2.50 = \$21$. Via API: $6{,}132 \times 0.05 = \$307$, before rate limits stretch it to hours.
 5. Daily increment: $30{,}000$ new cases $\times 280 = 8.4$M tokens, 42 GPU-seconds.
 
-**Interpretation.** Embedding the knowledge corpus is cheaper than a cup of coffee and takes under a minute; even the 21.9-million-case corpus re-embeds in about an hour for about \$21 of GPU time. **Engineering implication.** Embedding cost rarely decides a design; what does is the *index rebuild* that follows (building an HNSW graph over 21.9 million vectors takes hours of CPU, Chapter 74), the rate limits of hosted APIs, and the operational work of switching models safely.
+**Interpretation.** Embedding the knowledge corpus is cheaper than a cup of coffee and takes under a minute; even the 21.9-million-case corpus re-embeds in about an hour for about \$21 of GPU time. **Engineering implication.** Embedding cost rarely decides a design; what does is the *index rebuild* that follows (building an HNSW graph over 21.9 million vectors takes hours of CPU, §74.7), the rate limits of hosted APIs, and the operational work of switching models safely.
 :::
 
 Batching matters more than the GPU: sort chunks by length before batching so padding is small, run large batches (hundreds of sequences), and keep the job idempotent per chunk hash so a crash resumes instead of restarting, the same discipline as the batch pipelines of §61.5.
@@ -656,7 +656,7 @@ The index version, embedding-model version, chunker version and parser version a
 
 ### 75.8.1 Dense retrieval
 
-**Dense retrieval** embeds the query with the same encoder as the chunks and returns the nearest chunk vectors by cosine similarity, using an ANN index (Chapter 74). Karpukhin et al.'s **Dense Passage Retrieval (DPR)** trained two BERT encoders, one for questions and one for passages, with in-batch negatives, and outperformed a strong Lucene BM25 baseline by 9–19 percentage points in top-20 passage retrieval accuracy on open-domain question answering [Karpukhin et al. 2020]. Dense retrieval matches *meaning*: "money back for a missing burger" finds "refund policy for missing items" with no word in common except "missing".
+**Dense retrieval** embeds the query with the same encoder as the chunks and returns the nearest chunk vectors by cosine similarity, using an ANN index (§74.7–§74.10). Karpukhin et al.'s **Dense Passage Retrieval (DPR)** trained two BERT encoders, one for questions and one for passages, with in-batch negatives, and outperformed a strong Lucene BM25 baseline by 9–19 percentage points in top-20 passage retrieval accuracy on open-domain question answering [Karpukhin et al. 2020]. Dense retrieval matches *meaning*: "money back for a missing burger" finds "refund policy for missing items" with no word in common except "missing".
 
 ### 75.8.2 Sparse retrieval
 
@@ -1092,7 +1092,7 @@ flowchart TB
   P1 --> P2 --> P3 --> P4 --> P5 --> P6
 ```
 
-**Reading the diagram.** The static system section comes first so the LLM server's prefix cache can reuse it across all requests (Chapter 73); per-request content follows. Order facts and sources are separate labeled blocks, so each can be cited and instructions inside them recognized as data. The question sits near the end, then the output schema. Failure point: a per-request value (a timestamp, the user's name) in section 1 breaks the cacheable prefix for every request.
+**Reading the diagram.** The static system section comes first so the LLM server's prefix cache can reuse it across all requests (§73.8); per-request content follows. Order facts and sources are separate labeled blocks, so each can be cited and instructions inside them recognized as data. The question sits near the end, then the output schema. Failure point: a per-request value (a timestamp, the user's name) in section 1 breaks the cacheable prefix for every request.
 
 ### 75.11.4 Prompt injection through retrieved content
 
@@ -1345,13 +1345,13 @@ $$T_\text{TTFT} = t_\text{gw} + \max(t_\text{cond}, t_\text{facts}) + \max(t_\te
 :::
 
 ::: example
-**Worked example — QuickBite's p50 path.** Assumptions: a 1B-parameter condenser (450 prompt tokens, 30 output tokens at 6 ms each) takes 190 ms; order fetch 40 ms; embedding 8 ms + ANN 12 ms; BM25 18 ms; fusion 1 ms; reranking 59 ms (§75.9.2); context 5 ms; queueing 50 ms. Prefill of 4,050 tokens on the 7B model: $2 \times 7 \times 10^9 \times 4{,}050 = 5.67 \times 10^{13}$ FLOPs at $2.47 \times 10^{14}$ FLOP/s $= 230$ ms. Gateway 20 ms.
+**Worked example — QuickBite's p50 path.** Assumptions: a 1B-parameter condenser (450 prompt tokens, 30 output tokens at 6 ms each) takes 190 ms; order fetch 40 ms; embedding 8 ms + ANN 12 ms; BM25 18 ms; fusion 1 ms; reranking 59 ms (§75.9.2); context 5 ms; queueing 50 ms. Prefill of 4,050 tokens on the 7B model: $2 \times 7 \times 10^9 \times 4{,}050 = 5.67 \times 10^{13}$ FLOPs at the reranker's 25% utilization, $2.47 \times 10^{14}$ FLOP/s, $= 230$ ms (conservative for a busy shared GPU; Chapter 73's 50% MFU would give 115 ms). Gateway 20 ms.
 
 1. $T_\text{TTFT} = 20 + \max(190, 40) + \max(20, 18) + 1 + 59 + 5 + 50 + 230 = 575$ ms.
 2. Full answer: 200 output tokens at 25 ms each $= 5.0$ s after the first token, so about 5.6 s in total, streamed.
 3. First message of a conversation (no history, no condensation): $575 - 190 + 40 = 425$ ms, since the order fetch becomes the longest parallel branch.
 
-**Interpretation.** Retrieval proper (embedding, two searches, fusion) is 21 ms, under 4% of TTFT; the model calls (condenser, reranker, prefill) are 83%. **Engineering implication.** Optimize the model calls first: a smaller condenser, skipping it when there is no history, prefix caching of the 700-token system prompt (Chapter 73), and a smaller $k$. Leave a budget for the grounding check (Figure 75.12), which delays the visible answer unless it runs sentence by sentence as tokens stream.
+**Interpretation.** Retrieval proper (embedding, two searches, fusion) is 21 ms, under 4% of TTFT; the model calls (condenser, reranker, prefill) are 83%. **Engineering implication.** Optimize the model calls first: a smaller condenser, skipping it when there is no history, prefix caching of the 700-token system prompt (§73.8), and a smaller $k$. Leave a budget for the grounding check (Figure 75.12), which delays the visible answer unless it runs sentence by sentence as tokens stream.
 :::
 
 **Figure 75.15 — Critical path of one follow-up question, p50, in milliseconds.**
@@ -1400,7 +1400,7 @@ flowchart LR
   IDX -.->|invalidate by doc| SC
 ```
 
-**Reading the diagram.** Four caches, from safest to riskiest. The LLM's **prefix cache** reuses the static system prompt (Chapter 73). The **embedding cache** maps exact query text to a vector, keyed by model version. The **retrieval cache** maps (query, ACL scope, index version) to chunk IDs and is invalidated by ingestion events (§20.10.2). The **semantic answer cache** returns a stored answer for a nearby query embedding; it saves the most and is the most dangerous: "cancel my order" and "cancel my membership" can be neighbors with different answers, and personalized answers must never cross users. QuickBite limits it to non-personalized FAQs, scoped by audience and market, with a high threshold.
+**Reading the diagram.** Four caches, from safest to riskiest. The LLM's **prefix cache** reuses the static system prompt (§73.8). The **embedding cache** maps exact query text to a vector, keyed by model version. The **retrieval cache** maps (query, ACL scope, index version) to chunk IDs and is invalidated by ingestion events (§20.10.2). The **semantic answer cache** returns a stored answer for a nearby query embedding; it saves the most and is the most dangerous: "cancel my order" and "cancel my membership" can be neighbors with different answers, and personalized answers must never cross users. QuickBite limits it to non-personalized FAQs, scoped by audience and market, with a high threshold.
 
 ### 75.15.3 Cost per query
 

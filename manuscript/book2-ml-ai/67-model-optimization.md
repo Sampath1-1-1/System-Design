@@ -123,7 +123,7 @@ $$S = \frac{1}{(1 - f) + f \cdot \dfrac{b_\text{new}}{b_\text{old}}} \qquad S_\t
 3. Suppose a profile shows weight reads are $f = 0.8$ of the step (the rest is KV-cache reads, small kernels and launch gaps; assumed). Then $S = 1/(0.2 + 0.8/3.88) = 1/(0.2 + 0.206) = 2.46$.
 4. With $f = 0.9$: $S = 1/(0.1 + 0.232) = 3.01$.
 
-**Interpretation.** A 3.9× reduction in weight bytes yields a 2.5–3× faster token, because the untouched 10–20% of the step now dominates. **Engineering implication.** After compressing weights, profile again: the next bottleneck (KV cache, Chapter 73; launch overhead, §67.14) is now where the remaining time goes.
+**Interpretation.** A 3.9× reduction in weight bytes yields a 2.5–3× faster token, because the untouched 10–20% of the step now dominates. **Engineering implication.** After compressing weights, profile again: the next bottleneck (KV cache, §73.5; launch overhead, §67.14) is now where the remaining time goes.
 :::
 
 The same reasoning sizes a CPU fleet. §60.11 sized QuickBite's deep ETA model at 2 ms of CPU per prediction, 11 nodes in all.
@@ -692,7 +692,7 @@ $$M_\text{w} = N \cdot \frac{b + b_s / g}{8}$$
 
 1. FP16: $70 \times 10^9 \times 2 = 140$ GB; two GPUs and tensor parallelism (§65.10) before serving a single request.
 2. INT4, $g = 128$: $70 \times 10^9 \times (4 + 16/128)/8 = 36.1$ GB; one GPU.
-3. KV cache at FP16 for this shape (80 layers, 8 KV heads of 128 dimensions) is $2 \times 80 \times 8 \times 128 \times 2 = 327{,}680$ bytes per token (Chapter 73 derives it). The 43.9 GB left holds about 134,000 tokens of context across all concurrent requests; the INT8 model's 10 GB holds about 30,000.
+3. KV cache at FP16 for this shape (80 layers, 8 KV heads of 128 dimensions) is $2 \times 80 \times 8 \times 128 \times 2 = 327{,}680$ bytes per token (§72.11 derives it). The 43.9 GB left holds about 134,000 tokens of context across all concurrent requests; the INT8 model's 10 GB holds about 30,000.
 4. Embedding and output layers are often kept at 16 bits; for a 32,000-token vocabulary they add about 0.8 GB over INT4.
 
 **Interpretation.** INT4 does not just halve cost against INT8; it turns a GPU with no room for requests into one with room for many. **Engineering implication.** Size LLM serving from weights *plus* KV cache, and quantize weights first because they are the fixed cost; Chapter 73 quantizes the KV cache itself.
@@ -1162,7 +1162,7 @@ Inference memory is weights, live activations, runtime workspace and, for genera
 - **Weight sharing.** Tie the input embedding and output projection (one matrix, used twice); serve many fine-tuned variants as one shared base model plus small adapters (Chapters 73 and 76); load several small models into one process instead of one GPU each (§64.15).
 - **Activation memory planning.** Runtimes (ORT, TensorRT, Inductor) compute tensor lifetimes and reuse buffers, so peak activation memory is the largest set of simultaneously live tensors, not their sum.
 - **Lower-precision storage of large tables.** QuickBite's user-embedding table of 10 million rows × 64 dimensions is 2.56 GB in FP32 (§58.6). Row-wise INT8 with an FP16 scale and offset per row needs $10^7 \times (64 + 4) = 0.68$ GB, 3.8× less, so it fits beside the model on every replica instead of in a remote store.
-- **KV-cache memory** grows with batch × context length and often exceeds the weights in LLM serving; Chapter 73 owns its paging, sharing and quantization.
+- **KV-cache memory** grows with batch × context length and often exceeds the weights in LLM serving; §73.7, §73.8 and §73.13 own its paging, sharing and quantization.
 
 When a model still does not fit, **offloading** keeps some weights in CPU memory or NVMe and streams them to the GPU when needed.
 

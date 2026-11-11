@@ -862,7 +862,7 @@ sequenceDiagram
 
 1. **Heavy-ranker compute.** It dominates the fleet; candidates per request multiply it directly. Levers: tighter light-ranker cut-off, batching, accelerators, model distillation (Chapter 67).
 2. **Feature fetch fan-out.** Any design that issues one remote call per candidate fails at $1.56 \times 10^8$ lookups/s. Keep item features local and cross features keyed by user.
-3. **ANN index memory and rebuilds.** The retrieval index must hold 50 million embeddings in memory on every replica and absorb new items within 15 minutes; incremental insertion plus periodic full rebuild (Chapter 74).
+3. **ANN index memory and rebuilds.** The retrieval index must hold 50 million embeddings in memory on every replica and absorb new items within 15 minutes; incremental insertion plus periodic full rebuild (§74.12).
 4. **Hot users and hot items.** A celebrity's new post enters millions of following-inboxes (the fan-out problem of Chapter 53); a viral item's feature row is read by every ranker, which the in-process cache absorbs.
 5. **Logging throughput.** 92 TB/day of logs is a Kafka and lake capacity problem; compress, sample the full-candidate logs, and partition by hour.
 

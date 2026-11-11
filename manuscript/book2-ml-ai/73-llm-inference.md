@@ -9,7 +9,7 @@ This changes almost every serving decision. Batching becomes a per-step scheduli
 Chapter 72 explains the transformer (prefill and decode, the KV cache, grouped-query attention, mixture of experts, sampling); Chapters 64–67 supply the roofline, parallelism, general serving and weight quantization. This chapter uses those results without re-deriving them.
 
 ::: note
-**Assumptions used in this chapter.** Units are SI (1 kB, GB = 10³, 10⁹ bytes; 1 TB/s = 10¹² bytes/s). The reference GPU is an NVIDIA H100 SXM: 80 GB HBM at 3.35 TB/s and 989 TFLOP/s dense BF16 (Table 64.4, as of 2026) at an illustrative \$2.50 per GPU-hour (§60.11). We assume engines achieve 80% of peak bandwidth (2.68 TB/s) in decode, 50% model FLOPs utilization (MFU, §64.11) in prefill (494.5 TFLOP/s) and 2 ms of fixed overhead per step. **QuickBite's support chatbot** is the Llama-2-7B-like model of §72.8.2 ($h = 4{,}096$, $L = 32$, 32 heads and 32 KV heads of 128 dimensions; 6.74 billion parameters, rounded to 7B and 14 GB in FP16; 524 kB of KV cache per token, §72.11). The **hypothetical 70B option** has $h = 8{,}192$, $L = 80$, 64 query heads and 8 KV heads (Llama-2-70B-like, §67.6). **Traffic (§72.4.5):** 10,000 conversations a day, up to 200 concurrent at peak; each has 6 turns totaling about 9,063 input and 468 output tokens, so one LLM call averages $n_\text{in} \approx 1{,}510$ input tokens (1,000 of them a shared system prompt) and $n_\text{out} = 78$ output tokens: 60,000 calls a day. Peak-to-average ratio 10, as for orders (60/s peak, 5.8/s average). These are teaching assumptions, not measurements.
+**Assumptions used in this chapter.** Units are SI (1 KB, GB = 10³, 10⁹ bytes; 1 TB/s = 10¹² bytes/s). The reference GPU is an NVIDIA H100 SXM: 80 GB HBM at 3.35 TB/s and 989 TFLOP/s dense BF16 (Table 64.4, as of 2026) at an illustrative \$2.50 per GPU-hour (§60.11). We assume engines achieve 80% of peak bandwidth (2.68 TB/s) in decode, 50% model FLOPs utilization (MFU, §64.11) in prefill (494.5 TFLOP/s) and 2 ms of fixed overhead per step. **QuickBite's support chatbot** is the Llama-2-7B-like model of §72.8.2 ($h = 4{,}096$, $L = 32$, 32 heads and 32 KV heads of 128 dimensions; 6.74 billion parameters, rounded to 7B and 14 GB in FP16; 524 KB of KV cache per token, §72.11). The **hypothetical 70B option** has $h = 8{,}192$, $L = 80$, 64 query heads and 8 KV heads (Llama-2-70B-like, §67.6). **Traffic (§72.4.5):** 10,000 conversations a day, up to 200 concurrent at peak; each has 6 turns totaling about 9,063 input and 468 output tokens, so one LLM call averages $n_\text{in} \approx 1{,}510$ input tokens (1,000 of them a shared system prompt) and $n_\text{out} = 78$ output tokens: 60,000 calls a day. Peak-to-average ratio 10, as for orders (60/s peak, 5.8/s average). These are teaching assumptions, not measurements.
 :::
 
 ## 73.1 Learning objectives
@@ -366,7 +366,7 @@ $$k = 2 \cdot L \cdot n_\text{kv} \cdot d_\text{head} \cdot b_\text{kv} \qquad M
 | 70B, GQA (Llama-2-70B-like) | 80 | 8 × 128 | 327,680 | 3,052 |
 | 70B if it used MHA | 80 | 64 × 128 | 2,621,440 | 381 |
 
-The last row shows why large models adopted GQA: with MHA the 70B model would hold eight times fewer tokens per gigabyte. Some newer architectures cache a compressed latent instead (Chapter 72).
+The last row shows why large models adopted GQA: with MHA the 70B model would hold eight times fewer tokens per gigabyte. Some newer architectures, such as DeepSeek-V2's multi-head latent attention, cache a compressed latent instead.
 
 ::: mistake
 **"Weights fit, so the model fits."** A 70B FP16 model on two 80 GB GPUs leaves essentially nothing for the KV cache. Serving needs weights plus KV cache for the target concurrency plus overhead; check all three before choosing hardware.
@@ -711,7 +711,7 @@ Every chatbot call starts with the same 1,000-token instruction manual. Recomput
 
 #### Why does this exist?
 
-Real traffic is full of shared prefixes: system prompts, tool definitions, few-shot examples, retrieved documents (Chapter 75), multi-turn histories and agent transcripts (Chapter 77). Without reuse, prefill cost and TTFT grow with conversation length and every sequence stores its own copy of the prefix.
+Real traffic is full of shared prefixes: system prompts, tool definitions, few-shot examples, retrieved documents (§75.11), multi-turn histories and agent transcripts (Chapter 77). Without reuse, prefill cost and TTFT grow with conversation length and every sequence stores its own copy of the prefix.
 
 #### How it works internally
 
@@ -839,7 +839,7 @@ $$Q_\text{std} = \Theta(n\,d + n^2) \qquad Q_\text{flash} = \Theta\!\left(\frac{
 | $n$ | Sequence length | tokens |
 | $d$ | Head dimension | values |
 | $M$ | On-chip SRAM per SM, in elements | elements |
-| $I_\text{dec}$ | Decode attention FLOPs per KV byte read | FLOP/byte |
+| $I_\text{dec}$ | Decode attention FLOPs per KV byte read | FLOPs/byte |
 | $g$ | Query heads sharing one KV head (1 for MHA) | heads |
 | $b_\text{kv}$ | Bytes per KV element | bytes |
 :::
@@ -848,7 +848,7 @@ $$Q_\text{std} = \Theta(n\,d + n^2) \qquad Q_\text{flash} = \Theta\!\left(\frac{
 **Worked example — Prefill traffic and decode parallelism.** H100: about 228 KB of shared memory per SM, roughly $10^5$ FP16 elements (assumed usable); 132 SMs.
 
 1. *Prefill, $n = 8{,}192$, $d = 128$.* $n^2 = 6.7 \times 10^7$ elements; $n^2 d^2/M = 6.7 \times 10^7 \times 16{,}384/10^5 = 1.1 \times 10^7$: about 6× fewer HBM accesses, and no $n \times n$ buffer (134 MB per head per layer in FP16).
-2. *Decode intensity.* MHA, FP16: $I = 2 \times 1/2 = 1$ FLOP/byte; 70B GQA ($g = 8$): 8 FLOP/byte. The H100 ridge point is $989/3.35 \approx 295$ FLOP/byte (§64.9): both are memory-bound by a wide margin.
+2. *Decode intensity.* MHA, FP16: $I = 2 \times 1/2 = 1$ FLOPs/byte; 70B GQA ($g = 8$): 8 FLOPs/byte. The H100 ridge point is $989/3.35 \approx 295$ FLOPs/byte (§64.9): both are memory-bound by a wide margin.
 3. *Decode parallelism.* Batch 1, 32 heads, context 32,768: one block per head gives 32 blocks for 132 SMs, at most 24% of SMs busy. With 16 splits: 512 blocks, about 3.9 per SM.
 
 **Interpretation.** Prefill attention needs FlashAttention's tiling; decode attention is pure bandwidth, and its kernel must keep every SM streaming KV bytes. **Engineering implication.** Long-context, small-batch workloads need split-KV decode kernels; verify which kernel library is active when profiling.
@@ -1107,8 +1107,8 @@ $$V_\text{TP} = 2 L \cdot 2\,\frac{t - 1}{t} \cdot h\,b_\text{a} \qquad V_\text{
 1. $V_\text{TP} = 160 \times 1.5 \times 8{,}192 \times 2 = 3.93$ MB per token per GPU.
 2. *Decode step, batch 253:* $253 \times 3.93 = 994$ MB: 2.8 ms on NVLink plus $160 \times 8\ \mu\text{s} = 1.3$ ms of latency, about 4.1 ms on top of the 27.0 ms step (15%).
 3. *Prefill, 1,510 tokens:* 5.94 GB: 16.5 ms on NVLink against 106.9 ms of compute (15%, partly overlappable); across nodes at 40 GB/s, 148 ms (139%).
-4. *PP instead across 2 nodes:* $V_\text{PP} = 8{,}192 \times 2 = 16$ kB per token; a 253-token decode step sends 4.1 MB, 0.1 ms at 40 GB/s.
-5. *MoE (Mixtral-8×7B-like:* $h = 4{,}096$, 32 MoE layers, top-2): $V_\text{EP} = 2 \times 2 \times 4{,}096 \times 2 = 32.8$ kB per layer, 1.05 MB per token.
+4. *PP instead across 2 nodes:* $V_\text{PP} = 8{,}192 \times 2 = 16$ KB per token; a 253-token decode step sends 4.1 MB, 0.1 ms at 40 GB/s.
+5. *MoE (Mixtral-8×7B-like:* $h = 4{,}096$, 32 MoE layers, top-2): $V_\text{EP} = 2 \times 2 \times 4{,}096 \times 2 = 32.8$ KB per layer, 1.05 MB per token.
 
 **Interpretation.** TP moves megabytes per token and must stay on NVLink; PP moves kilobytes and tolerates the network; EP sits between. **Engineering implication.** TP inside the node for latency, PP or EP across nodes for capacity, replicas for throughput; a quantized single-GPU deployment avoids TP's 4 ms per step entirely (§73.13).
 :::
@@ -1454,10 +1454,10 @@ What to notice:
 3. Busy GPUs at peak: $6.9 \times 0.075 = 0.52$; $R = \lceil 0.52/0.6 \rceil + 1 = 2$.
 4. GPU-hours per day: $2 \times 24 = 48$; cost $48 \times \$2.50 = \$120$.
 5. Tokens per day: $60{,}000 \times 1{,}588 = 95.3$ M (90.6 M input, 4.7 M output, §72.4.5); $C_\text{1M} = 120/95.3 = \$1.26$.
-6. Per token type at full utilization: an output token costs $26.6/64 = 0.42$ ms of GPU, \$0.29 per million; an input token $2N/F_\text{eff} = 28.3\ \mu$s, \$0.020 per million, 14× less. At the API prices assumed in Chapter 75 (\$0.20 and \$0.60 per million), the same traffic costs $90.6 \times 0.20 + 4.7 \times 0.60 = \$20.9$ a day.
+6. Per token type at full utilization: an output token costs $26.6/64 = 0.42$ ms of GPU, \$0.29 per million; an input token $2N/F_\text{eff} = 28.3\ \mu$s, \$0.020 per million, 14× less. At the per-token prices assumed in Chapter 75 (\$0.20 and \$0.60 per million), the same traffic costs $90.6 \times 0.20 + 4.7 \times 0.60 = \$20.9$ a day.
 7. 70B option: $g_\text{req} = 0.461$ GPU-s; $6.9 \times 0.461 = 3.2$ busy GPUs; $\lceil 3.2/2.4 \rceil + 1 = 3$ replicas of 4 GPUs; $4 \times (48 + 6) = 216$ GPU-hours, \$540 a day, \$5.67 per million tokens.
 
-**Interpretation.** Half a GPU of work needs two GPUs for redundancy, the 70B option costs 4.5× more, and a hosted API at the assumed prices would cost a sixth as much. **Engineering implication.** At this scale, consolidate onto a multi-model platform (Chapter 79), use a managed API, or keep one quantized replica with an API fallback; self-hosting wins as volume grows toward the \$0.033 busy floor.
+**Interpretation.** Half a GPU of work needs two GPUs for redundancy, the 70B option costs 4.5× more, and billing the same traffic at Chapter 75's per-token prices, which assume a shared, well-utilized fleet, would recover only a sixth of it. **Engineering implication.** At this scale, consolidate onto a multi-model platform (Chapter 79), use a managed API, or keep one quantized replica with an API fallback; self-hosting wins as volume grows toward the \$0.033 busy floor.
 :::
 
 **Figure 73.17 — Autoscaling loop for LLM replicas.**
@@ -1587,7 +1587,7 @@ Spot capacity suits offline batch generation (summaries, evaluation runs) that r
 
 <details><summary>Answers</summary>
 
-1. Each step reads all 14 GB of weights for about $2N$ FLOPs, roughly 1 FLOP per byte, far below the ~295 FLOP/byte ridge.
+1. Each step reads all 14 GB of weights for about $2N$ FLOPs, roughly 1 FLOP per byte, far below the ~295 FLOPs/byte ridge.
 2. $(9.37 - 0.4)/299 = 30$ ms.
 3. $2 \times 40 \times 8 \times 128 \times 1 = 81{,}920$ bytes.
 4. With 8 KV heads instead of 32, its KV is 0.33 MB per token versus 0.52 MB, and TP spreads it across GPUs, offsetting 10× the parameters.
@@ -1667,7 +1667,6 @@ Spot capacity suits offline batch generation (summaries, evaluation runs) that r
 
 ## 73.24 Open verification items
 
-- Chapter 72 cross-references (§72.4.5, §72.7, §72.8.2, §72.10–§72.15) were checked against the finished chapter; re-check if it is renumbered.
 - TGI maintenance mode: date (December 2025) taken from secondary reports of the README banner; a 2026 repository archival is reported by one source only.
 - Reported figures to re-check against the papers: Orca 36.9×; vLLM 20.4–38.2% utilization, under 4% waste, 2–4×; SGLang 6.4×; DistServe 7.4×/12.6×; Splitwise 1.4× at 20% lower cost, 2.35×; Sarathi-Serve 2.6×/3.7×; FlashAttention-3 1.5–2.0×, 75%; Flash-Decoding up to 8× (and its blog URL); Medusa and EAGLE ranges.
 - vLLM `gpu_memory_utilization` default 0.9 and per-engine preemption defaults (as of 2026).

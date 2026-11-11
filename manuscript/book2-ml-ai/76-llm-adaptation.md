@@ -4,9 +4,9 @@
 
 QuickBite's support chatbot works. It retrieves the right refund paragraph (Chapter 75), runs on a 7B model that already speaks the language of food delivery (§65.9.1), and answers in about half a second. The product team still has a list of complaints. The bot apologizes in three sentences when one would do. It sometimes writes "I've issued a refund" when it has only *proposed* one, and the refund service cannot parse its reply because it is prose instead of the JSON the service expects. It answers allergy questions with the same breezy tone it uses for late soup. None of these are missing-knowledge problems, so more retrieval will not fix them. They are **behavior** problems: format, tone, judgment and reliability.
 
-This chapter is about changing a model's behavior, from the cheapest lever to the most expensive. You start with the prompt: instructions, examples and output schemas, engineered and tested like code. You then move into the weights: supervised fine-tuning, parameter-efficient methods such as LoRA and QLoRA that make a 7B model trainable on one GPU, and preference alignment with RLHF and DPO. Along the way you will build the data pipelines that feed these methods, serve many fine-tuned variants from one GPU, decide when fine-tuning beats retrieval and when it does not, and put release gates in front of every new set of weights.
+This chapter is about changing behavior, from the cheapest lever to the most expensive: prompts engineered and tested like code, structured output, supervised fine-tuning, LoRA and QLoRA, and preference alignment with RLHF and DPO, together with the data pipelines, serving patterns and release gates around them.
 
-The chapter builds on others. Transformer mechanics, tokens, chat templates and sampling are Chapter 72; training memory, $6ND$ and ZeRO/FSDP are Chapter 65 (§65.3, §65.9); quantization, which QLoRA builds on, is §67.6; distillation fundamentals are §67.8; prefix caching is §73.8; RAG is Chapter 75; labeling and annotator agreement are Chapter 63; memorization, privacy and model cards are Chapter 71. Evaluation methodology (benchmarks, LLM-as-a-judge, red-teaming) belongs to Chapter 78, tool use and agents to Chapter 77; this chapter previews both. It owns the decision between RAG and fine-tuning (§76.14).
+Transformer mechanics and chat templates are Chapter 72; training memory and $6ND$ are Chapter 65; quantization is §67.6 and distillation §67.8; prefix caching is §73.8; RAG is Chapter 75; labeling is Chapter 63; privacy and model cards are Chapter 71. Evaluation methodology belongs to Chapter 78 and agents to Chapter 77. This chapter owns the decision between RAG and fine-tuning (§76.14).
 
 ::: note
 **QuickBite assumptions used in this chapter.** These reuse the Book II design point and are teaching assumptions, not measurements of a real company. The chatbot model has the Llama-2-7B shape: 32 layers, hidden size 4,096, MLP width 11,008, 32,000-token vocabulary, 6.74 billion parameters, 13.5 GB in BF16, 524 KB of KV cache per token (§72.8.2, §72.11). It was adapted by continued pre-training on 50 billion tokens (§65.9.1: 1,458 GPU-hours, about \$3,650) and is served with RAG at 75,000 queries a day from 30,000 conversations, peaking at 8 queries per second; a query's prompt is about 4,050 tokens including a 700-token system prompt and six retrieved chunks; internal token prices are \$0.20 per million input and \$0.60 per million output tokens (Chapter 75). GPUs cost \$2.50 per GPU-hour; an H100 achieves about $4 \times 10^{14}$ FLOP/s in training (40% of its 989 TFLOP/s dense BF16 peak). Human review costs \$22 per hour at 80% productive time (§63.5.2). **New in this chapter:** a supervised fine-tuning set of about 24,000 conversations, a preference set of 8,000 comparisons, and a 1,500-conversation evaluation set. Sizes use SI units (1 GB = 10⁹ bytes).
@@ -53,7 +53,7 @@ Think of hiring an experienced chef for your restaurant. On day one you hand the
 
 #### Why does this exist?
 
-Adaptation methods differ by four to six orders of magnitude in cost. Editing a prompt costs an engineer's afternoon and deploys in minutes. QuickBite's continued pre-training cost 1,458 GPU-hours (§65.9.1). Pre-training a 7B model on a trillion tokens costs about $4.2 \times 10^{22}$ FLOPs, roughly 29,000 H100-hours (§65.3), before data, failures and staff. Teams that climb too high waste money and lose agility, because every weight change must be re-evaluated and re-released. Teams that stay too low fight a model with ever-longer prompts that are slow, expensive and brittle.
+Adaptation methods differ by four to six orders of magnitude in cost. Editing a prompt costs an afternoon; QuickBite's continued pre-training cost 1,458 GPU-hours (§65.9.1); pre-training a 7B model on a trillion tokens needs about 29,000 H100-hours (§65.3). Climbing too high wastes money and agility, because every weight change must be re-evaluated and re-released; staying too low means ever-longer, slower, brittle prompts.
 
 #### How it works internally
 
@@ -80,7 +80,7 @@ flowchart BT
 
 **Reading the diagram.** Read from the bottom up. The three lower rungs change only what is sent to an unchanged model, so they deploy like configuration and roll back instantly; the storage they touch is a prompt registry and, for RAG, the indexes of Chapter 75. The three upper rungs produce new weights that must pass through a training pipeline, an evaluation gate and the model registry (Chapter 69) before serving. Arrows mean "climb when the rung below fails", a design-time decision rather than a runtime call, so there are no synchronous paths here. The failure point at each step is climbing without evidence; the scaling consideration is that input-side rungs add per-request tokens forever, while weight-side rungs add a one-off training cost.
 
-Rungs are not exclusive: the production QuickBite bot uses a system prompt (rung 1), retrieval (rung 3), a LoRA fine-tune (rung 4) and a continued pre-trained base (rung 5) at once. The ladder orders the *order of trying*, not a single choice.
+Rungs are not exclusive: the production QuickBite bot combines a system prompt, retrieval, a LoRA fine-tune and a continued pre-trained base. The ladder orders what to *try first*.
 
 **Table 76.1 — Cost and data needs per rung, for a 7B model at QuickBite scale.**
 
@@ -93,7 +93,7 @@ Rungs are not exclusive: the production QuickBite bot uses a system prompt (rung
 | 5. Continued pre-training | All weights | $10^9$–$10^{11}$ tokens of domain text | $10^2$–$10^4$ GPU-hours | None | Weeks to months | Domain vocabulary and style |
 | 6. Pre-training from scratch | Everything | $10^{12}$+ tokens | $10^4$–$10^7$ GPU-hours | None | Months | New languages, modalities, full control |
 
-The striking column is the last-but-two: for a 7B model, fine-tuning *compute* is cheap (§76.7 shows about five GPU-hours for QuickBite's SFT run). The cost of rung 4 is the curated data and the evaluation and release machinery around it, which is why the ladder is ordered by total cost of ownership, not GPU-hours.
+For a 7B model, fine-tuning *compute* is cheap (about five GPU-hours for QuickBite's SFT run, §76.7); the cost of rung 4 is curated data and the evaluation and release machinery around it.
 
 ### 76.3.2 A decision procedure
 
@@ -144,21 +144,12 @@ $$T_\text{break-even} = \frac{C_\text{FT}}{R \cdot \Delta n \cdot p_\text{in}}$$
 **Worked example — Does fine-tuning pay for itself at QuickBite?** Today's prompt carries a 700-token system prompt; adding three few-shot examples of 350 tokens each would fix the format problems but add 1,050 tokens. A LoRA fine-tune would let the system prompt shrink to 150 tokens with no examples, so $\Delta n = 700 + 1{,}050 - 150 = 1{,}600$ tokens. $R = 75{,}000$, $p_\text{in} = \$0.20$ per million.
 
 1. Daily saving: $75{,}000 \times 1{,}600 \times 0.20 \times 10^{-6} = \$24.00$.
-2. One-off cost (§76.7, §76.11): about \$55,000 of human review, \$5,500 of preference labels and under \$100 of GPU time: $C_\text{FT} \approx \$60{,}600$.
-3. $T_\text{break-even} = 60{,}600 / 24.00 = 2{,}525$ days, almost seven years.
+2. One-off cost (§76.7, §76.11): about \$55,000 of human review, \$5,500 of preference labels and about \$300 of GPU time including a hyperparameter sweep: $C_\text{FT} \approx \$60{,}800$.
+3. $T_\text{break-even} = 60{,}800 / 24.00 = 2{,}533$ days, almost seven years.
 4. With prefix caching of the static prompt at 10% of the input price (§73.8), the saving falls to \$2.40 a day and break-even recedes past 60 years.
 
 **Interpretation.** At 75,000 requests a day, token savings never justify fine-tuning; at 100 times the volume they would within a month. **Engineering implication.** At small and medium scale, fine-tune for *quality and reliability* (format adherence, tone, judgment, fewer retries), not for token cost, and make the case with an evaluation, not a spreadsheet. The economics flip for very high-volume tasks and for distilling into smaller models (§76.13).
 :::
-
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Fine-tuned to teach facts; facts go stale | Knowledge problem treated as behavior | Wrong answers after policy edits | Move facts to RAG | Ask "knowledge or behavior?" first |
-| Prompt grows to 6,000 tokens of rules | Every incident adds a sentence | Prompt length trend, TTFT creep | Consolidate; fine-tune stable rules | Prompt budget in review |
-| Months spent on continued pre-training | Assumed domain gap never measured | No gain over SFT-only ablation | Stop; ship SFT on the base | Ablate before scaling up |
-| No way to tell if a rung "failed" | No evaluation set | Debates instead of numbers | Build the eval set | Eval set before any adaptation |
 
 ::: mistake
 **"Fine-tuning is how you teach a model your documents."** Fine-tuning on documents teaches style and some facts unreliably, cannot be updated without retraining, gives no citations and cannot enforce per-user access. Teach facts by retrieval; teach behavior by fine-tuning (§76.14).
@@ -174,11 +165,11 @@ $$T_\text{break-even} = \frac{C_\text{FT}}{R \cdot \Delta n \cdot p_\text{in}}$$
 
 #### First-principles explanation
 
-A prompt is a work order handed to a capable contractor who has never seen your company. A good work order states the job, the constraints, what "done" looks like, examples of past jobs, and the materials, each in a clearly labeled section so the contractor cannot mistake the customer's note for your instructions. Prompt engineering is writing such work orders, and then, because the contractor is stochastic and gets replaced every few months, testing them like code.
+A prompt is a work order for a capable contractor who has never seen your company: the job, the constraints, what "done" looks like, examples, and the materials, each clearly labeled so the customer's note cannot be mistaken for your instructions. Because the contractor is stochastic and replaced every few months, you test work orders like code.
 
 #### Why does this exist?
 
-The same model can score very differently on a task depending on wording, structure and examples. Brown et al. showed that GPT-3 could perform many tasks from a description and a few demonstrations in the prompt, with no gradient updates, and that this **in-context learning** improved sharply with model size [Brown et al. 2020]. That made the prompt a programming interface. Like any interface, it needs structure, versioning and tests, or it degrades one well-meant edit at a time.
+Brown et al. showed that GPT-3 could perform many tasks from a description and a few demonstrations in the prompt, with no gradient updates, and that this **in-context learning** improved sharply with model size [Brown et al. 2020]. That made the prompt a programming interface, and interfaces need structure, versioning and tests.
 
 #### How it works internally
 
@@ -191,7 +182,7 @@ A production prompt has six parts, assembled in a fixed order:
 5. **Context**: retrieved chunks and order facts, each wrapped in **delimiters**, explicit markers such as `<sources>…</sources>` or fenced blocks that separate data from instructions.
 6. **The user's message**, also delimited and labeled as untrusted.
 
-Stable parts come first and variable parts last, so the prefix cache can reuse the static head across requests (§73.8). Delimiters do double duty: they make the structure legible to the model, and they let the application escape or strip any delimiter-like text that appears inside user input or retrieved documents, a first-line defense against prompt injection (§75.11.4, Chapter 78).
+Stable parts come first and variable parts last, so the prefix cache can reuse the static head (§73.8). Delimiters make the structure legible to the model and let the application escape delimiter-like text inside untrusted input, a first-line defense against prompt injection (§75.11.4, Chapter 78).
 
 **Figure 76.3 — Prompt assembly from a versioned template registry.**
 
@@ -209,11 +200,11 @@ flowchart LR
 
 ### 76.4.2 Instructions, examples and chain-of-thought
 
-**Instructions** work best when they are specific, testable and few. "Be concise" is weak; "reply in at most three sentences unless the customer asks for detail" is testable. Instructions that conflict ("always apologize" and "be brief") are resolved unpredictably, so prompt reviews should look for conflicts as code reviews look for dead branches.
+**Instructions** work best when specific, testable and few: "be concise" is weak; "at most three sentences unless the customer asks for detail" is testable. Conflicting instructions are resolved unpredictably, so prompt reviews look for conflicts as code reviews look for dead branches.
 
 **Few-shot examples** teach by imitation. They are most valuable for format and for edge cases that are hard to describe ("customer is angry and the order was actually on time"). They are also the most expensive part of a prompt per unit of behavior and carry biases of their own (§76.6).
 
-**Chain-of-thought (CoT)** prompting asks the model to write intermediate reasoning before the answer. Wei et al. showed that including worked reasoning in few-shot exemplars substantially improved large models on arithmetic, commonsense and symbolic reasoning benchmarks, and that the benefit appeared only at large model scale [Wei et al. 2022]; Kojima et al. found that simply adding "Let's think step by step" elicited similar gains zero-shot [Kojima et al. 2022]. Sampling several reasoning paths and taking the majority answer, **self-consistency**, improves further at proportional cost [Wang et al. 2023]. For a system designer, CoT is a trade: more output tokens, the slowest and most expensive kind (§72.10), in exchange for accuracy on multi-step problems. QuickBite's refund-eligibility decisions involve two or three rules, so the bot reasons in a hidden `analysis` field that is logged but not shown, and the eligibility arithmetic itself is done by deterministic code the model calls (Chapter 77), not by the model.
+**Chain-of-thought (CoT)** prompting asks the model to write intermediate reasoning before the answer. Wei et al. showed that including worked reasoning in few-shot exemplars substantially improved large models on arithmetic, commonsense and symbolic reasoning benchmarks, and that the benefit appeared only at large model scale [Wei et al. 2022]; Kojima et al. found that simply adding "Let's think step by step" elicited similar gains zero-shot [Kojima et al. 2022]. Sampling several reasoning paths and taking the majority answer, **self-consistency**, improves further at proportional cost [Wang et al. 2023a]. For a system designer, CoT is a trade: more output tokens, the slowest and most expensive kind (§72.10), in exchange for accuracy on multi-step problems. QuickBite's refund-eligibility decisions involve two or three rules, so the bot reasons in a hidden `analysis` field that is logged but not shown, and the eligibility arithmetic itself is done by deterministic code the model calls (Chapter 77), not by the model.
 
 ::: warning
 **Reasoning text is not an explanation.** A chain of thought is generated text; it can be plausible and still not reflect how the answer was produced. Do not show it to customers as a justification, and do not use it as an audit trail for decisions that need one: log the inputs, the tools called and the rule that fired.
@@ -247,15 +238,6 @@ flowchart LR
 
 **Reading the diagram.** A pull request that changes a template triggers CI, which renders every golden case (the storage boundary holding curated conversations and incident replays), calls a staging model pinned to the production version, and runs two kinds of check: cheap deterministic assertions and a slower judged evaluation. The comparison is against the current production version on the same cases, with confidence intervals because outputs vary run to run (Chapter 78). Calls are synchronous inside the CI job; at 400 cases and 4,250 tokens each the run costs well under a dollar on the internal price list. Failure points: a golden set that never grows, so new failure modes are untested; temperature left above zero in CI, making results noisy; or judging only averages, which hides regressions on rare intents.
 
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Quality drops after a "harmless" wording edit | Prompts are sensitive to phrasing | Golden-set regression; refusal-rate shift | Roll back the prompt version | Regression tests on every change |
-| Model upgrade breaks format | Prompt tuned to old model | Parse-failure rate spikes | Pin old model; re-tune prompt | Treat model upgrades as prompt changes |
-| Retrieved text overrides instructions | Data and instructions not separated | Red-team cases; unexpected actions | Delimit and escape; restrict tools | Delimiters, least-privilege actions (Ch 77) |
-| Prefix cache hit rate collapses | Timestamp or user ID placed early | TTFT rises, cache metrics fall | Move variable slots to the end | Stable-first template layout |
-
 ::: mistake
 **"A better prompt is a longer prompt."** Each added rule competes for the model's attention with every other rule and with the user's message, adds tokens to every request, and makes conflicts more likely. Delete rules that tests show are unnecessary; move stable, well-specified behavior into the weights (§76.7) when the prompt becomes a rulebook.
 :::
@@ -270,11 +252,11 @@ flowchart LR
 
 #### First-principles explanation
 
-A free-text reply is a handwritten letter; structured output is a filled-in form. People can read a letter, but the refund service can only process a form, and it must reject any form with a field missing or a number in the wrong box. You can improve compliance in three ways: ask nicely for the form (instructions and examples), hand the writer a stencil that physically prevents writing outside the boxes (constrained decoding), and check every form at the counter and send bad ones back (validation and retry). Production systems use all three, because the stencil guarantees the *shape* of the form, not that the amounts written in it are right.
+A free-text reply is a handwritten letter; structured output is a filled-in form. You can ask nicely for the form (instructions), hand the writer a stencil that prevents writing outside the boxes (constrained decoding), and check every form at the counter (validation and retry). The stencil guarantees the form's *shape*, not that the amounts in it are right.
 
 #### Why does this exist?
 
-LLM outputs feed programs: QuickBite's reply goes to a renderer, its proposed action to the refund service, its citations to the grounding check (§75.12). A parse failure is an outage for that request. Instruction-only JSON fails in characteristic ways: prose before the object ("Sure! Here is the JSON"), trailing commas, missing fields, values outside an enumeration, numbers as strings. At 75,000 requests a day, even a 1% failure rate is 750 broken conversations.
+LLM outputs feed programs: QuickBite's reply goes to a renderer, its proposed action to the refund service, its citations to the grounding check (§75.12). Instruction-only JSON fails in characteristic ways (prose before the object, missing fields, values outside an enumeration), and at 75,000 requests a day a 1% failure rate is 750 broken conversations.
 
 #### How it works internally
 
@@ -515,7 +497,7 @@ What to notice:
 
 #### First-principles explanation
 
-In-context learning is like briefing a temp worker at the start of every shift. It works surprisingly well and needs no training budget, but the briefing is paid for every shift, it takes time before work starts, the worker can only hold so much of it in mind at once, and the order in which you mention things changes what they remember.
+In-context learning is like briefing a temp worker at the start of every shift: no training budget, but the briefing is paid every shift, delays the start, has limited capacity, and its order changes what is remembered.
 
 #### Why does this exist?
 
@@ -561,14 +543,6 @@ $$C_\text{ICL} = R \cdot n_\text{ex} \cdot t_\text{ex} \cdot p_\text{in} \cdot \
 **Interpretation.** Static few-shot examples are cheap when cached; dynamic ones cost full price and latency, and both consume context and, without prefix sharing, KV memory. **Engineering implication.** Prefer static, cached demonstrations; retrieve examples only where they measurably help; and treat "we need more and more examples" as evidence for fine-tuning.
 :::
 
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Accuracy swings between releases with no prompt edit | Example order changed by a refactor | Regression spread across orders | Fix and test order | Test several permutations |
-| Bot over-predicts "refund" intent | Majority-label bias in examples | Intent distribution vs labels | Rebalance demonstrations | Balanced, calibrated examples |
-| TTFT climbs as examples are added | Uncached prefill per request | TTFT by prompt version | Cache static examples | Token budget per prompt section |
-
 ::: mistake
 **"In-context learning is free fine-tuning."** It is paid per request, forgotten after each call, limited by the window and sensitive to order. It is the right tool for small, changing or experimental behavior, not for thousands of stable rules.
 :::
@@ -583,7 +557,7 @@ $$C_\text{ICL} = R \cdot n_\text{ex} \cdot t_\text{ex} \cdot p_\text{in} \cdot \
 
 #### First-principles explanation
 
-SFT is apprenticeship by example. Instead of telling the chef the house style, you have them cook a few thousand dishes alongside the head chef, correcting each plate. Loss masking means you grade only what the apprentice cooked, not how well they read the order ticket aloud.
+SFT is apprenticeship: the chef cooks a few thousand dishes alongside the head chef. Loss masking means you grade only what the apprentice cooked, not how well they read the order ticket aloud.
 
 #### Why does this exist?
 
@@ -755,7 +729,7 @@ $$M_\text{full} = N\,(b_w + b_g + b_m + b_o) + M_\text{act} \qquad G = \frac{k\,
 
 #### First-principles explanation
 
-Rather than repainting a whole mural (full fine-tuning), you hang a thin transparent overlay in front of it and paint only on the overlay. The overlay is cheap to store, you can keep a different one for each client, and you can always lift it off to see the original. Low rank means the overlay may only contain a few "brush directions", which turns out to be enough for most adaptations.
+Rather than repainting a mural (full fine-tuning), you paint on a thin transparent overlay: cheap to store, one per client, removable. Low rank means the overlay may use only a few "brush directions", which is enough for most adaptations.
 
 #### Why does this exist?
 
@@ -1042,7 +1016,7 @@ $$M_\text{adapters} = n_a \cdot 2\,N_\text{LoRA} \qquad T_\text{displaced} = \fr
 
 #### First-principles explanation
 
-Writing the perfect support reply is hard; recognizing the better of two replies is easy. A food critic who cannot cook can still rank two dishes reliably. Preference alignment exploits that asymmetry: SFT copies demonstrations, preference training learns from judgments, so it can push the model past the quality of the people who label.
+Writing the perfect support reply is hard; recognizing the better of two replies is easy, as a food critic who cannot cook can still rank dishes. Preference training exploits that asymmetry and can push the model past the quality of its labelers.
 
 #### Why does this exist?
 
@@ -1121,7 +1095,7 @@ $$\max_{\theta}\; \mathbb{E}_{x,\, y \sim \pi_\theta}\!\left[r_\phi(x, y) - \bet
 
 1. A: log ratio $= -30 - (-36) = 6$; penalized reward $2.0 - 0.05 \times 6 = 1.70$.
 2. B: log ratio $= 14$; penalized reward $2.4 - 0.05 \times 14 = 1.70$.
-3. The extra 0.4 of reward for B is exactly cancelled by its distance from the reference; at $\beta = 0.1$, A wins ($1.40$ versus $1.00$).
+3. The extra 0.4 of reward for B is exactly offset by its distance from the reference; at $\beta = 0.1$, A wins ($1.40$ versus $1.00$).
 4. Clipping: a token with $\rho = 1.5$ and $\hat A = +2$ contributes $\min(3.0,\, 1.2 \times 2) = 2.4$, so one batch cannot push its probability up by more than 20%.
 
 **Interpretation.** $\beta$ prices drift: the policy may leave the reference only where the reward gain pays for it. **Engineering implication.** Monitor KL to the reference, reply length and reward together during training; rising reward with rising length and KL is the signature of reward hacking [Gao et al. 2023], and the fix is a larger $\beta$, a better reward model or early stopping.
@@ -1150,7 +1124,7 @@ $$\mathcal{L}_\text{DPO} = -\,\mathbb{E}\left[\log \sigma\!\left(\beta \left[\lo
 1. Chosen log ratio $= -42 + 44 = 2$; rejected log ratio $= -47 + 46 = -1$.
 2. Margin $= 0.1 \times (2 - (-1)) = 0.3$; $\sigma(0.3) = 0.574$; loss $= -\ln 0.574 = 0.554$.
 3. The gradient is weighted by $\sigma(-0.3) = 0.426$: pairs the model already orders correctly by a wide margin contribute little, pairs it gets wrong contribute most.
-4. Compute per pair: policy forward and backward on both replies plus two reference forwards. With 8,000 pairs of about 2,000 tokens per reply, two epochs: $D = 3.2 \times 10^7$ tokens per policy pass; $(6 + 2) \times 6.74 \times 10^9 \times 3.2 \times 10^7 = 1.73 \times 10^{18}$ FLOPs, 1.2 GPU-hours, \$3. Reference log-probabilities can be precomputed once.
+4. Compute per pair: policy forward and backward on both replies plus two reference forwards. With 8,000 pairs, two sequences of about 2,000 tokens each per pair and two epochs: $D = 8{,}000 \times 4{,}000 \times 2 = 6.4 \times 10^7$ tokens; $(6 + 2) \times 6.74 \times 10^9 \times 6.4 \times 10^7 = 3.45 \times 10^{18}$ FLOPs, 2.4 GPU-hours, \$6. Reference log-probabilities can be precomputed once.
 
 **Interpretation.** DPO increases the chosen reply's probability *relative to the reference* and decreases the rejected one's; absolute probabilities can both fall. **Engineering implication.** Log chosen and rejected log-probabilities separately during training, and with LoRA use the base with the adapter disabled as $\pi_\text{ref}$, which avoids holding a second model.
 :::
@@ -1265,3 +1239,296 @@ flowchart TB
 
 QuickBite chooses DPO with LoRA: 8,000 comparisons of two replies sampled from its SFT model, judged by trained support leads under written guidelines, at about 90 s per comparison: $8{,}000 \times 90 \times 22/(3{,}600 \times 0.8) = \$5{,}500$.
 
+## 76.11 Training data pipelines for LLM adaptation
+
+### 76.11.1 From logs to a training set
+
+Every method in this chapter is only as good as its data, and the data for a support bot starts as raw conversations full of personal details, duplicates, policy violations and evaluation leakage. The pipeline that turns logs into SFT examples and preference pairs is a batch data pipeline (Chapter 61) with LLM-specific stages.
+
+**Figure 76.13 — QuickBite's adaptation data pipeline.**
+
+```mermaid
+flowchart LR
+  LOGS[("Conversation logs<br/>90 days, 2.7M")] --> SEL["Select: resolved,<br/>CSAT 4+, consented"]
+  SEL --> PII["PII scrub:<br/>NER + regex + placeholders"]
+  PII --> DEDUP["Dedup: exact hash,<br/>MinHash near-dup"]
+  DEDUP --> SAMP["Stratified sample<br/>by intent, 30,000"]
+  SAMP --> REV["Human review<br/>accept, edit, reject"]
+  GEN["Synthetic generation<br/>rare intents"] --> FILT["Filter: rules,<br/>judge, human spot check"]
+  REV --> MERGE["Merge + mixture<br/>with general data"]
+  FILT --> MERGE
+  EVAL[("Eval set<br/>1,500 held out")] -.->|13-gram blocklist| DECON["Decontaminate"]
+  MERGE --> DECON
+  DECON --> DS[("Versioned dataset<br/>+ datasheet")]
+```
+
+**Reading the diagram.** Logs (the source storage boundary) flow through batch stages in order: selection by outcome and consent, PII scrubbing, deduplication, stratified sampling, human review. A parallel branch generates and filters synthetic examples for intents too rare in logs (allergen questions, courier safety). Both branches merge with a general-instruction replay set, are checked against the evaluation set, which feeds a blocklist asynchronously, and land in a versioned dataset with a datasheet (§63.13). Failure points: PII that survives scrubbing becomes memorizable (§71.9); near-duplicates over-weight templated replies; evaluation leakage inflates every later metric. Stages are partitioned by conversation and scale horizontally; human review is the throughput bottleneck.
+
+The stages, briefly:
+
+1. **Collection and consent.** Use conversations whose terms of service and retention policy allow training; honor deletion requests through lineage (§61.12), which means knowing which dataset and which adapter contain a deleted user's data.
+2. **PII scrubbing.** Named-entity recognition plus patterns for phone numbers, emails, card fragments and addresses, replaced by typed placeholders (`<ADDRESS>`) rather than deleted, so the model learns the shape of the conversation without the values.
+3. **Deduplication.** Exact hashing, then MinHash near-duplicate detection (§75.5.3). Lee et al. found that deduplicating training data reduced memorized output by about ten times and made models train more efficiently [Lee et al. 2022].
+4. **Synthetic data** from a larger teacher model: generate customer messages for rare intents, generate replies, then filter by rules, an LLM judge and human spot checks. Self-Instruct showed models can bootstrap instruction data from their own generations [Wang et al. 2023b]; Chapter 63 covers the risks of distribution mismatch and model collapse (§63.12.2).
+5. **Decontamination.** Remove training examples that overlap the evaluation set, for example any shared 13-word sequence, the n-gram test GPT-3's authors used [Brown et al. 2020].
+6. **Mixture.** Blend domain data with general instruction data so the model keeps its general skills (§76.12).
+
+::: formula
+**Token budget of an adaptation dataset**
+
+$$D = E \sum_{s} n_s\, \bar t_s \qquad D_\text{loss} = f_\text{resp}\, D$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $D$ | Tokens processed in training, all epochs | tokens |
+| $E$ | Epochs | — |
+| $n_s$, $\bar t_s$ | Sequences from source $s$; mean tokens per sequence | count; tokens |
+| $f_\text{resp}$ | Fraction of tokens in assistant responses (in the loss) | — |
+| $D_\text{loss}$ | Tokens that contribute to the loss | tokens |
+:::
+
+::: example
+**Worked example — QuickBite's SFT token budget.** 30,000 conversations/day for 90 days gives 2.7 million.
+
+1. Selection keeps 35% (resolved, CSAT ≥ 4, consented): 945,000. Near-duplicate removal drops 40%: 567,000.
+2. A stratified sample of 30,000 is reviewed at 4 minutes each: $30{,}000 \times 240 \times 22/(3{,}600 \times 0.8) = \$55{,}000$; 20,000 are accepted, many after edits.
+3. Synthetic: 6,000 generated for rare intents, 4,000 pass the filters. Decontamination removes about 100. Domain total about 24,000 conversations.
+4. Each conversation is about 2,000 tokens (150 system, 1,000 sources, 250 order facts, 100 customer turns, 500 replies): $24{,}000 \times 2{,}000 = 48$ million tokens. General replay at 20% of the mixture: 6,000 sequences, 12 million tokens. Per epoch 60 million; $E = 3$: $D = 180$ million.
+5. $f_\text{resp} = 500/2{,}000 = 0.25$: $D_\text{loss} = 45$ million tokens.
+
+**Interpretation.** 2.7 million logged conversations become 24,000 training conversations; the 1% that survives is what makes the model better than its logs. **Engineering implication.** Budget review hours, not GPU-hours, and keep every stage versioned so that a deletion request or a contaminated example can be traced to the adapters that contain it.
+:::
+
+## 76.12 Continued pre-training and domain adaptation
+
+**Continued pre-training (CPT)**, also called domain-adaptive pre-training, runs the ordinary next-token objective on large amounts of unlabeled domain text, before SFT. Gururangan et al. showed that a second phase of pre-training on in-domain text improved downstream tasks across four domains (biomedical and computer-science papers, news, reviews), and that further pre-training on task-specific unlabeled text helped again [Gururangan et al. 2020]. It is worth considering when the domain's vocabulary or style is far from the base model's pre-training data and you have billions of tokens of it, and it is rarely worth it otherwise: QuickBite's 50-billion-token run (§65.9.1) processed 278 times more tokens than its whole SFT budget.
+
+The main risk is **catastrophic forgetting**: training on a narrow distribution overwrites general abilities [Kirkpatrick et al. 2017]. The standard defenses are a **replay mixture** (keep 5–30% general-domain text in every batch), a lower peak learning rate with warmup, and evaluating general benchmarks alongside domain ones at every checkpoint. §65.9.1 described QuickBite's mixture as transcripts, menus and policies only; a production run should add general replay data and an ablation comparing "SFT on the base" with "SFT on the CPT model". If the ablation shows no gain on the evaluation set, the CPT stage should be dropped from the pipeline, saving 1,458 GPU-hours on every base-model upgrade.
+
+::: mistake
+**"Continued pre-training on our documents will make the model know our policies."** It teaches language and associations, not reliably retrievable facts, and policies change. Use CPT for vocabulary and style at scale; use RAG for facts (§76.14).
+:::
+
+## 76.13 Distillation from large to small models
+
+LLM distillation trains a small student on a large teacher's behavior, using the soft-target principle of §67.8 at token level or, more commonly, at sequence level: the teacher generates complete responses and the student is fine-tuned on them [Kim and Rush 2016]. It is how many small open models were built, and how QuickBite can generate synthetic SFT data (§76.11) or train a 1B intent router that decides whether a message needs the 7B model at all (Chapter 78 previews routing). Stanford's Alpaca fine-tuned LLaMA 7B on 52,000 instruction-following demonstrations generated with a stronger commercial model, and released it for research use only because of the teacher's terms of use and the base model's license [Taori et al. 2023]: a reminder that the teacher's license governs what you may do with its outputs.
+
+::: example
+**Worked example — Storing teacher logits for token-level distillation.** The SFT budget is $1.8 \times 10^8$ tokens with a 32,000-token vocabulary.
+
+1. Full distributions in FP16: $1.8 \times 10^8 \times 32{,}000 \times 2 = 1.15 \times 10^{13}$ bytes, 11.5 TB.
+2. Top-20 tokens per position, 4-byte ID plus 2-byte probability: $1.8 \times 10^8 \times 20 \times 6 = 21.6$ GB.
+3. Sequence-level distillation stores only the teacher's generated text: about the size of the dataset itself, under 1 GB.
+
+**Interpretation.** Full-vocabulary soft targets are impractical to store; top-$k$ captures most of the probability mass at 0.2% of the size. **Engineering implication.** Use sequence-level distillation by default, top-$k$ logits when the student and teacher share a tokenizer and you need the extra signal, and check the teacher's license before generating anything.
+:::
+
+## 76.14 RAG versus fine-tuning
+
+### 76.14.1 Two tools for two problems
+
+The two are complements, not rivals: RAG changes what the model *knows at request time*; fine-tuning changes how it *behaves*. Ovadia et al. compared the two for injecting knowledge and found that RAG consistently outperformed unsupervised fine-tuning, both for facts the model had seen in pre-training and for new ones [Ovadia et al. 2024]. Fine-tuning wins where the requirement is behavior that must hold on every request.
+
+**Table 76.7 — RAG versus fine-tuning.**
+
+| Row | RAG (Chapter 75) | Fine-tuning (SFT, LoRA, DPO) |
+|---|---|---|
+| What it is | Retrieved passages added to each prompt | Weights or adapters updated on examples |
+| How it works | Index, retrieve, rerank, build context | Gradient descent on demonstrations or pairs |
+| Advantages | Fresh, citable, per-user access control, cheap updates | Consistent format and tone, shorter prompts, learned judgment |
+| Disadvantages | Retrieval misses, more tokens and latency, injection surface | Stale facts, no citations, retraining to change, safety regressions |
+| Performance | +100–300 ms and +2,000–5,000 prompt tokens | No added latency; can remove prompt tokens |
+| Operational complexity | Ingestion, indexes, ACL propagation | Data pipeline, training, evaluation gates, model versions |
+| Cost | Per query (tokens, search cluster) | One-off (data review, GPU) plus re-runs per base upgrade |
+| Use cases | Policies, help articles, order facts | Output schema, tone, escalation rules, domain phrasing |
+| Choose when | Knowledge changes, must be cited or restricted | Behavior must be reliable and is stable |
+
+**Figure 76.14 — QuickBite's combined design: retrieve facts, fine-tune behavior.**
+
+```mermaid
+flowchart LR
+  C([Customer]) --> ORCH[RAG orchestrator]
+  ORCH -->|query| RET["Hybrid retrieval<br/>Ch 75"]
+  RET -->|6 chunks| ORCH
+  ORCH -->|short prompt<br/>+ sources| LLM["7B CPT base<br/>+ LoRA SFT + DPO"]
+  LLM -->|JSON reply| VAL["Validator<br/>section 76.5"]
+  VAL --> C
+  TRAIN[("SFT data rendered<br/>with RAG contexts")] -.->|train adapter| LLM
+```
+
+**Reading the diagram.** At request time the path is the RAG pipeline of Chapter 75 with two changes: the system prompt shrinks to about 150 tokens because the adapter carries the rules, and the output is validated JSON. Offline (dotted), the adapter is trained on conversations rendered *with* their retrieved sources, so the model learns to use, cite and refuse based on evidence, including examples where the sources are irrelevant and the right answer is "I don't know". Failure points: training contexts that differ from production contexts (another chunker or $k$), and a policy change that makes trained behavior wrong, which is why facts must stay in retrieval.
+
+::: example
+**Worked example — QuickBite's decision.** The complaint list from the chapter opening, classified:
+
+1. "Over-apologizes; prose instead of JSON; inconsistent escalation for allergy questions": behavior, stable, testable. **LoRA SFT** on 24,000 reviewed conversations, then **DPO** on 8,000 pairs for tone. One-off cost about \$61,000, almost all review.
+2. "Refund thresholds changed on 1 September": knowledge, changing. **RAG** (already in place).
+3. "Doesn't know what *kottu roti* is": domain vocabulary. Already covered by CPT; if not, add help-center glossary chunks to retrieval before considering more CPT.
+4. "Says it refunded when it only proposed": behavior plus authority. **Structured output** with an `action` field validated in code (§76.5), plus SFT examples.
+5. Expected effect on the evaluation set (assumed targets): first-attempt validity $p_1$ from 0.70 to 0.97, calls per request from 1.345 to 1.036, 23% fewer generation calls.
+
+**Interpretation.** Every complaint maps to exactly one primary tool, and none of them needed a bigger model. **Engineering implication.** Classify each requirement as knowledge or behavior before choosing a method, and keep the classification in the design document so later changes go to the right place.
+:::
+
+## 76.15 Risks and governance
+
+**Safety regressions.** Fine-tuning can erode a model's safety training. Qi et al. showed that fine-tuning an aligned model on a handful of adversarial examples removed its refusals, and that even fine-tuning on benign data degraded safety measurably [Qi et al. 2024]. Every adapted model therefore re-runs the safety evaluation, and SFT data should include examples of correct refusals.
+
+**Licenses.** Open-weight models come with licenses that bind fine-tunes. The Llama 2 Community License, for example, requires a separate license for products above 700 million monthly active users and restricts using the model's outputs to improve other large language models [Touvron et al. 2023]; teacher models' terms govern distillation (§76.13). Legal review of the base, the teacher and every dataset is part of the pipeline, not an afterthought.
+
+**Provenance.** Record, for every adapter: base model and checksum, dataset versions and datasheets, training code commit, hyperparameters and evaluation results, in the model registry (§69.6.2) with a model card (§71.12). Without it you cannot answer "which models were trained on this deleted user's conversations?" or "which adapters must be retrained for the new base?".
+
+**Memorization and privacy.** Small SFT sets trained for several epochs are memorized more than pre-training data; canary strings planted in training data and extraction tests (§71.9) measure the risk.
+
+**Figure 76.15 — Release gates for an adapted model.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Trained
+  Trained --> TaskEval: adapter registered
+  TaskEval --> SafetyEval: task metrics pass
+  TaskEval --> Rejected: regression
+  SafetyEval --> PrivacyEval: refusals and red team pass
+  SafetyEval --> Rejected: safety regression
+  PrivacyEval --> Shadow: no canary extraction
+  PrivacyEval --> Rejected: leakage
+  Shadow --> Canary: shadow metrics match
+  Canary --> Production: online metrics hold
+  Canary --> Rejected: rollback
+  Production --> Retired: superseded
+  Rejected --> [*]
+```
+
+**Reading the diagram.** A trained adapter moves through gates in order, each a set of automated checks with human sign-off where required: task metrics on the held-out evaluation set (Chapter 78), safety evaluation and red-teaming, privacy tests, then shadow traffic and a canary (§69.6.4). Any gate can reject; the canary can roll back by repointing the adapter version, which multi-LoRA serving makes instant (§76.9). The registry stores every state transition with its evidence. Failure points: gates that check averages and miss slices, evaluation sets that leaked into training (§76.11), and manual overrides without records.
+
+## 76.16 Summary and revision notes
+
+::: summary
+- Climb the adaptation ladder only on evidence: prompt, few-shot, RAG, fine-tuning, continued pre-training, pre-training. Retrieve for knowledge; fine-tune for behavior.
+- For a 7B model, fine-tuning compute is cheap (about 5 GPU-hours for 180 million tokens); curated data and evaluation dominate cost. Token savings repay a fine-tune only at very high volume.
+- Prompts are versioned artifacts: stable content first, delimited untrusted content, property-based regression tests on a golden set.
+- Structured output layers instructions, constrained decoding (syntax), validation (business rules) and bounded retries; $E[\text{calls}] = 1 + (1 - p_1)\sum_{j<k}(1 - p_r)^j$.
+- In-context examples cost tokens, TTFT and context on every request and are order-sensitive; cache static ones.
+- SFT: serving chat template, loss on assistant tokens only, quality over quantity. Full fine-tuning of the 7B needs about 108 GB of state.
+- LoRA: $N_\text{LoRA} = L\sum r(d_\text{in} + d_\text{out})$, 16.8M parameters (0.249%) at $r = 16$ on attention; QLoRA's NF4 base fits the 7B on a 24 GB GPU.
+- Multi-LoRA serving (Punica, S-LoRA) shares one base across many adapters; merge for few, high-volume variants.
+- RLHF: Bradley–Terry reward model, then PPO maximizing reward minus $\beta$ KL. DPO optimizes the same objective offline; $\beta$ sets how far the policy moves.
+- Data pipelines: consent, PII scrubbing, deduplication, filtered synthetic data, decontamination, replay mixtures, lineage.
+- Re-run safety, privacy and task gates for every adapted model; licenses of base and teacher bind the result.
+:::
+
+## 76.17 Knowledge checkpoint
+
+1. Classify each as knowledge or behavior: a new refund threshold; replies too long; JSON format; a new restaurant's menu.
+2. How many trainable parameters does LoRA with $r = 8$ on $W_Q$ and $W_V$ add to the 7B model?
+3. Why is $B$ initialized to zero in LoRA?
+4. Why must assistant end-of-turn tokens stay in the SFT loss?
+5. With $p_1 = 0.9$, $p_r = 0.5$, $k = 1$, what are $P_\text{fallback}$ and $E[\text{calls}]$?
+6. What does constrained decoding guarantee, and what does it not?
+7. A reward model scores two replies 0.5 and 2.0. What probability does it assign to the second being preferred?
+8. In DPO, what happens to the loss if $\beta$ doubles and log ratios stay fixed?
+9. Why is full fine-tuning of the 7B infeasible on one 80 GB GPU?
+10. Why can 12 merged variants cost far more than 12 adapters?
+11. Name two mitigations for catastrophic forgetting.
+12. What does decontamination protect?
+
+<details><summary>Answers</summary>
+
+1. Knowledge, behavior, behavior, knowledge.
+2. $32 \times 2 \times 8 \times 8{,}192 = 4{,}194{,}304$ (0.062%).
+3. So $\Delta W = 0$ at the start and training begins exactly at the base model.
+4. Otherwise the model never learns to stop and generates until the length limit.
+5. $0.1 \times 0.5 = 0.05$; $1 + 0.1 = 1.1$.
+6. Parseable output matching types and enumerations; not correct values or cross-field rules.
+7. $\sigma(1.5) = 0.818$.
+8. The margin doubles, so the loss falls for correctly ordered pairs; at the optimum the policy moves less from the reference.
+9. About 108 GB of weights, gradients, master weights and Adam moments before activations.
+10. Each merged variant needs a full 13.5 GB copy and its own replicas; adapters share one base at tens of MB each.
+11. Replay of general data; lower learning rate (also regularization such as EWC, early stopping).
+12. The validity of evaluation results, by keeping test items out of training data.
+
+</details>
+
+## 76.18 Interview questions
+
+### Basic
+
+**Q1. When would you fine-tune instead of improving the prompt?**
+**Answer.** When a stable, testable behavior still fails after good instructions and examples, you have at least a thousand good examples, and the evaluation shows the gap. Not for facts, which belong in retrieval.
+
+**Q2. What is LoRA and why is it popular?**
+**Answer.** A frozen weight plus a trainable low-rank update $BA$. It trains under 1% of parameters, needs a fraction of the memory, produces small adapters and can be merged at zero inference cost.
+
+### Intermediate
+
+**Q3. The bot's JSON fails 5% of the time. Fix it.**
+**Answer.** Measure failure types; add constrained decoding for syntax; validate business rules in code; retry once with errors fed back; fall back to handoff; fine-tune on schema-conforming examples; alert on first-attempt validity and size capacity on expected calls.
+
+**Q4. Compare RLHF and DPO for a product team.**
+**Answer.** Both optimize reward minus a KL penalty to a reference. RLHF trains a reward model and runs PPO with four models online, which explores but is costly and unstable. DPO trains offline on fixed pairs like SFT. Most teams start with DPO on pairs sampled from their own SFT model.
+
+### Advanced
+
+**Q5. Serve 200 per-tenant fine-tunes of a 7B model.**
+**Answer.** LoRA adapters on one base with multi-LoRA serving: adapters in an object-store registry keyed by base checksum, host cache, paging into GPU memory, adapter-affinity routing, per-tenant rate limits and evaluation gates, instant rollback by version pointer, and cost attribution per adapter (Chapter 79).
+
+**Q6. Design the data pipeline for fine-tuning on customer conversations.**
+**Answer.** Consent-filtered selection, PII scrubbing with placeholders, exact and near deduplication, stratified sampling and human review, filtered synthetic data for rare intents, decontamination against the eval set, replay mixture, versioned datasets with lineage for deletion, and a datasheet.
+
+## 76.19 Practical exercises
+
+1. Extend the validator of §76.5 to report all errors at once (no early return) and measure the change in $E[\text{calls}]$ in the simulation.
+2. Apply `LoRALinear` to every linear layer of the decoder layer from §72.8.2, count trainable parameters, and verify the merged model matches.
+3. Add label smoothing to the DPO code and observe what happens with unanimous votes.
+4. Compute QLoRA memory for 4,096-token sequences on a 24 GB GPU.
+
+## 76.20 Design challenges
+
+1. **Courier assistant in five languages.** Decide prompt, RAG, per-language adapters or one multilingual fine-tune; plan data and evaluation per language.
+2. **Merchant menu writer.** Generate dish descriptions in each restaurant's voice for 50,000 restaurants; choose between few-shot, per-restaurant adapters and one conditioned fine-tune, and estimate cost.
+3. **Base model upgrade.** A new base model is released; plan re-running CPT, SFT and DPO, the gates, and the migration of twelve adapters.
+
+## 76.21 References
+
+1. Brown, T., et al. *Language Models are Few-Shot Learners*. NeurIPS, 2020.
+2. Wei, J., et al. *Chain-of-Thought Prompting Elicits Reasoning in Large Language Models*. NeurIPS, 2022.
+3. Kojima, T., et al. *Large Language Models are Zero-Shot Reasoners*. NeurIPS, 2022.
+4. Wang, X., et al. *Self-Consistency Improves Chain of Thought Reasoning in Language Models*. ICLR, 2023. (Cited as Wang et al. 2023a.)
+5. Lu, Y., et al. *Fantastically Ordered Prompts and Where to Find Them: Overcoming Few-Shot Prompt Order Sensitivity*. ACL, 2022.
+6. Zhao, Z., et al. *Calibrate Before Use: Improving Few-Shot Performance of Language Models*. ICML, 2021.
+7. Liu, N. F., et al. *Lost in the Middle: How Language Models Use Long Contexts*. Transactions of the ACL 12, 2024.
+8. Willard, B. T., Louf, R. *Efficient Guided Generation for Large Language Models*. arXiv:2307.09702, 2023.
+9. OpenAI. *Introducing Structured Outputs in the API*. OpenAI blog, August 2024.
+10. Ouyang, L., et al. *Training Language Models to Follow Instructions with Human Feedback*. NeurIPS, 2022.
+11. Zhou, C., et al. *LIMA: Less Is More for Alignment*. NeurIPS, 2023.
+12. Hu, E. J., et al. *LoRA: Low-Rank Adaptation of Large Language Models*. ICLR, 2022.
+13. Dettmers, T., Pagnoni, A., Holtzman, A., Zettlemoyer, L. *QLoRA: Efficient Finetuning of Quantized LLMs*. NeurIPS, 2023.
+14. Houlsby, N., et al. *Parameter-Efficient Transfer Learning for NLP*. ICML, 2019.
+15. Li, X. L., Liang, P. *Prefix-Tuning: Optimizing Continuous Prompts for Generation*. ACL, 2021.
+16. Lester, B., Al-Rfou, R., Constant, N. *The Power of Scale for Parameter-Efficient Prompt Tuning*. EMNLP, 2021.
+17. Chen, L., et al. *Punica: Multi-Tenant LoRA Serving*. MLSys, 2024.
+18. Sheng, Y., et al. *S-LoRA: Serving Thousands of Concurrent LoRA Adapters*. MLSys, 2024.
+19. Christiano, P., et al. *Deep Reinforcement Learning from Human Preferences*. NeurIPS, 2017.
+20. Schulman, J., et al. *Proximal Policy Optimization Algorithms*. arXiv:1707.06347, 2017.
+21. Gao, L., Schulman, J., Hilton, J. *Scaling Laws for Reward Model Overoptimization*. ICML, 2023.
+22. Rafailov, R., et al. *Direct Preference Optimization: Your Language Model is Secretly a Reward Model*. NeurIPS, 2023.
+23. Bai, Y., et al. *Constitutional AI: Harmlessness from AI Feedback*. arXiv:2212.08073, 2022.
+24. Touvron, H., et al. *Llama 2: Open Foundation and Fine-Tuned Chat Models*. arXiv:2307.09288, 2023.
+25. Lee, K., et al. *Deduplicating Training Data Makes Language Models Better*. ACL, 2022.
+26. Wang, Y., et al. *Self-Instruct: Aligning Language Models with Self-Generated Instructions*. ACL, 2023. (Cited as Wang et al. 2023b.)
+27. Gururangan, S., et al. *Don't Stop Pretraining: Adapt Language Models to Domains and Tasks*. ACL, 2020.
+28. Kirkpatrick, J., et al. *Overcoming Catastrophic Forgetting in Neural Networks*. PNAS 114(13), 2017.
+29. Kim, Y., Rush, A. M. *Sequence-Level Knowledge Distillation*. EMNLP, 2016.
+30. Taori, R., et al. *Alpaca: A Strong, Replicable Instruction-Following Model*. Stanford CRFM, 2023.
+31. Ovadia, O., et al. *Fine-Tuning or Retrieval? Comparing Knowledge Injection in LLMs*. EMNLP, 2024.
+32. Qi, X., et al. *Fine-tuning Aligned Language Models Compromises Safety, Even When Users Do Not Intend To!* ICLR, 2024.
+
+## 76.22 Open verification items
+
+- Hu et al. 2022: "about 10,000× fewer trainable parameters and 3× less GPU memory" on GPT-3 175B; confirm wording.
+- InstructGPT inter-labeler agreement of about 73%; Christiano et al. "less than 1%" feedback figure.
+- LIMA 43% figure; Lee et al. "about ten times" memorization reduction; GPT-3's 13-gram decontamination.
+- OpenAI 2024 Structured Outputs figures (100% vs under 40%).
+- Llama 2 license clauses (700M MAU; output-use restriction) and "more than a million" comparisons.
+- Alpaca terms; Ovadia et al. venue (EMNLP 2024).
+- All QuickBite numbers new in this chapter (data funnel, review times, $p_1$, $p_r$) are teaching assumptions.

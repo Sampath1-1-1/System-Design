@@ -756,7 +756,7 @@ An average hides the people a model fails. The same synthetic GBDT, broken down 
 
 The east slice is three times worse. **Error analysis** asks why: inspect the worst errors, group them, and form hypotheses. Here the synthetic world contains a bridge closure in the east city from day 60, after the training window ended; the model has never seen it. In real life the remedy might be a road-closure feature, a fresher training window, or a fallback to the rule for that city until retraining. Slice evaluation is also how you find such problems *before* customers do, which is why TFX includes sliced model analysis as a pipeline component [Baylor et al. 2017].
 
-**Fairness slices.** Some slices correspond to groups of people. If ETAs are systematically too optimistic in lower-income neighborhoods, customers there receive worse service, and couriers serving them may be judged unfairly against unrealistic promises. Chapter 71 defines fairness metrics and mitigations; the lifecycle point is simply that such slices must be part of evaluation and monitoring from the first model.
+**Fairness slices.** Some slices correspond to groups of people. If ETAs are systematically too optimistic in lower-income neighborhoods, customers there receive worse service, and couriers serving them may be judged unfairly against unrealistic promises. Chapter 71 defines fairness metrics (§71.4) and mitigation (§71.6)s; the lifecycle point is simply that such slices must be part of evaluation and monitoring from the first model.
 
 ### 59.10.3 Model cards
 

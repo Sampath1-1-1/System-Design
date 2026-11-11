@@ -480,7 +480,7 @@ What to notice:
 #### Real-world industry applications
 
 ::: industry
-**Streaming responses from large-language-model APIs.** Several widely used LLM HTTP APIs stream generated tokens to clients as `text/event-stream` responses, because generation is strictly one-directional (server to client), each response is short-lived (seconds to minutes), and SSE passes through standard HTTP infrastructure, authentication and rate limiting unchanged. Chapter 73 discusses time to first token (TTFT) and inter-token latency (ITL), which is what this streaming exposes to users.
+**Streaming responses from large-language-model APIs.** Several widely used LLM HTTP APIs stream generated tokens to clients as `text/event-stream` responses, because generation is strictly one-directional (server to client), each response is short-lived (seconds to minutes), and SSE passes through standard HTTP infrastructure, authentication and rate limiting unchanged. §73.4 discusses time to first token (TTFT) and inter-token latency (ITL), which is what this streaming exposes to users.
 *Evidence: Illustrative* — a widely observed pattern; consult each provider's API documentation for specifics.
 :::
 

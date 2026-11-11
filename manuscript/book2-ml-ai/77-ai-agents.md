@@ -2,14 +2,14 @@
 
 > **Level:** 4 · **Track:** B (ML/AI) · **Estimated reading time:** 6 h
 
-At 8:12 p.m. a QuickBite customer writes: "order Q-1001 came 38 minutes late and the soup was cold, can I get something back?" The RAG chatbot of Chapter 75 can quote the late-delivery policy. It cannot look up the order, check whether this customer already received a credit this month, issue a \$12.25 refund, or hand the case to a person when the policy says a person must decide. Answering is reading; resolving is acting. A system that acts must choose which action to take, call another service with the right arguments, notice when the call failed, avoid paying twice when it retries, stop when it is going in circles, and refuse when a sentence planted in an order note tells it to refund \$500.
+At 8:12 p.m. a QuickBite customer writes: "order Q-1001 came 38 minutes late and the soup was cold, can I get something back?" The RAG chatbot of Chapter 75 can quote the late-delivery policy. It cannot look up the order, check whether this customer already received a credit this month, issue a \$12.25 refund, or hand the case to a person when the policy says a person must decide. Answering is reading; resolving is acting. A system that acts must also avoid paying twice when it retries, stop when it goes in circles, and refuse when a sentence planted in an order note tells it to refund \$500.
 
 An **AI agent** is a language model placed in a loop with tools, memory and a goal: it decides the next step, a program executes that step, and the result goes back to the model until the goal is met or a limit is reached. This chapter treats an agent as a distributed system whose control flow is chosen at run time by a probabilistic component. That framing makes most of the hard problems familiar: they are the problems of long-running workflows (§32.11), retries and idempotency (§22.12, §22.15), sagas (§32.7), least privilege and sandboxing (Chapter 50, §47.9) and tracing (§40.6), with one new twist. The component choosing the next step can be wrong, can be persuaded by its inputs, and costs money every time it thinks.
 
-The chapter builds a support agent for QuickBite that looks up orders, issues refunds within policy and escalates to humans. You will write its loop with a mock model, an idempotent refund tool, a policy check and step budgets; make it durable across crashes; size its cost per resolved ticket against a human agent; compute how reliability decays with the number of steps; and design its guardrails, approval gates, security boundaries, evaluation and traces. Structured output and function-calling formats belong to Chapter 76; LLM evaluation methodology belongs to Chapter 78; serving cost and latency are Chapter 73; RAG, including the agentic retrieval preview of §75.16.2, is Chapter 75. This chapter summarizes each and cross-references the owner.
+The running example is a QuickBite support agent that looks up orders, issues refunds within policy and escalates to humans. Structured output belongs to Chapter 76, evaluation methodology to Chapter 78, serving cost to Chapter 73 and RAG to Chapter 75; this chapter summarizes each and cross-references the owner.
 
 ::: note
-**QuickBite assumptions used in this chapter.** Reused from Book II: 500,000 orders a day; 30,000 support conversations a day, peak-to-average ratio about 9.6 (Chapter 75); the self-hosted 7B model at an internal price of \$0.20 per million input tokens and \$0.60 per million output tokens (Chapters 73, 75). **New in this chapter (teaching assumptions, not measurements of any real company):** 40% of support conversations need an account action, so the agent handles **12,000 tasks a day**, peaking at about 1.3 tasks per second; half of them (6,000) involve a refund request; 15% of refund requests (900 a day) exceed the automatic limit of **\$25** and need human approval. The agent's policy model is a larger hosted model at an illustrative **\$3.00 per million input tokens, \$15.00 per million output tokens and \$0.30 per million cached input tokens** (as of 2026, typical of frontier-class hosted models; not any provider's price list), with about 300 ms of request overhead and 20 ms per output token. A human support agent costs a fully loaded **\$30 per hour** and spends **8 minutes** on an average ticket, so a human-handled ticket costs \$4.00; a refund approval takes 2 minutes. Money is in US dollars; 1 GB = 10⁹ bytes.
+**QuickBite assumptions used in this chapter.** Reused from Book II: 500,000 orders a day; 30,000 support conversations a day, peak-to-average ratio about 9.6 (Chapter 75); the self-hosted 7B model at an internal price of \$0.20 per million input tokens and \$0.60 per million output tokens (Chapters 73, 75). **New in this chapter (teaching assumptions, not measurements of any real company):** 40% of support conversations need an account action, so the agent handles **12,000 tasks a day**, peaking at about 1.3 tasks per second; half of them (6,000) involve a refund request; 15% of refund requests (900 a day) need human approval, mostly because they exceed the automatic limit of **\$25**. The agent's policy model is the larger hosted model of Chapter 78 at an illustrative **\$2.50 per million input tokens and \$10 per million output tokens**, cached input **\$0.25 per million** (as of 2026; not any provider's price list), about 300 ms of overhead per call and 20 ms per output token. A human support agent costs a fully loaded **\$30 per hour** and spends **6 minutes** on an average ticket, so a human-handled contact costs **\$3.00** (as in Chapter 78); a refund approval takes 2 minutes. The agent's escalation rate is assumed equal to the 20% handoff rate of Chapter 78. Money is in US dollars; 1 GB = 10⁹ bytes.
 :::
 
 ## 77.1 Learning objectives
@@ -21,11 +21,9 @@ After this chapter you should be able to:
 - Design tool schemas, validate arguments, handle tool-selection errors and parallel calls, and explain the Model Context Protocol (MCP) roles and primitives.
 - Compare ReAct, plan-and-execute, reflection and tree search by quality, cost and latency.
 - Design short-term and long-term memory with explicit write policies and privacy controls.
-- Run an agent as a durable workflow with checkpointed steps, replay and idempotent tools.
-- Decide when multiple agents help, and estimate their communication overhead.
-- Apply idempotency keys, compensation and retry budgets to side-effecting tools.
-- Place guardrails, spend caps and human approval gates, and size the review team.
-- Defend against prompt injection, confused-deputy attacks and data exfiltration with least privilege, sandboxing and egress control.
+- Run an agent as a durable workflow with replay, idempotency keys, compensation and retry budgets.
+- Decide when multiple agents help, and estimate their overhead.
+- Place guardrails and approval gates, size the review team, and defend against injection and exfiltration.
 - Evaluate agents with task success, pass^k, steps, cost and trajectory checks, and instrument them with OpenTelemetry GenAI conventions.
 - Compute success probability over $n$ steps, latency of a step chain and cost per resolved ticket.
 
@@ -36,7 +34,7 @@ After this chapter you should be able to:
 - Timeouts, retries with backoff, retry budgets, circuit breakers and idempotency keys — §22.11–§22.13, §22.15 (every side-effecting tool call).
 - Tokens, context windows, prefill and decode — Chapter 72; serving latency, prefix caching and cost per token — §73.4, §73.8, §73.15 (the cost model of §77.17).
 - RAG and prompt injection through retrieved content — §75.11.4, §75.16.2 (search is one of the agent's tools).
-- Structured output and function-calling formats — Chapter 76 (how the model emits a tool call).
+- Structured output, function-calling formats and bounded repair retries — §76.5 (how the model emits a tool call).
 - Authorization and policy engines — §50.5.4; the confused deputy and compute isolation (containers, gVisor, microVMs) — §47.12.2, §47.9 (security in §77.13).
 - Distributed tracing and OpenTelemetry — §40.6, §40.7 (observability in §77.15).
 
@@ -50,18 +48,18 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a new support employee on their first day, sitting in front of an order-management console. They have a manual (instructions), a set of screens they may use (tools), notes from earlier shifts (memory) and a customer's question (the goal). They do not follow a fixed script. They read the question, open the order screen, read what it says, decide that a partial refund is appropriate, open the refund screen, type an amount, read the confirmation and reply. Each decision depends on what the previous screen showed. A supervisor sets limits: refunds above \$25 need sign-off, and some screens are off-limits.
+Think of a new support employee on their first day, sitting in front of an order-management console. They have a manual (instructions), a set of screens they may use (tools), notes from earlier shifts (memory) and a customer's question (the goal). They do not follow a fixed script: each decision depends on what the previous screen showed. A supervisor sets limits: refunds above \$25 need sign-off, and some screens are off-limits.
 
 An agent is that employee with a language model as the decision-maker. The model never touches the console itself. It writes a structured request ("call `issue_refund` with `order_id=Q-1001`, `amount=12.25`"), and ordinary code checks the request, performs it and shows the model the result. That separation is what makes an agent engineerable: everything except the decision is deterministic code you can test, limit and log.
 
 #### Why does this exist?
 
-Some tasks cannot be laid out as a fixed sequence in advance because the next step depends on information discovered along the way. Resolving "my order was late and cold" may need one lookup or five: the order may be split across two restaurants, the customer may have a pending credit, the courier may have marked the order as delivered early. Writing a branch for every combination is the classic expert-system trap. A model that can read the intermediate results and choose the next call handles the long tail of cases that rules never anticipated. That flexibility is the reason agents exist, and also the source of every risk in this chapter.
+Some tasks cannot be laid out as a fixed sequence in advance because the next step depends on information discovered along the way. Resolving "my order was late and cold" may need one lookup or five: the order may be split across two restaurants, the customer may have a pending credit, the courier may have marked the order as delivered early. A model that reads intermediate results and chooses the next call handles the long tail that hand-written branches never anticipate. That flexibility is the reason agents exist, and also the source of every risk in this chapter.
 
 #### How it works internally
 
 1. The orchestrator builds the prompt: system instructions, tool definitions (name, description, argument schema), relevant memory and the conversation so far.
-2. The model returns either a final answer or one or more **tool calls**, each a tool name plus arguments in structured form (Chapter 76).
+2. The model returns either a final answer or one or more **tool calls**, each a tool name plus arguments in structured form (§76.5.1).
 3. The orchestrator validates each call against its schema and policies, executes allowed calls (with timeouts, retries and idempotency keys), and records each result, or error, as a new message.
 4. The orchestrator checks budgets (steps, tokens, dollars, wall-clock time) and stop conditions, then loops to step 1 with the extended context.
 5. On a final answer, a handoff or a budget stop, the orchestrator returns a result and persists the trajectory for evaluation and audit.
@@ -100,7 +98,7 @@ flowchart LR
   E --> F["Multi-agent<br/>agents call agents"]
 ```
 
-**Reading the diagram.** Moving right, control over the sequence of steps shifts from your code to the model. On the left, the number of LLM calls is fixed and known at design time, so cost and latency are predictable and every path can be tested. On the right, the number of calls, their order and the tools used are decided at run time: more cases are handled, but cost, latency and failure modes become distributions rather than constants. There are no network protocols here; it is a design spectrum. The engineering rule is to stop at the leftmost box that meets the quality bar.
+**Reading the diagram.** Moving right, control over the sequence of steps shifts from your code to the model. On the left, the number of LLM calls is fixed and known at design time, so cost and latency are predictable and every path can be tested. On the right, the number of calls, their order and the tools used are decided at run time: more cases are handled, but cost, latency and failure modes become distributions rather than constants. The rule: stop at the leftmost box that meets the quality bar.
 
 **Table 77.1 — Workflow with LLM steps versus agent.**
 
@@ -118,28 +116,28 @@ flowchart LR
 
 Do not use an agent when a workflow will do, which is most of the time. Concretely:
 
-1. **The steps are known.** "Classify the ticket, fetch the order, apply the refund table, draft a reply" is a four-step chain. Writing it as a chain gives fixed cost, deterministic tests and a clear audit trail.
-2. **The task is one decision.** Fraud scoring (Chapter 70) and ETA prediction (Chapter 60) are single predictions with latency budgets in milliseconds; a loop adds nothing but delay.
-3. **Errors are irreversible and frequent decisions are cheap to encode.** If a wrong action costs more than a human's time, the agent should propose and a person (or a rule) should dispose (§77.12).
-4. **Latency must be sub-second.** Each model call costs hundreds of milliseconds to seconds (§77.17); a five-step agent cannot answer in 300 ms.
-5. **You cannot evaluate it.** If you have no way to tell a good trajectory from a bad one (§77.14), you cannot ship an agent responsibly.
+1. **The steps are known.** "Classify, fetch the order, apply the refund table, reply" is a chain with fixed cost, deterministic tests and a clear audit trail.
+2. **The task is one decision.** Fraud scoring (Chapter 70) and ETA prediction (Chapter 60) are single predictions with millisecond budgets.
+3. **Errors are expensive and the rule is easy to encode.** Let the agent propose and a rule or person dispose (§77.12).
+4. **Latency must be sub-second.** A five-step agent takes seconds (§77.17).
+5. **You cannot evaluate it.** Without a way to tell good trajectories from bad (§77.14), you cannot ship it responsibly.
 
 QuickBite's design follows the rule. A router (one small-model call) sends FAQ questions to the RAG pipeline of Chapter 75; only conversations that need account actions reach the agent, and inside the agent the refund itself is a fixed, code-enforced sub-workflow.
 
 ::: mistake
-**"Agent" as a synonym for "LLM feature".** Calling every LLM integration an agent hides the decision that matters: who controls the sequence of steps. If your code does, you have a workflow and should test it like one. If the model does, you have taken on the obligations of this chapter: budgets, guardrails, durable state, trajectory evaluation and injection defense.
+**"Agent" as a synonym for "LLM feature".** The label hides the decision that matters: who controls the sequence of steps. If your code does, test it as a workflow. If the model does, you have taken on this chapter's obligations: budgets, guardrails, durable state, trajectory evaluation and injection defense.
 :::
 
 ## 77.4 Agent architecture
 
 ### 77.4.1 The seven components
 
-A production agent is mostly not the model. Figure 77.3 shows the reference architecture QuickBite uses; the same boxes appear, under different names, in every serious agent platform.
+A production agent is mostly not the model. Figure 77.3 shows QuickBite's reference architecture.
 
-1. **Policy LLM.** Chooses the next action. It is stateless: everything it knows about the task arrives in the prompt. It may be one model or a router across models (Chapter 78).
-2. **Tool layer.** A registry of tools with schemas, a validator, adapters that call real services with per-tool credentials, timeouts and idempotency keys. Tools can be local functions, internal RPCs or MCP servers (§77.5.4).
-3. **Memory.** Short-term context (the current conversation and trajectory) plus long-term stores: customer preferences, summaries of past cases, and the knowledge corpus reached through retrieval (§77.7).
-4. **State store.** The durable record of each task's steps, inputs, outputs and status. It is the agent's saga log and the basis for resumption, audit and replay (§77.8, §77.10).
+1. **Policy LLM.** Chooses the next action; stateless, it knows only what the prompt contains. It may be a router across models (§78.14).
+2. **Tool layer.** Registry, schemas, validator and adapters that call services with per-tool credentials, timeouts and idempotency keys; tools may be functions, RPCs or MCP servers (§77.5.4).
+3. **Memory.** Short-term context plus long-term stores of preferences, past cases and knowledge (§77.7).
+4. **State store.** The durable record of each task's steps: the saga log, and the basis for resumption, audit and replay (§77.8, §77.10).
 5. **Orchestrator.** The loop of Figure 77.1, written as deterministic code, usually on a workflow engine. It owns budgets, stop conditions, retries and handoffs.
 6. **Guardrails.** Deterministic and model-based checks on inputs, tool calls and outputs, and especially **policy checks before side effects** (§77.11), with human approval gates for actions above a threshold (§77.12).
 7. **Observability.** Traces of every model call and tool call, with token counts, costs, latencies and outcomes, linked to the task and conversation (§77.15).
@@ -174,9 +172,9 @@ flowchart TB
 
 Two design rules follow from the diagram.
 
-**The model proposes; code disposes.** No component trusts a tool call because the model produced it. The model is an untrusted planner whose output is validated like user input. This rule is why the refund limit lives in the policy engine, not in the system prompt: a prompt is a request to the model; a policy check is a guarantee.
+**The model proposes; code disposes.** The model is an untrusted planner whose output is validated like user input. This rule is why the refund limit lives in the policy engine, not in the system prompt: a prompt is a request to the model; a policy check is a guarantee.
 
-**State lives outside the model and outside the worker.** The context window is a cache of the task state, rebuilt from the state store on every step. If a worker dies mid-task, another worker rebuilds the context from the store and continues. This is the same separation of stateless compute from durable state as in §32.11.1, and it is what makes long tasks (waiting hours for a human approval) possible.
+**State lives outside the model and outside the worker.** The context window is a cache of the task state, rebuilt from the state store on every step. This is the same separation of stateless compute from durable state as in §32.11.1, and it is what makes long tasks (waiting hours for a human approval) possible.
 
 ::: recommendation
 **Start with a single agent, a small tool set and a workflow engine.** QuickBite's first agent had four tools (`lookup_order`, `get_refund_history`, `issue_refund`, `handoff_to_human`), one policy model and a durable orchestrator. Add tools when trajectory analysis shows tasks failing for lack of one, and add agents only under the conditions of §77.9.
@@ -266,13 +264,13 @@ sequenceDiagram
 
 ### 77.5.4 The Model Context Protocol
 
-Every agent framework once defined its own way to describe tools, so a tool written for one host had to be rewrapped for every other. The **Model Context Protocol (MCP)**, an open specification introduced by Anthropic in November 2024, standardizes the connection between LLM applications and the systems that supply context and actions, in the way the Language Server Protocol standardized editors and language tooling.
+Every framework once described tools its own way, so a tool had to be rewrapped for every host. The **Model Context Protocol (MCP)**, an open specification introduced by Anthropic in November 2024, standardizes the connection between LLM applications and the systems that supply context and actions, as the Language Server Protocol did for editors.
 
 ::: definition
-**Definition — MCP roles.** A **host** is the LLM application (a chat app, an IDE, an agent runtime) that the user interacts with; it creates and manages **clients**, enforces security policy and user consent, and aggregates context. Each **client** lives inside the host and holds a stateful, one-to-one session with one **server**. A **server** is a separate program, local or remote, that exposes focused capabilities through three primitives: **tools** (functions the model may invoke), **resources** (context data such as files or records, identified by URI) and **prompts** (reusable message templates selected by the user) [MCP 2025].
+**Definition — MCP roles.** A **host** is the LLM application (chat app, IDE, agent runtime); it creates **clients**, enforces security policy and user consent, and aggregates context. Each **client** lives inside the host and holds a stateful, one-to-one session with one **server**. A **server** is a separate program, local or remote, that exposes focused capabilities through three primitives: **tools** (functions the model may invoke), **resources** (context data such as files or records, identified by URI) and **prompts** (reusable message templates selected by the user) [MCP 2025].
 :::
 
-The protocol is JSON-RPC 2.0 over stateful connections, with capability negotiation at initialization: each side declares the features it supports, and only those may be used in the session. Servers may also use features offered by clients: **sampling** (the server asks the host's model for a completion, subject to user approval), **roots** (the server asks which URI or file-system boundaries it may operate within) and **elicitation** (the server asks the user for more information). Two standard transports are defined: **stdio**, where the host launches the server as a subprocess and exchanges newline-delimited JSON-RPC messages, and **Streamable HTTP**, a single HTTP endpoint accepting POST and GET, with responses as JSON or a Server-Sent Events stream and an optional `Mcp-Session-Id` header. For HTTP, servers must validate the `Origin` header to prevent DNS-rebinding attacks and should bind to localhost when local; remote servers authorize with an OAuth 2.1–based flow [MCP 2025]. Statements here follow the 2025-06-18 and 2025-11-25 revisions (as of 2026).
+The protocol is JSON-RPC 2.0 over stateful connections, with capability negotiation at initialization: only features both sides declare may be used. Clients may offer servers **sampling** (a completion from the host's model, subject to user approval), **roots** (the URI or file-system boundaries the server may operate within) and **elicitation** (a request for more information from the user). Two transports are standard: **stdio** (the host launches the server as a subprocess) and **Streamable HTTP** (one endpoint accepting POST and GET, replying with JSON or a Server-Sent Events stream). HTTP servers must validate the `Origin` header against DNS rebinding; remote servers authorize with an OAuth 2.1–based flow [MCP 2025]. Statements here follow the 2025-06-18 and 2025-11-25 revisions (as of 2026).
 
 **Figure 77.5 — MCP architecture: one host, several clients, one server each.**
 
@@ -526,7 +524,7 @@ What to notice:
 
 ### 77.5.6 How many tools?
 
-Every tool definition is sent on every model call. QuickBite's four tools cost about 1,800 tokens of schema; fifty tools from several MCP servers could cost 20,000 tokens per call, or \$0.06 per call at \$3 per million input tokens before caching, and models select less accurately among many similar tools. Three remedies: group tools behind a router (the router picks the tool family, then only that family is shown); retrieve tool definitions by relevance to the task, as RAG retrieves passages; and merge fine-grained tools into coarser, task-shaped ones (`resolve_late_delivery` instead of six primitive calls), which moves sequencing back into deterministic code.
+Every tool definition is sent on every model call. QuickBite's four tools cost about 1,800 tokens of schema; fifty tools from several MCP servers could cost 20,000 tokens per call, or \$0.05 per call at \$2.50 per million input tokens before caching, and models select less accurately among many similar tools. Three remedies: group tools behind a router (the router picks the tool family, then only that family is shown); retrieve tool definitions by relevance to the task, as RAG retrieves passages; and merge fine-grained tools into coarser, task-shaped ones (`resolve_late_delivery` instead of six primitive calls), which moves sequencing back into deterministic code.
 
 ## 77.6 Planning patterns
 
@@ -540,9 +538,9 @@ Cost and latency: one model call per step, each with the full history, so input 
 
 ### 77.6.2 Plan-and-execute
 
-**Plan-and-execute** separates a planner call, which writes the whole plan up front ("1. look up the order; 2. check refund history; 3. compute entitlement; 4. refund; 5. reply"), from an executor that carries out each step, often with a smaller model or plain code, and a **replanner** invoked only when a step fails or returns something unexpected. Plan-and-Solve prompting showed the planning half of the idea for zero-shot reasoning: asking the model first to devise a plan that divides the task into subtasks, then to carry it out, reduced missing-step errors relative to zero-shot chain-of-thought on arithmetic, commonsense and symbolic reasoning benchmarks [Wang et al. 2023].
+**Plan-and-execute** separates a planner call, which writes the whole plan up front ("1. look up the order; 2. check refund history; 3. compute entitlement; 4. refund; 5. reply"), from an executor that carries out each step, often with a smaller model or plain code, and a **replanner** invoked only when a step fails or returns something unexpected. Plan-and-Solve prompting showed the planning half for zero-shot reasoning: devising a plan of subtasks first, then carrying it out, reduced missing-step errors relative to zero-shot chain-of-thought [Wang et al. 2023].
 
-Plan-and-execute helps systems in three ways: the expensive model is called once or twice instead of at every step; independent steps in the plan can run in parallel; and the plan is an artifact that a guardrail or a human can inspect *before* any side effect. Its weakness is rigidity: a plan written before the order lookup cannot know the order was split across two restaurants, so replanning logic matters.
+The expensive model runs once or twice instead of every step, independent steps can run in parallel, and the plan can be inspected by a guardrail or a human *before* any side effect. The weakness is rigidity: a plan written before the order lookup cannot know the order was split across two restaurants.
 
 **Figure 77.7 — ReAct versus plan-and-execute.**
 
@@ -568,9 +566,9 @@ flowchart TB
 
 ### 77.6.3 Reflection, self-critique and tree search
 
-**Reflection** adds a critique step. Reflexion has the agent, after a failed attempt, write a short verbal reflection on what went wrong, store it in an episodic memory buffer and retry with the reflection in context; it reached 91% pass@1 on the HumanEval coding benchmark, against 80% for the GPT-4 baseline it compared with [Shinn et al. 2023]. Self-Refine iterates generate, critique, revise with the same model and no external signal [Madaan et al. 2023]. The pattern works best when a reliable external signal exists: unit tests for code, a policy checker for refunds, a schema validator for structured output. Without one, the model grades its own homework and can talk itself into confident errors. Anthropic's evaluator–optimizer workflow is the same idea with separate generator and evaluator prompts [Anthropic 2024].
+**Reflection** adds a critique step. Reflexion has the agent, after a failed attempt, write a short verbal reflection on what went wrong, store it in an episodic memory buffer and retry with the reflection in context; it reached 91% pass@1 on the HumanEval coding benchmark, against 80% for the GPT-4 baseline it compared with [Shinn et al. 2023]. Self-Refine iterates generate, critique, revise with the same model and no external signal [Madaan et al. 2023]. Reflection works best with a reliable external signal (unit tests, a policy checker, a schema validator); without one, the model grades its own homework.
 
-**Tree search** explores alternatives instead of committing to one. Tree of Thoughts lets the model propose several candidate next steps, evaluate them, and search the tree with breadth-first or depth-first search and backtracking [Yao et al. 2023b]; Language Agent Tree Search applies Monte Carlo tree search to agent trajectories, using environment feedback and self-reflection as value signals [Zhou et al. 2024]. Search can raise success on puzzles and coding tasks with checkable outcomes, but its cost is multiplicative: with branching factor $b$ and depth $d$, exhaustive search evaluates up to $b^d$ nodes, and even a beam of width $w$ costs about $b \cdot w \cdot d$ model calls. Side effects make search awkward, because you cannot explore "refund \$12" and "refund \$24" against the real payments service; search is for planning in simulation or over reversible actions.
+**Tree search** explores alternatives instead of committing to one. Tree of Thoughts lets the model propose several candidate next steps, evaluate them, and search the tree with breadth-first or depth-first search and backtracking [Yao et al. 2023b]; Language Agent Tree Search applies Monte Carlo tree search to agent trajectories, using environment feedback and self-reflection as value signals [Zhou et al. 2024]. Its cost is multiplicative: with branching factor $b$ and depth $d$, exhaustive search evaluates up to $b^d$ nodes, and even a beam of width $w$ costs about $b \cdot w \cdot d$ model calls. You cannot explore "refund \$12" and "refund \$24" against real payments, so search suits simulation and reversible actions.
 
 **Figure 77.8 — Reflection with an external checker.**
 
@@ -692,9 +690,9 @@ What to notice: simulation and formula agree to within sampling error (200,000 t
 
 ### 77.7.1 Short-term context and summarization
 
-The model remembers nothing between calls; **short-term memory** is whatever the orchestrator puts in the prompt: the conversation, the trajectory of tool calls and results, and scratch notes. It grows with every step. A long conversation plus verbose tool results can exhaust the context window or, long before that, make each call slow and expensive and bury the important facts in the middle of the prompt, where models attend to them less reliably (§75.11.2).
+The model remembers nothing between calls; **short-term memory** is whatever the orchestrator puts in the prompt, and it grows with every step. Long before it exhausts the context window, it makes each call slow and expensive and buries facts in the middle of the prompt, where models attend less reliably (§75.11.2).
 
-Three techniques keep it bounded. **Trimming** tool results at the tool layer: return the eight fields the model needs, not the 4 KB order document. **Summarization**: when the context exceeds a threshold, replace older turns with a model-written summary that keeps decisions, facts and open questions, and keep the raw turns in the state store for audit. **Structured scratchpads**: maintain task state (order ID, entitlement computed, refund issued yes/no) as a small structured block the orchestrator updates, rather than relying on the model to re-derive it from history. MemGPT frames the same idea as an operating system's memory hierarchy, with the model itself paging information between a small main context and external storage through function calls [Packer et al. 2023].
+Three techniques keep it bounded. **Trimming** tool results at the tool layer: return the eight fields the model needs, not the 4 KB order document. **Summarization**: above a threshold, replace older turns with a summary of decisions, facts and open questions, keeping raw turns in the state store. **Structured scratchpads**: keep task state (order ID, entitlement, refund issued) in a small block the orchestrator updates. MemGPT frames this as an operating system's memory hierarchy, with the model paging information between main context and external storage through function calls [Packer et al. 2023].
 
 ### 77.7.2 Long-term memory: episodic and semantic
 
@@ -702,7 +700,7 @@ Three techniques keep it bounded. **Trimming** tool results at the tool layer: r
 **Definition — Episodic and semantic memory.** **Episodic memory** stores records of specific past events ("on 3 May the customer reported a missing drink on order Q-0877 and received \$4"). **Semantic memory** stores general facts distilled from many events or sources ("this customer prefers contactless delivery"; "the late-delivery policy grants 50% above 30 minutes"). In agents, both are usually stored outside the model and retrieved into the prompt by relevance.
 :::
 
-The terms come from cognitive psychology, and the generative agents of Park et al. made them concrete for LLMs. Each of 25 simulated characters kept a **memory stream** of natural-language observations; retrieval scored each memory by a weighted sum of **recency** (exponential decay since last access), **importance** (a 1–10 score the model assigned when writing) and **relevance** (embedding similarity to the current situation); periodic **reflection** synthesized higher-level memories from recent ones, which then fed planning [Park et al. 2023]. Production memory systems keep this shape: an append-only store of events, a scoring function for retrieval, and a background process that consolidates events into facts.
+The terms come from cognitive psychology, and the generative agents of Park et al. made them concrete for LLMs. Each of 25 simulated characters kept a **memory stream** of natural-language observations; retrieval scored each memory by a weighted sum of **recency** (exponential decay since last access), **importance** (a 1–10 score the model assigned when writing) and **relevance** (embedding similarity to the current situation); periodic **reflection** synthesized higher-level memories from recent ones, which then fed planning [Park et al. 2023]. Production memory systems keep this shape: an event store, a retrieval score and background consolidation into facts.
 
 **Figure 77.9 — Memory tiers of the support agent.**
 
@@ -727,13 +725,13 @@ flowchart LR
 
 ### 77.7.3 Memory write policies and privacy
 
-Reading memory is a retrieval problem; **writing** memory is a policy problem, and it is where most incidents start. A memory store that saves whatever the model decides is worth remembering will accumulate personal data with no retention limit, sensitive inferences ("customer mentioned a medical condition"), and injected instructions that resurface in later sessions as trusted context.
+Reading memory is a retrieval problem; **writing** memory is a policy problem. A store that saves whatever the model finds memorable accumulates personal data without retention limits, sensitive inferences and injected instructions that resurface later as trusted context.
 
 QuickBite's write policy:
 
-1. **Allow-listed memory types only.** Episodic: case summaries with outcome and amount. Semantic: a fixed schema of preferences (language, contact channel, delivery instructions). No free-form "facts about the customer".
+1. **Allow-listed types only**: case summaries with outcome and amount; a fixed schema of preferences. No free-form "facts about the customer".
 2. **Written by code from structured fields where possible,** not by the model's prose; model-written summaries pass a PII redactor (§40.4.5) and an instruction detector.
-3. **Provenance on every record**: source task, timestamp, writer version, and whether it came from the customer, a tool or the model. Retrieved memories are labeled as data, not instructions (§77.13).
+3. **Provenance on every record** (source task, time, writer, origin); retrieved memories are labeled as data, not instructions (§77.13).
 4. **Retention and deletion**: episodic records expire after 24 months; every store is wired into the data-subject deletion pipeline (§50.9.3), including vector indexes (§75.5.4).
 5. **Scope**: memories are keyed by customer and never retrieved across customers; filters are applied inside the search (§75.14).
 
@@ -755,15 +753,15 @@ Sizing is modest. If 4 million weekly active customers each accumulate an averag
 
 Most production "agents" are best built as deterministic workflows in which some steps are LLM calls and one bounded step is an agent loop. QuickBite's refund flow: a router (LLM), an order lookup (code), the agent loop to understand the complaint and propose an action (LLM with tools, at most six steps), a policy check (code), an approval wait if needed (human, possibly hours), the refund (code, idempotent), a reply (LLM) and a memory write (code). The sequence is fixed; only one box is autonomous.
 
-This structure answers questions an unbounded agent cannot: How long can a task wait? (As long as the approval takes; the workflow sleeps durably.) What happens on deploy? (In-flight workflows continue on the new workers.) Where is ticket T-501? (The engine's visibility API shows the current step.)
+The structure also answers operational questions: a task can wait hours for approval, in-flight tasks survive deploys, and the engine shows where ticket T-501 is.
 
 ### 77.8.2 Durable execution for agents
 
-An agent task is a long-running workflow (§32.11.1). It makes several network calls with seconds of latency each, it may wait for a human, and it performs side effects in the middle. A process crash between steps must not lose the task, re-ask the customer or repeat the refund. Durable execution solves exactly this: each step's result is persisted in an event history; after a crash, another worker **replays** the history, receiving recorded results for completed steps instead of re-executing them, and continues from the first unfinished step [Temporal Docs].
+An agent task is a long-running workflow (§32.11.1) with slow network calls, human waits and side effects in the middle; a crash must not lose the task or repeat the refund. Durable execution solves exactly this: each step's result is persisted in an event history; after a crash, another worker **replays** the history, receiving recorded results for completed steps instead of re-executing them, and continues from the first unfinished step [Temporal Docs].
 
 Applying the model to agents yields three rules.
 
-1. **Every LLM call is an activity.** A model call is a nondeterministic network call; it cannot live in deterministic workflow code. Recording its output in the history also means replay sees the *same* decision. Re-calling the model on replay would produce a different plan and break determinism.
+1. **Every LLM call is an activity.** It is a nondeterministic network call; recording its output means replay sees the *same* decision instead of a new plan.
 2. **Every tool call is an activity with a retry policy and timeouts.** Activities execute at least once, so side-effecting tools must be idempotent (§77.10).
 3. **Long waits are durable timers or signals.** "Wait for approval, up to 4 hours" is a signal with a timer, not a sleeping thread.
 
@@ -903,7 +901,7 @@ flowchart TB
 
 **Reading the diagram.** The lead agent sends subtasks synchronously but they run in parallel; each worker has its own context window and tools and returns a compressed summary, not its whole trajectory. Shared state is written asynchronously so the lead can resume. Failure points: workers duplicating work or contradicting each other, summaries dropping the crucial detail, and the lead waiting on the slowest worker. Scaling: wall-clock time falls with parallelism; tokens rise with the number of agents.
 
-#### When multiple agents help, and when they just add cost
+### 77.9.1 When multiple agents help, and when they just add cost
 
 Multiple agents help when the task decomposes into **independent, context-heavy** subtasks: each worker can read far more than fits in one context, in parallel, and return only what matters. Anthropic reports that its multi-agent research system, a Claude Opus 4 lead with Claude Sonnet 4 subagents, outperformed single-agent Claude Opus 4 by 90.2% on an internal research evaluation; it also reports that agents use about 4× the tokens of chat interactions and multi-agent systems about 15×, that token usage alone explained 80% of performance variance on the BrowseComp evaluation, and that domains where agents must share the same context, and most coding tasks, are poorer fits [Anthropic 2025]. More agents mostly means more tokens spent in parallel; that pays when the value of the task is high and the subtasks are separable.
 
@@ -1120,7 +1118,7 @@ $$a = \lambda_\text{peak}\, S, \qquad c = \left\lceil \frac{a}{\rho_\text{target
 
 An agent reads text from places its operator does not control: customer messages, order notes typed by customers, restaurant menus, web pages, emails, retrieved documents and the outputs of third-party MCP servers. **Indirect prompt injection** places instructions in such content so that the model, reading it as part of a tool result, follows them. Greshake et al. demonstrated it against real LLM-integrated applications, showing data theft, manipulation of outputs and propagation through content the model later reads [Greshake et al. 2023]; the OWASP Top 10 for LLM Applications (2025 edition) lists prompt injection first and **excessive agency**, granting an LLM more functionality, permissions or autonomy than it needs, as a separate risk [OWASP 2025].
 
-No current model reliably distinguishes instructions from data in its context, so the defenses are architectural. Simon Willison's **lethal trifecta** names the dangerous combination: an agent with access to **private data**, exposure to **untrusted content**, and the ability to **communicate externally** can be made to exfiltrate the data [Willison 2025]. Remove any one leg for a given task and the attack has no payoff. CaMeL takes a stronger approach: a privileged model writes a program from the trusted user request only; untrusted data is processed by a quarantined model that cannot call tools; and capabilities attached to each value enforce, at tool-call time, where data may flow [Debenedetti et al. 2025].
+No current model reliably distinguishes instructions from data in its context, so the defenses are architectural (§78.13 covers testing them). Simon Willison's **lethal trifecta** names the dangerous combination: an agent with access to **private data**, exposure to **untrusted content**, and the ability to **communicate externally** can be made to exfiltrate the data [Willison 2025]. Remove any one leg for a given task and the attack has no payoff. CaMeL takes a stronger approach: a privileged model writes a program from the trusted user request only; untrusted data is processed by a quarantined model that cannot call tools; and capabilities attached to each value enforce, at tool-call time, where data may flow [Debenedetti et al. 2025].
 
 **Figure 77.15 — Indirect injection and the confused deputy.**
 
@@ -1182,7 +1180,7 @@ flowchart LR
 
 ## 77.14 Agent evaluation at the systems level
 
-Chapter 78 owns evaluation methodology (benchmarks, LLM-as-a-judge, human evaluation, statistics). Here the question is which numbers an agent system must produce and where they come from.
+Chapter 78 owns evaluation methodology (benchmarks, LLM-as-a-judge, human evaluation, statistics, and the end-state harness of §78.6.4). Here the question is which numbers an agent system must produce and where they come from.
 
 **Table 77.7 — Systems-level agent metrics.**
 
@@ -1250,7 +1248,7 @@ The OpenTelemetry **GenAI semantic conventions** (status: Development, as of 202
 
 ```mermaid
 flowchart TB
-  A["invoke_agent support_agent<br/>12.0 s, 5 model calls, cost 0.041"] --> B["chat model-x<br/>3,800 in, 100 out"]
+  A["invoke_agent support_agent<br/>12.0 s, 5 model calls, cost 0.033"] --> B["chat model-x<br/>3,800 in, 100 out"]
   A --> C["execute_tool lookup_order<br/>140 ms"]
   A --> D["chat model-x<br/>4,300 in, 100 out"]
   A --> E["execute_tool issue_refund<br/>2,010 ms, 2 attempts"]
@@ -1279,7 +1277,7 @@ flowchart TB
 | Silent wrong action | Plausible but wrong arguments | Audits, reversals, complaints | Reverse; human review of cluster | Preconditions; approval gates |
 | Prompt regression | New prompt or model version | Scenario suite; canary metrics | Roll back version | Versioned prompts; release gate |
 
-**Circuit breakers** (§22.13) apply at two levels. Per tool: if payments fails 50% of calls in a 30-second window, the breaker opens, the tool immediately returns a non-retryable "payments unavailable" result, and the model is instructed to tell the customer the refund will be processed and to hand off. Per model provider: if the policy model's error rate or TTFT crosses a threshold, route new tasks to a fallback model (Chapter 78) with a reduced tool set, or to human agents. A **watchdog** on wall-clock time per task catches whatever the other limits miss: a task older than 10 minutes without a human wait is escalated.
+**Circuit breakers** (§22.13) apply at two levels. Per tool: if payments fails 50% of calls in a 30-second window, the breaker opens, the tool immediately returns a non-retryable "payments unavailable" result, and the model is instructed to tell the customer the refund will be processed and to hand off. Per model provider: if the policy model's error rate or TTFT crosses a threshold, route new tasks to a fallback model (§78.15) with a reduced tool set, or to human agents. A **watchdog** on wall-clock time per task catches whatever the other limits miss: a task older than 10 minutes without a human wait is escalated.
 
 ::: mistake
 **Letting the model handle infrastructure failures.** Telling the model "the tool failed, try again" hands retry policy to a component that does not know about retry budgets, breakers or idempotency. Retry in code; tell the model only what the customer needs to hear.
@@ -1313,15 +1311,15 @@ $$C_\text{task} = \underbrace{\left[nB + \Delta\frac{n(n-1)}{2}\right]p_\text{in
 **Worked example — Cost per resolved QuickBite ticket versus a human agent.** $n = 5$ calls; $B = 3{,}800$ (3,000 static instructions and tool schemas, 800 conversation); $\Delta = 500$; output: four tool-call steps of 100 tokens and a 250-token reply, $O = 650$.
 
 1. Input tokens: $5 \times 3{,}800 + 500 \times 5 \times 4/2 = 19{,}000 + 5{,}000 = 24{,}000$.
-2. Without caching: $24{,}000 \times \$3/\text{M} = \$0.0720$; output $650 \times \$15/\text{M} = \$0.00975$; $C_\text{LLM} = \$0.0818$.
-3. Caching the 3,000-token static prefix on all 5 calls: $15{,}000 \times \$0.30/\text{M} = \$0.0045$ plus $9{,}000 \times \$3/\text{M} = \$0.0270$; $C_\text{LLM} = 0.0045 + 0.0270 + 0.00975 = \$0.0413$.
+2. Without caching: $24{,}000 \times \$2.50/\text{M} = \$0.0600$; output $650 \times \$10/\text{M} = \$0.0065$; $C_\text{LLM} = \$0.0665$.
+3. Caching the 3,000-token static prefix on all 5 calls: $15{,}000 \times \$0.25/\text{M} = \$0.00375$ plus $9{,}000 \times \$2.50/\text{M} = \$0.0225$; $C_\text{LLM} = 0.00375 + 0.0225 + 0.0065 = \$0.0328$.
 4. $C_\text{aux}$: three 7B calls of 1,000 input and 20 output tokens: $3{,}000 \times \$0.20/\text{M} + 60 \times \$0.60/\text{M} = \$0.0006$. $C_\text{infra}$: an assumed \$600 a day over 12,000 tasks, \$0.050.
 5. Approvals: $h = 900/12{,}000 = 0.075$ at \$1.00 (§77.12.2), \$0.075. Wrong actions: 1% of the 6,000 refunds a day wrong by \$12 on average, $\$720 / 12{,}000 = \$0.060$ per task.
-6. Agent-side cost: $0.0413 + 0.0006 + 0.050 + 0.075 + 0.060 = \$0.227$ per task.
-7. Escalations: $e = 0.20$ at \$4.00, \$0.80. $C_\text{task} = 0.227 + 0.80 = \$1.03$, against \$4.00 for a human-only ticket: \$12,300 a day instead of \$48,000.
-8. Agent-side cost per agent-resolved ticket: $0.227 \times 12{,}000 / 9{,}600 = \$0.28$.
+6. Agent-side cost: $0.0328 + 0.0006 + 0.050 + 0.075 + 0.060 = \$0.218$ per task.
+7. Escalations: $e = 0.20$ at \$3.00, \$0.60. $C_\text{task} = 0.218 + 0.60 = \$0.82$, against \$3.00 for a human-only ticket: about \$9,800 a day instead of \$36,000.
+8. Agent-side cost per agent-resolved ticket: $0.218 \times 12{,}000 / 9{,}600 = \$0.27$.
 
-**Interpretation.** Tokens are 4% of the blended cost per ticket; escalations are 78%. Raising escalations from 20% to 30% adds \$0.40 per task, ten times the whole model bill, while switching the policy to the 7B model would save only about \$0.036 ($24{,}000 \times \$0.20/\text{M} + 650 \times \$0.60/\text{M} = \$0.0052$ instead of \$0.0413). **Engineering implication.** Optimize resolution rate and wrong-action rate first, then steps per task, then token prices. A cheaper model that resolves one point fewer tickets ($0.01 \times \$4 = \$0.04$) already costs more than it saves. The human comparison also omits what the agent changes for customers: a 10-second answer at 8 p.m. instead of a queue.
+**Interpretation.** Tokens are 4% of the blended cost per ticket; escalations are 73%. Raising escalations from 20% to 30% adds \$0.30 per task, nine times the whole model bill, while switching the policy to the 7B model would save only about \$0.028 ($24{,}000 \times \$0.20/\text{M} + 650 \times \$0.60/\text{M} = \$0.0052$ instead of \$0.0328). **Engineering implication.** Optimize resolution rate and wrong-action rate first, then steps per task, then token prices. A cheaper model that resolves one point fewer tickets ($0.01 \times \$3 = \$0.03$) already costs more than it saves. The comparison also omits what the agent changes for customers: a 10-second answer at 8 p.m. instead of a queue.
 :::
 
 ### 77.17.2 Latency of a step chain
@@ -1375,5 +1373,136 @@ gantt
   Stream 250 tokens         :r2, 10100, 15100
 ```
 
-**Reading the diagram.** Bars are strictly sequential, because each model call depends on the previous tool result; that is the defining latency property of a ReAct loop. Model calls are 92% of the time to first token; tools are 6%. Merging steps 1 and 2 with parallel reads removes 2.45 s. Failure points: any model call's tail latency delays everything after it, so per-call timeouts with one retry and a per-task deadline bound the chain. Scaling more workers does not shorten a chain; only fewer or faster steps do.
+**Reading the diagram.** Bars are strictly sequential, because each model call depends on the previous tool result; that is the defining latency property of a ReAct loop. Model calls are 94% of the time to first token; tools are 6%. Merging steps 1 and 2 with parallel reads removes 2.45 s. Failure points: any model call's tail latency delays everything after it, so per-call timeouts with one retry and a per-task deadline bound the chain. Scaling more workers does not shorten a chain; only fewer or faster steps do.
 
+## 77.18 Summary and revision notes
+
+::: summary
+- An agent is an LLM policy in a loop with tools, memory and a goal; code executes, validates and budgets every step. Workflows fix the path in code; agents let the model choose it. Use the simplest pattern that works.
+- Reference architecture: policy LLM, tool layer, memory, durable state store, orchestrator, guardrails, observability. The model proposes; code disposes.
+- Tools need precise schemas and descriptions; return validation errors to the model, cap corrections, run only independent reads in parallel. MCP standardizes hosts, clients and servers with tools, resources and prompts over JSON-RPC; it is not a security boundary.
+- ReAct decides every step; plan-and-execute exposes a reviewable plan; reflection needs an external checker; tree search multiplies cost. Success decays as $p^n$; retries fix detectable errors, silent errors set the ceiling.
+- Memory: bound the context, store episodic and semantic memory with allow-listed types, provenance, retention and deletion.
+- Run agents as durable workflows: LLM and tool calls are recorded activities; key side effects by logical action; compensate multi-step actions; budget retries in one layer.
+- Enforce policy, ownership and spend caps in code before side effects; gate high-value actions on humans sized by $c = \lceil \lambda S / \rho \rceil$.
+- Assume injection succeeds: user-scoped least-privilege credentials, break the lethal trifecta, sandbox code in gVisor or microVMs, control egress.
+- Evaluate with end-state success, pass^k, steps, cost and trajectory checks; trace with OpenTelemetry GenAI spans; replay failures.
+- QuickBite: about \$0.03 of tokens, \$0.22 agent-side and \$0.82 blended per ticket against \$3.00 human; escalation rate dominates cost. A 4-step chain takes about 10 s to first token.
+:::
+
+## 77.19 Knowledge checkpoint
+
+1. What distinguishes an agent from a workflow with LLM steps?
+2. Give two situations in which an agent is the wrong design.
+3. Why must the customer ID not be a tool argument the model fills?
+4. In MCP, what is the relationship between hosts, clients and servers?
+5. What are the three MCP server primitives, and who controls each?
+6. With per-step success 0.95, what is the success probability of an 8-step task?
+7. With $q_d = 0.04$, $q_u = 0.01$ and unlimited retries, what is the per-step ceiling?
+8. Why must an LLM call be recorded in the workflow history rather than re-executed on replay?
+9. Why should an idempotency key not include the step number?
+10. Three layers each allow two retries. What is the worst-case call amplification?
+11. 120 reviews arrive in the peak hour at 3 minutes each; how many reviewers at 75% target utilization?
+12. A task succeeds in 5 of 8 trials. What is pass^2 for that task?
+13. Name the three legs of the lethal trifecta.
+14. Why is a step budget needed in addition to loop detection?
+15. In QuickBite's cost model, which term dominates, and what follows?
+
+<details><summary>Answers</summary>
+
+1. Who chooses the sequence of steps: code (workflow) or the model at run time (agent).
+2. Any two of: steps are known in advance; a single prediction under a tight latency budget; frequent irreversible actions; no way to evaluate trajectories.
+3. The model can be confused or injected into supplying another customer's ID (confused deputy); identity must come from the authenticated session.
+4. A host creates many clients; each client holds one stateful session with exactly one server.
+5. Tools (model-controlled), resources (application-controlled context) and prompts (user-selected templates).
+6. $0.95^8 = 0.663$.
+7. $0.95 / 0.96 = 0.9896$.
+8. The model is nondeterministic; re-calling it on replay can produce a different decision, breaking determinism and possibly the idempotency of later side effects.
+9. A re-planning model may propose the same refund at a later step; only a key built from the logical action deduplicates it.
+10. $(1 + 2)^3 = 27$.
+11. $a = 120 \times 3/60 = 6$; $c = \lceil 6/0.75 \rceil = 8$.
+12. $\binom{5}{2}/\binom{8}{2} = 10/28 = 0.357$.
+13. Access to private data, exposure to untrusted content, ability to communicate externally.
+14. Loop detection catches exact repetition only; a wandering policy never repeats exactly (scenario D in §77.5.5).
+15. Escalations (73% of the blended cost); resolution rate matters far more than token prices.
+
+</details>
+
+## 77.20 Interview questions
+
+### Basic
+
+**Q1. What is an AI agent, and how is it different from a chatbot with RAG?**
+**Answer.** A RAG chatbot runs a fixed pipeline: retrieve, then generate. An agent loops: the model chooses tool calls based on intermediate results, code executes them, and the loop ends on a final answer, handoff or budget. It can act, not just answer, so it needs validation, policy checks, idempotency and budgets.
+
+**Q2. How do you stop an agent from looping forever?**
+**Answer.** Budgets on steps, tokens, dollars and wall-clock time enforced by the orchestrator; repeated-call detection; caps on corrections per tool; a watchdog per task; and a graceful handoff with a summary when a limit is hit.
+
+### Intermediate
+
+**Q3. An agent's refund tool timed out. Was the customer refunded?**
+**Answer.** Unknown. The step stays in an Unknown state; retry with the same idempotency key, derived from task and logical action, so the provider returns the original result if it executed. If retries are exhausted, reconcile by querying the provider by key, and never let the model decide to "try again" with a new request.
+
+**Q4. When would you use multiple agents?**
+**Answer.** When the task splits into independent, context-heavy subtasks whose parallel execution cuts latency or overcomes context limits, and the task is valuable enough to pay several times the tokens. Not for short sequential tasks or tasks that need shared context. Use hub-and-spoke communication with compact summaries.
+
+### Advanced
+
+**Q5. Design the support agent for a food-delivery company that can issue refunds.**
+**Answer.** Router to separate FAQs from actions; a single ReAct agent with four tools on a durable workflow engine; user-scoped credentials; policy engine enforcing ownership, entitlement, a \$25 auto limit and per-customer and fleet spend caps; approval queue with evidence packs sized by Erlang C; idempotency keys by logical action; compensation for multi-step actions; scenario suite with end-state checks and pass^k gates; OpenTelemetry traces; cost per resolved ticket against human cost, optimized through resolution rate.
+
+**Q6. The agent reads restaurant menus and customer notes and can issue refunds. Defend it against prompt injection.**
+**Answer.** Assume the model will be fooled. Enforce limits and ownership in services; give each tool least privilege and user-scoped credentials; label tool output as data; remove the exfiltration leg (no external messaging, no rendered links, egress allow-lists); expose write tools only for classified refund intents; approval gates above thresholds; fleet spend caps with rate alerts; red-team scenarios in the evaluation suite (§78.13); audit denials.
+
+## 77.21 Practical exercises
+
+1. Extend the loop of §77.5.5 with a `get_refund_history` tool and a 30-day cap of \$40 per customer; add a scenario that exceeds it.
+2. Add a token and dollar meter to the loop, using the prices of §77.17, and stop tasks above \$0.10.
+3. Modify the simulation of §77.6.4 so that silent errors are detected by an audit with probability 0.5 and become retryable; plot success against $n$.
+4. Make the durable-execution program of §77.8.2 crash after `llm_decide` but before it is recorded, and show what goes wrong if `issue_refund` keys include the amount.
+5. Write five trajectory assertions for the refund task and apply them to the four scenarios of §77.5.5.
+
+## 77.22 Design challenges
+
+1. **Courier support agent.** Couriers ask about pay disputes and need shift changes. Design tools, permissions, approval gates and an evaluation suite; estimate cost per resolved case.
+2. **Merchant onboarding agent.** An agent reads uploaded menus (PDFs, photos) and creates catalog entries. Design the sandbox for document parsing, injection defenses and human review.
+3. **Agent platform.** Fifty internal teams want agents. Design a shared runtime with an MCP tool registry, per-tenant budgets, tracing and an evaluation service (Chapter 79 for the platform).
+
+## 77.23 References
+
+1. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., Cao, Y. *ReAct: Synergizing Reasoning and Acting in Language Models*. ICLR, 2023. (Cited as Yao et al. 2023a.)
+2. Schick, T., et al. *Toolformer: Language Models Can Teach Themselves to Use Tools*. NeurIPS, 2023.
+3. Shinn, N., Cassano, F., Gopinath, A., Narasimhan, K., Yao, S. *Reflexion: Language Agents with Verbal Reinforcement Learning*. NeurIPS, 2023.
+4. Wang, L., et al. *Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models*. ACL, 2023.
+5. Park, J. S., O'Brien, J. C., Cai, C. J., Morris, M. R., Liang, P., Bernstein, M. S. *Generative Agents: Interactive Simulacra of Human Behavior*. ACM UIST, 2023.
+6. Wu, Q., et al. *AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation*. arXiv:2308.08155, 2023.
+7. Schluntz, E., Zhang, B. *Building Effective Agents*. Anthropic, December 2024. https://www.anthropic.com/engineering/building-effective-agents (Cited as Anthropic 2024.)
+8. Anthropic. *How We Built Our Multi-Agent Research System*. Anthropic Engineering, June 2025. https://www.anthropic.com/engineering/multi-agent-research-system (Cited as Anthropic 2025.)
+9. Model Context Protocol. *Specification*, versions 2025-06-18 and 2025-11-25. https://modelcontextprotocol.io/specification (Cited as MCP 2025.)
+10. Greshake, K., Abdelnabi, S., Mishra, S., Endres, C., Holz, T., Fritz, M. *Not What You've Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection*. ACM AISec Workshop, 2023.
+11. OWASP Foundation. *OWASP Top 10 for Large Language Model Applications*. 2025. https://genai.owasp.org/ (Cited as OWASP 2025.)
+12. Jimenez, C. E., et al. *SWE-bench: Can Language Models Resolve Real-World GitHub Issues?* ICLR, 2024.
+13. Yao, S., Shinn, N., Razavi, P., Narasimhan, K. *τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains*. arXiv:2406.12045, 2024.
+14. OpenTelemetry. *Semantic Conventions for Generative AI Systems* (status: Development). https://github.com/open-telemetry/semantic-conventions-genai (Cited as OpenTelemetry GenAI.)
+15. Temporal Technologies. *Temporal Documentation*. https://docs.temporal.io/ (Cited as Temporal Docs.)
+16. Yao, S., et al. *Tree of Thoughts: Deliberate Problem Solving with Large Language Models*. NeurIPS, 2023. (Cited as Yao et al. 2023b.)
+17. Zhou, A., et al. *Language Agent Tree Search Unifies Reasoning, Acting, and Planning in Language Models*. ICML, 2024.
+18. Madaan, A., et al. *Self-Refine: Iterative Refinement with Self-Feedback*. NeurIPS, 2023.
+19. Du, Y., Li, S., Torralba, A., Tenenbaum, J. B., Mordatch, I. *Improving Factuality and Reasoning in Language Models through Multiagent Debate*. ICML, 2024.
+20. Packer, C., et al. *MemGPT: Towards LLMs as Operating Systems*. arXiv:2310.08560, 2023.
+21. Wei, J., et al. *Chain-of-Thought Prompting Elicits Reasoning in Large Language Models*. NeurIPS, 2022.
+22. Kapoor, S., Stroebl, B., Siegel, Z. S., Nadgir, N., Narayanan, A. *AI Agents That Matter*. arXiv:2407.01502, 2024; Transactions on Machine Learning Research, 2025.
+23. Willison, S. *The Lethal Trifecta for AI Agents: Private Data, Untrusted Content, and External Communication*. Blog post, 16 June 2025. https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/
+24. Debenedetti, E., et al. *Defeating Prompt Injections by Design*. arXiv:2503.18813, 2025.
+25. Hardy, N. *The Confused Deputy (or Why Capabilities Might Have Been Invented)*. ACM SIGOPS Operating Systems Review 22(4), 1988.
+26. Agache, A., et al. *Firecracker: Lightweight Virtualization for Serverless Applications*. USENIX NSDI, 2020.
+27. *Moffatt v. Air Canada*, 2024 BCCRT 149. British Columbia Civil Resolution Tribunal, February 2024.
+
+## 77.24 Open verification items
+
+- Anthropic 2024: the page credits "Erik S." and Barry Zhang; confirm the first author's full name (Erik Schluntz) before final publication.
+- MCP: transport, tool-result and authorization details are stated for the 2025-06-18 and 2025-11-25 revisions; re-check against the revision current at publication (modelcontextprotocol.io was not reachable from the authoring environment; the specification repository was used).
+- OpenTelemetry GenAI conventions moved to a separate repository and are in Development; attribute and span names may change.
+- τ-bench: the "fewer than 50%" and "pass^8 below 25% (retail)" figures are from the abstract as reported in secondary summaries; confirm against the paper.
+- ReAct (34 and 10 points), Reflexion (91% vs 80%) and Toolformer tool list are quoted from memory of the papers' abstracts; confirm wording.
+- All QuickBite numbers new to this chapter (task volumes, \$25 limit, prices, handling times, error rates, latency components) are teaching assumptions.

@@ -149,7 +149,7 @@ $$C \approx 6\,N\,D \qquad T_\text{wall} = \frac{C}{G \cdot R \cdot \text{MFU}} 
 3. $T_\text{wall} = 4.2 \times 10^{22} / 2.048 \times 10^{17} = 205{,}078$ s $= 57.0$ hours, 2.4 days; $29{,}167$ GPU-hours; about \$72,900 at \$2.50/GPU-hour.
 4. At MFU 25% the same run takes 91 hours and costs \$116,700: near 40% MFU each point of MFU is worth about \$1,800 on this run and about \$25,000 on the 70B run (cost scales as $1/\text{MFU}$).
 5. Compute-optimal split of the same budget: $N_\text{opt} = \sqrt{4.2 \times 10^{22}/120} = 1.87 \times 10^{10}$ parameters on $D_\text{opt} = 3.74 \times 10^{11}$ tokens. Chinchilla's rule says this budget would reach a lower loss with an 18.7B model on 374 billion tokens.
-6. Why train 7B on 1T tokens anyway? It is 2.7× cheaper to *serve* than 18.7B ($2N$ FLOPs per token, Chapter 73): extra training buys permanently cheaper inference.
+6. Why train 7B on 1T tokens anyway? It is 2.7× cheaper to *serve* than 18.7B ($2N$ FLOPs per token, §72.15): extra training buys permanently cheaper inference.
 
 **Interpretation.** Three multiplications turn a training plan into GPU-hours, and MFU converts engineering quality into money. **Engineering implication.** Put $6ND$, the GPU count and a measured MFU into every training proposal, and choose $N$ and $D$ with lifetime serving cost in view.
 :::

@@ -768,7 +768,7 @@ $$\widehat{\text{MMD}}^2 = \frac{1}{n(n-1)}\sum_{i \ne j} k(x_i, x_j) + \frac{1}
 
 ### 70.7.4 Embedding drift for text and images
 
-For text and images, monitor in a representation space: a fixed pretrained encoder's embeddings (comparable across retrains), the model's penultimate layer, or its output probabilities. Rabanser et al. found that reducing dimension first, notably with a pretrained classifier's softmax outputs (**black-box shift detection**) followed by per-dimension KS tests with Bonferroni correction, was among the strongest and simplest detectors; domain classifiers were weaker at small samples but best at characterizing *which* examples shifted [Rabanser et al. 2019]. Chapter 75 applies the idea to RAG queries.
+For text and images, monitor in a representation space: a fixed pretrained encoder's embeddings (comparable across retrains), the model's penultimate layer, or its output probabilities. Rabanser et al. found that reducing dimension first, notably with a pretrained classifier's softmax outputs (**black-box shift detection**) followed by per-dimension KS tests with Bonferroni correction, was among the strongest and simplest detectors; domain classifiers were weaker at small samples but best at characterizing *which* examples shifted [Rabanser et al. 2019]. §75.15.4 applies the idea to RAG queries.
 
 ### 70.7.5 Code example: a domain-classifier drift detector
 

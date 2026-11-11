@@ -1663,7 +1663,7 @@ $$\text{SE} = \frac{\sigma}{\sqrt{n}}$$
 1. $n = 100$: SE $= 50/\sqrt{100} = 5$ ms.
 2. $n = 10{,}000$: SE $= 50/100 = 0.5$ ms.
 
-**Interpretation.** Ten times the accuracy costs a hundred times the samples, and so a hundred times the processing time. **Engineering implication.** The same diminishing returns appear elsewhere: an ANN index searched more exhaustively gains recall slowly while latency grows roughly in proportion to the work done (Chapter 74); a ranking stage that scores 5,000 candidates at, say, 20 µs each spends 100 ms versus 10 ms for 500 (an illustrative cost). Decide the accuracy the product needs, then buy exactly that much.
+**Interpretation.** Ten times the accuracy costs a hundred times the samples, and so a hundred times the processing time. **Engineering implication.** The same diminishing returns appear elsewhere: an ANN index searched more exhaustively gains recall slowly while latency grows roughly in proportion to the work done (§74.6); a ranking stage that scores 5,000 candidates at, say, 20 µs each spends 100 ms versus 10 ms for 500 (an illustrative cost). Decide the accuracy the product needs, then buy exactly that much.
 :::
 
 ### 4.18.5 GPU utilization ↔ throughput

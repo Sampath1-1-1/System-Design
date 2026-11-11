@@ -926,3 +926,498 @@ What to notice:
 | False 429s at peak | `max_tokens` reservations held in flight | High 429 rate with spare GPU | Lower $\hat o$ | Percentile estimates; clamp `max_tokens` |
 | Reservations leak after crashes | No reconciliation for lost requests | Bucket balance drifts down | Expire reservations by TTL | TTL on every reservation |
 | Limits differ per gateway node | Local buckets only | Tenant throughput scales with node count | Central store | Shared store with local cache (§22.8) |
+
+## 79.10 Tenant isolation
+
+### 79.10.1 Noisy neighbors on shared GPUs
+
+::: definition
+**Definition — Tenant isolation on an AI platform.** The guarantee that one tenant's load, failures or data cannot degrade another tenant's latency, availability or confidentiality. **Performance isolation** comes from per-tenant queues, fair scheduling, priority and dedicated capacity; **data isolation** comes from separating prompts, caches, logs and adapters per tenant (§47.5, §47.12).
+:::
+
+#### Why does this exist?
+
+GPUs make noisy neighbors worse than CPUs do. Requests from all tenants share one continuous batch, so a batch tenant that floods a replica raises *everyone's* decode step time (step time grows with batch size, §73.6) and fills the KV cache, forcing preemptions. Rate limits do not prevent this: every tenant can be within its limit while their sum exceeds capacity (§47.8). And the prefix cache is a side channel: if tenant B's request runs faster because tenant A recently sent the same prefix, B can probe A's prompts by timing.
+
+#### How it works internally
+
+1. **Per-tenant queues** in front of each pool, and a scheduler that picks the next request to admit into the batch.
+2. **Fair scheduling in cost units.** The scheduler tracks each tenant's service in GPU-cost units and admits from the backlogged tenant with the least weighted service. The Virtual Token Counter (VTC) applies this idea to LLM serving, counting weighted input and output tokens per client and lifting a newly active client's counter so it cannot bank unused share [Sheng et al. 2024b].
+3. **Priority on top of fairness.** Fair share divides throughput; it does not protect latency. P0 tenants get a cap on how many batch slots and KV blocks P2 work may hold, and P2 requests are preempted first.
+4. **Data isolation.** Prefix caches are partitioned or salted per tenant (or sharing is limited to platform-owned prompts); logs and adapters are stored per tenant with their own access controls and keys (§79.14).
+5. **Dedicated tiers.** Tenants with strict objectives or contracts get dedicated replicas or node pools.
+
+**Figure 79.10 — Per-tenant queues, fair scheduler and dedicated tier.**
+
+```mermaid
+flowchart LR
+  T1([P0 support-chat]) --> Q1[["Queue T1"]]
+  T2([P2 menu-enrich]) --> Q2[["Queue T2"]]
+  T3([P2 review-tags]) --> Q3[["Queue T3"]]
+  Q1 --> FS{"Fair scheduler:<br/>least weighted service,<br/>P0 slot reserve"}
+  Q2 --> FS
+  Q3 --> FS
+  FS -->|admit to batch| SH["Shared 7B replicas"]
+  T6([Enterprise tenant]) --> DQ[["Dedicated queue"]]
+  DQ --> DR["Dedicated replicas"]
+```
+
+**Reading the diagram.** Each shared tenant's requests wait in its own queue; the fair scheduler admits synchronously into the shared replicas' running batch, choosing the backlogged tenant with the least weighted service while keeping a reserve of batch slots for P0. A tenant on the dedicated tier bypasses the shared scheduler entirely. Queues live in the engine or router memory, so a replica crash loses queued requests, which clients retry. Failure points: a weight misconfiguration starves a tenant; dedicated replicas idle when their tenant is quiet. Scaling: add shared replicas for the pool, dedicated replicas per contract.
+
+::: formula
+**Weighted service in GPU-cost units**
+
+$$s_i \mathrel{+}= \frac{c_\text{in}\, n_\text{in}^\text{uncached} + c_\text{out}\, n_\text{out}}{\phi_i} \qquad \text{admit from } \arg\min_{i \in \text{backlogged}} s_i$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $s_i$ | Weighted service received by tenant $i$ | GPU-s |
+| $c_\text{in}$, $c_\text{out}$ | GPU cost per uncached prompt token and per output token | GPU-s/token |
+| $n_\text{in}^\text{uncached}$, $n_\text{out}$ | Tokens of the admitted request | tokens |
+| $\phi_i$ | Tenant weight | dimensionless |
+:::
+
+::: example
+**Worked example — Support chat and a menu backlog at dinner peak.** Five replicas give 5 GPU-s of service per second. Support chat ($\phi = 4$) needs $8 \times 0.238 = 1.90$ GPU-s/s; a menu backlog ($\phi = 1$) wants unlimited service. A menu request costs $600 \times 28.3\ \mu\text{s} + 150 \times 0.567\ \text{ms} = 0.102$ GPU-s.
+
+1. Weighted fair shares: support $4/5 \times 5 = 4.0$ GPU-s/s, menu 1.0.
+2. Support's demand (1.90) is below its share, so max–min fairness serves it fully and gives the remaining $5 - 1.90 = 3.10$ GPU-s/s to menu: about $3.10/0.102 = 30$ menu requests/s.
+3. Counting *requests* instead of GPU-seconds would treat a menu call (0.102 GPU-s) and a support call (0.238 GPU-s) as equal and misallocate by 2.3×; counting tokens unweighted would treat an output token as equal to a prompt token, though it costs $0.567/0.0283 = 20$ times more.
+4. Latency: with menu filling 30 more requests/s into the batches, decode steps lengthen; capping P2 at, say, 40% of batch slots keeps support's TPOT within objective.
+
+**Interpretation.** Fair share protects support chat's *throughput* even against an unlimited backlog; its *latency* needs the slot cap. **Engineering implication.** Weight tokens by measured GPU cost per model, and combine fairness with priority caps rather than relying on either alone.
+:::
+
+**Table 79.3 — Isolation tiers for AI tenants.**
+
+| Tier | How it works | Isolation | Cost | Choose when |
+|---|---|---|---|---|
+| Shared best-effort | Shared pool, fair scheduler | Throughput share only | Lowest | Batch, internal tools |
+| Shared with priority | Shared pool, P0 slot and KV reserve | Latency protected within pool | Low | Customer-facing features |
+| Dedicated replicas | Tenant-pinned replicas in shared cluster | Compute isolated; node shared | Medium | Contractual SLOs, large steady tenants |
+| Dedicated pool or cluster | Own nodes, keys, logs, network | Strongest short of separate account | High | Regulated data, enterprise contracts |
+
+#### Failure scenarios
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| P0 TPOT doubles during a batch run | Batch fills shared batches | TPOT p95 per tenant vs batch share | Pause P2 queue | P2 slot cap; preempt P2 first |
+| Cross-tenant timing leak | Shared prefix cache across tenants | Security review, timing tests | Partition cache | Per-tenant cache salt |
+| Tenant starved | Weight or counter bug | Queue age per tenant | Reset counters | Alert on max queue age |
+
+## 79.11 Multi-region AI systems
+
+### 79.11.1 Scarce capacity, residency and failover
+
+::: definition
+**Definition — Multi-region AI serving.** Running gateways, routers and model capacity in several regions (§44.6) so that each request is served in an allowed region with acceptable latency, and so that a regional outage or capacity shortage shifts traffic to another region, another provider or a fallback model without breaking **data-residency** rules for prompts and logs (§44.9).
+:::
+
+#### Why does this exist?
+
+Three properties make AI traffic different from ordinary web traffic across regions. **GPU capacity is scarce and uneven**: the newest GPUs may be available in some regions only, and on-demand capacity in a region can run out, so "scale out in the failover region" may simply fail. **Prompts are personal data**: an EU customer's chat contains their name, address and order, so routing it to a US region or a provider endpoint outside the EU may be unlawful under the platform's residency policy. **Latency is forgiving**: an extra 90 ms round trip (Frankfurt–Virginia, §44.4) matters little against a 1 s TTFT objective, and streamed tokens are pipelined, so distance is rarely the binding constraint; residency and capacity are.
+
+#### How it works internally
+
+1. **Regional gateways** terminate traffic close to users (GeoDNS or anycast, §44.5) and tag each request with its data class and allowed regions.
+2. **Region-aware routing**: the router's policy filter (Figure 79.4) keeps only compliant deployments; then it prefers the local pool, then a compliant remote pool, then a compliant external provider endpoint.
+3. **Failover tiers**: within-region replica failover (seconds); cross-region shift within the same jurisdiction; spillover to a provider's regional endpoint; finally a degraded mode (smaller model, canned answers, hand-off to humans).
+4. **Residency of everything**: logs, caches, quota stores and evaluation samples for EU prompts stay in the EU, not only the inference.
+
+**Figure 79.11 — Region-aware routing with residency and spillover.**
+
+```mermaid
+flowchart LR
+  EU([EU user]) --> GEU["Gateway EU-1<br/>Frankfurt"]
+  US([US user]) --> GUS["Gateway US<br/>Virginia"]
+  GEU -->|local| PEU1["7B pool EU-1"]
+  GEU -.->|failover, EU only| PEU2["7B pool EU-2"]
+  GEU -.->|spillover| XEU{{"Provider EU endpoint"}}
+  GUS -->|local| PUS["7B pool US"]
+  GUS -.->|spillover| XUS{{"Provider US endpoint"}}
+  GEU -.-x|blocked by policy| PUS
+  PEU1 -.->|logs stay in EU| LEU[("EU log store")]
+```
+
+**Reading the diagram.** Each user reaches the nearest gateway. The EU gateway sends traffic synchronously to its local pool and fails over (dotted, used only on failure) to a second EU region or to a provider's EU endpoint; the crossed edge shows that policy forbids sending EU prompts to the US pool even when it has spare GPUs. The US gateway has its own pool and spillover. Logs are written to a store inside the jurisdiction, a storage boundary that must follow the same rules as inference. Failure points: a provider's regional endpoint may hit its own capacity limits during a wide outage; a fallback model may answer worse (Chapter 78). Scaling: add regions per jurisdiction; spillover absorbs short peaks without owning GPUs.
+
+::: formula
+**Standby capacity versus spillover**
+
+$$C_\text{standby} = n_\text{gpu}\, H\, p_\text{gpu} \qquad C_\text{spill} = f\, T_\text{out}\, \lambda\, c_\text{req}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n_\text{gpu}$ | GPUs kept warm in the failover region | GPUs |
+| $H$ | Hours per month | h |
+| $p_\text{gpu}$ | Price per GPU-hour | \$/GPU-h |
+| $f$ | Regional incidents per month | 1/month |
+| $T_\text{out}$ | Incident duration | h |
+| $\lambda$ | Traffic to move, in requests per hour | requests/h |
+| $c_\text{req}$ | External price per request | \$ |
+:::
+
+::: example
+**Worked example — EU support chat failover.** EU traffic is 30% of peak support chat: $0.3 \times 8 = 2.4$ queries/s. Using Chapter 44's incident rate, 2 incidents per region-year of 3 hours each, $f\,T_\text{out} = 6/12 = 0.5$ h/month.
+
+1. Standby: two warm H100s in EU-2, $2 \times 730 \times 2.50 = \$3{,}650$ per month.
+2. Spillover price per query on a small-model API with an EU endpoint: $4{,}500 \times 0.15 \times 10^{-6} + 230 \times 0.60 \times 10^{-6} = \$0.000813$.
+3. Traffic per hour at peak: $2.4 \times 3{,}600 = 8{,}640$ queries, $\$7.02$ per hour.
+4. Expected spillover: $0.5 \times 7.02 = \$3.51$ per month, a thousandth of the standby cost; even a 10-hour incident at peak costs \$70.
+
+**Interpretation.** For a modest, latency-tolerant workload, renting failover capacity per token is far cheaper than owning idle GPUs. **Engineering implication.** Pre-approve and evaluate a compliant fallback model, keep its contract and quotas sized for full failover traffic, and test the path regularly (§39.11); keep standby GPUs only where no compliant provider exists or the custom model cannot be replaced.
+:::
+
+#### Failure scenarios
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| EU prompts processed in the US | Failover rule ignores data class | Residency audit on usage ledger | Stop route; purge; notify | Policy filter before every fallback |
+| Failover region cannot scale | GPU capacity exhausted | Pending pods; provisioning errors | Spill to provider | Capacity reservations or contracts |
+| Fallback provider rejects load | Its rate limits sized for normal use | 429s from provider | Shed P2; degrade | Raise provider quotas for failover volume |
+
+## 79.12 Caching
+
+### 79.12.1 Four caches and their economics
+
+::: definition
+**Definition — Caches on an AI platform.** An **exact response cache** returns a stored response when the normalized request (model version, parameters, full prompt) matches byte for byte. A **semantic cache** returns a stored response when a new prompt's embedding is close to a cached prompt's. A **prefix (KV) cache** reuses the attention keys and values of a shared prompt prefix inside the engine or provider (§73.8), so the model still generates a fresh answer. An **embedding cache** stores vectors for repeated inputs to an embedding model.
+:::
+
+#### Why does this exist?
+
+Model calls are the most expensive requests most platforms serve, and many are repeated: chains list the same dish in hundreds of branches; agents resend the same growing context at every step; search users type the same queries. But a generated answer is not a static resource: it depends on the full prompt, the model version and the sampling settings, and an answer correct for one customer can be wrong for another. Each cache type trades savings against that risk differently.
+
+**Figure 79.12 — Where each cache sits on the request path.**
+
+```mermaid
+flowchart LR
+  C([Client]) --> GW["Gateway"]
+  GW -->|1 exact key| EX[("Exact response cache")]
+  GW -->|2 embedding lookup| SEM[("Semantic cache,<br/>vector index")]
+  GW --> RT["Router: prefix affinity"]
+  RT --> ENG["Engine"]
+  ENG -->|3 KV reuse| KV[("Prefix KV cache<br/>in GPU memory")]
+  GW -->|4 vectors| EMB[("Embedding cache")]
+```
+
+**Reading the diagram.** The gateway checks the exact cache first (a key-value lookup, under a millisecond), then optionally the semantic cache (an embedding plus a vector search, milliseconds), before routing. Prefix caching happens inside the engine, so the router's prefix affinity (§79.6) determines its hit ratio; the embedding cache sits in front of embedding models. All four are storage boundaries with their own TTLs and must be keyed or partitioned by tenant (§79.10). Failure points: stale entries after a model or prompt-template change, and false hits in the semantic cache. Scaling: exact and embedding caches shard by key (§20.14); the prefix cache scales with replicas and affinity.
+
+::: formula
+**Expected saving of a response cache, with false hits**
+
+$$S = h\,C_\text{gen} - C_\text{lookup} - h\,f\,C_\text{err} \qquad f^\star = \frac{h\,C_\text{gen} - C_\text{lookup}}{h\,C_\text{err}}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $h$ | Cache hit ratio | dimensionless |
+| $C_\text{gen}$ | Cost of generating a response | \$/request |
+| $C_\text{lookup}$ | Cost of a lookup, paid on every request | \$/request |
+| $f$ | Fraction of hits that return a wrong answer for this request | dimensionless |
+| $C_\text{err}$ | Business cost of a wrong answer | \$ |
+| $S$ | Expected saving per request | \$/request |
+| $f^\star$ | False-hit rate at which the cache stops paying | dimensionless |
+:::
+
+::: example
+**Worked example — A semantic cache for support chat.** Generation plus retrieval costs $C_\text{gen} = \$0.0012$ per query (Chapter 75); lookup (an embedding and a vector search) $C_\text{lookup} = \$0.00002$. Generic first questions give $h = 0.12$; offline tests show $f = 0.04$ (answers about the wrong order or an outdated policy). A wrong answer leads to a human contact half the time at \$3, so $C_\text{err} = \$1.50$.
+
+1. Gross saving: $0.12 \times 0.0012 = \$0.000144$.
+2. Error cost: $0.12 \times 0.04 \times 1.50 = \$0.0072$.
+3. $S = 0.000144 - 0.00002 - 0.0072 = -\$0.0071$ per query, $-\$531$ a day over 75,000 queries.
+4. Break-even: $f^\star = (0.000144 - 0.00002)/(0.12 \times 1.50) = 0.00069$, under one false hit in 1,400.
+5. Exact caching of menu enrichment instead: 40% of dish updates are duplicates across a chain's branches (assumed), and an exact match with temperature 0 and a pinned model version has $f = 0$, saving $0.4 \times 10{,}203 = 4{,}081$ GPU-s a day.
+
+**Interpretation.** When answers are cheap and mistakes are expensive, a semantic cache of *answers* loses money at any realistic false-hit rate. **Engineering implication.** Use exact caches for deterministic, non-personalized calls; use semantic caching for retrieval results or for platform-owned, non-personal content with a strict threshold; and spend most effort on prefix caching, which saves compute without ever returning a wrong answer.
+:::
+
+**Prefix caching across requests** is the safest large saving. Inside self-hosted engines it depends on prefix affinity (§79.6). External providers publish prompt-caching features in which repeated prompt prefixes are billed at a discount, with conditions on minimum length and cache lifetime (as of 2026) [Anthropic Docs: Prompt caching; OpenAI Docs: Prompt caching]. Prompts must be laid out for it: stable content (system prompt, tool definitions, documents) first, variable content (user message, timestamps) last. A timestamp at the top of a system prompt silently disables every prefix cache downstream.
+
+**Embedding caches** are almost free wins for search: query distributions are heavy-tailed, so a cache keyed on the normalized query string and the embedding-model version serves a large share of T5's traffic, and a wrong hit is impossible as long as the model version is in the key. GPTCache is one open-source library for semantic and exact LLM caching [Bang 2023].
+
+**Table 79.4 — Cache types compared.**
+
+| Cache | Key | Saves | Risk | Use for |
+|---|---|---|---|---|
+| Exact response | Model version, parameters, full prompt hash | Whole call | Stale after template change | Deterministic batch, repeated tool calls |
+| Semantic | Prompt embedding within threshold | Whole call | Wrong answer for a different question | Non-personal FAQ content, retrieval results |
+| Prefix KV | Token prefix (block hashes) | Prefill compute and TTFT | Cross-tenant timing leak if shared | Every LLM workload; agents most |
+| Embedding | Input text, model version | Encoder compute | Mixing model versions | Search queries, document re-indexing |
+
+## 79.13 AI observability
+
+### 79.13.1 Tokens, latency phases, cost and traces
+
+::: definition
+**Definition — AI observability.** The metrics, logs and traces (§40.3) needed to operate model-backed features: per-request token counts (input, cached, output), latency phases (queueing, TTFT, TPOT, end-to-end, §73.4), cost, model and deployment identity, finish reason, and the causal trace that links the many model and tool calls of one agent task. It adds content observability (prompts and responses) under privacy controls.
+:::
+
+#### Why does this exist?
+
+HTTP dashboards report a support-chat call as "200 OK in 6.2 s" and say nothing useful. Was the 6.2 s queueing, a slow first token or a 900-token answer? Which adapter version answered? Did prefix caching hit? How much did it cost, and whose budget pays? An agent task makes eight model calls and five tool calls; without a trace tying them together, nobody can tell which step looped.
+
+#### How it works internally
+
+1. **One usage record per model call**, emitted by the gateway: tenant, alias, resolved deployment and version, region, input/cached/output tokens (provider-reported), TTFT, TPOT, end-to-end latency, finish reason, retries and fallbacks, cache status and computed cost.
+2. **Standard attribute names.** The OpenTelemetry semantic conventions for generative AI define span attributes such as `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens`, and metrics for token usage and operation duration, plus server-side TTFT and time-per-output-token metrics; they were still marked as in development as of 2026 [OpenTelemetry: GenAI semantic conventions].
+3. **Traces across agent steps.** The agent framework opens a root span per task; each model call, tool call and retrieval is a child span carrying the same trace context through the gateway (§40.6), so cost and latency roll up per task.
+4. **Content logging under policy.** Prompts and responses go to a separate, redacted, access-controlled store with short retention, sampled for most tenants (§79.14); metrics and traces carry no content.
+5. **Dashboards and alerts** per tenant and per deployment (Table 79.5).
+
+**Figure 79.13 — Tracing one agent task across model and tool calls.**
+
+```mermaid
+sequenceDiagram
+  participant A as Agent runtime
+  participant G as Gateway
+  participant M as Model
+  participant T as Tool API
+  participant O as Telemetry collector
+  A->>G: step 1 chat, trace context
+  G->>M: forward
+  M-->>G: tokens and usage
+  G-)O: span: tokens, TTFT, cost
+  A->>T: tool call, same trace
+  T-)O: span: tool latency
+  A->>G: step 2 chat, same trace
+  G->>M: forward, prefix cached
+  M-->>G: tokens and usage
+  G-)O: span: cached tokens, cost
+  A-)O: root span: task cost and outcome
+```
+
+**Reading the diagram.** The agent runtime propagates one trace context through every call. The gateway forwards model calls synchronously and emits a span per call asynchronously to the telemetry collector, with token counts, TTFT and cost; tools emit their own spans; the runtime closes a root span with the task's total cost and outcome. The collector feeds the metrics and trace stores, the storage boundary. Failure points: a tool or provider that drops the trace header breaks the chain; high-cardinality attributes (user IDs, prompt hashes) on metrics explode storage, so they belong on traces and logs. Scaling: sample traces by tenant and by outcome, keeping all errors.
+
+::: formula
+**Cost of one model call and of one task**
+
+$$c_\text{call} = n_\text{in}^\text{new}\,p_\text{in} + n_\text{in}^\text{cached}\,p_\text{cached} + n_\text{out}\,p_\text{out} \qquad c_\text{task} = \sum_{\text{steps}} c_\text{call} + \sum_{\text{tools}} c_\text{tool}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n_\text{in}^\text{new}$, $n_\text{in}^\text{cached}$ | Uncached and cached input tokens | tokens |
+| $n_\text{out}$ | Output tokens | tokens |
+| $p_\text{in}$, $p_\text{cached}$, $p_\text{out}$ | Prices or internal transfer prices per token | \$/token |
+| $c_\text{tool}$ | Cost of a tool call | \$ |
+:::
+
+::: example
+**Worked example — Cost of one ops-agent task.** Eight steps of 6,000 input and 300 output tokens on the frontier API (\$3 and \$15 per million); from step 2 on, about 80% of each prompt is the previous step's context. Assume cached input billed at 10% of the input price (illustrative).
+
+1. Without caching, per step: $6{,}000 \times 3 \times 10^{-6} + 300 \times 15 \times 10^{-6} = 0.018 + 0.0045 = \$0.0225$; per task $8 \times 0.0225 = \$0.180$.
+2. With caching, per step: $1{,}200 \times 3 \times 10^{-6} + 4{,}800 \times 0.3 \times 10^{-6} + 0.0045 = 0.0036 + 0.00144 + 0.0045 = \$0.00954$; per task \$0.076 (treating step 1 like the rest for simplicity).
+3. Monthly at 4,000 tasks a day: \$21,600 without caching, \$9,158 with it.
+
+**Interpretation.** Output tokens are 5% of the tokens but, with caching, 47% of the cost; cached-token counts belong in every usage record. **Engineering implication.** Alert on the cached-token ratio per alias: a template change that breaks prefix stability more than doubles this tenant's bill overnight.
+:::
+
+**Table 79.5 — Core dashboards and alerts.**
+
+| Signal | Granularity | Alert when |
+|---|---|---|
+| TTFT p95, TPOT p95 | Alias, deployment, region | Above objective for 10 min |
+| Queue depth, KV-cache usage, preemptions | Replica, pool | Sustained above scale-out threshold |
+| Error and fallback rate, by cause | Alias, provider | Fallback rate > 5% |
+| Tokens per minute and 429 rate | Tenant | Near limit; 429s on P0 |
+| Cost per day and per task | Tenant, alias | Above budget forecast (§51.5) |
+| Cached-token ratio | Alias | Drops by > 20 points |
+| Finish reason `length` share | Alias | Rising (answers truncated) |
+
+## 79.14 Data privacy and security
+
+### 79.14.1 Prompts are data
+
+::: definition
+**Definition — Prompt and response data protection.** The controls that govern personal and confidential data in model traffic: **redaction** or **pseudonymization** before data leaves a trust boundary (§50.10), **retention** limits for prompts, responses and derived artifacts (logs, caches, evaluation sets), **encryption** in transit and at rest, **access control** on who may read content, **provider data controls** such as zero-data-retention modes, and an **audit** trail of every access and every flow.
+:::
+
+#### Why does this exist?
+
+A support prompt contains a customer's name, address, phone number and order history; an ops-agent prompt may contain a courier's location trail or a fraud case. Every place that text lands is a copy to protect: gateway logs, the usage stream, the prompt log store, the response cache, the prefix cache, evaluation datasets, the provider's abuse-monitoring logs and any fine-tuning set built from logs. GDPR access and erasure requests (§50.9) reach all of them.
+
+#### How it works internally
+
+1. **Classify** each tenant and alias with a data class (public, internal, personal, sensitive) that drives every later control.
+2. **Redact or pseudonymize at the gateway** before external providers and before logging: pattern matchers for structured identifiers (phones, emails, card numbers), NER models for names and addresses, and reversible tokens from a vault (`<CUSTOMER_1>`) where the model needs to refer to an entity and the response must be re-identified for the user.
+3. **Choose provider data controls** per data class. As published in 2026: OpenAI documents that API abuse-monitoring logs are retained for up to 30 days by default, with Modified Abuse Monitoring or Zero Data Retention available to approved customers on eligible endpoints [OpenAI Docs: Your data]; Anthropic documents zero data retention as available on request through its account team, with listed exceptions [Anthropic Docs: API and data retention]; Google documents data-governance and zero-data-retention conditions for generative AI on Vertex AI [Google Cloud Docs: Vertex AI data governance]. Terms change; the platform's provider registry records the contract actually signed, and the router enforces it (Figure 79.4).
+4. **Retain briefly, by tier.** Usage records (no content) for years for billing; redacted content for days to weeks for debugging; unredacted content only in break-glass scenarios with approval.
+5. **Encrypt and separate.** TLS everywhere; content stores encrypted with per-tenant keys so that deleting a key erases a tenant's logs (crypto-shredding).
+6. **Control and audit access.** Reading prompts requires a role, a reason and leaves an audit record; dashboards show aggregates only.
+
+**Figure 79.14 — Privacy controls on the prompt path.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|TLS| GW["Gateway: classify"]
+  GW --> RED["Redact and pseudonymize"]
+  RED -->|tokens only| VAULT[("Token vault")]
+  RED --> RT["Router: provider<br/>allow-list by data class"]
+  RT --> SELF["Self-hosted pool"]
+  RT -->|ZDR contract| EXT{{External provider}}
+  GW -.->|redacted, per-tenant key| LOG[("Prompt log store,<br/>short TTL")]
+  LOG -.->|role, reason| AUD[("Audit log")]
+```
+
+**Reading the diagram.** The gateway classifies the request and replaces identifiers with reversible tokens, storing the mapping in a vault, the most sensitive storage boundary. The router sends personal data only to self-hosted pools or to providers whose contract (for example zero data retention) the data class allows. A redacted copy goes asynchronously to the prompt log store under a per-tenant key and short TTL, and every read of that store is recorded in the audit log. Failure points: redaction misses (NER recall is never 100%), so the provider control is defense in depth, not a substitute; the vault and keys must be as available as the gateway. Scaling: redaction runs on gateway CPUs; NER models may need their own pool.
+
+::: warning
+**Warning — Retention hides in derived copies.** Zero data retention at the provider does nothing for your own gateway logs, caches, traces and evaluation sets. Inventory every store that holds content, give each a TTL and an erasure path, and test erasure end to end.
+:::
+
+#### Failure scenarios
+
+| What goes wrong | Why | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Names reach provider logs | NER misses a name | Sampled audits of outbound prompts | Request deletion under contract | Layered controls; ZDR for personal data |
+| Debug logging stores raw prompts | Verbose mode enabled in production | Content in metric or trace stores | Purge; rotate keys | Content only through the logging API |
+| Engineer browses customer chats | Broad read access | Audit log anomaly | Revoke | Role, reason and approval for content reads |
+| Erasure request incomplete | Copy in cache or eval set | Erasure test fails | Purge copies | Per-tenant keys and data inventory |
+
+## 79.15 Cost allocation and chargeback
+
+### 79.15.1 From GPU-hours and invoices to team bills
+
+::: definition
+**Definition — Showback and chargeback.** **Showback** reports each team's share of platform cost without moving money; **chargeback** bills it to the team's budget (§51.5). Both need **metering** (who used what, §79.13), **unit rates** (cost per token by model, per GPU-hour, per request) and **allocation rules** for shared and idle cost.
+:::
+
+#### Why does this exist?
+
+External API costs are easy to attribute: the invoice is in tokens, and the gateway knows whose tokens they were. Self-hosted cost is not: a GPU-hour serves several tenants at once and sits idle between peaks, and somebody must pay for the idle hours. The allocation rule is also an incentive: it decides whether a team that moves its batch job to 3 a.m. saves money, and whether a team asking for a dedicated pool sees its true cost.
+
+#### How it works internally
+
+1. **Meter** every call in the usage ledger with tokens and GPU-seconds estimated from per-token costs of the deployment.
+2. **Price external usage** from provider rates, including cached-token discounts, reconciled monthly to invoices.
+3. **Allocate pool cost.** Either by **usage share** (each tenant pays its fraction of busy GPU-seconds, idle included), or by **cost driver**: tenants that set the pool's size (online peaks) pay for capacity, while tenants that only fill valleys pay the busy rate for what they consume.
+4. **Allocate platform overhead** (gateways, logging, observability, on-call) by requests or by tokens.
+5. **Publish rates** per alias, so teams can forecast: dollars per million input, cached and output tokens.
+
+**Figure 79.15 — Cost allocation pipeline.**
+
+```mermaid
+flowchart LR
+  GW["Gateway usage events"] -.-> LED[("Usage ledger")]
+  INV{{"Provider invoices"}} -.-> REC["Reconcile tokens<br/>to invoices"]
+  CL{{"Cloud bill: GPU-hours"}} -.-> ALLOC["Allocate pool cost:<br/>usage or cost driver"]
+  LED --> REC
+  LED --> ALLOC
+  REC --> BILL["Monthly showback<br/>or chargeback"]
+  ALLOC --> BILL
+  BILL --> FIN([Team budgets])
+```
+
+**Reading the diagram.** Usage events flow asynchronously into the ledger, which is the system of record. Provider invoices are reconciled against the ledger's token counts; the cloud bill's GPU-hours are allocated to tenants using the ledger's GPU-second estimates and an allocation rule. Both feed a monthly bill per team. Failure points: ledger gaps (dropped usage events) make bills disagree with invoices, so a reconciliation tolerance (for example 1%) is monitored; changing the allocation rule mid-quarter breaks forecasts. Scaling: the ledger is an append-only table partitioned by day and tenant, aggregated daily.
+
+::: formula
+**Self-hosted cost per million tokens and cost-driver allocation**
+
+$$c_\text{1M} = \frac{p_\text{gpu}\, g_\text{tok}\, 10^6}{3{,}600\, u} \qquad A_\text{valley} = p_\text{gpu}\, G_\text{valley} \qquad A_\text{driver} = C_\text{pool} - \sum A_\text{valley}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $p_\text{gpu}$ | Price per GPU-hour | \$/GPU-h |
+| $g_\text{tok}$ | GPU-seconds per token of a type (input, output) | GPU-s |
+| $u$ | Pool utilization (busy over provisioned GPU-hours) | dimensionless |
+| $c_\text{1M}$ | Loaded cost per million tokens | \$ |
+| $G_\text{valley}$ | Busy GPU-hours of tenants that run only in idle capacity | GPU-h |
+| $C_\text{pool}$ | Pool cost for the month | \$ |
+| $A$ | Amount allocated | \$ |
+:::
+
+::: example
+**Worked example — QuickBite's monthly allocation.** Pool: 2,160 GPU-hours, $C_\text{pool} = \$5{,}400$ (§79.8); busy GPU-hours T1 148.7, T2 85.0, T3 7.6 (total 241.3, $u = 0.112$). Ops agents' API bill with prefix caching: \$9,158 (§79.13). Platform overhead \$2,600, allocated by requests: T1 75,000, T2 100,000, T3 20,000, T4 32,000 a day.
+
+1. Unit rates at 100% busy: input $2.50 \times 28.3 \times 10^{-6} \times 10^6/3{,}600 = \$0.0197$ per million; output $2.50 \times 567/3{,}600 = \$0.394$. Loaded at $u = 0.112$: \$0.176 and \$3.52.
+2. Usage-share allocation of the pool: T1 61.6% → \$3,328; T2 35.2% → \$1,903; T3 3.1% → \$169.
+3. Cost-driver allocation: valley tenants pay the busy rate, T2 $85.0 \times 2.50 = \$213$ and T3 $7.6 \times 2.50 = \$19$; T1, which sets the pool's size, pays $5{,}400 - 213 - 19 = \$5{,}169$.
+4. Overhead by request share: T1 33.0% → \$859; T2 44.1% → \$1,145; T3 8.8% → \$229; T4 14.1% → \$367.
+
+**Table 79.6 — Monthly chargeback, cost-driver rule (rounded).**
+
+| Tenant | Pool | External API | Overhead | Total |
+|---|---|---|---|---|
+| T1 `support-chat` | \$5,169 | — | \$859 | \$6,028 |
+| T2 `menu-enrich` | \$213 | — | \$1,145 | \$1,358 |
+| T3 `review-tags` | \$19 | — | \$229 | \$248 |
+| T4 `ops-agents` | — | \$9,158 | \$367 | \$9,525 |
+| **Total** | \$5,400 | \$9,158 | \$2,600 | \$17,158 |
+
+**Interpretation.** The rule moves T2's pool bill by 9× (\$1,903 versus \$213). Under usage share, the menu team subsidizes support chat's idle peak capacity and gains nothing by running at night; under cost driver, support chat sees its true cost, \$0.0027 per query, and the menu team is rewarded for filling valleys. **Engineering implication.** Allocate idle capacity to the tenants whose peaks and SLOs create it, charge valley tenants the busy rate, publish per-alias rates, and review the rule when the tenant mix changes. Overhead by requests over-charges batch tenants with many small calls; by tokens is the alternative.
+:::
+
+::: mistake
+**Misconception — "A low loaded rate means a cheap model."** The loaded output rate (\$3.52 per million) is 9× the busy rate because the pool is 11% utilized, not because the model is expensive. Compare deployment options at the utilization each would actually reach.
+:::
+
+## 79.16 Build versus buy for AI platforms
+
+### 79.16.1 Self-hosting versus API providers
+
+::: definition
+**Definition — Build versus buy for model serving.** The per-model decision between **self-hosting** (running open-weight or custom models on GPUs you rent or own, with your engines and operations) and **buying** inference from API providers (paying per token, possibly with provisioned capacity), and, at the platform level, between building the gateway and control plane and adopting an open-source or managed one (§51.9, §69.15).
+:::
+
+#### Why does this exist?
+
+Self-hosting looks cheap per token when GPUs are busy and expensive when they are not; APIs look expensive per token but charge nothing when idle. The decision turns on volume, utilization, the model you need (a custom fine-tune cannot be bought from a provider that does not host it), data controls and the cost of the people who operate GPUs at 3 a.m.
+
+::: formula
+**Break-even volume between self-hosting and an API**
+
+$$C_\text{self}(V) = F + c\,V \qquad C_\text{api}(V) = p\,V \qquad V^\star = \frac{F}{p - c}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $V$ | Tokens served per month | millions of tokens |
+| $F$ | Fixed monthly cost of self-hosting: always-on minimum fleet plus operations staff share | \$/month |
+| $c$ | Variable self-hosted cost per million tokens at the achieved utilization | \$/M tokens |
+| $p$ | Blended API price per million tokens for the workload's input/output mix | \$/M tokens |
+| $V^\star$ | Monthly volume above which self-hosting is cheaper | millions of tokens |
+:::
+
+::: example
+**Worked example — Should QuickBite self-host the support chatbot?** Mix per query: 4,500 input and 230 output tokens (4,730 total). Small-model API: \$0.15 and \$0.60 per million. Self-hosted 7B: 0.238 GPU-s per query. Minimum fleet two H100s always on; an assumed \$8,000 a month for the share of platform engineers and on-call.
+
+1. Blended API price: $p = (4{,}500 \times 0.15 + 230 \times 0.60)/4{,}730 = 813/4{,}730 = \$0.172$ per million.
+2. Self-hosted variable cost at 100% busy: $0.238/4{,}730 \times 10^6 = 50.3$ GPU-s per million tokens, $50.3/3{,}600 \times 2.50 = \$0.0349$; at $\rho = 0.6$, $c = \$0.0582$.
+3. Fixed cost: $F = 2 \times 730 \times 2.50 + 8{,}000 = 3{,}650 + 8{,}000 = \$11{,}650$.
+4. Break-even: $V^\star = 11{,}650/(0.172 - 0.0582) = 11{,}650/0.1137 \approx 102{,}500$ million, about 102.5 billion tokens a month.
+5. Actual volume: $75{,}000 \times 4{,}730 \times 30 = 10.6$ billion tokens a month, about a tenth of break-even. The API would cost $10{,}643 \times 0.172 = \$1{,}830$ a month against \$6,028 charged to support chat in Table 79.6.
+6. For the ops agents, the comparison is a 70B self-hosted model (minimum two four-GPU replicas, $8 \times 730 \times 2.50 = \$14{,}600$ a month before staff) against \$9,158 of frontier API with caching, and the two are not the same quality (Chapter 78).
+
+**Interpretation.** At QuickBite's volume, buying is cheaper for both workloads by a wide margin. Self-hosting the chatbot is justified only by things the formula omits: the model is QuickBite's own continued-pre-trained 7B (§65.9), which a generic API cannot serve; data controls; and the option to grow. **Engineering implication.** Price the alternatives honestly, including providers that host custom fine-tunes or adapters, and revisit the decision when volume reaches a third of $V^\star$, when GPU prices move, or when the custom model's quality advantage is measured rather than assumed.
+:::
+
+**Figure 79.16 — Build-versus-buy decision per model.**
+
+```mermaid
+flowchart TB
+  S([New model workload]) --> Q1{"Custom weights<br/>required?"}
+  Q1 -->|no| Q2{"Data class allows<br/>a provider contract?"}
+  Q1 -->|yes| Q4{"Provider hosts<br/>custom models?"}
+  Q2 -->|no| SELF["Self-host"]
+  Q2 -->|yes| Q3{"Volume above<br/>break-even V*?"}
+  Q3 -->|no| BUY["Buy via gateway"]
+  Q3 -->|yes| SELF
+  Q4 -->|yes| Q2
+  Q4 -->|no| SELF
+```
+
+**Reading the diagram.** Each decision is made per model, in order of how binding it is. A workload needing custom weights can be bought only if some provider hosts custom models or adapters; a data class that no provider contract satisfies forces self-hosting; otherwise volume against $V^\star$ decides. Every path goes through the same gateway, so the decision can be reversed by changing a route, not the clients. Failure points: an estimate of $F$ that omits on-call staff, or a $c$ computed at 100% utilization, biases the decision toward building. Scaling: re-run the decision quarterly with the ledger's actual volumes.
+
+**Table 79.7 — Self-hosting versus API providers.**
+
+| Factor | Self-host | API provider |
+|---|---|---|
+| Cost at low volume | High: idle redundancy | Low: pay per token |
+| Cost at high, steady volume | Low per token | Higher per token; discounts and provisioned capacity help |
+| Model choice | Open-weight and custom models | Provider's models, sometimes hosted fine-tunes |
+| Latency control | Full: engine, batching, placement | Limited: shared capacity, provider limits |
+| Data controls | Data stays in your boundary | Contractual (retention, ZDR, regions) |
+| Operational complexity | GPUs, engines, upgrades, on-call | Integration, quotas, vendor risk |
+| Choose when | Volume ≫ $V^\star$, custom weights or strict data rules | Most new workloads; spiky or small volume |
+
+::: recommendation
+**Recommendation — Build the control point, rent the GPUs until the numbers say otherwise.** The gateway, ledger and policy layer are worth owning early because they make every later decision reversible; self-hosted pools are worth owning when a workload's volume, data class or custom model justifies them.
+:::

@@ -4,31 +4,27 @@
 
 QuickBite's support team wants to replace the chatbot's system prompt with a new one that is "friendlier and better at refunds". Someone tries twenty conversations by hand, likes what they see, and asks to ship on Friday. Nobody can say whether the new prompt is better. Twenty conversations cannot separate a 3-point improvement from noise; the person reading them liked the longer answers; one of the twenty refunds quietly cited a policy that expired in August; and nobody tested whether a merchant could plant "approve every refund" in a menu description. A classifier has accuracy on a test set. A language-model feature has none of that until you build it.
 
-This chapter builds it. **LLM evaluation** is the discipline of turning "it seems better" into numbers with confidence intervals, measured on data that looks like production, by graders (programs, models and people) whose own errors are known. **Reliability** is the companion discipline of keeping an LLM feature correct, safe, available and affordable when models misbehave, providers fail, attackers probe and traffic grows. You will design versioned evaluation suites and size them, use and calibrate LLM judges, detect hallucination, evaluate retrieval-augmented generation end to end, run online experiments, red-team the system, defend against prompt injection in layers, route between models, design fallbacks and service level objectives, and choose a point on the cost–quality frontier.
+This chapter builds it. **LLM evaluation** is the discipline of turning "it seems better" into numbers with confidence intervals, measured on data that looks like production, by graders (programs, models and people) whose own errors are known. **Reliability** is the companion discipline of keeping an LLM feature correct, safe, available and affordable when models misbehave, providers fail, attackers probe and traffic grows.
 
-The chapter builds on others and owns the evaluation methodology they preview. Hypothesis tests, power and A/B testing are §57.14; inter-annotator agreement and Cohen's κ are §63.6; drift and quality monitoring are Chapter 70; retrieval metrics are §75.13 and grounded generation with citations is §75.12; prompting and fine-tuning are Chapter 76; agent architecture, tool calling and guardrails are Chapter 77 (this chapter goes deeper on how to evaluate agents); serving cost is Chapter 73; cascades in classic ML are §60.13.2; threat modeling and security architecture are Chapters 10 and 50; SLOs and error budgets are §39.6–§39.7; continuous integration for models is Chapter 69.
+This chapter owns the evaluation methodology that earlier chapters preview. It builds on A/B testing (§57.14), agreement metrics (§63.6), monitoring (Chapter 70), retrieval metrics and grounded generation (§75.12–§75.13), adaptation (Chapter 76), agents (Chapter 77, whose evaluation it deepens), serving cost (Chapter 73), cascades (§60.13.2), security (Chapters 10 and 50), SLOs (§39.6–§39.7) and CI for models (Chapter 69).
 
 ::: note
-**QuickBite assumptions used in this chapter.** These reuse the Book II design point and are teaching assumptions, not measurements of a real company. The support chatbot is the in-house 7B model (§72, §65.9.1) with RAG over an 8.6-million-token corpus of 25,800 chunks (§75). It answers about **75,000 queries a day** from about 30,000 conversations (2.5 user messages each), peaking at 8 queries per second (§75). A query sends about 4,050 input tokens and receives 200 output tokens, and the in-house transfer price is \$0.20 per million input and \$0.60 per million output tokens, so generation costs **\$0.00093 per query** (§75.15.3). **New in this chapter:** a *support agent* built on the chatbot can call four tools (look up an order, propose a credit, request a redelivery, hand off to a human; Chapter 77); 20% of conversations are handed off to a human agent today; a human-handled contact costs \$3.00; a **hosted larger model** is available at an illustrative \$2.50 per million input and \$10 per million output tokens, **\$0.0121 per query**; annotators cost \$40 per hour fully loaded. Prices are illustrative, as of 2026, and are not any vendor's quote.
+**QuickBite assumptions used in this chapter.** Teaching assumptions, not measurements of a real company. The support chatbot is the in-house 7B model (§72, §65.9.1) with RAG over an 8.6-million-token corpus of 25,800 chunks (§75). It answers about **75,000 queries a day** from about 30,000 conversations (2.5 user messages each), peaking at 8 queries per second (§75). A query sends about 4,050 input tokens and receives 200 output tokens, and the in-house transfer price is \$0.20 per million input and \$0.60 per million output tokens, so generation costs **\$0.00093 per query** (§75.15.3). **New in this chapter:** a *support agent* built on the chatbot can call four tools (look up an order, propose a credit, request a redelivery, hand off to a human; Chapter 77); 20% of conversations are handed off to a human agent today; a human-handled contact costs \$3.00; a **hosted larger model** is available at an illustrative \$2.50 per million input and \$10 per million output tokens, **\$0.0121 per query**; annotators cost \$40 per hour fully loaded. Prices are illustrative, as of 2026, and are not any vendor's quote.
 :::
 
 ## 78.1 Learning objectives
 
 After this chapter you should be able to:
 
-- Explain why evaluating open-ended, non-deterministic LLM outputs is harder than evaluating a classifier, and name the five main sources of difficulty.
-- Build a versioned offline evaluation suite from production traffic with rubrics, golden answers and slices, and size it with confidence intervals and paired sample-size formulas.
-- Judge what public benchmarks can and cannot tell you, including contamination and Goodhart effects.
-- Choose between exact match, F1, BLEU, ROUGE, execution tests, schema checks and end-state checks, and compute pass@k and pass^k.
-- Use LLM-as-a-judge in pointwise and pairwise modes, measure its agreement with humans, and correct position bias and prevalence bias.
-- Design a human evaluation protocol and estimate its cost and throughput.
-- Define hallucination and groundedness, and detect them with citation checks, entailment, self-consistency sampling and retrieval-grounded checks.
-- Evaluate a RAG system end to end with faithfulness, answer relevance, context precision and context recall.
-- Run online evaluation with A/B tests, implicit signals, guardrail metrics, interleaving and shadow deployments.
-- Plan safety evaluation and red teaming, and reason about the refusal trade-off.
-- Threat-model prompt injection and design layered defenses, explaining why no single filter suffices.
-- Design model routers, cascades and fallbacks; compute expected cost, quality, break-even points and availability; write SLOs for an LLM feature.
-- Architect an evaluation platform with regression gates in CI.
+- Explain why open-ended, non-deterministic LLM outputs are harder to evaluate than a classifier's.
+- Build and size a versioned evaluation suite from production traffic, with confidence intervals and paired comparisons.
+- Judge what public benchmarks can tell you, and choose programmatic metrics, including pass@k and pass^k for agents.
+- Use LLM judges and human raters, measure judge–human agreement, and correct position and prevalence bias.
+- Detect hallucination and evaluate RAG end to end with faithfulness, relevance, context precision and recall.
+- Run online evaluation with A/B tests, implicit signals, guardrails, interleaving and shadow deployments.
+- Plan safety evaluation and red teaming, and defend against prompt injection in layers.
+- Design routers, cascades and fallbacks; compute expected cost, quality, break-even and availability; write SLOs.
+- Choose on the cost–quality frontier and architect an evaluation platform with CI regression gates.
 
 ## 78.2 Prerequisites
 
@@ -59,20 +55,14 @@ Grading a multiple-choice exam is easy: one answer is right, and a machine can c
 Classic ML evaluation (§57.10) assumes a fixed label per input and a model that returns the same prediction every time. LLM features break each assumption:
 
 1. **Open-ended outputs.** "Your credit of 20% is on its way" and "We've added a 20% credit to your account" are both correct; string comparison calls them different. Correctness is a judgment about meaning, tone, policy compliance and safety at once.
-2. **Non-determinism.** Sampling at temperature above zero gives different answers to the same prompt, and even greedy decoding can vary across batch sizes, hardware and engine versions (Chapter 73). One run of a suite is one sample of a random variable.
+2. **Non-determinism.** Sampling gives different answers to the same prompt, and even greedy decoding varies across batch sizes, hardware and engines (Chapter 73). One run is one sample of a random variable.
 3. **Contamination.** Models are trained on much of the public web. A public benchmark question, or its answer, may have been in the training data, so a high score can measure memory rather than ability (§78.5).
-4. **Distribution shift.** The suite was built last quarter; customers now ask about a new subscription plan, merchants upload menus in a new format, and attackers have new tricks. A suite that does not follow traffic measures the past (Chapter 70).
+4. **Distribution shift.** Customers ask about new products and attackers learn new tricks; a suite that does not follow traffic measures the past (Chapter 70).
 5. **The cost of human judgment.** The most trusted grader, a trained person reading carefully, costs dollars per item and hours per hundred items, so it cannot score every change. Cheaper graders (programs, LLM judges) must be validated against people, and that validation is itself an experiment.
 
 #### How it works internally
 
-Because no single measurement is trusted, mature teams evaluate in a loop with several stages, each catching different failures at different costs:
-
-1. **Offline evaluation** on versioned suites, scored by programs and calibrated judges, on every change (§78.4–§78.10).
-2. **Human evaluation** on samples, to calibrate judges and to decide close calls (§78.8).
-3. **Safety and adversarial evaluation** before launch and continuously (§78.12–§78.13).
-4. **Online evaluation**: shadow traffic, canaries and A/B tests with implicit signals and guardrails (§78.11).
-5. **Production monitoring** that samples live traffic into new evaluation items, closing the loop (Chapter 70, §78.17).
+Because no single measurement is trusted, mature teams evaluate in a loop of stages that catch different failures at different costs: offline suites on every change (§78.4–§78.10), human evaluation on samples (§78.8), safety suites (§78.12–§78.13), online tests (§78.11) and production sampling back into the suites (§78.17).
 
 **Figure 78.1 — The LLM evaluation loop.**
 
@@ -90,17 +80,7 @@ flowchart LR
   HUM[Human labels] -.->|calibrate| OFF
 ```
 
-**Reading the diagram.** A change enters on the left and is scored offline against versioned suites, which live in a storage boundary of their own. A failed regression gate sends it back synchronously in CI. Passing changes face safety suites, then online exposure, where real users and implicit signals take over from graders. The dotted asynchronous paths close the loop: sampled production logs go to monitoring and human review, and new failure cases become new suite items; human labels calibrate the automated judges. Failure points are the stages that are skipped: a suite that never grows, judges that are never recalibrated, and online tests without guardrails. Scaling: offline cost grows with suite size times changes per day, so suites are tiered (§78.17).
-
-**Table 78.1 — Sources of difficulty and the engineering response.**
-
-| Difficulty | Symptom | Response | Section |
-|---|---|---|---|
-| Open-ended outputs | Correct answers fail string match | Rubrics, programmatic checks on structure, calibrated judges | §78.6–§78.7 |
-| Non-determinism | Scores move between identical runs | Repeat runs, fixed seeds where possible, confidence intervals | §78.4 |
-| Contamination | Benchmark scores exceed real-task quality | Private, fresh, task-specific suites | §78.5 |
-| Distribution shift | Offline wins, online losses | Suites sampled from recent traffic; online evaluation | §78.4, §78.11 |
-| Cost of human judgment | Too few labels to decide | Judges validated against humans; humans on samples and close calls | §78.7–§78.8 |
+**Reading the diagram.** A change is scored offline against versioned suites, a storage boundary of their own; a failed gate sends it back synchronously in CI. Passing changes face safety suites, then online exposure. Dotted asynchronous paths close the loop: sampled production logs become new suite items, and human labels calibrate the judges. Failure points are skipped stages: suites that never grow, judges never recalibrated, online tests without guardrails. Offline cost scales with suite size times changes per day, so suites are tiered (§78.17).
 
 ::: mistake
 **"We looked at twenty examples and it is clearly better."** Twenty examples give a 95% interval on a pass rate of about ±16 to ±19 points (§78.4.2), and the person looking is a biased grader who knows which version is new. Vibe checks are useful for finding failure modes; they are not evidence that a change is an improvement.
@@ -116,7 +96,7 @@ flowchart LR
 
 The suite should look like the traffic the system will face, plus the cases that matter most when they go wrong. QuickBite builds its chatbot suite in five steps:
 
-1. **Sample real traffic.** Draw conversations from the last 30 days of logs, stratified by intent (late delivery, missing item, refund status, account, merchant question), language and market, with personal data redacted (§50.8). Stratification keeps rare but expensive intents from vanishing.
+1. **Sample real traffic.** Draw redacted conversations (§50.8) from the last 30 days, stratified by intent, language and market so rare but expensive intents do not vanish.
 2. **Add curated hard cases.** Every production incident, escalated complaint and known failure becomes an item, as does a set of **unanswerable** questions whose correct behavior is to refuse or hand off (§75.12).
 3. **Write expected behavior.** Policy experts write golden answers where one answer is right ("the late-delivery credit is 20% of the food total") and rubrics where many are ("states the credit amount; does not promise a cash refund; offers photo upload for damaged items; under 120 words; no internal jargon").
 4. **Attach state.** For agent items, record the mock order, the customer's history and the expected end state of the backend after the conversation (§78.6.4).
@@ -138,9 +118,9 @@ flowchart TB
   SUITE --> SPLIT[Dev split for iteration;<br/>held-out split for gates]
 ```
 
-**Reading the diagram.** Three asynchronous feeds supply candidates: a redacted, stratified sample of logs, incidents and curated adversarial items. Deduplication removes near-copies and checks that items do not leak into prompts, few-shot examples or fine-tuning data (Chapter 76). Experts label; disagreement sends the item to adjudication and usually exposes an ambiguous guideline (§63.6). The suite is a versioned store. It is split: engineers iterate freely on a development split, while a **held-out split** is used only for release gates, so that the team does not overfit its prompt to the very items that decide launches. Failure point: a suite that is never refreshed drifts away from traffic; QuickBite refreshes 20% of items each quarter and keeps old versions for comparison.
+**Reading the diagram.** Three asynchronous feeds supply candidates. Deduplication removes near-copies and checks that items have not leaked into prompts, few-shot examples or fine-tuning data (Chapter 76). Expert disagreement goes to adjudication and usually exposes an ambiguous guideline (§63.6). The versioned suite is split: engineers iterate on a development split, and a **held-out split** is used only for release gates, so the prompt is not overfit to the items that decide launches. Failure point: a suite never refreshed drifts from traffic; QuickBite refreshes 20% of items each quarter.
 
-**Table 78.2 — QuickBite chatbot suite v7 (illustrative).**
+**Table 78.1 — QuickBite chatbot suite v7 (illustrative).**
 
 | Slice | Items | Grader | Why it is a slice |
 |---|---|---|---|
@@ -201,7 +181,7 @@ The paired formula comes from treating each item's difference $D_i \in \{-1, 0, 
 **Interpretation.** A 400-item suite can tell an 80% system from a 90% one, not an 82% from an 85% one. Pairing more than halves the items needed to compare two versions. **Engineering implication.** QuickBite's 1,200-item suite gives about ±2.1 points per version overall and is sized to detect 3-point paired differences; individual slices of 100–300 items carry intervals of ±4–8 points, so slice regressions smaller than that need a larger slice or a human look, not an automatic verdict.
 :::
 
-Two subtleties change the answer. First, items are not always independent: QuickBite's suite has several turns from the same conversation, and turns of a hard conversation fail together. The independent unit is then the conversation, and the interval should be computed by resampling conversations (a **cluster bootstrap**). Second, the system is random: with sampling at temperature 0.7, an item's pass/fail varies between runs. Running each item $m$ times and scoring the per-item mean pass rate reduces this run-to-run noise, but it does not substitute for more items, because item-to-item variation usually dominates.
+Two subtleties matter. Turns from the same conversation fail together, so the independent unit is the conversation and intervals should resample conversations (a **cluster bootstrap**). And the system is random: running each item $m$ times reduces run-to-run noise but does not substitute for more items, because item-to-item variation usually dominates.
 
 ### 78.4.3 Code example: bootstrap intervals and sample sizes
 
@@ -288,32 +268,31 @@ What to notice:
 - The normal, Wilson and item-bootstrap intervals agree closely at $n = 400$ and $\hat p = 0.82$; Wilson shifts toward 0.5, as it should. The **cluster bootstrap** interval is wider (8.8 versus 7.5 points) because turns of one conversation pass or fail together: treating them as independent overstates precision.
 - The candidate fixes 23 items and breaks 6. The **paired** interval for the +4.3-point gain excludes zero; the **unpaired** interval, which ignores that both versions ran on the same items, includes zero. Same data, opposite conclusions: always compare versions item by item.
 - The sample-size functions reproduce the worked example (1,356; 2,401; 1,039; 2,281).
-- Report the six broken items, not just the net gain: a fix that breaks a refund calculation may be unacceptable even if the average rises.
 
 ### 78.4.4 Failure scenarios in offline evaluation
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
-| Offline gains, online losses | Suite no longer matches traffic | Offline–online metric correlation tracked per launch | Refresh suite from recent logs | Quarterly refresh; production sampling into the suite |
+| Offline gains, online losses | Suite no longer matches traffic | Offline–online correlation per launch | Refresh from recent logs | Quarterly refresh |
 | Team overfits prompt to the suite | Iterating against the gating items | Dev split improves, held-out split flat | Rotate held-out items | Separate dev and held-out splits; limit gate runs |
-| Leakage into prompts or training | Suite items copied as few-shot examples or fine-tuning data | n-gram overlap scan of prompts and training sets | Replace leaked items | Leakage check at suite build and at each data refresh |
-| Scores drift with no code change | Provider model update, engine change, sampling noise | Daily run of a fixed canary suite | Pin model versions; re-baseline | Pin versions; repeat runs; alert on canary-suite drift |
+| Leakage into prompts or training | Items reused as examples or training data | n-gram overlap scan | Replace leaked items | Leakage check at each build |
+| Scores drift with no code change | Provider update, engine change, noise | Daily fixed canary suite | Re-baseline | Pin versions; repeat runs |
 | Stale golden answers | Policy changed after labeling | Golden answers disagree with current policy documents | Relabel affected items | Link each item to the policy version it cites |
 
 ## 78.5 Benchmarks and their limits
 
-Public benchmarks are shared, fixed evaluation suites that let the research community compare models. Three illustrate the genres:
+Public benchmarks are shared, fixed evaluation suites that let the research community compare models. Four illustrate the genres:
 
-- **MMLU** (Massive Multitask Language Understanding) asks multiple-choice questions across 57 subjects, from elementary mathematics to law and medicine, and scores accuracy [Hendrycks et al. 2021]. It measures breadth of knowledge and test-taking skill under a fixed format.
-- **HELM** (Holistic Evaluation of Language Models) evaluates many models on many scenarios under standardized conditions and reports several metrics per scenario (accuracy, calibration, robustness, fairness, bias, toxicity and efficiency), arguing that a single accuracy number hides the trade-offs that matter for deployment [Liang et al. 2023].
+- **MMLU** asks multiple-choice questions across 57 subjects, from elementary mathematics to law and medicine [Hendrycks et al. 2021].
+- **HELM** evaluates many models on many scenarios under standardized conditions and reports several metrics per scenario (accuracy, calibration, robustness, fairness, bias, toxicity, efficiency), because one accuracy number hides deployment trade-offs [Liang et al. 2023].
 - **HumanEval** gives 164 hand-written Python programming problems with unit tests and scores functional correctness with pass@k (§78.6.3) [Chen et al. 2021].
 - **MT-Bench** and **Chatbot Arena** evaluate open-ended, multi-turn assistance: MT-Bench with 80 multi-turn questions graded by a strong LLM judge, and Chatbot Arena with crowdsourced pairwise human votes between anonymous models [Zheng et al. 2023; Chiang et al. 2024].
 
 Benchmarks are valuable for choosing *which models are worth trying*. They are weak evidence about *your* task, for four reasons.
 
-1. **Contamination.** If benchmark items, or pages discussing them, are in a model's training data, its score partly measures memorization. Because pretraining corpora are huge and rarely disclosed, contamination is hard to rule out from outside.
+1. **Contamination.** If benchmark items are in the training data, the score partly measures memorization, and undisclosed corpora make this hard to rule out.
 2. **Saturation.** Once frontier models score near the ceiling, the benchmark no longer separates them.
-3. **Format mismatch.** Multiple-choice accuracy says little about writing a policy-compliant refund message, calling the right tool, or refusing when the context is silent.
+3. **Format mismatch.** Multiple-choice accuracy says little about policy-compliant replies, tool calls or refusals.
 4. **Goodhart's law.** "When a measure becomes a target, it ceases to be a good measure" (Strathern's formulation of Goodhart's observation) [Strathern 1997]. When labs and teams optimize for a leaderboard, the benchmark score rises faster than the capability it was meant to indicate.
 
 **Figure 78.3 — How benchmark contamination and Goodhart effects inflate scores.**
@@ -330,10 +309,10 @@ flowchart LR
   PRIV[(Private, fresh<br/>task suite)] -->|measures| TASK
 ```
 
-**Reading the diagram.** The benchmark is a store of fixed items. Two paths feed it back into the model. The dotted asynchronous path is contamination: items leak through the web crawl into pretraining. The solid path is Goodhart pressure: the leaderboard becomes a target that steers training and prompting choices. Both raise the benchmark score without a matching rise in quality on your task, which only a **private, fresh, task-specific suite** measures. Failure point: choosing a model by leaderboard rank alone. Mitigations at the benchmark level include held-out or periodically refreshed test sets and contamination audits; at the application level, the remedy is your own suite.
+**Reading the diagram.** Two paths feed the benchmark back into the model. The dotted asynchronous path is contamination: items leak through the web crawl into pretraining. The solid path is Goodhart pressure: the leaderboard steers training and prompting choices. Both raise the score without a matching rise in quality on your task, which only a **private, fresh, task-specific suite** measures. Failure point: choosing a model by leaderboard rank alone.
 
 ::: recommendation
-**Use benchmarks to shortlist, your suite to decide.** QuickBite shortlists candidate models from public leaderboards and model cards, then runs its own 1,200-item suite, safety suites and a cost and latency test on each. Its private suite is never published, never pasted into a hosted model's fine-tuning endpoint, and is refreshed every quarter, so it stays uncontaminated.
+**Use benchmarks to shortlist, your suite to decide.** QuickBite shortlists models from leaderboards and model cards, then runs its private suite, safety suites and a cost and latency test on each. The private suite is never published or sent to a provider's fine-tuning endpoint, so it stays uncontaminated.
 :::
 
 ::: mistake
@@ -423,8 +402,8 @@ pass@k suits settings where a human or a test picks the best of several attempts
 
 Two programmatic checks catch a large share of production failures in structured systems:
 
-- **Schema validity.** The chatbot returns a JSON object (`answer`, `citations`, `handoff_to_human`, §75.12). Validate every output against the schema; measure the invalid rate; check that cited IDs exist in the context. Constrained decoding (Chapter 76) can make syntax errors impossible, but not semantic ones such as citing the wrong source.
-- **End-state checks.** For an agent, the final answer is less important than what it did. Run each task in a sandbox with mock backends seeded from the item's recorded state, let the agent converse with a simulated customer (a scripted or LLM-played user), then compare the backend's final state with the expected state: was exactly one redelivery created, for the right order, with no credit beyond policy limits? This is the τ-bench approach, and it is far more reliable than judging the transcript.
+- **Schema validity.** Validate every JSON output (`answer`, `citations`, `handoff_to_human`, §75.12) against its schema and check that cited IDs exist in the context. Constrained decoding (Chapter 76) prevents syntax errors, not semantic ones.
+- **End-state checks.** For an agent, what it did matters more than what it said. Run each task in a sandbox with mock backends seeded from the item's state, let the agent converse with a simulated customer, then compare the final backend state with the expected one: exactly one redelivery, for the right order, no credit beyond policy. This is the τ-bench approach, and it is far more reliable than judging the transcript.
 
 **Figure 78.4 — Agent evaluation harness with end-state checks.**
 
@@ -441,9 +420,9 @@ flowchart LR
   JUD -.-> SC
 ```
 
-**Reading the diagram.** Each task stores a seed state, the customer's goal and the expected end state. A simulated customer converses with the agent synchronously, turn by turn; the agent's tool calls hit **mock services** seeded from the task, never production, so tests are repeatable and harmless. The deterministic comparison of final state with expected state is the primary score; an LLM judge reads the trajectory asynchronously for secondary qualities (tone, redundant tool calls, asking for information it already had). Failure points: a simulated user that is too cooperative (it should also be impatient, vague or adversarial), and mocks that drift from real service behavior. Scaling: tasks run in parallel sandboxes; cost is dominated by agent and simulator tokens times trials per task.
+**Reading the diagram.** Each task stores a seed state, the customer's goal and the expected end state. A simulated customer converses with the agent turn by turn; tool calls hit **mock services**, never production, so tests are repeatable and harmless. The deterministic state comparison is the primary score; an LLM judge reads the trajectory asynchronously for tone and redundant calls. Failure points: a simulated user that is too cooperative, and mocks that drift from real services. Tasks run in parallel sandboxes; cost is agent and simulator tokens times trials.
 
-**Table 78.3 — Choosing an automated metric.**
+**Table 78.2 — Choosing an automated metric.**
 
 | Output type | Primary metric | Supplement | Avoid |
 |---|---|---|---|
@@ -462,9 +441,9 @@ flowchart LR
 **Definition — LLM-as-a-judge.** Using a language model to grade another model's output. **Pointwise** judging scores one response on a scale or against a rubric (pass/fail per criterion). **Pairwise** judging shows two responses to the same input and asks which is better, or whether they tie. **Reference-guided** judging gives the judge a golden answer to compare against.
 :::
 
-A judge is a cheap, tireless, somewhat biased annotator. Zheng et al. studied strong LLMs as judges on MT-Bench and Chatbot Arena and found that the strongest judge they tested agreed with human preferences about as often as humans agreed with each other (over 80% on their data), while also documenting **position bias**, **verbosity bias** and **self-enhancement bias**, and weaker grading of math and reasoning [Zheng et al. 2023]. That combination, useful and biased, defines how judges must be used: as instruments that are calibrated before they are trusted.
+A judge is a cheap, tireless, somewhat biased annotator. Zheng et al. found that the strongest judge they tested agreed with human preferences about as often as humans agreed with each other (over 80% on their data), and documented **position**, **verbosity** and **self-enhancement** biases and weaker grading of math and reasoning [Zheng et al. 2023]. Judges are instruments to calibrate before trusting.
 
-Pairwise judging is more sensitive for comparing two versions, because "which is better?" is an easier question than "is this a 7 or an 8?". Pointwise rubric judging is better for gates and monitoring, because it gives an absolute pass rate and names which criterion failed. QuickBite uses pointwise rubric checks for its regression gate and pairwise judging to choose between candidate prompts. A rubric prompt makes each criterion a separate, checkable question and asks for a short justification before the verdict, a form-filling approach similar to G-Eval [Liu et al. 2023]:
+Pairwise judging is more sensitive for comparing versions ("which is better?" is easier than "is this a 7 or an 8?"); pointwise rubric judging gives absolute pass rates and names the failed criterion. QuickBite uses pointwise rubric checks for its regression gate and pairwise judging to choose between candidate prompts. A rubric prompt makes each criterion a separate, checkable question and asks for a short justification before the verdict, a form-filling approach similar to G-Eval [Liu et al. 2023]:
 
 ```text
 You are grading a customer-support reply for QuickBite. Use only the policy
@@ -505,7 +484,7 @@ sequenceDiagram
   Note over R,S: if the verdicts disagree, record a tie<br/>and log the pair as position-sensitive
 ```
 
-**Reading the diagram.** The runner calls the judge twice per pair, synchronously, with the order swapped; the calls are independent and can run in parallel. A winner counts only if it wins in both orders; otherwise the pair is recorded as a tie in the score store, and the share of such pairs is itself a metric of judge reliability. Failure points: caching the first call's verdict for the second (defeats the purpose) and judge rate limits, since swapping doubles judge traffic. Scaling: judge calls are embarrassingly parallel and can use batch APIs at off-peak prices.
+**Reading the diagram.** The runner calls the judge twice per pair with the order swapped; the calls are independent and can run in parallel. A winner counts only if it wins in both orders; otherwise the pair is a tie, and the share of ties is itself a judge-reliability metric. Failure points: caching the first verdict for the second call, and judge rate limits, since swapping doubles judge traffic.
 
 ### 78.7.3 Calibrating a judge against humans
 
@@ -625,7 +604,7 @@ What to notice:
 
 - Depending only on which answer is shown first, the same judge reports a 74% or a 33% win rate for the candidate; humans say 53.5%. Swapping and counting inconsistent pairs as ties gives 53.6%.
 - κ against humans is only about 0.41 in a single order and 0.71 on the 58% of pairs where the judge is consistent. Inconsistent pairs are mostly close calls, so a tie is the honest verdict for them.
-- Swapping does not remove verbosity bias: on consistent pairs the judge picks the longer answer 72% of the time against 58% for humans. Order swapping fixes order; length needs its own control (length-controlled comparison, a rubric criterion on concision, or a length cap).
+- Swapping does not remove verbosity bias: on consistent pairs the judge picks the longer answer 72% of the time against 58% for humans. Length needs its own control (length-controlled comparison, a concision criterion or a length cap).
 
 **Figure 78.6 — Judge calibration and reuse workflow.**
 
@@ -643,7 +622,7 @@ flowchart TB
   USE -.->|monthly resample| SAMP
 ```
 
-**Reading the diagram.** A stratified sample is labeled independently by humans and by the candidate judge; the comparison computes κ, the confusion matrix and per-slice agreement. Only a judge whose agreement approaches human–human agreement and whose miss rate on critical criteria is acceptable is registered, with its model version, prompt version and measured sensitivity and specificity; the registry is a storage boundary that makes judge versions as explicit as model versions. The dotted path is the monthly recalibration. Failure points: changing the judge model or prompt without recalibrating, and a hosted judge model silently updated by its provider; pin versions and rerun calibration on any change.
+**Reading the diagram.** Humans and the candidate judge label the same stratified sample independently. Only a judge whose agreement approaches human–human agreement, with acceptable misses on critical criteria, is registered with its model version, prompt version, sensitivity and specificity; the registry makes judge versions as explicit as model versions. The dotted path is monthly recalibration. Failure points: changing the judge model or prompt without recalibrating, and a hosted judge silently updated by its provider.
 
 ::: mistake
 **"The judge agrees with humans 85% of the time, so its pass rate is the true pass rate."** Agreement and bias are different properties. In the worked example, 85% agreement coexists with a 5-point lenient bias and a 29% miss rate on failures. Report κ, the confusion matrix and the corrected rate, and compare versions with paired differences where the bias cancels.
@@ -654,10 +633,10 @@ flowchart TB
 Humans remain the reference grader: they calibrate judges, decide close launches, and grade what no rubric captures (whether a reply would calm an angry customer). Three protocols cover most needs:
 
 - **Pointwise rubric rating.** One response at a time against the same rubric the judge uses, so the two can be compared item by item.
-- **Side-by-side (SxS) comparison.** Two anonymized responses to the same input, in random order, with "A better / tie / B better" and a reason. It is the most sensitive way to compare versions, and the human analog of pairwise judging. Aggregating many pairwise votes across many models with a Bradley–Terry or Elo-style model gives a ranking, as in Chatbot Arena [Chiang et al. 2024].
+- **Side-by-side (SxS) comparison.** Two anonymized responses in random order, rated "A better / tie / B better" with a reason: the most sensitive human comparison. Aggregating many pairwise votes with a Bradley–Terry or Elo-style model gives a ranking, as in Chatbot Arena [Chiang et al. 2024].
 - **Task-based evaluation.** Annotators role-play customers with a scripted goal and judge whether the assistant accomplished it, which captures multi-turn behavior that single-reply rating misses.
 
-Good protocols share the practices of §63.5–§63.6: written **guidelines** with worked examples of each verdict and of borderline cases; a pilot to measure agreement before scaling; blind, randomized presentation so annotators cannot tell which version is new; two or three ratings per item with adjudication of disagreements; and **gold items** with known answers mixed in to detect inattentive raters. For a support assistant, include policy experts for correctness and ordinary readers for tone; they disagree in useful ways.
+Good protocols follow §63.5–§63.6: written **guidelines** with examples of each verdict and of borderline cases; a pilot to measure agreement; blind, randomized presentation; two or three ratings per item with adjudication; and **gold items** with known answers to detect inattentive raters. For a support assistant, combine policy experts (correctness) with ordinary readers (tone).
 
 ::: formula
 **Human evaluation effort and cost**
@@ -704,7 +683,7 @@ flowchart LR
   EXP --> RES
 ```
 
-**Reading the diagram.** Pairs are anonymized and order-randomized so raters cannot favor the new version, and gold items with known verdicts are mixed in. A queue distributes each pair to three raters asynchronously. Aggregation computes the vote, inter-rater agreement and each rater's gold accuracy; split votes and raters who fail gold items go to an expert. Results are stored per slice with confidence intervals, and the human verdicts also feed judge calibration (Figure 78.6). Failure points: raters who learn to recognize a version's style, guidelines that drift, and fatigue in long sessions. Scaling is linear in rater-hours, which is why the sample is chosen carefully.
+**Reading the diagram.** Pairs are anonymized and order-randomized, and gold items are mixed in. A queue sends each pair to three raters asynchronously. Aggregation computes the vote, inter-rater agreement and each rater's gold accuracy; split votes and failed gold go to an expert. Results are stored per slice with intervals and also feed judge calibration (Figure 78.6). Failure points: raters who learn a version's style, drifting guidelines, fatigue. Cost scales linearly in rater-hours.
 
 ## 78.9 Hallucination and groundedness
 
@@ -714,11 +693,11 @@ flowchart LR
 **Definition — Hallucination, faithfulness, factuality.** A **hallucination** is generated content that is nonsensical or unfaithful to the provided source content. Ji et al. distinguish **intrinsic** hallucinations, which contradict the source, from **extrinsic** hallucinations, which cannot be verified from the source at all [Ji et al. 2023]. **Faithfulness** (groundedness) is consistency with the provided context; **factuality** is consistency with the world. A grounded answer can be factually wrong if the source is wrong, and a factual answer can be ungrounded if it comes from the model's memory rather than the context.
 :::
 
-For QuickBite, faithfulness is the property to enforce: the chatbot must state what the current policy and the order record say, even when its parametric memory "knows" an older policy. An answer that is true but unsupported by the context is a failure, because next month it will be false.
+For QuickBite, faithfulness is the property to enforce: an answer true today but unsupported by the current policy and order record is a failure, because next month it will be false.
 
 ### 78.9.2 Detection methods
 
-**Table 78.4 — Hallucination detection methods.**
+**Table 78.3 — Hallucination detection methods.**
 
 | Method | How it works | Needs | Strength | Weakness |
 |---|---|---|---|---|
@@ -728,7 +707,7 @@ For QuickBite, faithfulness is the property to enforce: the chatbot must state w
 | Self-consistency sampling | Sample several responses; claims the samples do not support are likely invented | Only the model, no context | Zero-resource, black-box [Manakul et al. 2023] | $N$ extra generations; misses consistent errors |
 | LLM judge on faithfulness | Rubric criterion "every claim supported by the context" | Calibrated judge (§78.7) | Handles paraphrase and reasoning | Judge cost and bias |
 
-SelfCheckGPT rests on a simple observation: if a model knows a fact, repeated samples tend to agree on it; if it is inventing, samples diverge [Manakul et al. 2023]. Each sentence of the main response is checked against $N$ additional stochastic samples, with variants that measure support by n-gram overlap, question answering, BERTScore, NLI or prompting an LLM.
+SelfCheckGPT rests on a simple observation: if a model knows a fact, repeated samples agree on it; if it is inventing, they diverge [Manakul et al. 2023]. Each sentence is checked against $N$ extra samples, using n-gram, QA, BERTScore, NLI or LLM-prompt variants.
 
 ::: formula
 **Self-consistency hallucination score (SelfCheckGPT-style, NLI variant)**
@@ -771,7 +750,7 @@ flowchart LR
   POL -->|no| LOG[[Log for review]]
 ```
 
-**Reading the diagram.** Claims extracted from the answer are checked synchronously: first that the cited source exists in the context (catching invented citations), then that the cited chunk entails the claim. Self-consistency sampling runs asynchronously on a sample, because it multiplies generation cost. Flagged claims about money, policy or safety block the answer or route it to a human; others are logged. Failure points: the claim splitter (a compound sentence hides an unsupported clause), the NLI model's weakness on numbers, and latency, since verification sits before the visible answer unless done per sentence while streaming.
+**Reading the diagram.** Claims are checked synchronously: first that the cited source exists in the context (catching invented citations), then that the cited chunk entails the claim. Self-consistency runs asynchronously on a sample, because it multiplies generation cost. Flagged claims about money, policy or safety block the answer or go to a human; others are logged. Failure points: the claim splitter, the NLI model's weakness on numbers, and latency before the visible answer.
 
 ### 78.9.3 Reducing hallucination by design
 
@@ -784,13 +763,13 @@ Detection catches hallucination; architecture prevents much of it:
 5. **Lower temperature for factual tasks**, and verify before showing anything that moves money.
 
 ::: industry
-**Air Canada's chatbot, revisited as an evaluation lesson.** In *Moffatt v. Air Canada* (2024) the tribunal held the airline liable for its website chatbot's incorrect statement about bereavement fares, which contradicted the airline's own policy page. The decision does not describe the system's design or testing. Its relevance here is that a policy-contradicting answer is an intrinsic hallucination with legal consequences, which is why faithfulness to the current policy belongs in the release gate rather than in a sampled quality report.
+**Air Canada's chatbot, revisited as an evaluation lesson.** In *Moffatt v. Air Canada* (2024) the tribunal held the airline liable for its website chatbot's incorrect statement about bereavement fares, which contradicted the airline's own policy page. The decision does not describe the system's design. A policy-contradicting answer is an intrinsic hallucination with legal consequences, which is why faithfulness to current policy belongs in the release gate, not only in a sampled quality report.
 *Evidence: Primary* — [Moffatt v. Air Canada 2024]
 :::
 
 ## 78.10 RAG evaluation end to end
 
-Retrieval metrics (§75.13) say whether evidence reached the context; groundedness checks (§78.9) say whether the answer stayed within it. End-to-end RAG evaluation connects the four objects in play: the question, the retrieved context, the generated answer and, where available, a reference answer. RAGAS proposed reference-free LLM-scored metrics for faithfulness, answer relevance and context relevance [Es et al. 2024]; its open-source implementation later added reference-based **context precision** and **context recall**. The definitions below follow that family.
+End-to-end RAG evaluation connects four objects: the question, the retrieved context, the answer and, where available, a reference answer. RAGAS proposed reference-free LLM-scored metrics for faithfulness, answer relevance and context relevance [Es et al. 2024]; its open-source implementation later added reference-based **context precision** and **context recall**. The definitions below follow that family.
 
 **Figure 78.9 — What each RAG metric compares.**
 
@@ -835,7 +814,7 @@ $$\text{Faith} = \frac{|C_\text{supported}|}{|C|} \quad \text{CP@}K = \frac{\sum
 **Interpretation.** Retrieval missed one fact the reference needed (recall 0.75), and the generator added one unsupported claim (faithfulness 0.80); the two failures are independent and need different fixes. **Engineering implication.** Track all four per slice and gate on faithfulness for policy and money slices; a fall in context recall points at the index or chunker (Chapter 75), a fall in faithfulness at the prompt or model (Chapter 76).
 :::
 
-**Table 78.5 — Diagnosing a RAG failure from its metrics.**
+**Table 78.4 — Diagnosing a RAG failure from its metrics.**
 
 | Context recall | Faithfulness | Answer relevance | Likely cause | Fix |
 |---|---|---|---|---|
@@ -848,7 +827,7 @@ LLM-scored RAG metrics inherit every judge bias of §78.7: calibrate the faithfu
 
 ## 78.11 Online evaluation
 
-Offline suites are proxies. Only real users show whether a change resolves more problems, and only production exposes the long tail. Online evaluation for LLM features uses the rollout ladder of §66 and the statistics of §57.14, with LLM-specific signals.
+Offline suites are proxies; only real users show whether a change resolves more problems. Online evaluation uses the rollout ladder of §66 and the statistics of §57.14 with LLM-specific signals.
 
 **Figure 78.10 — Online evaluation ladder for an LLM change.**
 
@@ -866,9 +845,9 @@ flowchart LR
   AB -.->|thumbs, edits,<br/>handoffs, recontacts| EV[[Event log]]
 ```
 
-**Reading the diagram.** In **shadow** mode the candidate receives a copy of live requests and its outputs are judged and safety-checked but never shown, which finds crashes, latency problems and gross quality regressions on real traffic at zero user risk (agents in shadow must run against mock tools: a shadow agent that really issues credits is not a shadow). The **canary** exposes a small share of conversations and watches guardrails with automatic rollback. The **A/B test** measures the primary metric with enough users and time. Implicit signals flow asynchronously to the event log. Failure points: shadow traffic that triggers side effects, canaries too small to see rare harms, and stopping an A/B test early (§57.14.3).
+**Reading the diagram.** In **shadow** mode the candidate gets a copy of live requests; its outputs are judged but never shown, which finds crashes, latency problems and gross regressions at zero user risk (a shadow agent must use mock tools, or it really issues credits). The **canary** exposes a small share of conversations with automatic rollback on guardrails. The **A/B test** measures the primary metric with enough users and time. Implicit signals flow asynchronously to the event log. Failure points: shadow side effects, canaries too small for rare harms, stopping early (§57.14.3).
 
-**Table 78.6 — Online signals for QuickBite's support assistant.**
+**Table 78.5 — Online signals for QuickBite's support assistant.**
 
 | Signal | Role | Caveat |
 |---|---|---|
@@ -891,7 +870,7 @@ flowchart LR
 **Interpretation.** Volume is not the constraint for the primary metric; the guardrails are. A policy violation that occurs in 0.1% of conversations needs far more traffic to detect a doubling. **Engineering implication.** Randomize by customer, not by message, so one customer does not see both bots in a conversation; and review the guardrails with sampled judge and human audits, not just counters.
 :::
 
-**Interleaving for search answers.** When the LLM feature ranks or retrieves (a help-center search box with generated answers), **interleaving** shows each user one merged list from two rankers and credits clicks to the ranker that contributed the item, which detects ranking preferences with far fewer users than an A/B test [Chapelle et al. 2012; §57.14.3]. It applies to the retrieved list, not to a single generated answer; for generated answers, side-by-side presentation to a sample of users or raters plays the same role.
+**Interleaving for search answers.** When the feature ranks results (help-center search with generated answers), **interleaving** merges two rankers' lists for each user and credits clicks to the contributing ranker, detecting preferences with far fewer users than an A/B test [Chapelle et al. 2012; §57.14.3]. For a single generated answer, side-by-side rating plays that role.
 
 ::: warning
 **Feedback is biased and gameable.** Thumbs come from a small, unrepresentative minority; a model tuned to win thumbs learns to flatter and over-promise. Use explicit feedback to find problems, and outcome metrics (resolution, recontact, credit cost) to decide.
@@ -901,7 +880,7 @@ flowchart LR
 
 Safety evaluation asks whether the system does harm when used normally, when misused and when attacked. Start from a **harm taxonomy** specific to the product, then build suites per category, measure, and red-team for what the suites miss.
 
-**Table 78.7 — Harm taxonomy for QuickBite's assistant (illustrative).**
+**Table 78.6 — Harm taxonomy for QuickBite's assistant (illustrative).**
 
 | Category | Example | Severity | Suite |
 |---|---|---|---|
@@ -912,7 +891,7 @@ Safety evaluation asks whether the system does harm when used normally, when mis
 | System-prompt and tool leakage | Revealing internal instructions or tool schemas | Medium | Extraction probes |
 | Over-refusal | Refusing to discuss a legitimate allergy question | Medium | Benign-but-sensitive suite |
 
-**Jailbreak suites** collect prompts that try to bypass the model's rules: role-play framing, encoding tricks, many-turn escalation, and adversarial suffixes. They go stale as models are trained against them, so a fixed suite measures robustness to *known* attacks only. **Over-refusal** suites test the opposite failure: XSTest pairs safe prompts that superficially resemble unsafe ones with genuinely unsafe contrasts, so a model that refuses on keywords is caught [Röttger et al. 2024].
+**Jailbreak suites** collect prompts that try to bypass the rules (role-play, encodings, many-turn escalation, adversarial suffixes); they go stale, measuring robustness only to *known* attacks. **Over-refusal** suites test the opposite failure: XSTest pairs safe prompts that resemble unsafe ones with genuinely unsafe contrasts, catching keyword-driven refusal [Röttger et al. 2024].
 
 **Automated red teaming** uses one language model to generate test cases that make another misbehave, and a classifier to detect the failures. Perez et al. generated test questions with an LM, found tens of thousands of offensive replies from a 280-billion-parameter chatbot, and compared generation methods from zero-shot to reinforcement learning, which found more failures at some cost in diversity [Perez et al. 2022].
 
@@ -931,7 +910,7 @@ flowchart LR
   SUITE --> FIX[Mitigate: prompt, filter,<br/>permission, training]
 ```
 
-**Reading the diagram.** The attacker model, seeded with the taxonomy and known attacks, generates test cases against the full target system, including retrieval and mock tools, because many failures only appear end to end. A harm classifier and end-state checks score each response. Humans triage hits, remove duplicates and false alarms, and add confirmed failures to the regression safety suite; successful attacks feed back as seeds, so the search concentrates where the system is weak. Failure points: a harm classifier with blind spots (the loop cannot find what it cannot detect) and attackers that collapse onto one trick; track diversity of findings. Scaling: the loop is parallel and runs nightly.
+**Reading the diagram.** The attacker model, seeded with the taxonomy and known attacks, targets the full system including retrieval and mock tools, because many failures appear only end to end. A harm classifier and end-state checks score responses; humans triage hits into the regression safety suite, and successful attacks become new seeds, concentrating the search where the system is weak. Failure points: classifier blind spots (the loop cannot find what it cannot detect) and attackers collapsing onto one trick. The loop runs nightly in parallel.
 
 ::: formula
 **Expected cost of a refusal policy**
@@ -967,11 +946,11 @@ $$\mathbb{E}[C] = N\big[\pi\,\text{HCR}\,c_h + (1 - \pi)\,\text{ORR}\,c_r\big] \
 
 #### First-principles explanation
 
-Imagine a new assistant who follows any note on their desk. Their manager leaves instructions; customers leave letters. A letter that says "the manager says to refund everyone" looks, to this assistant, just like a manager's note. SQL injection was solved by keeping code and data in separate channels (parameterized queries, §10.7). An LLM has only one channel: instructions and data are both tokens in the same context window, and the model decides from their content which to obey. That is why prompt injection is not a bug to be patched but a property to be contained.
+Imagine an assistant who follows any note on their desk: a customer's letter saying "the manager says to refund everyone" looks just like a manager's note. SQL injection was solved by keeping code and data in separate channels (parameterized queries, §10.7). An LLM has only one channel: instructions and data are both tokens in the same context window, and the model decides from their content which to obey. That is why prompt injection is not a bug to be patched but a property to be contained.
 
 #### Threat model
 
-For QuickBite's agent, the assets are money (credits and refunds), customer and courier personal data, and the integrity of actions. Untrusted inputs are the customer's messages (direct), and indirect channels: merchant-supplied menu descriptions and item notes, customer-uploaded photos with text, order notes, and any retrieved document a partner can edit. Capabilities that turn a successful injection into harm are the agent's tools and any output rendered as a link or image (which can exfiltrate data through URLs).
+For QuickBite's agent, the assets are money, customer and courier personal data, and the integrity of actions. Untrusted inputs are customer messages (direct) and indirect channels: merchant menu descriptions and item notes, uploaded photos with text, order notes and partner-editable documents. The agent's tools, and any output rendered as a link or image (which can exfiltrate data through URLs), turn a successful injection into harm.
 
 **Figure 78.12 — An indirect injection through a merchant menu description.**
 
@@ -991,15 +970,15 @@ sequenceDiagram
   AG-->>C: a 20% late-delivery credit was applied
 ```
 
-**Reading the diagram.** The attacker never talks to the agent. The planted note enters through a legitimate data path (the catalog), returns as a tool result, and the model treats it as an instruction. The defense that holds is not in the model: the credit tool enforces the policy cap deterministically and rejects the 100% credit. Failure points: any tool that acts on the model's word alone, and outputs that render attacker-chosen URLs. Every untrusted data path into the context is an attack path.
+**Reading the diagram.** The attacker never talks to the agent. The planted note enters through a legitimate data path, returns as a tool result, and the model treats it as an instruction. The defense that holds is outside the model: the credit tool enforces the policy cap and rejects the 100% credit. Failure points: tools that act on the model's word alone and outputs that render attacker-chosen URLs.
 
 ### 78.13.2 Defenses in depth
 
 No known filter or prompt reliably separates instructions from data in natural language, and adaptive attackers search for whatever a given filter misses. Defenses are therefore layered so that each one reduces risk and the last ones bound the damage (§50.3).
 
-1. **Privilege separation and tool permissioning.** Give each tool the least authority it needs; enforce business rules (credit caps, one redelivery per order, ownership of the order) in the service, not the prompt; require human or customer confirmation for consequential actions; scope credentials to the current customer (Chapter 77).
-2. **Input and output filtering.** Classifiers scan untrusted content for instruction-like text at ingestion and at runtime; output filters block links to unknown domains, markdown images, and content matching data-exfiltration patterns. Useful, and always incomplete.
-3. **Instruction hierarchy.** Train or prompt the model to give system instructions priority over user messages, and both over tool outputs and retrieved content. Wallace et al. trained models with such a hierarchy and reported large robustness gains, including against attack types not seen in training, with limited loss of general capability [Wallace et al. 2024]. Delimit and label untrusted content in the prompt so the hierarchy has something to act on.
+1. **Privilege separation and tool permissioning.** Least authority per tool; business rules (credit caps, one redelivery per order, order ownership) enforced in the service, not the prompt; confirmation for consequential actions; credentials scoped to the current customer (Chapter 77).
+2. **Input and output filtering.** Classifiers scan untrusted content for instruction-like text; output filters block unknown links, markdown images and exfiltration patterns. Useful, always incomplete.
+3. **Instruction hierarchy.** Train or prompt the model to give system instructions priority over user messages, and both over tool outputs and retrieved content. Wallace et al. trained models with such a hierarchy and reported large robustness gains, including against attack types not seen in training, with limited loss of general capability [Wallace et al. 2024].
 4. **The dual-LLM or quarantined pattern.** Willison proposed separating a **privileged LLM**, which plans and calls tools but never sees untrusted content, from a **quarantined LLM**, which reads untrusted content but has no tools; the privileged side refers to the quarantined side's outputs only through opaque variables that a non-LLM controller substitutes into the final output [Willison 2023]. Later work extended the idea with explicit control and data flows and capability checks [Debenedetti et al. 2025].
 5. **Monitoring and response.** Log tool calls with the context that produced them; alert on anomalies (credit spikes per merchant); keep injection suites in CI; red-team continuously (§78.12).
 
@@ -1018,7 +997,7 @@ flowchart LR
   CTRL -->|substitutes $VAR1<br/>into reply| C
 ```
 
-**Reading the diagram.** The controller is ordinary code and is the only component that holds untrusted text. The privileged LLM talks to the customer and plans tool calls but never reads untrusted content, so injected instructions cannot reach the component with authority. The quarantined LLM summarizes or extracts from untrusted content and has no tools; its output is stored under an opaque variable name that the privileged LLM can reference but not read. Tools still enforce policy themselves. Failure points: the pattern limits what the assistant can do with untrusted content (the privileged side cannot reason about it), the customer's own messages are still untrusted, and leaking a variable's content into the privileged context breaks the guarantee. It costs two models and a more complex controller.
+**Reading the diagram.** The controller is plain code and the only component that holds untrusted text. The privileged LLM plans and calls tools but never reads untrusted content, so injected instructions cannot reach the component with authority. The quarantined LLM reads untrusted content but has no tools; its output is stored under an opaque variable the privileged LLM can reference but not read, and tools still enforce policy. Failure points: the privileged side cannot reason about untrusted content, customer messages remain untrusted, and leaking a variable's content breaks the guarantee. It costs two models and a more complex controller.
 
 ::: formula
 **Residual injection risk across layers**
@@ -1044,12 +1023,12 @@ $$P_\text{harm} = P_\text{attempt} \prod_{i=1}^{L} m_i \qquad \text{(if layers f
 :::
 
 ::: industry
-**OWASP Top 10 for LLM Applications.** OWASP's list ranks prompt injection first, and its 2025 edition also covers sensitive information disclosure, improper output handling, excessive agency, system prompt leakage, vector and embedding weaknesses, misinformation and unbounded consumption. The guidance on prompt injection matches the layering above: constrain model behavior, validate outputs, enforce least privilege for tools, require human approval for high-risk actions, segregate external content, and run adversarial testing.
+**OWASP Top 10 for LLM Applications.** OWASP ranks prompt injection first; its 2025 edition also covers sensitive information disclosure, improper output handling, excessive agency, system prompt leakage and unbounded consumption. Its prompt-injection guidance matches the layering above: constrain behavior, validate outputs, least privilege for tools, human approval for high-risk actions, segregation of external content and adversarial testing.
 *Evidence: Primary* — [OWASP 2025]
 :::
 
 ::: mistake
-**"We added a classifier that detects prompt injection, so we are protected."** A classifier is a probabilistic layer with a miss rate that an attacker can search against. Greshake et al. demonstrated indirect injection against real LLM-integrated applications [Greshake et al. 2023]. Treat the model's output as untrusted input to every downstream system, the way you treat a browser's input to a server.
+**"We added a classifier that detects prompt injection, so we are protected."** A classifier has a miss rate attackers can search against; Greshake et al. demonstrated indirect injection against real LLM-integrated applications [Greshake et al. 2023]. Treat model output as untrusted input to every downstream system.
 :::
 
 ## 78.14 Model routing
@@ -1076,7 +1055,7 @@ flowchart LR
   VER -.->|escalation rate| MON[Monitoring]
 ```
 
-**Reading the diagram.** The router (left diamond) decides before any generation, so it adds only a classifier's latency. Queries it sends to the small model pass through the cascade's verifier (a calibrated judge or entailment check, §78.9), which escalates low-scoring answers to the hosted model; the large model is an external system with its own failure modes (§78.15). The dotted path reports the escalation rate, which drives cost and capacity on both sides: a rising rate signals drift in traffic or in the small model. Failure points: a router trained on old traffic, and a verifier whose confidence is poorly calibrated.
+**Reading the diagram.** The router decides before any generation, adding only a classifier's latency. Answers from the small model pass the cascade's verifier (a calibrated judge or entailment check, §78.9), which escalates low scores to the hosted model, an external system with its own failure modes (§78.15). The dotted path reports the escalation rate, which drives cost and capacity; a rising rate signals drift. Failure points: a router trained on old traffic and a poorly calibrated verifier.
 
 ::: formula
 **Cascade cost and quality, and the routing break-even**
@@ -1158,9 +1137,9 @@ break-even success gain: 0.0223
 
 What to notice:
 
-- The "all-in" column adds the downstream cost of wrong answers to token cost (both per 1,000 queries). The small model is cheapest on tokens and most expensive all-in: at $V = \$0.50$, its 22% failure rate costs \$111 per 1,000 queries against \$0.93 of tokens.
-- The cascade at threshold 0.7 matches the large model's success (0.936 versus 0.932) for 48% of its token cost, because the verifier keeps the 61% of small answers that are very likely right. It can slightly exceed the large model because a few queries the small model gets right, the large one gets wrong.
-- The pre-generation router is much weaker here: difficulty estimated from the query alone is noisier than checking an actual answer. The oracle row (send to the large model only where it helps) bounds what any router could achieve; the gap between the routers and the oracle is the value of a better router.
+- "All-in" adds the downstream cost of wrong answers to token cost. The small model is cheapest on tokens and most expensive all-in: its 22% failure rate costs \$111 per 1,000 queries against \$0.93 of tokens.
+- The cascade at threshold 0.7 matches the large model's success (0.936 versus 0.932) for 48% of its token cost, because the verifier keeps the 61% of small answers that are very likely right (it can slightly exceed the large model, which fails some queries the small one gets right).
+- The pre-generation router is much weaker: difficulty estimated from the query alone is noisier than checking an actual answer. The oracle row bounds what any router could achieve.
 
 ::: example
 **Worked example — Cascade cost, quality and break-even at QuickBite.** From the simulation at threshold 0.7: $r = 0.389$; kept small answers succeed at $q_\text{acc} = 0.989$; escalated queries succeed at $q_\text{esc} = 0.852$.
@@ -1175,7 +1154,7 @@ What to notice:
 :::
 
 ::: industry
-**Published LLM routers and cascades.** FrugalGPT proposed an LLM cascade that queries models in order of cost and uses a learned scoring function to decide whether to accept an answer; on the tasks studied, the authors reported matching the best individual model's performance with up to 98% cost reduction, or improving accuracy by 4% at the same cost [Chen, Zaharia and Zou 2023]. RouteLLM trained pre-generation routers between a strong and a weak model from human preference data (Chatbot Arena comparisons, with augmentation) and reported cost reductions of more than 2× on some benchmarks without substantial quality loss, with routers that transferred to model pairs not seen in training [Ong et al. 2024]. Both report results on public benchmarks; the savings on any particular workload depend on its difficulty mix and must be measured on its own suite.
+**Published LLM routers and cascades.** FrugalGPT proposed a cascade that queries models in order of cost and uses a learned scorer to accept or escalate; the authors reported matching the best individual model with up to 98% cost reduction, or 4% higher accuracy at the same cost, on the tasks studied [Chen, Zaharia and Zou 2023]. RouteLLM trained pre-generation routers between a strong and a weak model from human preference data and reported cost reductions of more than 2× on some benchmarks without substantial quality loss [Ong et al. 2024]. Savings on any workload depend on its difficulty mix and must be measured on its own suite.
 *Evidence: Primary* — [Chen, Zaharia and Zou 2023; Ong et al. 2024]
 :::
 
@@ -1198,7 +1177,7 @@ flowchart TB
   P3 -->|fail| DEG([Degraded: help articles<br/>+ human handoff])
 ```
 
-**Reading the diagram.** A semantic or exact cache answers repeated FAQ queries keyed by policy version (§75.15.2). On a miss, the primary model is called with a **TTFT timeout** (§22.11); a timeout, rate limit, server error or open circuit breaker (§22.13) moves the request to a secondary provider or region, then to the in-house small model in a **restricted mode** (answers only from retrieved articles, no tools that move money), and finally to a non-LLM degraded mode that shows matching help articles and offers a human. All calls are synchronous within the user's latency budget. Failure points: fallbacks that are never exercised and fail when needed (test them with chaos experiments, §39.11), and fallbacks whose quality was never evaluated. Each model in the chain needs its own prompt variant and must pass the same evaluation suite at a known, lower bar.
+**Reading the diagram.** A cache answers repeated FAQ queries keyed by policy version (§75.15.2). On a miss, the primary model is called with a **TTFT timeout** (§22.11); a timeout, rate limit, server error or open circuit breaker (§22.13) moves the request to a secondary provider, then to the in-house model in a **restricted mode** (answers only from retrieved articles, no money-moving tools), and finally to a non-LLM mode showing help articles and offering a human. All calls are synchronous within the latency budget. Failure points: fallbacks never exercised (test them with chaos experiments, §39.11) or never evaluated; each model needs its own prompt variant and must pass the suite at a known, lower bar.
 
 ::: formula
 **Availability of a serial path with a fallback chain**
@@ -1221,10 +1200,10 @@ $$A = \prod_{j \in \text{serial}} a_j \times \Big[1 - \prod_{i=1}^{m}(1 - a_i)\B
 2. With both fallbacks, if independent: model chain $1 - 0.005 \times 0.005 \times 0.001 = 1 - 2.5 \times 10^{-8}$; total $0.9995 \times 0.999 = 0.9985$, about 1.1 hours a month.
 3. Worst-case latency with a 2.0 s TTFT timeout on the primary and secondary and a 0.4 s TTFT from the in-house model: $2.0 + 2.0 + 0.4 = 4.4$ s to the first token.
 
-**Interpretation.** One fallback removes the model as the dominant risk; after that, the serial components (gateway, retrieval, your own code) set availability, and correlated failures (a shared gateway, a regional network outage, both providers rate-limiting during the same traffic spike) matter more than the product of independent terms suggests. **Engineering implication.** Add one well-tested fallback, then spend effort on the serial path and on timeouts: a chain of patient timeouts can turn an outage into a 4-second hang for every user.
+**Interpretation.** One fallback removes the model as the dominant risk; after that, serial components set availability, and correlated failures (a shared gateway, both providers rate-limiting in the same spike) matter more than the independent product suggests. **Engineering implication.** Add one well-tested fallback, then work on the serial path and on timeouts: patient timeouts turn an outage into a 4-second hang for every user.
 :::
 
-**Table 78.8 — SLOs for QuickBite's support assistant (illustrative).**
+**Table 78.7 — SLOs for QuickBite's support assistant (illustrative).**
 
 | SLI | Definition | SLO (30 days) |
 |---|---|---|
@@ -1243,7 +1222,7 @@ The availability SLO of 99.5% on 2.25 million messages a month gives an error bu
 **Definition — Pareto frontier.** Among options scored on several objectives (cost, quality, latency), an option is **dominated** if another is at least as good on every objective and strictly better on one. The non-dominated options form the **Pareto frontier**; choosing among them is a business decision, not a technical one.
 :::
 
-**Table 78.9 — QuickBite's options on the cost–quality plane (from §78.14.2; per 1,000 queries).**
+**Table 78.8 — QuickBite's options on the cost–quality plane (from §78.14.2; per 1,000 queries).**
 
 | Option | Token cost | Success | All-in at $V$ = \$0.50 | Streams in live chat | Data leaves QuickBite | Frontier? |
 |---|---|---|---|---|---|---|
@@ -1251,11 +1230,10 @@ The availability SLO of 99.5% on 2.25 million messages a month gives an error bu
 | Router, threshold 0.6 | \$3.28 | 0.845 | \$80.6 | Yes | Some queries | Yes |
 | Cascade, threshold 0.3 | \$3.51 | 0.907 | \$50.2 | No | Some queries | Yes |
 | Cascade, threshold 0.5 | \$4.45 | 0.927 | \$40.9 | No | Some queries | Yes |
-| Router, threshold 0.45 | \$5.46 | 0.885 | \$63.1 | Yes | Some queries | No (cascade 0.5) |
 | Cascade, threshold 0.7 | \$5.83 | 0.936 | \$37.8 | No | Some queries | Yes (best all-in) |
 | Hosted large only | \$12.10 | 0.932 | \$46.2 | Yes | All queries | No (cascade 0.7) |
 
-On cost and success alone, the hosted model is dominated by the 0.7 cascade. Adding the latency objective puts it back on the frontier for live chat, because it streams. Privacy and contractual constraints are a fourth objective: sending order details to a third-party provider requires a data-processing agreement, data minimization in the prompt and, in some markets, regional processing (§50.8).
+On cost and success alone, the 0.7 cascade dominates the hosted model; latency puts the hosted model back on the frontier for live chat, because it streams. Privacy is a fourth objective: sending order details to a provider needs a data-processing agreement, data minimization and sometimes regional processing (§50.8).
 
 ::: example
 **Worked example — Choosing between the in-house 7B and the hosted model.** 75,000 queries a day, 70% live chat (52,500) and 30% asynchronous (22,500). Live chat needs streaming, so its options are the 7B or the hosted model; asynchronous queries can use the 0.7 cascade.
@@ -1265,12 +1243,12 @@ On cost and success alone, the hosted model is dominated by the 0.7 cascade. Add
 3. The in-house fleet stays (cascade first stage and fallback), about \$135 a day mostly fixed (§73.15), so the marginal in-house cost is below its transfer price.
 4. Sensitivity: the hosted model beats the 7B all-in when $0.00093 + 0.223V > 0.0121 + 0.068V$, that is, when $V > 0.01117/0.155 = \$0.072$ per wrong answer.
 
-**Interpretation.** The token bill rises elevenfold, from \$70 to \$766 a day, and the all-in cost falls by \$5,177 a day, because wrong answers are expensive and the 7B fails 22% of queries. The decision flips only if a wrong answer costs less than about 7 cents. **Engineering implication.** Price failure before comparing token bills, and treat $V$ as a measured quantity (from recontact and handoff data in A/B tests, §78.11), not a guess. The cheapest long-run move is often to raise the small model's quality on the traffic it handles (adaptation, Chapter 76; better retrieval, Chapter 75) and so shift the whole frontier.
+**Interpretation.** The token bill rises elevenfold, from \$70 to \$766 a day, and the all-in cost falls by \$5,177 a day, because wrong answers are expensive and the 7B fails 22% of queries. The decision flips only if a wrong answer costs less than about 7 cents. **Engineering implication.** Price failure before comparing token bills, and treat $V$ as a measured quantity (from recontact and handoff data in A/B tests, §78.11), not a guess. Raising the small model's quality (Chapters 75–76) shifts the whole frontier.
 :::
 
 ## 78.17 An evaluation platform architecture
 
-Every technique in this chapter needs the same plumbing: versioned datasets, reproducible runs, a registry of judges, stored per-item results and dashboards that compare runs. Building it once, as a platform, is what makes evaluation routine rather than heroic.
+Every technique in this chapter needs the same plumbing: versioned datasets, reproducible runs, a judge registry, per-item results and run comparisons. Building it once makes evaluation routine.
 
 **Figure 78.16 — Evaluation platform for LLM features.**
 
@@ -1300,9 +1278,9 @@ flowchart TB
   HUMQ[[Human review queue]] -.->|labels| JR
 ```
 
-**Reading the diagram.** A change in the CI boundary triggers an evaluation run. The runner, a pool of parallel workers, reads a pinned suite version and pinned judge versions, calls the system under test (with mock tools) and the judge models, and writes per-item scores and traces to the results store. The regression gate reads those results, computes paired differences with intervals per slice, and either blocks the merge or registers the new prompt or model version (Chapter 69). Dashboards compare any two runs item by item. Asynchronous paths keep the platform fresh: sampled production logs become suite items, and human labels recalibrate judges. Failure points: judge-provider rate limits during large runs, unpinned versions that make runs incomparable, and results stored only as aggregates, which makes regressions impossible to debug. Scaling: runs are embarrassingly parallel; cost scales with items times judges times runs.
+**Reading the diagram.** A change in the CI boundary triggers a run. Parallel workers read pinned suite and judge versions, call the system under test (with mock tools) and the judges, and write per-item scores and traces. The gate computes paired differences with intervals per slice and either blocks the merge or registers the new version (Chapter 69); dashboards compare runs item by item. Asynchronous paths keep the platform fresh: sampled logs become suite items, human labels recalibrate judges. Failure points: judge rate limits, unpinned versions, and results stored only as aggregates. Cost scales with items times judges times runs.
 
-A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired interval on the overall pass rate is below −1 point; or if any critical slice (money, safety, injection) loses any item that passed before without a reviewer's sign-off; or if schema validity falls below 99.5%; or if the safety suite's harmful-compliance rate exceeds its ceiling. Gates on intervals, not point estimates, keep noise from blocking good changes and let real regressions through less often.
+A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired interval on the overall pass rate is below −1 point; or if any critical slice (money, safety, injection) loses any item that passed before without a reviewer's sign-off; or if schema validity falls below 99.5%; or if the safety suite's harmful-compliance rate exceeds its ceiling. Gating on intervals keeps noise from deciding.
 
 ::: example
 **Worked example — What one evaluation run costs.** Full suite of 1,200 items; generation with the in-house model at \$0.00093 per item; one rubric judge call per item on the hosted model at \$0.00925 (§78.8); 32 parallel workers; 6 s to generate and 3 s to judge per item.
@@ -1322,16 +1300,16 @@ A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired
 ## 78.18 Summary and revision notes
 
 ::: summary
-- LLM evaluation is hard because outputs are open-ended, sampling is random, public benchmarks are contaminated, traffic shifts and human judgment is expensive. Evaluate in a loop: offline suites, human calibration, safety suites, online tests, production sampling back into suites.
-- Build suites from stratified, redacted production traffic plus incidents, unanswerable and adversarial items; use golden answers where one answer is right and rubrics where many are; report slices; version suites and keep a held-out split for gates.
+- LLM evaluation is hard: open-ended outputs, random sampling, contaminated benchmarks, shifting traffic, expensive humans. Evaluate in a loop from offline suites to online tests and back.
+- Build versioned suites from stratified production traffic plus incidents, unanswerable and adversarial items; golden answers or rubrics; per-slice reports; a held-out gate split.
 - A pass rate needs an interval: 400 items give about ±3.8 points; ±2 points needs about 1,356 items at 83%. Compare versions on the same items: a paired design needs 1,039 items to detect +3 points where an unpaired one needs 2,281 per version. Resample conversations, not turns, when turns are correlated.
-- Benchmarks shortlist models; private, fresh, task-specific suites decide. Goodhart's law applies to leaderboards and to your own suite.
-- Check programmatically what a program can check: extracted fields by exact match, schemas, execution tests, agent end states. Overlap metrics barely see a wrong amount. Report pass^k, not only pass@1, for agents customers rely on.
+- Benchmarks shortlist; private, fresh, task-specific suites decide.
+- Check programmatically what a program can check (fields, schemas, tests, agent end states); report pass^k for agents.
 - LLM judges are calibrated instruments: measure κ against humans, read the confusion matrix, correct pass rates for leniency (Rogan–Gladen), swap order to remove position bias, control length separately, and pin judge versions.
-- Hallucination is intrinsic (contradicts the source) or extrinsic (unverifiable). Detect it with citation checks, entailment, atomic-fact verification and self-consistency; prevent it with retrieval gates, structured facts, schemas and designed refusal.
+- Hallucination is intrinsic or extrinsic; detect it with citations, entailment and self-consistency; prevent it with retrieval gates, structured facts and designed refusal.
 - RAG metrics localize failures: context precision and recall for retrieval; faithfulness and answer relevance for generation.
-- Online, use resolution-type outcomes (handoff, recontact) as primary metrics and cost, safety and latency as guardrails; thumbs are diagnostics. Shadow agents must use mock tools.
-- Safety evaluation needs a product-specific harm taxonomy, jailbreak and over-refusal suites, and automated red teaming; set hard ceilings for severe harms, then minimize over-refusal.
+- Online, resolution outcomes are primary; cost, safety and latency are guardrails; thumbs are diagnostics.
+- Safety needs a harm taxonomy, jailbreak and over-refusal suites and automated red teaming; hard ceilings for severe harms.
 - Prompt injection follows from instructions and data sharing one channel. Layer defenses (permissions, filtering, instruction hierarchy, dual-LLM isolation, monitoring) and make the last layer deterministic.
 - Routers decide before generation; cascades verify after. $C = c_s + c_v + r c_l$; use the large model when its success gain exceeds $(c_l - c_s)/V$. Cascades cannot stream.
 - One tested fallback removes the model as the dominant availability risk; after that, serial dependencies and timeouts dominate. Write SLOs for availability, latency, groundedness, safety and cost.
@@ -1343,36 +1321,30 @@ A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired
 1. Name the five sources of difficulty in LLM evaluation.
 2. A suite of 250 items has a pass rate of 0.80. What is the normal-approximation 95% interval?
 3. Why does a paired comparison need fewer items than an unpaired one?
-4. When should you bootstrap over conversations instead of over turns?
-5. Give two reasons a higher MMLU score may not mean better support answers.
-6. Ten samples of a coding task, 4 correct. Compute pass@1 and pass@3.
-7. An agent task succeeds in 5 of 6 trials. Compute pass^3.
-8. A judge has Se = 0.90 and Sp = 0.80 and reports a 75% pass rate. Estimate the human pass rate.
-9. Why does swapping answer order not remove verbosity bias?
-10. Distinguish intrinsic from extrinsic hallucination with a QuickBite example of each.
-11. Retrieval has high context recall, but faithfulness is low. Where is the fault?
-12. Why must a shadow deployment of an agent use mock tools?
-13. Why is prompt injection harder to eliminate than SQL injection?
-14. A cascade has $c_s = \$0.001$, $c_v = \$0.0002$, $c_l = \$0.01$ and $r = 0.3$. What is its cost per query?
-15. With three independent model options of availability 0.99 each, what is the chain's availability?
+4. Give two reasons a higher MMLU score may not mean better support answers.
+5. Ten samples of a coding task, 4 correct. Compute pass@1 and pass@3.
+6. An agent task succeeds in 5 of 6 trials. Compute pass^3.
+7. A judge has Se = 0.90 and Sp = 0.80 and reports a 75% pass rate. Estimate the human pass rate.
+8. Why does swapping answer order not remove verbosity bias?
+9. Distinguish intrinsic from extrinsic hallucination with a QuickBite example of each.
+10. Retrieval has high context recall, but faithfulness is low. Where is the fault?
+11. Why is prompt injection harder to eliminate than SQL injection?
+12. A cascade has $c_s = \$0.001$, $c_v = \$0.0002$, $c_l = \$0.01$ and $r = 0.3$. What is its cost per query?
 
 <details><summary>Answers</summary>
 
 1. Open-ended outputs, non-determinism, contamination, distribution shift, cost of human judgment.
 2. $\sqrt{0.8 \times 0.2/250} = 0.0253$; $0.80 \pm 0.0496$: [0.750, 0.850].
 3. The same items cancel item-difficulty variance; only discordant items carry information, with variance $p_d - \Delta^2$.
-4. When several items come from one conversation and pass or fail together; the conversation is the independent unit.
-5. Contamination or Goodhart optimization of the benchmark; format mismatch (multiple choice versus policy-compliant, grounded replies).
-6. pass@1 $= 1 - 6/10 = 0.4$; pass@3 $= 1 - \binom{6}{3}/\binom{10}{3} = 1 - 20/120 = 0.833$.
-7. $\binom{5}{3}/\binom{6}{3} = 10/20 = 0.5$.
-8. $(0.75 + 0.80 - 1)/(0.90 + 0.80 - 1) = 0.55/0.70 = 0.786$.
-9. Length is a property of the answer, not its position; the longer answer stays longer in both orders, so a length-preferring judge prefers it consistently.
-10. Intrinsic: saying the credit is 30% when the retrieved policy says 20%. Extrinsic: adding "and it applies to your next three orders", which no source mentions.
-11. Generation: the evidence reached the context, but the model ignored or embellished it (prompt, model, verification).
-12. Its outputs are not shown, but tool calls have real side effects (credits, redeliveries) that would occur twice.
-13. SQL has separate channels for code and data; an LLM receives instructions and data as tokens in one context and decides by content which to obey.
-14. $0.001 + 0.0002 + 0.3 \times 0.01 = \$0.0042$.
-15. $1 - 0.01^3 = 0.999999$, before serial components and correlated failures.
+4. Contamination or Goodhart optimization of the benchmark; format mismatch (multiple choice versus policy-compliant, grounded replies).
+5. pass@1 $= 1 - 6/10 = 0.4$; pass@3 $= 1 - \binom{6}{3}/\binom{10}{3} = 1 - 20/120 = 0.833$.
+6. $\binom{5}{3}/\binom{6}{3} = 10/20 = 0.5$.
+7. $(0.75 + 0.80 - 1)/(0.90 + 0.80 - 1) = 0.55/0.70 = 0.786$.
+8. Length is a property of the answer, not its position; the longer answer stays longer in both orders, so a length-preferring judge prefers it consistently.
+9. Intrinsic: saying the credit is 30% when the retrieved policy says 20%. Extrinsic: adding "and it applies to your next three orders", which no source mentions.
+10. Generation: the evidence reached the context, but the model ignored or embellished it (prompt, model, verification).
+11. SQL has separate channels for code and data; an LLM receives instructions and data as tokens in one context and decides by content which to obey.
+12. $0.001 + 0.0002 + 0.3 \times 0.01 = \$0.0042$.
 
 </details>
 
@@ -1397,10 +1369,10 @@ A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired
 ### Advanced
 
 **Q5. Defend an agent that reads merchant content and can issue credits against prompt injection.**
-**Answer.** Threat-model untrusted paths; enforce caps, ownership and confirmation in the credit service; scope credentials per customer; quarantine untrusted content (dual-LLM) or at least delimit it under an instruction hierarchy; filter inputs and outputs, especially URLs; log and alert on credit anomalies; keep injection suites in CI and red-team continuously; assume every model layer can fail together.
+**Answer.** Threat-model untrusted paths; enforce caps, ownership and confirmation in the credit service; scope credentials per customer; quarantine or delimit untrusted content under an instruction hierarchy; filter outputs, especially URLs; alert on credit anomalies; keep injection suites in CI; assume every model layer can fail together.
 
 **Q6. Reduce LLM cost by 50% without losing quality.**
-**Answer.** Price failures, then build the cost–quality frontier on your suite: prompt and context trimming, caching, routing easy traffic to a small model, cascades with a calibrated verifier where streaming is not needed, and adapting the small model. Gate each change on paired quality intervals and roll out with A/B guardrails on resolution and cost.
+**Answer.** Price failures, then build the frontier on your suite: trim prompts and context, cache, route easy traffic to a small model, cascade where streaming is not needed, adapt the small model. Gate each change on paired intervals and roll out with A/B guardrails.
 
 ## 78.21 Practical exercises
 
@@ -1463,4 +1435,4 @@ A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired
 - OWASP Top 10 for LLM Applications 2025: confirm category names and that prompt injection remains first.
 - Debenedetti et al. 2025 (CaMeL) and Dubois et al. 2024: confirm author lists and venues.
 - DoorDash 2024: reported 90% and 99% reductions are not independently verified.
-- All QuickBite numbers (suite sizes, prices, success rates, $V$, availabilities, SLOs) are teaching assumptions.
+- All QuickBite numbers are teaching assumptions.

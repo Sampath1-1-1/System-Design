@@ -793,7 +793,7 @@ If the experiment tracker is the lab notebook, the registry is the parts warehou
 1. **Immutable versions.** Version 58 always means the same bytes. Retraining creates version 59; nothing is overwritten.
 2. **Aliases.** A named, movable pointer to a version. Serving asks for `eta-gbdt@champion`, not for "the latest". Moving an alias is the promotion; moving it back is the rollback.
 3. **Signature.** The input and output schema (feature names, types, shapes). CD refuses to deploy a version whose signature the serving path cannot satisfy.
-4. **Model card.** A short document of intended use, training data, evaluation by slice, limitations and ethical considerations [Mitchell et al. 2019]. Chapter 71 covers its content; the registry makes it a required field.
+4. **Model card.** A short document of intended use, training data, evaluation by slice, limitations and ethical considerations [Mitchell et al. 2019]. §71.12 covers its content; the registry makes it a required field.
 
 **Figure 69.8 — Lifecycle of one model version in the registry.**
 
@@ -999,7 +999,7 @@ flowchart TB
 
 **Reading the diagram.** A new model or a *material* change (new features, new architecture, new use) is tiered by the harm its errors can cause. Low-risk models ship on an automated gate; medium-risk ones add the owner's approval; high-risk models, such as QuickBite's fraud model that blocks payments, need an independent validator who did not build the model. All paths end in the registry, whose audit log is the evidence, and in monitoring with a periodic review whose frequency also follows the tier. Routine retrains with unchanged features can use a lighter path than material changes, which is what makes continuous training compatible with governance. Failure point: treating every nightly retrain as a material change, which pushes teams to retrain less often or to bypass the process.
 
-Regulation points the same way: the EU AI Act imposes documentation, logging, human-oversight and risk-management obligations on high-risk AI systems (Chapter 71). A platform that records lineage, approvals and model cards meets much of the record-keeping burden by construction.
+Regulation points the same way: the EU AI Act imposes documentation, logging, human-oversight and risk-management obligations on high-risk AI systems (§71.13.1). A platform that records lineage, approvals and model cards meets much of the record-keeping burden by construction.
 
 ## 69.12 Monitoring hooks and the retraining loop
 

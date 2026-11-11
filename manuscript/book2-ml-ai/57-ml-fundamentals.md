@@ -124,7 +124,7 @@ flowchart TB
 | Does the right answer change monthly (adversaries, tastes)? | Stable | Drifts; retraining is cheaper than rewriting |
 | Do you have labeled examples, or can you get them? | Few or none | Thousands to millions |
 | Is an occasional wrong answer acceptable? | No: must be exact (tax, billing) | Yes, and errors can be measured and bounded |
-| Must every decision be explained precisely? | Regulatory requirement | Approximate explanations suffice (Chapter 71) |
+| Must every decision be explained precisely? | Regulatory requirement | Approximate explanations suffice (§71.7) |
 | Does a small accuracy gain matter at your scale? | Low volume | 1% of 500,000 orders/day is 5,000 decisions |
 | Can you monitor quality after launch? | No labels ever arrive | Labels or proxies arrive (§57.6) |
 

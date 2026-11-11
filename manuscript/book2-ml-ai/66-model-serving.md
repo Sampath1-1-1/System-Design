@@ -520,7 +520,7 @@ What to notice:
 :::
 
 ::: note
-**Preview — LLM batching is different.** A transformer generating text runs hundreds of decode steps per request with different output lengths, so request-level batching leaves slots idle when short requests finish. **Continuous (iteration-level) batching** admits and retires requests at every decode step, and the KV cache, not compute, limits the batch. Chapter 73 owns these mechanisms.
+**Preview — LLM batching is different.** A transformer generating text runs hundreds of decode steps per request with different output lengths, so request-level batching leaves slots idle when short requests finish. **Continuous (iteration-level) batching** admits and retires requests at every decode step, and the KV cache, not compute, limits the batch. Chapter 73 owns these mechanisms (§73.6–§73.7).
 :::
 
 ## 66.7 CPU versus GPU serving
@@ -596,7 +596,7 @@ flowchart TB
 
 A billion-user embedding table (10⁹ × 128 × 4 bytes = 512 GB, §65.8) cannot fit on an 80 GB GPU and must be split; QuickBite's 300 per-chain demand models are each small and mostly idle, and a replica each would pay the floor of §66.7 three hundred times.
 
-**Large models.** Tensor parallelism inside one server keeps per-layer exchanges on NVLink (§64.14); pipeline parallelism adds a hop per stage and needs several requests in flight. Recommenders replicate dense layers and shard embeddings (Chapter 68); Chapter 73 owns LLM parallelism.
+**Large models.** Tensor parallelism inside one server keeps per-layer exchanges on NVLink (§64.14); pipeline parallelism adds a hop per stage and needs several requests in flight. Recommenders replicate dense layers and shard embeddings (Chapter 68); §73.11 owns LLM parallelism.
 
 **Many models.** Memory decides how many fit: an 80 GB GPU with 10 GB reserved holds $\lfloor 70 / 1.5 \rfloor = 46$ models of 1.5 GB, and their summed busy fractions must stay below the target utilization. Beyond that, models load on demand and the least recently used is evicted; a miss pays the load time of §66.10, so the router sends a model's requests to replicas already holding it (Ray Serve multiplexing, KServe ModelMesh) [Ray Serve Docs; KServe Docs]. INFaaS went further: clients state a latency and accuracy requirement, and the system picks among *variants* of a model (different hardware, batch size, precision) and scales them, so users need not choose [Romero et al. 2021].
 

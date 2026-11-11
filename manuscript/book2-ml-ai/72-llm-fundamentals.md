@@ -95,7 +95,7 @@ flowchart LR
   DET -->|stream| C
 ```
 
-**Reading the diagram.** A CPU-side tokenizer turns text into IDs; everything from the embedding lookup to the output head runs on the GPU. The blocks read and append to the **KV cache**, the per-sequence store of past keys and values in GPU memory (the storage boundary that limits concurrency, §72.11). Unless a stop condition fires, each sampled token loops back, so a 300-token answer is 300 trips around the loop. Arrows are synchronous within a request; the detokenizer streams text back as tokens arrive. Failure points: a mismatched tokenizer, KV-cache exhaustion, runaway generation. Scaling: batch many sequences per trip and shard blocks across GPUs (Chapter 73).
+**Reading the diagram.** A CPU-side tokenizer turns text into IDs; everything from the embedding lookup to the output head runs on the GPU. The blocks read and append to the **KV cache**, the per-sequence store of past keys and values in GPU memory (the storage boundary that limits concurrency, §72.11). Unless a stop condition fires, each sampled token loops back, so a 300-token answer is 300 trips around the loop. Arrows are synchronous within a request; the detokenizer streams text back as tokens arrive. Failure points: a mismatched tokenizer, KV-cache exhaustion, runaway generation. Scaling: batch many sequences per trip and shard blocks across GPUs (§73.6, §73.11).
 
 ### 72.3.2 Pre-training, then adaptation
 
@@ -362,7 +362,7 @@ $$n_\text{tok} = r \cdot n_\text{words} \qquad C_\text{day} = R_\text{conv} \lef
 4. Per day: $10{,}000 \times 9{,}063 = 90.6$ million input tokens and 4.7 million output tokens.
 5. The same conversation in a language with $r = 2.6$ (twice English, an assumption within the range Petrov et al. report) for the customer and reply text, with the system prompt unchanged: exchange 222 tokens, input $6 \times 1{,}266 + 222 \times 15 = 10{,}926$ tokens (+21%), output 936 tokens (+100%).
 
-**Interpretation.** The re-sent system prompt is 79% of input tokens; output is 5% of tokens but most of the wall-clock time, since each output token is a sequential pass (§72.10). Doubling tokens per word doubles reply latency for those users. **Engineering implication.** Plan in tokens measured with the production tokenizer per language, cache the shared prefix (Chapter 73), and track per-language latency as a fairness metric (Chapter 71).
+**Interpretation.** The re-sent system prompt is 79% of input tokens; output is 5% of tokens but most of the wall-clock time, since each output token is a sequential pass (§72.10). Doubling tokens per word doubles reply latency for those users. **Engineering implication.** Plan in tokens measured with the production tokenizer per language, cache the shared prefix (§73.8), and track per-language latency as a fairness metric (Chapter 71).
 :::
 
 ### 72.4.6 The tokenizer in the serving path
@@ -415,7 +415,7 @@ flowchart LR
   E -.->|tied: W_out = E transposed| WO
 ```
 
-**Reading the diagram.** The embedding table is read (one row per token, a memory gather); the output head is multiplied ($2dV$ FLOPs per token). With tying (dotted), both are one stored matrix; untied, they are two. Both live in GPU memory with the rest of the weights. Failure point: computing logits for *every* prompt position during prefill when only the last is needed, which at $V = 128{,}256$ materializes $4 \times 128{,}256 = 513$ KB of FP32 logits per position, 2.1 GB for a 4,096-token prompt. Scaling: shard the output head by vocabulary columns across GPUs (Chapter 73).
+**Reading the diagram.** The embedding table is read (one row per token, a memory gather); the output head is multiplied ($2dV$ FLOPs per token). With tying (dotted), both are one stored matrix; untied, they are two. Both live in GPU memory with the rest of the weights. Failure point: computing logits for *every* prompt position during prefill when only the last is needed, which at $V = 128{,}256$ materializes $4 \times 128{,}256 = 513$ KB of FP32 logits per position, 2.1 GB for a 4,096-token prompt. Scaling: shard the output head by vocabulary columns across GPUs (§73.11).
 
 ::: formula
 **Embedding and output-head parameters and cost**
@@ -435,7 +435,7 @@ $$P_\text{emb} = V d \;(\text{tied}) \quad\text{or}\quad 2 V d \;(\text{untied})
 
 1. *GPT-2 small* ($V = 50{,}257$, $d = 768$, tied): $50{,}257 \times 768 = 38.6$ million parameters, 31% of its 124.4 million. Untied it would be 163 million: tying saves a quarter of the model.
 2. *QuickBite's 7B* ($V = 32{,}000$, $d = 4{,}096$, untied): $32{,}000 \times 4{,}096 = 131.1$ million per matrix, 262 million in total, 3.9% of 6.74 billion. Head FLOPs: $2 \times 131.1 \times 10^6 = 0.26$ GFLOPs per generated token.
-3. *Llama-3-8B shape* ($V = 128{,}256$, $d = 4{,}096$, untied): 525.3 million per matrix, 1.05 billion total, 13% of 8.03 billion. Head FLOPs 1.05 GFLOPs per token, about 7.5% of the model's matrix-multiply FLOPs.
+3. *Llama-3-8B shape* ($V = 128{,}256$, $d = 4{,}096$, untied): 525.3 million per matrix, 1.05 billion total, 13% of 8.03 billion. Head FLOPs 1.05 GFLOPs per token, about 7% of the model's matrix-multiply FLOPs.
 
 **Interpretation.** Vocabulary size is a parameter-budget decision that matters most for small models: at 1B parameters a 128K vocabulary is a quarter of the model; at 70B it is 3%. **Engineering implication.** A 4× larger vocabulary that cuts tokens per word by 20% (§72.4.5) cuts prefill, decode steps and KV cache by 20% for the same text, at the price of a larger output head and softmax per token; at 7B–8B scale that trade usually pays.
 :::
@@ -616,7 +616,7 @@ flowchart TB
   end
 ```
 
-**Reading the diagram.** Each subgraph is one layer with 8 query heads; cylinders are what the KV cache stores per token (8, 2 or 1 K/V pairs), so cache memory and decode bytes fall 4× and 8×, while all variants still compute 8 attention patterns at nearly equal FLOPs. Failure point: too few KV heads lose quality. Scaling: tensor parallelism splits KV heads across GPUs, so 8 KV heads allow at most 8-way splitting without replication (Chapter 73).
+**Reading the diagram.** Each subgraph is one layer with 8 query heads; cylinders are what the KV cache stores per token (8, 2 or 1 K/V pairs), so cache memory and decode bytes fall 4× and 8×, while all variants still compute 8 attention patterns at nearly equal FLOPs. Failure point: too few KV heads lose quality. Scaling: tensor parallelism splits KV heads across GPUs, so 8 KV heads allow at most 8-way splitting without replication (§73.11).
 
 ::: formula
 **Attention parameters and KV bytes per token for $h$ query heads and $g$ KV heads**
@@ -673,7 +673,7 @@ $$P_\text{attn} = \underbrace{d \cdot h d_h}_{W_Q} + \underbrace{2\, d \cdot g\,
 
 #### First-principles explanation
 
-Picture each token's hidden vector as a whiteboard travelling up the stack, the **residual stream**. Each block reads it, adds a small correction and passes it on, never erasing. In attention a token copies notes from other tokens' whiteboards; in the MLP it thinks privately. Normalization keeps the handwriting a readable size as additions accumulate.
+Picture each token's hidden vector as a whiteboard traveling up the stack, the **residual stream**. Each block reads it, adds a small correction and passes it on, never erasing. In attention a token copies notes from other tokens' whiteboards; in the MLP it thinks privately. Normalization keeps the handwriting a readable size as additions accumulate.
 
 #### How it works internally (pre-norm, Llama style)
 
@@ -970,7 +970,7 @@ sequenceDiagram
   end
 ```
 
-**Reading the diagram.** One prefill reads the weights once for 2,048 tokens and writes their KV entries to HBM, the storage boundary both phases share; tokens stream back asynchronously (dashed). Each decode iteration rereads the 13.5 GB plus the growing cache and appends one entry. Failure points: a long prefill stalls other sequences' decode steps in the same batch; KV growth exhausts memory mid-reply. Scaling: batch decodes, chunk prefills, or separate the phases onto different GPU pools (Chapter 73).
+**Reading the diagram.** One prefill reads the weights once for 2,048 tokens and writes their KV entries to HBM, the storage boundary both phases share; tokens stream back asynchronously (dashed). Each decode iteration rereads the 13.5 GB plus the growing cache and appends one entry. Failure points: a long prefill stalls other sequences' decode steps in the same batch; KV growth exhausts memory mid-reply. Scaling: batch decodes, chunk prefills, or separate the phases onto different GPU pools (§73.6, §73.14, §73.12).
 
 #### Mathematical foundations
 
@@ -1008,7 +1008,7 @@ $$I_\text{prefill} \approx \frac{2 N_m s}{b_w N} \approx s \qquad I_\text{decode
 6. Batch 48: $13.5 + 51.5 = 65.0$ GB → 19.4 ms, 2,470 tokens/s; FLOPs $48 \times 1.43 \times 10^{10} = 6.9 \times 10^{11}$, 0.7 ms of compute. $I = 10.6$: still memory-bound, now by the KV cache, which is 79% of the bytes.
 7. The same at batch 48 with GQA-8 (Llama-3-8B shape, 16.1 GB weights, 131 KB per token): $16.1 + 48 \times 0.27 = 29.0$ GB → 8.6 ms, about 5,550 tokens/s, 2.2× the MHA model.
 
-**Interpretation.** One prefill token costs about $47.5/2{,}048 = 0.023$ ms of GPU time; one decode token at batch 1 costs 4.3 ms, about 190 times more. Batching raises decode throughput 10× before the KV cache takes over; beyond that only a smaller cache (GQA, FP8 KV) or more bandwidth helps. **Engineering implication.** Plan TTFT from FLOPs and TPOT from bytes. Prefill wants large token batches; decode wants many concurrent sequences and a small KV cache. Chapter 73 builds continuous batching, chunked prefill and disaggregation on these two bounds; Chapter 64's §64.9.2 rounded the batch-1 bound to 4.2 ms with 14 GB.
+**Interpretation.** One prefill token costs about $47.5/2{,}048 = 0.023$ ms of GPU time; one decode token at batch 1 costs 4.3 ms, about 190 times more. Batching raises decode throughput 10× before the KV cache takes over; beyond that only a smaller cache (GQA, FP8 KV) or more bandwidth helps. **Engineering implication.** Plan TTFT from FLOPs and TPOT from bytes. Prefill wants large token batches; decode wants many concurrent sequences and a small KV cache. Chapter 73 builds continuous batching, chunked prefill and disaggregation (§73.6, §73.14, §73.12) on these two bounds; Chapter 64's §64.9.2 rounded the batch-1 bound to 4.2 ms with 14 GB.
 :::
 
 Step 6 hides a key fact: decode attention reads each sequence's cache for that sequence's query only, so its intensity is about $h/g$ FLOPs per byte (1 for MHA, 4 for GQA-8) *regardless of batch size*. Batching amortizes weight reads, never cache reads [Pope et al. 2023].
@@ -1092,7 +1092,7 @@ flowchart LR
   KVP -.->|full| ADM{"Admission:<br/>queue or preempt"}
 ```
 
-**Reading the diagram.** Memory splits into fixed weights, a small working area and a pool the scheduler hands to sequences as they grow, laid out per layer and KV head, one entry per token. When the pool is full (dotted), new requests queue or a running one is preempted. Failure point: reserving each sequence's maximum length up front wastes the pool, the fragmentation PagedAttention solves with fixed-size blocks [Kwon et al. 2023]. Scaling: GQA, FP8 KV, tensor-parallel sharding, offloading (Chapter 73).
+**Reading the diagram.** Memory splits into fixed weights, a small working area and a pool the scheduler hands to sequences as they grow, laid out per layer and KV head, one entry per token. When the pool is full (dotted), new requests queue or a running one is preempted. Failure point: reserving each sequence's maximum length up front wastes the pool, the fragmentation PagedAttention solves with fixed-size blocks [Kwon et al. 2023]. Scaling: GQA, FP8 KV, tensor-parallel sharding, offloading (§73.5, §73.13, §73.11).
 
 ::: formula
 **KV-cache size**
@@ -1163,7 +1163,7 @@ model                        GPUs  KB/tok   4k seq  128k seq  fit@4k fit@128k
 
 What to notice:
 
-- It assumes every sequence at full length; with real length distributions and paged allocation (Chapter 73) the pool holds more on average.
+- It assumes every sequence at full length; with real length distributions and paged allocation (§73.7) the pool holds more on average.
 - FP8 KV ($b = 1$) doubles every "fit" column; the 10% reserve is an assumption to replace with a measurement.
 
 **Table 72.6 — KV-cache failure scenarios.**
@@ -1216,7 +1216,7 @@ $$\frac{C_\text{attn}}{C_\text{lin}}\Big|_\text{decode at } t = \frac{4 t d}{24 
 2. Crossovers: in decode, attention equals linear work at $t = 6d = 24{,}576$ tokens; in prefill at $s = 12d = 49{,}152$.
 3. Score matrix column: $s^2 \times 2$ bytes; at 128K, 34 GB *per head per layer* if materialized, which is why fused attention kernels never write it to HBM (§64.13).
 
-**Interpretation.** Below about 10K tokens the $2N$ estimate holds; at 128K attention dominates and TTFT is ten seconds on one GPU. **Engineering implication.** Price long context separately, budget prompts in tokens per section, prefer retrieving the relevant 2K tokens over sending 100K (Chapter 75), and chunk long prefills (Chapter 73).
+**Interpretation.** Below about 10K tokens the $2N$ estimate holds; at 128K attention dominates and TTFT is ten seconds on one GPU. **Engineering implication.** Price long context separately, budget prompts in tokens per section, prefer retrieving the relevant 2K tokens over sending 100K (Chapter 75), and chunk long prefills (§73.14).
 :::
 
 **Figure 72.12 — Budgeting the chatbot's 4,096-token window.**
