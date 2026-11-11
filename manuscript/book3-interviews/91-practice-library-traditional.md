@@ -170,3 +170,246 @@ If your interview is weeks away, work through one tier at a time and finish each
 **A four-week plan for a senior loop.** Week 1: Q1, Q3, Q6, Q9 (Easy, one per shape) plus Ch 89 drills. Week 2: Q13, Q14, Q19, Q21 (Medium, the four most common prompts). Week 3: Q16, Q22, Q26, Q28, re-attempting any week-1 question you scored below senior. Week 4: two Hard questions from part B and two cold Medium questions, then rest. This is general advice, not a published recommendation of any company.
 :::
 
+## 91.4 Easy questions (Q1–Q12)
+
+The Easy tier trains standard components done well. Each answer is short on architecture and long on the one mechanism that a mid-level candidate usually leaves vague: code generation, expiry, counting, eviction, ID layout, hot counters, holds, ranking, priorities, upload state, flag propagation and gateway policy.
+
+### 91.4.1 Q1. URL shortener
+
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §52.4 (full case study); §17.10 (IDs), §20.15 (hot keys)
+
+#### Prompt
+
+"Design a service like bit.ly: users submit a long URL and get a short link; anyone who opens the short link is redirected. Assume large public scale."
+
+#### Clarifying questions and assumptions
+
+- Custom aliases and expiry? Yes to both, optional per link. Analytics? Click counts per link, minutes of delay acceptable.
+- Scale? Assume 50 million new links per day and 100 redirects per link (§52.4.4). Links kept 10 years.
+- Can short codes be guessable? No: sequential codes would let anyone enumerate private links.
+
+#### Requirements
+
+- **FR:** create a short link (optionally custom alias, expiry); redirect; per-link click statistics; delete or disable a link (abuse takedown).
+- **NFR:** redirect p99 < 50 ms at the edge region; redirect availability 99.99%; create 99.9%; no two long URLs ever share a code by accident; codes 7 characters.
+
+#### Estimation
+
+::: example
+**Worked example — The numbers that shape the shortener (§52.4.4, formulas of §89.5 and §89.6).**
+
+1. Creates: $50 \times 10^6 \times 0.10 / 3{,}600 \times 2 = 2{,}778$/s at peak. Redirects: $5 \times 10^9$/day, peak $277{,}778$ RPS.
+2. Ten years of links: $50 \times 10^6 \times 3{,}650 = 1.825 \times 10^{11}$; 7 base62 characters give $62^7 = 3.52 \times 10^{12}$ codes, so 5.2% of the space is used.
+3. Storage at 500 B per link: 9.1 TB/year; 274 TB over ten years with three replicas.
+4. Cache: 200 million links clicked per day × 500 B × 2 overhead = 200 GB; at a 95% hit ratio, $277{,}778 \times 0.05 = 13{,}889$ reads/s reach the store.
+
+**Interpretation.** A read-dominated lookup at 280,000 RPS with a modest write rate. **Implication.** Design the redirect path around caches; the create path's difficulty is correctness of code generation, not throughput.
+:::
+
+#### API and data model
+
+- `POST /v1/links {long_url, alias?, expires_at?}` with an `Idempotency-Key` header → `201 {code, short_url}`.
+- `GET /{code}` → `302 Location: long_url` (or `404`/`410`).
+- `links(code PK, long_url, owner_id, created_at, expires_at, status)` in a partitioned key-value or wide-column store keyed by `code`; clicks go to an event log, not to this table.
+
+#### High-level design
+
+**Figure 91.2 — URL shortener: cache-first redirects, asynchronous analytics.**
+
+```mermaid
+flowchart LR
+  U([Browser]) -->|HTTPS GET code| E["Edge and<br/>redirect service"]
+  E -->|"miss"| RC[(Redis cluster)]
+  RC -.->|"miss"| LS[(Link store<br/>partitioned by code)]
+  A([Creator]) -->|POST link| CS[Create service]
+  CS -->|"next ID range"| AL[Range allocator]
+  CS --> LS
+  E -.->|click event| K[[Click log]]
+  K -.-> AG[Roll-up jobs] --> AN[(Analytics store)]
+```
+
+**Reading the diagram.** Redirects arrive over HTTPS at a stateless redirect tier with an in-process cache; a miss goes to a shared Redis cluster and then to the link store (cylinders are storage boundaries). Creates take a block of IDs from a range allocator, permute them into codes and write the link store. Click events leave asynchronously (dotted) through a log to roll-up jobs, so analytics can lag or fail without touching redirects. Failure points: the Redis cluster (a cold cache multiplies store load by 20) and the allocator (it must never hand out a range twice). The redirect tier and caches scale horizontally; the store scales by code partitions.
+
+#### Deep dives
+
+1. **Code generation.** Hashing the URL and truncating to 7 characters collides at billions of links and merges different users' links; random codes need a uniqueness check on insert; counter ranges (each create node leases a block of, say, 10,000 IDs) need no per-create coordination. Pass the counter through a keyed permutation before base62 encoding so that codes are not enumerable (§52.4.8).
+2. **Redirect caching and hot keys.** Two cache layers (in-process, then Redis) plus negative caching for unknown codes protect the store from scans. A viral link at 50,000 RPS is absorbed by the in-process layer (§20.15). Use **302**, not 301, if you need click counts and the ability to disable a link; 301 is cached by browsers indefinitely.
+3. **Analytics off the critical path.** At 1 TB/day the click stream is the largest write load; emit it asynchronously and roll it up.
+
+#### Trade-offs and alternatives
+
+- Counter ranges versus random codes: ranges are cheaper per create; random codes avoid the allocator as a durable-state hazard. Reverse if creates are rare and you prefer fewer moving parts.
+- 302 versus 301: 302 costs more redirect traffic; choose 301 only for permanent links with no analytics or takedown needs.
+
+#### Follow-up questions
+
+1. *"Why not hash the URL?"* Truncated hashes collide, so you still need a uniqueness check, and two users shortening the same URL would share statistics.
+2. *"How do you stop enumeration?"* Keyed permutation or random codes, rate-limited 404s per client, and no reliance on obscurity for private content.
+3. *"The same user wants the same code for the same URL."* Add an `(owner_id, hash(long_url)) → code` index checked before creating.
+4. *"How do expired links stop working?"* Check `expires_at` on every redirect and bound cache TTLs by it; delete rows lazily (§52.5.8).
+5. *"What changes at 100× creates?"* Eight-character codes ($62^8 = 2.2 \times 10^{14}$) and larger ID blocks; code length is a parameter, not a constant.
+
+#### What distinguishes levels
+
+- **Mid:** a working create/redirect design with a database and a cache; base62 encoding explained.
+- **Senior:** quantifies the read path and the keyspace; justifies 302; handles hot keys, negative caching and enumeration.
+- **Staff:** notices the click stream is the largest write load, treats abuse takedown as a subsystem protecting the domain's reputation, and treats the allocator as durable state that a restored backup must not rewind.
+
+### 91.4.2 Q2. Pastebin
+
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §52.5 (full case study); §15.8.2 (presigned URLs), §15.9 (lifecycle)
+
+#### Prompt
+
+"Design Pastebin: users paste text, get a link, and others can view it. Pastes can expire."
+
+#### Clarifying questions and assumptions
+
+- Visibility? Public, unlisted and private. Expiry options? 10 minutes to never, plus "burn after reading". Size limit? 10 MB per paste.
+- Scale? 10 million pastes/day, 5 reads per paste, mean size 20 KB (median 2 KB; log dumps pull the mean up).
+
+#### Requirements
+
+- **FR:** create with visibility and expiry; read by link; burn after reading; delete; syntax highlighting (client side).
+- **NFR:** read p99 < 200 ms; an expired paste is never served, even from a cache; 99.9% availability; content durable until expiry.
+
+#### Estimation
+
+::: example
+**Worked example — Pastebin is shaped by lifecycle, not throughput (§52.5.4; §89.5, §89.6).**
+
+1. Peak creates $10^7 \times 0.10 / 3{,}600 \times 2 = 556$/s; peak reads 2,778 RPS; peak egress $2{,}778 \times 20$ KB $= 55.6$ MB/s.
+2. Live expiring content at steady state, by Little's Law summed over expiry classes: about 57.6 million pastes, 1.15 TB, constant over time.
+3. Never-expiring pastes (30%) accumulate $10^7 \times 0.3 \times 365 \times 20$ KB $= 21.9$ TB/year.
+4. Physical deletions: 7 million/day, about 389/s at peak.
+
+**Interpretation.** Request rates are small; the 30% that never expire hold 95% of the bytes after a year. **Implication.** Put content in object storage with lifecycle rules, keep metadata small, and build a dedicated expiry pipeline.
+:::
+
+#### API and data model
+
+- `POST /v1/pastes {visibility, expires_in, burn_after_read}` → `{id, upload_url?}`; small pastes inline, large ones through a presigned upload URL.
+- `GET /v1/pastes/{id}` → content or `404`.
+- `pastes(id PK, owner_id, visibility, expires_at, burn, state, size, blob_key | inline_content)`; an expiry index bucketed by hour: `expiry_bucket(hour, id)`.
+
+#### High-level design
+
+**Figure 91.3 — Pastebin: metadata and blob split with an expiry pipeline.**
+
+```mermaid
+flowchart LR
+  U([Client]) -->|HTTPS| API[Paste API]
+  API --> MD[(Metadata store)]
+  U -->|"presigned PUT, large pastes"| OS[(Object storage)]
+  U -->|"GET public"| CDN[CDN] --> API
+  API -->|"read blob"| OS
+  SW[Expiry sweeper] -.->|"scan hour buckets"| MD
+  SW -.->|"delete blobs"| OS
+```
+
+**Reading the diagram.** The API owns metadata (cylinder) and checks `expires_at` and visibility on every read; large bodies go directly from the client to object storage with a presigned URL, so they never pass through the API. Public pastes are cached at the CDN with a TTL bounded by remaining lifetime; private pastes are never cached there. The sweeper (dotted, asynchronous) walks hourly expiry buckets and deletes rows and blobs; an object-store lifecycle rule is a backstop. Failure points: sweeper lag (storage cost, not correctness) and orphaned blobs from abandoned uploads, reconciled periodically. Everything scales horizontally; the metadata store partitions by `id`.
+
+#### Deep dives
+
+1. **Logical versus physical deletion.** Correctness comes from the read-time check; physical deletion is a lagging, idempotent cleanup. Cache lifetimes must be capped at the remaining time to expiry.
+2. **Burn after reading.** A conditional state transition (`UPDATE … SET state='burned' WHERE id=? AND state='live'`) before returning content; only one reader wins.
+3. **Blob/metadata split.** Inline pastes under a few KB in the metadata row; larger ones in object storage, keeping the database small and compaction cheap.
+
+#### Trade-offs and alternatives
+
+- Inline versus object storage: inline is one read; object storage is cheaper per byte and has lifecycle rules. The threshold moves with the size distribution.
+- A TTL-capable store (native row TTL) can replace the sweeper for metadata, but blobs still need cleanup.
+
+#### Follow-up questions
+
+1. *"How do you guarantee an expired paste is never shown?"* Check on every read; cap every cache TTL by remaining lifetime.
+2. *"Ten-minute expiry with day-granularity lifecycle rules?"* The read check is correct; the sweeper deletes within the hour; lifecycle rules are only a backstop.
+3. *"Deduplicate identical pastes?"* Content hash as blob key with reference counts; worthwhile only if many large pastes repeat, and it complicates deletion.
+4. *"Abuse: leaked credentials pasted publicly?"* Scan new public pastes asynchronously for secrets and malware, with a takedown path.
+
+#### What distinguishes levels
+
+- **Mid:** a database-backed design with expiry handled by a cron job.
+- **Senior:** separates blobs from metadata, uses presigned uploads, and keeps reads correct independent of deletion lag.
+- **Staff:** reads from the estimate that permanent pastes dominate storage and proposes a product policy; designs reconciliation between the two stores; treats private-content caching as a tested security property.
+
+### 91.4.3 Q3. Rate limiter
+
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §52.6 (full case study); §22.4–§22.8 (algorithms and distributed counting)
+
+#### Prompt
+
+"Design a rate limiter that protects our public API. Limits are per API key and per endpoint, and the API runs in several regions."
+
+#### Clarifying questions and assumptions
+
+- Where does it run: client library, gateway, or separate service? A library in the gateway, backed by a regional service for precise limits.
+- Accuracy? Within about 5% for paid-tier limits; looser for fairness limits. Failure policy if the limiter is down? Per rule.
+- Scale? 1 million API RPS at peak across three regions; 3 rules matched per request; 20 million active keys per 10 minutes (§52.6.4).
+
+#### Requirements
+
+- **FR:** evaluate rules (per key, per endpoint, per tenant) and return allow/deny with `429` and `Retry-After`; rules configurable without deploys; shadow mode for new rules.
+- **NFR:** added latency p99 < 1 ms locally, < 5 ms for central checks; the limiter must never take the API down; per-key limits within 5%.
+
+#### Estimation
+
+::: example
+**Worked example — Decisions, central load and memory (§52.6.4; §89.10).**
+
+1. Decisions at peak: $10^6 \times 3 = 3 \times 10^6$/s.
+2. All central: $3 \times 10^6 / (50{,}000 \times 0.6) = 100$ Redis shards and 4.8 Gb/s of limiter traffic.
+3. Only the 20% that need precision central: $6 \times 10^5 / 30{,}000 = 20$ shards across three regions.
+4. Memory: $20 \times 10^6 \times 150$ B $= 3$ GB.
+5. A hot tenant at 100,000 RPS on one key exceeds one shard; leasing tokens in batches of 100 cuts it to 1,000 calls/s.
+
+**Interpretation.** Memory is trivial; operations per second per key decide the design. **Implication.** Evaluate most rules locally, centralize only precise ones, and batch hot keys.
+:::
+
+#### API and data model
+
+- In-process `check(key, endpoint, cost) → {allow, remaining, reset_at}`; regional RPC `Acquire(bucket_id, tokens)` for central rules and token leases.
+- Rule: `{id, scope, match, algorithm, limit, window, failure_mode: open|closed, shadow}`; bucket state in Redis: `bucket:{id} → (tokens, last_refill)`, updated by one atomic Lua script.
+
+#### High-level design
+
+**Figure 91.4 — Tiered rate limiting: local, regional and leased.**
+
+```mermaid
+flowchart LR
+  C([API client]) -->|HTTPS| GW["Gateway with<br/>limiter library"]
+  GW -->|"precise rules"| RL[Regional limiter service]
+  RL --> R[(Redis shards)]
+  CFG[Rule control plane] -.->|"snapshot push"| GW
+  CFG -.-> RL
+  RL -.->|"demand reports"| GA[Global allocator]
+  GA -.->|"regional shares"| RL
+  GW -->|allowed| B[Backend services]
+```
+
+**Reading the diagram.** Every request is checked in the gateway's in-process library (synchronous, sub-millisecond) against a rule snapshot pushed asynchronously by the control plane. Rules needing precision call the regional limiter, which runs an atomic token-bucket script on Redis (cylinder). Cross-region limits are never checked synchronously: a global allocator assigns each region a share from reported demand every second (dotted). Failure points: Redis or the regional service (handled by each rule's failure mode behind a short timeout), and a bad rule push (shadow mode and rollback). Scaling: Redis shards by bucket key; hot keys use leases.
+
+#### Deep dives
+
+1. **Algorithm choice, briefly.** Token bucket for rates with bursts, sliding-window counter for per-minute limits, fixed windows for daily quotas (§22.4–§22.7). Then move on: the algorithm is not the hard part.
+2. **Where to count.** Local counters are fast but imprecise across many gateways; central counters are precise but cost a network hop and can fail; leased batches combine the two for hot keys (§22.8).
+3. **Failure policy per rule.** Fail open (fall back to local limits) for fairness rules; fail closed for security and cost rules such as login attempts or SMS sends.
+
+#### Trade-offs and alternatives
+
+- Central precision versus local speed: reverse toward central only for rules whose overshoot costs money.
+- A sidecar or gateway plugin versus a separate service: a library avoids a hop but couples releases to the gateway.
+
+#### Follow-up questions
+
+1. *"Redis goes down?"* Each rule's failure mode applies after a short timeout and a circuit breaker; fairness rules degrade to local limits.
+2. *"Global limit across regions?"* Allocate regional shares from demand and reconcile each second; accept a small overshoot during shifts.
+3. *"Race between two gateways reading the same counter?"* The Lua script makes read-modify-write atomic on the shard.
+4. *"What headers do you return?"* `429` with `Retry-After`, and remaining/limit headers so well-behaved clients back off.
+
+#### What distinguishes levels
+
+- **Mid:** explains token bucket and puts counters in Redis.
+- **Senior:** atomic scripts, correct 429 semantics, local versus central placement with numbers.
+- **Staff:** per-rule failure policy, control plane separated from data plane (shadow mode, rollback), hot-key leasing and multi-region allocation, and insists that the limiter cannot become the outage it prevents.
+
