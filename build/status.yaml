@@ -77,6 +77,6 @@
 75: {research: done, draft: done, diagrams: done, review: wip, final: todo}
 76: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
 77: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
-78: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
+78: {research: done, draft: done, diagrams: done, review: todo, final: todo}
 79: {research: wip, draft: wip, diagrams: todo, review: todo, final: todo}
 80: {research: done, draft: done, diagrams: done, review: todo, final: todo}

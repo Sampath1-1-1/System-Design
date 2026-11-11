@@ -352,3 +352,6 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-345 | 80 | Llama 3 Table 5: 148 faulty-GPU interruptions (30.1%) inconsistent with 419 total — chapter uses percentages only; Llama 3 storage (240 PB, 7,500 servers, 2 TB/s sustained, 7 TB/s peak) and 16M-token batch | Open | arXiv blocked during drafting |
 | UQ-346 | 80 | Gemini report goodput (85%→97%) and "SDC every week or two" wording; Gangidi et al. SIGCOMM 2024 congestion-control details; DGX SuperPOD switch counts; GB200 NVL72 rack power 120–132 kW (vendor pages) | Open | |
 | UQ-347 | 80 | Llama 3.1 model-card GPU-hours and emissions; Li et al. 700,000-liter water estimate; titles of cited AWS, Microsoft, OpenAI, Google engineering posts | Open | Capex, prices, device power are Illustrative |
+| UQ-348 | 78 | Zheng et al. 2023 "over 80% agreement" wording; Perez et al. 2022 "tens of thousands of offensive replies" (280B chatbot); FrugalGPT and RouteLLM savings as author-reported | Open | |
+| UQ-349 | 78 | τ-bench pass^k estimator C(c,k)/C(n,k); current RAGAS context precision/recall formulas; OWASP Top 10 for LLM Applications 2025 category names (prompt injection still #1) | Open | Time-sensitive |
+| UQ-350 | 78 | CaMeL (Debenedetti et al. 2025) and Dubois et al. 2024 author lists and venues; DoorDash 2024 90%/99% reductions | Open | |

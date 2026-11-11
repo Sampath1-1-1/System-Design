@@ -43,7 +43,7 @@ After this chapter you should be able to:
 ### 78.3.1 Five sources of difficulty
 
 ::: definition
-**Definition — Evaluation suite, grader.** An **evaluation suite** is a versioned set of inputs (prompts, conversations, tasks), the expected behavior for each (a reference answer, a rubric or an end-state check), and the **graders** that score outputs: programs, LLM judges or human annotators. An **evaluation run** executes one system version (model, prompt, retrieval configuration, tools) on the suite and records per-item scores, from which aggregate metrics and their confidence intervals are computed.
+**Definition — Evaluation suite, grader.** An **evaluation suite** is a versioned set of inputs (prompts, conversations, tasks), the expected behavior for each (a reference answer, a rubric or an end-state check), and the **graders** that score outputs: programs, LLM judges or human annotators. An **evaluation run** executes one system version on the suite and records per-item scores, from which metrics and confidence intervals are computed.
 :::
 
 #### First-principles explanation
@@ -178,7 +178,7 @@ The paired formula comes from treating each item's difference $D_i \in \{-1, 0, 
 5. Unpaired, as if the versions ran on different items ($p_A = 0.83$, $p_B = 0.86$, §57.14.2): $7.849 \times (0.1411 + 0.1204)/0.0009 = 2{,}281$ items *per version*.
 6. Twenty items: $1.96\sqrt{0.83 \times 0.17/20} = 0.165$, a ±16.5-point interval (±18 at $p = 0.78$).
 
-**Interpretation.** A 400-item suite can tell an 80% system from a 90% one, not an 82% from an 85% one. Pairing more than halves the items needed to compare two versions. **Engineering implication.** QuickBite's 1,200-item suite gives about ±2.1 points per version overall and is sized to detect 3-point paired differences; individual slices of 100–300 items carry intervals of ±4–8 points, so slice regressions smaller than that need a larger slice or a human look, not an automatic verdict.
+**Interpretation.** A 400-item suite can tell an 80% system from a 90% one, not an 82% from an 85% one. Pairing more than halves the items needed to compare two versions. **Engineering implication.** QuickBite's 1,200-item suite gives about ±2.1 points overall and detects 3-point paired differences; slices of 100–300 items carry ±4–8 points, so smaller slice regressions need a human look, not an automatic verdict.
 :::
 
 Two subtleties matter. Turns from the same conversation fail together, so the independent unit is the conversation and intervals should resample conversations (a **cluster bootstrap**). And the system is random: running each item $m$ times reduces run-to-run noise but does not substitute for more items, because item-to-item variation usually dominates.
@@ -488,7 +488,7 @@ sequenceDiagram
 
 ### 78.7.3 Calibrating a judge against humans
 
-Before a judge gates releases, a sample of items is labeled by trained humans (§78.8) and by the judge, and three things are measured: chance-corrected agreement (Cohen's κ, §63.6.2), the confusion matrix (does the judge miss failures, or invent them?), and agreement per slice.
+Before a judge gates releases, humans (§78.8) and the judge label the same sample, and three things are measured: Cohen's κ (§63.6.2), the confusion matrix and per-slice agreement.
 
 ::: formula
 **Judge–human agreement and a prevalence-corrected pass rate**
@@ -757,9 +757,9 @@ flowchart LR
 Detection catches hallucination; architecture prevents much of it:
 
 1. **Retrieve, and say when nothing was found.** Gate generation on retrieval scores and route empty retrievals to a refusal or a human (§75.12).
-2. **Put facts in structured fields.** The credit amount comes from the refund service, not from the model's arithmetic; the model explains a number it was given.
+2. **Put facts in structured fields.** The credit amount comes from the refund service; the model explains a number it was given.
 3. **Constrain the output.** A schema with `citations` and `handoff_to_human` makes unsupported answers detectable and refusals explicit.
-4. **Instruct and exemplify refusal.** Include unanswerable items in prompts and evaluation, and measure the refusal rate on them.
+4. **Instruct refusal**, and measure it on unanswerable items.
 5. **Lower temperature for factual tasks**, and verify before showing anything that moves money.
 
 ::: industry
@@ -785,7 +785,7 @@ flowchart LR
   REF -.->|answer correctness| ANS
 ```
 
-**Reading the diagram.** Solid arrows are the pipeline: the question retrieves a context, and the context and question produce an answer. Dotted arrows are measurements, each comparing two of the objects. **Faithfulness** compares answer with context; **answer relevance** compares answer with question; **context precision** asks whether the retrieved chunks are relevant and ranked first; **context recall** and **answer correctness** need a reference answer, so they are computed only on the labeled part of the suite. Reading the metrics together localizes a failure to retrieval or generation.
+**Reading the diagram.** Solid arrows are the pipeline; dotted arrows are measurements comparing two objects. **Faithfulness** compares answer with context; **answer relevance**, answer with question; **context precision** asks whether relevant chunks are ranked first; **context recall** and **answer correctness** need a reference answer, so they run only on the labeled part of the suite. Read together, they localize a failure to retrieval or generation.
 
 ::: formula
 **RAG metrics (RAGAS-style)**
@@ -867,7 +867,7 @@ flowchart LR
 3. With about 30,000 conversations a day split 50/50, each arm collects 15,000 a day: the sample is reached in under 2 days.
 4. Run 14 days anyway to cover weekly patterns and novelty, collecting about 210,000 per arm.
 
-**Interpretation.** Volume is not the constraint for the primary metric; the guardrails are. A policy violation that occurs in 0.1% of conversations needs far more traffic to detect a doubling. **Engineering implication.** Randomize by customer, not by message, so one customer does not see both bots in a conversation; and review the guardrails with sampled judge and human audits, not just counters.
+**Interpretation.** Volume is not the constraint for the primary metric; rare guardrail events (a 0.1% violation rate doubling) are. **Engineering implication.** Randomize by customer, not message, and audit guardrails with sampled judge and human review, not just counters.
 :::
 
 **Interleaving for search answers.** When the feature ranks results (help-center search with generated answers), **interleaving** merges two rankers' lists for each user and credits clicks to the contributing ranker, detecting preferences with far fewer users than an A/B test [Chapelle et al. 2012; §57.14.3]. For a single generated answer, side-by-side rating plays that role.
@@ -933,7 +933,7 @@ $$\mathbb{E}[C] = N\big[\pi\,\text{HCR}\,c_h + (1 - \pi)\,\text{ORR}\,c_r\big] \
 1. Strict: $5 \times 0.02 \times 200 + 995 \times 0.06 \times 3 = 20.0 + 179.1 = \$199.1$.
 2. Lenient: $5 \times 0.08 \times 200 + 995 \times 0.015 \times 3 = 80.0 + 44.8 = \$124.8$.
 
-**Interpretation.** On expected dollars the lenient setting wins, because benign traffic is 199 times larger than harmful traffic and every wrongful refusal costs something. **Engineering implication.** Do not optimize one blended number. Set hard ceilings for severe categories (no money movement beyond policy, no cross-customer data, ever), enforce them with deterministic controls, and then minimize over-refusal within those limits. Refusal rate is a quality metric, not a safety metric.
+**Interpretation.** On expected dollars the lenient setting wins, because benign traffic is 199 times larger than harmful traffic. **Engineering implication.** Do not optimize one blended number: set hard ceilings for severe categories (no money movement beyond policy, no cross-customer data), enforce them deterministically, then minimize over-refusal within them.
 :::
 
 ## 78.13 Prompt injection
@@ -1377,8 +1377,8 @@ A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired
 ## 78.21 Practical exercises
 
 1. Extend the bootstrap program of §78.4.3 to run each item three times at random and compare interval widths with and without repeats.
-2. Add a length-controlled correction to the judge simulation of §78.7.4: fit a logistic regression of the judge's verdict on quality proxy and length difference, and report the win rate at zero length difference.
-3. Implement token F1 and an extracted-amount exact match; build ten paraphrased and ten wrong-amount answers and compare how well each metric separates them.
+2. Add a length-controlled correction to the judge simulation of §78.7.4: regress the judge's verdict on length difference and report the win rate at zero difference.
+3. Implement token F1 and extracted-amount exact match; compare how well each separates ten paraphrased from ten wrong-amount answers.
 4. In the routing simulation of §78.14.2, vary $V$ from \$0.01 to \$2 and plot the policy with the lowest all-in cost.
 
 ## 78.22 Design challenges
@@ -1427,11 +1427,11 @@ A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired
 
 ## 78.24 Open verification items
 
-- Zheng et al. 2023: "over 80% agreement" for the strongest judge, matching human–human agreement, as stated in the abstract; confirm wording before quoting.
-- Perez et al. 2022: "tens of thousands of offensive replies" from a 280B-parameter chatbot; confirm figures.
-- FrugalGPT (up to 98% cost reduction or +4% accuracy) and RouteLLM (over 2× cost reduction) are as reported by the authors on their benchmarks.
+- Zheng et al. 2023: confirm the "over 80% agreement" wording.
+- Perez et al. 2022: confirm "tens of thousands of offensive replies" from a 280B chatbot.
+- FrugalGPT and RouteLLM savings are as reported by the authors.
 - Yao et al. 2024: confirm that τ-bench defines pass^k with the estimator $\binom{c}{k}/\binom{n}{k}$.
-- RAGAS: the paper defines faithfulness, answer relevance and context relevance; confirm the library's current context precision and recall formulas.
+- RAGAS: confirm the library's current context precision and recall formulas.
 - OWASP Top 10 for LLM Applications 2025: confirm category names and that prompt injection remains first.
 - Debenedetti et al. 2025 (CaMeL) and Dubois et al. 2024: confirm author lists and venues.
 - DoorDash 2024: reported 90% and 99% reductions are not independently verified.
