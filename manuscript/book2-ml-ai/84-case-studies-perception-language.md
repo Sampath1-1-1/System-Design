@@ -1652,3 +1652,154 @@ sequenceDiagram
 - **Responsible ML.** Gender and formality bias suites; quality tiers disclosed so users of low-resource languages know when to double-check; no training on tenant content without contract.
 - **Security and privacy.** Content encrypted in transit, processed in memory, logged only with tenant opt-in; meeting audio not retained.
 - **Cost.** Roughly 130 GPUs for text and 344 to 636 for live speech (ASR plus MT, depending on the simultaneous policy); the policy choice and the share of directions on distilled models are the largest cost levers.
+
+## 84.8 Summary and revision notes
+
+::: summary
+- **Perception and language systems** are judged on a task metric, on latency or throughput at a cost, and on how little raw signal they collect and keep. Draw the signal trace for every design.
+- **Face recognition:** detect, align, embed, match. FPIR ≈ N·FMR, so gallery size multiplies false matches; scoped galleries are both more private and more accurate; set one threshold so the worst demographic slice meets the FMR target; model upgrades require re-embedding every template; consent gates fail closed and deletion is crypto-shredding plus purge receipts.
+- **Image classification:** pipeline cost is a sum over stages, and JPEG decode can cost more than the model; dynamic batching adds at most $D_{\max} + 2T(B_{\max})$; a shared backbone with per-tenant heads keeps 25,000 models resident; versions are immutable and a backbone upgrade is a migration with two live backbones.
+- **Speech recognition:** size by concurrent streams; streaming transducers emit partials, a second pass recovers accuracy; end-pointing dominates final latency; bias toward contacts with bounded boosts and measure false triggers; WER only after normalization, with entity accuracy and slice WER beside it; on-device recognition is a privacy and cost lever.
+- **Real-time translation:** cascade for captions; AL measures lag, wait-k lags by $k$ words when lengths match, more when the target is longer; re-translation buys quality with flicker and 3× compute; route directions to bilingual, multilingual or pivot paths by volume and measured quality; glossaries are versioned data enforced in layers; COMET plus human MQM, not BLEU alone.
+:::
+
+## 84.9 Knowledge checkpoint
+
+1. Define FMR, FNMR and FPIR. How does FPIR depend on gallery size?
+2. Why can you not certify FMR = $10^{-8}$ from 4 million non-mated pairs?
+3. Why does the face design set one global threshold instead of per-group thresholds?
+4. What must happen to stored templates when the face embedding model changes, and why?
+5. What is crypto-shredding, and which deletion problem does it solve?
+6. In §84.5.4, why does full JPEG decode cost more per image than the GPU model?
+7. What are the worst-case in-server latency and the stability condition for dynamic batching with $B_{\max} = 32$, $D_{\max} = 8$ ms and $T(B) = 1.6 + 0.35B$ ms?
+8. Why do shared-backbone heads remove the cold-start problem of many customer models?
+9. Why is speech capacity sized by concurrent streams rather than requests per second?
+10. Which term dominates final ASR latency, and how does an end-of-query detector change it?
+11. Compute WER for reference "turn on the kitchen lights" and hypothesis "turn the kitchen light on".
+12. Why can an attention encoder–decoder like Whisper not produce 300 ms partials directly?
+13. What is average lagging for wait-3 when source and target have equal length? Why does it grow when the target is longer?
+14. Give two costs of re-translation compared with a wait-k model.
+15. Why does the segment cache key include the glossary and model versions?
+
+<details><summary>Answers</summary>
+
+1. FMR: fraction of non-mated comparisons above threshold; FNMR: fraction of mated comparisons below it; FPIR: fraction of searches by unenrolled people returning any candidate. FPIR $= 1-(1-\text{FMR})^N \approx N \cdot \text{FMR}$.
+2. By the rule of three you need at least $3/\text{FMR} = 3 \times 10^8$ non-mated pairs to bound the rate; 4 million pairs would expect 0.04 false matches.
+3. Per-group thresholds need demographic inference, itself prohibited biometric categorization in some jurisdictions and error-prone; one threshold set for the worst slice meets the target for everyone.
+4. Re-embed them with the new model (dual-write, per-user migration, atomic flip), because embeddings from different models are not comparable.
+5. Encrypting each owner's data with its own key and destroying the key on deletion; it makes copies in backups and replicas unreadable even if a purge misses them.
+6. Decoding scales with the image's full pixel count (2 MP) on a CPU core at 23 ms, while the GPU model processes a 224×224 input in a batch at 2,500 images/s; per 1,000 images \$0.000426 against \$0.000148.
+7. $8 + 2 \times 12.8 = 33.6$ ms; stable while per-GPU arrivals stay below $X(32) = 2{,}500$ images/s.
+8. Every replica holds the backbone and all heads (4.1 GB), so any request can be served anywhere without loading a model.
+9. Each utterance holds GPU state and a connection for its whole duration; capacity is stream slots ($S_{\text{GPU}}$), not request throughput.
+10. The end-point delay $T_{\text{ep}}$; a learned detector fires about 300 ms after a complete query instead of a 600 ms silence timeout.
+11. Alignment: "on" deleted, "lights"→"light" substituted, "on" inserted: $S{=}1, D{=}1, I{=}1$, $N = 5$, WER = 60%.
+12. It attends over the whole encoded input window (30 s for Whisper) before emitting tokens, so output waits for the input unless chunking tricks are added.
+13. 3 words. With one write per read, a longer target falls behind the ideal schedule $(t-1)/r$; catch-up writes extra words.
+14. About three times the MT compute, and flicker (captions changing under the reader).
+15. So a model or glossary change can never serve an outdated translation, without flushing the cache.
+</details>
+
+## 84.10 Interview questions
+
+### Basic
+
+**Q1. What is the difference between face verification and face identification, and why does it matter for the threshold?**
+
+**Answer.** Verification compares a probe with one claimed identity (1:1); identification searches a gallery of $N$ (1:N). Every gallery entry is a chance of a false match, so FPIR ≈ N·FMR: a threshold acceptable for 1:1 can produce false candidates for most unenrolled people when $N$ is large. Identification needs a stricter threshold, a smaller gallery, or a second factor.
+
+**Q2. Why batch requests on a GPU, and what does it cost?**
+
+**Answer.** One batched forward pass amortizes weight loading and kernel launch across rows, raising throughput (513 to 2,500 images/s in §84.5.8). The cost is waiting for the batch to fill and for the previous batch, bounded by $D_{\max} + 2T(B_{\max})$.
+
+### Intermediate
+
+**Q3. Your ASR service meets its WER target, but users complain it cuts them off. What do you do?**
+
+**Answer.** Measure early-cutoff rate (queries whose final transcript misses words the user then repeats) against end-point latency, by context and by slice (slow speakers, older users, accents). Tune the end-of-query threshold or condition it on the decoder state (incomplete phrases such as "call Maya" wait longer), disable it in dictation, and gate any change on the cutoff–latency curve rather than WER alone.
+
+**Q4. A tenant's image classifier accuracy fell after a platform release, but its version did not change. How?**
+
+**Answer.** Something outside the version changed: preprocessing (resize library, color conversion, EXIF handling), the backbone serving precision, or the decoder. Replay the tenant's golden images through old and new serving stacks, compare tensors stage by stage, and roll back the stage that differs. Prevent it with shared preprocessing code pinned per version and golden-image tests in deployment.
+
+### Advanced
+
+**Q5. Design the threshold policy for a 50,000-person corporate campus with a requirement of FPIR ≤ 0.1%.**
+
+**Answer.** FMR must be at most $0.001 / 50{,}000 = 2 \times 10^{-8}$, which requires at least $1.5 \times 10^8$ non-mated pairs per slice to certify and would raise FNMR. Better: partition galleries by building (a few thousand people each, FMR $\approx 2 \times 10^{-7}$ to $5 \times 10^{-7}$), or use badge plus face verification for sensitive doors, set the threshold for the worst demographic slice, and monitor false grants and badge-fallback rates per site.
+
+**Q6. Live captions must lag at most 3 s in 30 languages. How do you choose policies and capacity?**
+
+**Answer.** Subtract ASR lag (about 0.5 s), leaving roughly 6 words at 2.5 words/s. For each direction, measure quality against AL for wait-k values (with catch-up where the target is longer) and for re-translation with a stability mask; pick the best point within budget, allowing a higher published target for word-order-divergent pairs. Capacity follows from the choice: re-translation triples MT tokens, so use it where quality gains justify the cost, and trained simultaneous models elsewhere.
+
+## 84.11 Practical exercises
+
+1. **DET curve.** Extend the §84.4.8 program to plot FNMR against FMR on a log scale for both groups, and add bootstrap confidence intervals for FMR at the operating threshold.
+2. **Pipeline cost calculator.** Implement the §84.5.4 formula for any list of stages and reproduce the four cost figures; add a GPU-decode option that consumes a measured fraction of GPU time.
+3. **WER toolkit.** Add a text normalizer (contractions, numbers, punctuation) to the §84.6.8 code, then compute corpus WER and entity accuracy on 20 utterances you record and transcribe yourself.
+4. **Lag explorer.** Extend the AL code with wait-k catch-up and with a re-translation simulator that counts flicker; plot AL against flicker for $|y|/|x|$ of 1.0 and 1.3.
+
+## 84.12 Design challenges
+
+1. **Smart doorbell.** Design person recognition for a home doorbell that recognizes household members only, works offline, and lets visitors who never consented remain unrecognized. Where do galleries live, and how is consent recorded for each enrolled person?
+2. **Medical image triage API.** Adapt §84.5 for radiology images (DICOM, 50 MB, 3D volumes) with a regulatory requirement to keep every model version reproducible for ten years.
+3. **Courtroom transcription.** Design ASR with speaker attribution and a WER below 3%, where every correction is audited. Which parts of §84.6 change, and what replaces end-pointing?
+4. **Translated customer support.** Combine §84.6 and §84.7 so a support agent and a customer speaking different languages can talk live, with the company glossary enforced in both directions.
+
+## 84.13 References
+
+1. Taigman, Y., Yang, M., Ranzato, M., Wolf, L. *DeepFace: Closing the Gap to Human-Level Performance in Face Verification*. IEEE CVPR, 2014.
+2. Schroff, F., Kalenichenko, D., Philbin, J. *FaceNet: A Unified Embedding for Face Recognition and Clustering*. IEEE CVPR, 2015.
+3. Deng, J., Guo, J., Xue, N., Zafeiriou, S. *ArcFace: Additive Angular Margin Loss for Deep Face Recognition*. IEEE CVPR, 2019.
+4. Deng, J., Guo, J., Ververas, E., Kotsia, I., Zafeiriou, S. *RetinaFace: Single-Shot Multi-Level Face Localisation in the Wild*. IEEE CVPR, 2020.
+5. Zhang, K., Zhang, Z., Li, Z., Qiao, Y. *Joint Face Detection and Alignment Using Multitask Cascaded Convolutional Networks*. IEEE Signal Processing Letters 23(10), 2016.
+6. Grother, P., Ngan, M., Hanaoka, K. *Face Recognition Vendor Test (FRVT) Part 3: Demographic Effects*. NISTIR 8280, National Institute of Standards and Technology, 2019. https://doi.org/10.6028/NIST.IR.8280
+7. Buolamwini, J., Gebru, T. *Gender Shades: Intersectional Accuracy Disparities in Commercial Gender Classification*. Conference on Fairness, Accountability and Transparency (FAT*), PMLR 81, 2018.
+8. Fredrikson, M., Jha, S., Ristenpart, T. *Model Inversion Attacks that Exploit Confidence Information and Basic Countermeasures*. ACM CCS, 2015.
+9. Meta. *An Update On Our Use of Face Recognition*. Meta Newsroom, November 2021.
+10. *In re Facebook Biometric Information Privacy Litigation*. US District Court, Northern District of California; settlement approved 2021.
+11. Illinois General Assembly. *Biometric Information Privacy Act*, 740 ILCS 14, 2008.
+12. Regulation (EU) 2016/679 (General Data Protection Regulation), Articles 9, 17 and 25; Regulation (EU) 2024/1689 (Artificial Intelligence Act), Article 5 and Annex III.
+13. Apple. *An On-Device Deep Neural Network for Face Detection*. Apple Machine Learning Research, 2017.
+14. Apple. *Recognizing People in Photos Through Private On-Device Machine Learning*. Apple Machine Learning Research, 2021.
+15. He, K., Zhang, X., Ren, S., Sun, J. *Deep Residual Learning for Image Recognition*. IEEE CVPR, 2016.
+16. Dosovitskiy, A., et al. *An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale*. ICLR, 2021.
+17. Radford, A., Kim, J. W., et al. *Learning Transferable Visual Models From Natural Language Supervision*. ICML, 2021.
+18. NVIDIA. *Data Loading Library (DALI) documentation*. https://docs.nvidia.com/deeplearning/dali/user-guide/docs/
+19. Graves, A., Fernández, S., Gomez, F., Schmidhuber, J. *Connectionist Temporal Classification: Labelling Unsegmented Sequence Data with Recurrent Neural Networks*. ICML, 2006.
+20. Graves, A. *Sequence Transduction with Recurrent Neural Networks*. ICML Workshop on Representation Learning, 2012. arXiv:1211.3711.
+21. Chan, W., Jaitly, N., Le, Q., Vinyals, O. *Listen, Attend and Spell: A Neural Network for Large Vocabulary Conversational Speech Recognition*. IEEE ICASSP, 2016.
+22. He, Y., Sainath, T. N., Prabhavalkar, R., et al. *Streaming End-to-end Speech Recognition for Mobile Devices*. IEEE ICASSP, 2019.
+23. Sainath, T. N., Pang, R., et al. *Two-Pass End-to-End Speech Recognition*. Interspeech, 2019.
+24. Gulati, A., et al. *Conformer: Convolution-augmented Transformer for Speech Recognition*. Interspeech, 2020.
+25. Radford, A., Kim, J. W., Xu, T., Brockman, G., McLeavey, C., Sutskever, I. *Robust Speech Recognition via Large-Scale Weak Supervision*. ICML, 2023.
+26. Aleksic, P., Allauzen, C., Elson, D., Kracun, A., Casado, D. M., Moreno, P. J. *Bringing Contextual Information to Google Speech Recognition*. Interspeech, 2015.
+27. Pundak, G., Sainath, T. N., Prabhavalkar, R., Kannan, A., Zhao, D. *Deep Context: End-to-End Contextual Speech Recognition*. IEEE SLT, 2018.
+28. Shannon, M., Simko, G., Chang, S.-Y., Parada, C. *Improved End-of-Query Detection for Streaming Speech Recognition*. Interspeech, 2017.
+29. Koenecke, A., et al. *Racial Disparities in Automated Speech Recognition*. PNAS 117(14), 2020.
+30. Vaswani, A., et al. *Attention Is All You Need*. NeurIPS, 2017.
+31. Johnson, M., et al. *Google's Multilingual Neural Machine Translation System: Enabling Zero-Shot Translation*. TACL 5, 2017.
+32. Jia, Y., Weiss, R. J., et al. *Direct Speech-to-Speech Translation with a Sequence-to-Sequence Model*. Interspeech, 2019.
+33. Seamless Communication, et al. *SeamlessM4T: Massively Multilingual and Multimodal Machine Translation*. arXiv:2308.11596, 2023.
+34. Ma, M., Huang, L., et al. *STACL: Simultaneous Translation with Implicit Anticipation and Controllable Latency using Prefix-to-Prefix Framework*. ACL, 2019.
+35. Arivazhagan, N., Cherry, C., Macherey, W., Foster, G. *Re-translation versus Streaming for Simultaneous Translation*. IWSLT, 2020.
+36. NLLB Team, Costa-jussà, M. R., et al. *No Language Left Behind: Scaling Human-Centered Machine Translation*. arXiv:2207.04672, 2022.
+37. Hokamp, C., Liu, Q. *Lexically Constrained Decoding for Sequence Generation Using Grid Beam Search*. ACL, 2017.
+38. Post, M., Vilar, D. *Fast Lexically Constrained Decoding with Dynamic Beam Allocation for Neural Machine Translation*. NAACL, 2018.
+39. Dinu, G., Mathur, P., Federico, M., Al-Onaizan, Y. *Training Neural Machine Translation to Apply Terminology Constraints*. ACL, 2019.
+40. Post, M. *A Call for Clarity in Reporting BLEU Scores*. WMT, 2018.
+41. Popović, M. *chrF: Character n-gram F-score for Automatic MT Evaluation*. WMT, 2015.
+42. Rei, R., Stewart, C., Farinha, A. C., Lavie, A. *COMET: A Neural Framework for MT Evaluation*. EMNLP, 2020.
+43. Kocmi, T., Federmann, C., Grundkiewicz, R., Junczys-Dowmunt, M., Matsushita, H., Menezes, A. *To Ship or Not to Ship: An Extensive Evaluation of Automatic Metrics for Machine Translation*. WMT, 2021.
+44. Freitag, M., Foster, G., Grangier, D., Ratnakar, V., Tan, Q., Macherey, W. *Experts, Errors, and Context: A Large-Scale Study of Human Evaluation for Machine Translation*. TACL 9, 2021.
+
+## 84.14 Open verification items
+
+- NISTIR 8280: confirm the "factors of 10 to 100" wording for one-to-one false positive differentials and the count of 189 algorithms; note NIST's 2023 renaming of FRVT to FRTE/FATE.
+- Meta 2021 announcement (exact title, URL, "more than a billion" templates) and the USD 650 million BIPA settlement approval year.
+- Apple Machine Learning Research article titles and years (2017 face detection; 2021 people recognition).
+- He et al. 2019: on-device model size and quantization details as published.
+- Whisper: confirm the released text normalizer and the 680,000-hour figure; SeamlessM4T language counts per modality; NLLB distilled model sizes.
+- Claim that several web-scraped face datasets were withdrawn in 2019 over consent concerns (e.g., MS-Celeb-1M).
+- EU AI Act biometric provisions (Art. 5 prohibitions; Annex III remote biometric identification) against the Official Journal text.
+- Illustrative throughputs to replace with measurements: 600 photos/s and 2,500 faces/s per GPU; 2,500 images/s per GPU; 23 ms and 5 ms JPEG decode; 600 ASR streams per GPU; 5,000 MT output tokens/s per GPU.
