@@ -175,7 +175,7 @@ Sources: [NVIDIA 2022b; NVIDIA GB200 NVL72; Jouppi et al. 2023; Google Cloud 202
 5. Links: 16,384 per tier × 3 tiers = 49,152 cables; with optics at both ends, about 98,000 transceivers.
 6. Add one frontend NIC per server (2,048), storage servers, and a BMC port per server.
 
-**Interpretation.** The backend alone has more cables than the cluster has GPUs times three, and every one is a failure point (network switches and cables caused 8.4% of Llama 3's unexpected interruptions; Table 80.6). **Engineering implication.** Budget optics and cabling as first-class capex and failure sources, and prefer topologies that cut tiers (higher-radix switches, larger scale-up domains).
+**Interpretation.** The backend alone has three cables for every GPU, and every one is a failure point (network switches and cables caused 8.4% of Llama 3's unexpected interruptions; Table 80.6). **Engineering implication.** Budget optics and cabling as first-class capex and failure sources, and prefer topologies that cut tiers (higher-radix switches, larger scale-up domains).
 :::
 
 ### 80.4.2 Bandwidth tiers
@@ -880,7 +880,7 @@ $$L = \lambda_\text{node}\,W_\text{repair} \qquad s = \min\{k : P(X \le k) \ge 1
 1. $L = 6.05 \times 3 = 18.2$ nodes out of service on average.
 2. Poisson quantiles: 99% → 29 nodes; 99.9% → 33 nodes.
 3. A pool of 33 spare nodes (264 GPUs) is 1.6% of the cluster.
-4. Halving repair time to 1.5 days halves $L$ to 9.1 and the 99.9% pool to about 19 nodes.
+4. Halving repair time to 1.5 days halves $L$ to 9.1 and the 99.9% pool to about 20 nodes.
 
 **Interpretation.** About 1–2% spare capacity turns most failures into a minute-scale node swap. **Engineering implication.** Size spares from measured failure rates and repair times, spread them across power and network domains, and run SDC scans on them while idle (§80.8.3); faster repair is cheaper than more spares.
 :::
@@ -1117,7 +1117,7 @@ $$c_\text{GPU-h} = \frac{1}{u}\left(\frac{K}{L_h} + p_\text{GPU}\,c_e + f + o\ri
 4. Operations and maintenance at 10% of capex a year: $5{,}000/8{,}766 = \$0.57$.
 5. Sum at $u = 1$: \$2.49; at $u = 0.8$: \$3.12. The \$2.50 used across Chapters 60–65 corresponds to a fully used owned cluster or a discounted committed rental.
 6. Reference run: ideal GPU-hours $= 3.8 \times 10^{25}/(4 \times 10^{14} \times 3{,}600) = 26.4$ million; at $\Gamma_\text{total} = 0.90$, 29.3 million GPU-hours, 74.6 days on 16,384 GPUs, \$73 million at \$2.50 (Meta's model card reports 30.84 million GPU-hours for Llama 3.1 405B [Meta 2024]).
-7. For contrast, QuickBite's support-chatbot continued pre-training (7B model, 50B tokens, §65.4): $6 \times 7 \times 10^9 \times 5 \times 10^{10}/(4 \times 10^{14} \times 3{,}600) = 1{,}458$ GPU-hours, about \$3,600: 20,000 times smaller.
+7. For contrast, QuickBite's support-chatbot continued pre-training (7B model, 50B tokens, §65.9.1): $6 \times 7 \times 10^9 \times 5 \times 10^{10}/(4 \times 10^{14} \times 3{,}600) = 1{,}458$ GPU-hours, about \$3,650: 20,000 times smaller.
 
 **Interpretation.** Capex dominates, so idle hours are the most expensive hours; one point of goodput on the reference run is worth about \$0.8 million. **Engineering implication.** Track utilization ($u$), goodput and MFU as one product. A company of QuickBite's size should rent GPU-hours, not build clusters: its training needs fit in a day on 64 rented GPUs.
 :::

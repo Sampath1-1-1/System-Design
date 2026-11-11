@@ -9,7 +9,7 @@ This chapter builds it. **LLM evaluation** is the discipline of turning "it seem
 This chapter owns the evaluation methodology that earlier chapters preview. It builds on A/B testing (§57.14), agreement metrics (§63.6), monitoring (Chapter 70), retrieval metrics and grounded generation (§75.12–§75.13), adaptation (Chapter 76), agents (Chapter 77, whose evaluation it deepens), serving cost (Chapter 73), cascades (§60.13.2), security (Chapters 10 and 50), SLOs (§39.6–§39.7) and CI for models (Chapter 69).
 
 ::: note
-**QuickBite assumptions used in this chapter.** Teaching assumptions, not measurements of a real company. The support chatbot is the in-house 7B model (§72, §65.9.1) with RAG over an 8.6-million-token corpus of 25,800 chunks (§75). It answers about **75,000 queries a day** from about 30,000 conversations (2.5 user messages each), peaking at 8 queries per second (§75). A query sends about 4,050 input tokens and receives 200 output tokens, and the in-house transfer price is \$0.20 per million input and \$0.60 per million output tokens, so generation costs **\$0.00093 per query** (§75.15.3). **New in this chapter:** a *support agent* built on the chatbot can call four tools (look up an order, propose a credit, request a redelivery, hand off to a human; Chapter 77); 20% of conversations are handed off to a human agent today; a human-handled contact costs \$3.00; a **hosted larger model** is available at an illustrative \$2.50 per million input and \$10 per million output tokens, **\$0.0121 per query**; annotators cost \$40 per hour fully loaded. Prices are illustrative, as of 2026, and are not any vendor's quote.
+**QuickBite assumptions used in this chapter.** Teaching assumptions, not measurements of a real company. The support chatbot is the in-house 7B model (Chapter 72, §65.9.1) with RAG over an 8.6-million-token corpus of 25,800 chunks (§75.6.3). It answers about **75,000 queries a day** from about 30,000 support conversations (10,000 with the chatbot and 20,000 handled by human agents with a retrieval assistant; 2.5 queries each on average), peaking at 8 queries per second (Chapter 75). A query sends about 4,050 input tokens and receives 200 output tokens, and the in-house transfer price is \$0.20 per million input and \$0.60 per million output tokens, so generation costs **\$0.00093 per query** (§75.15.3). **New in this chapter:** a *support agent* built on the chatbot can call four tools (look up an order, propose a credit, request a redelivery, hand off to a human; a credit-and-redelivery variant of Chapter 77's refund agent); 20% of chatbot conversations are handed off to a human agent today; a human-handled contact costs \$3.00; a **hosted larger model** is available at an illustrative \$2.50 per million input and \$10 per million output tokens, **\$0.0121 per query**; annotators cost \$40 per hour fully loaded. Prices are illustrative, as of 2026, and are not any vendor's quote.
 :::
 
 ## 78.1 Learning objectives
@@ -202,9 +202,9 @@ b = np.where(a, u > 0.03, u < 0.25)        # candidate: breaks 3% of passes, fix
 
 def wilson(k, n, z=1.96):
     p = k / n
-    centre = (p + z**2 / (2 * n)) / (1 + z**2 / n)
+    center = (p + z**2 / (2 * n)) / (1 + z**2 / n)
     half = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / (1 + z**2 / n)
-    return centre - half, centre + half
+    return center - half, center + half
 
 B = 10_000
 k, n = int(a.sum()), a.size
@@ -827,7 +827,7 @@ LLM-scored RAG metrics inherit every judge bias of §78.7: calibrate the faithfu
 
 ## 78.11 Online evaluation
 
-Offline suites are proxies; only real users show whether a change resolves more problems. Online evaluation uses the rollout ladder of §66 and the statistics of §57.14 with LLM-specific signals.
+Offline suites are proxies; only real users show whether a change resolves more problems. Online evaluation uses the rollout ladder of §66.12 and the statistics of §57.14 with LLM-specific signals.
 
 **Figure 78.10 — Online evaluation ladder for an LLM change.**
 
@@ -864,8 +864,8 @@ flowchart LR
 
 1. Variances: $0.20 \times 0.80 = 0.1600$; $0.19 \times 0.81 = 0.1539$; sum $0.3139$.
 2. $n = 7.849 \times 0.3139/0.01^2 = 2.4638/0.0001 = 24{,}638$ conversations per arm.
-3. With about 30,000 conversations a day split 50/50, each arm collects 15,000 a day: the sample is reached in under 2 days.
-4. Run 14 days anyway to cover weekly patterns and novelty, collecting about 210,000 per arm.
+3. With about 10,000 chatbot conversations a day split 50/50, each arm collects 5,000 a day: the sample is reached in 5 days.
+4. Run 14 days anyway to cover weekly patterns and novelty, collecting about 70,000 per arm.
 
 **Interpretation.** Volume is not the constraint for the primary metric; rare guardrail events (a 0.1% violation rate doubling) are. **Engineering implication.** Randomize by customer, not message, and audit guardrails with sampled judge and human review, not just counters.
 :::
@@ -1039,7 +1039,7 @@ $$P_\text{harm} = P_\text{attempt} \prod_{i=1}^{L} m_i \qquad \text{(if layers f
 **Definition — Model router, LLM cascade.** A **router** chooses, before generation, which model should answer a request, from features of the request (intent, length, estimated difficulty, customer tier). A **cascade** calls a cheaper model first, scores its answer with a verifier, and escalates to a stronger model only when the score is low. Both apply the cascade idea of §60.13.2 to LLMs, where the price gap between models is one to two orders of magnitude.
 :::
 
-Most support traffic is easy ("where is my order?") and a few queries are hard (a disputed refund across two orders under a changed policy). Paying the large model's price for every query wastes money on the easy ones; using only the small model fails the hard ones. Chapter 73 previewed the arithmetic: routing 80% of calls to the 7B model would cut the blended serving floor by 60% (§73.17).
+Most support traffic is easy ("where is my order?") and a few queries are hard (a disputed refund across two orders under a changed policy). Paying the large model's price for every query wastes money on the easy ones; using only the small model fails the hard ones. Chapter 73 previewed the arithmetic: routing 80% of calls to the 7B model would cut the blended serving floor by 67% (§73.17).
 
 **Figure 78.14 — A pre-generation router and a post-generation cascade.**
 
@@ -1240,7 +1240,7 @@ On cost and success alone, the 0.7 cascade dominates the hosted model; latency p
 
 1. All in-house: tokens $75 \times \$0.93 = \$70$ a day; all-in $75 \times \$112.7 = \$8{,}453$ a day.
 2. Hosted for live chat, cascade for asynchronous: tokens $52.5 \times 12.10 + 22.5 \times 5.83 = \$635 + \$131 = \$766$; all-in $52.5 \times 46.2 + 22.5 \times 37.8 = \$2{,}426 + \$851 = \$3{,}276$ a day.
-3. The in-house fleet stays (cascade first stage and fallback), about \$135 a day mostly fixed (§73.15), so the marginal in-house cost is below its transfer price.
+3. The in-house fleet stays (cascade first stage and fallback), about \$180 a day, mostly fixed (§79.8), so the marginal in-house cost is below its transfer price.
 4. Sensitivity: the hosted model beats the 7B all-in when $0.00093 + 0.223V > 0.0121 + 0.068V$, that is, when $V > 0.01117/0.155 = \$0.072$ per wrong answer.
 
 **Interpretation.** The token bill rises elevenfold, from \$70 to \$766 a day, and the all-in cost falls by \$5,177 a day, because wrong answers are expensive and the 7B fails 22% of queries. The decision flips only if a wrong answer costs less than about 7 cents. **Engineering implication.** Price failure before comparing token bills, and treat $V$ as a measured quantity (from recontact and handoff data in A/B tests, §78.11), not a guess. Raising the small model's quality (Chapters 75–76) shifts the whole frontier.
@@ -1293,7 +1293,7 @@ A useful **gate rule** for QuickBite: block if the lower bound of the 95% paired
 :::
 
 ::: industry
-**DoorDash's quality pipeline for support automation.** DoorDash described a RAG-based support assistant for couriers with an online guardrail that checks responses before they are shown, an LLM judge that grades sampled conversations on several quality dimensions, and a quality pipeline that feeds graded failures back into prompts and the knowledge base. The post reports that the guardrail reduced hallucinations by 90% and severe compliance issues by 99% (as reported, not independently verified). Its architecture shows the loop of Figure 78.1 in production: online checks, offline judging, and failures flowing back into the evaluation and improvement process.
+**DoorDash's quality pipeline for support automation.** The courier-support assistant summarized in §75.12 pairs an online guardrail that checks responses before they are shown with an LLM judge that grades sampled conversations on several quality dimensions, and feeds graded failures back into prompts and the knowledge base: the loop of Figure 78.1 in production. Its reported reductions in hallucinations (90%) and severe compliance issues (99%) are the company's own figures.
 *Evidence: Primary* — [DoorDash 2024]
 :::
 

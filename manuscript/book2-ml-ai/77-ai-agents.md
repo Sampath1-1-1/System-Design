@@ -166,7 +166,7 @@ flowchart TB
   OBS -.-> TS[(Trace and eval store)]
 ```
 
-**Reading the diagram.** Customers connect over WebSocket to the chat gateway (§9.6). A router, one small-model call, sends questions to RAG and actions to the orchestrator. The orchestrator runs on a workflow engine that checkpoints each step; it calls the policy LLM over HTTPS and sends every proposed tool call through guardrails before the tool layer executes it with scoped credentials. Actions above policy limits go asynchronously to a review queue read by human agents. Traces flow asynchronously to the trace pipeline. Storage boundaries: task state, memory and traces are separate stores with separate retention rules (§77.7.4). Failure points: the policy LLM (latency, outages, wrong calls), downstream services (timeouts) and the review queue (backlog). Scaling: orchestrator workers are stateless and scale horizontally; the policy LLM is the bottleneck in cost and latency (§77.17).
+**Reading the diagram.** Customers connect over WebSocket to the chat gateway (§9.6). A router, one small-model call, sends questions to RAG and actions to the orchestrator. The orchestrator runs on a workflow engine that checkpoints each step; it calls the policy LLM over HTTPS and sends every proposed tool call through guardrails before the tool layer executes it with scoped credentials. Actions above policy limits go asynchronously to a review queue read by human agents. Traces flow asynchronously to the trace pipeline. Storage boundaries: task state, memory and traces are separate stores with separate retention rules (§77.7.3). Failure points: the policy LLM (latency, outages, wrong calls), downstream services (timeouts) and the review queue (backlog). Scaling: orchestrator workers are stateless and scale horizontally; the policy LLM is the bottleneck in cost and latency (§77.17).
 
 ### 77.4.2 Where control and trust live
 
@@ -623,7 +623,7 @@ $$P_\text{task}(r) = \left[(1 - q_d - q_u)\sum_{k=0}^{r} q_d^{\,k}\right]^n \;\x
 3. Unlimited retries: per-step ceiling $= 0.95 / 0.96 = 0.98958$. For $n = 20$: $0.98958^{20} = e^{20 \ln 0.98958} = e^{-0.2095} = 0.811$.
 4. Silent errors alone at $n = 20$: $0.99^{20} = 0.818$, so the ceiling of step 3 is essentially "no silent error in 20 steps".
 
-**Interpretation.** One retry recovers most of the loss from detectable errors (0.599 → 0.886 at ten steps); further retries add almost nothing, because the remaining failures are silent. **Engineering implication.** Keep tasks short (collapse steps with parallel calls and coarser tools), retry detectable errors once or twice, and spend effort converting silent errors into detectable ones: preconditions, cross-checks against looked-up state, and human review of high-value actions. A twenty-step agent at 95% per step is a coin flip without retries.
+**Interpretation.** One retry recovers most of the loss from detectable errors (0.599 → 0.886 at ten steps); further retries add almost nothing, because the remaining failures are silent. **Engineering implication.** Keep tasks short (collapse steps with parallel calls and coarser tools), retry detectable errors once or twice, and spend effort converting silent errors into detectable ones: preconditions, cross-checks against looked-up state, and human review of high-value actions. A twenty-step agent at 95% per step fails almost two tasks in three without retries.
 :::
 
 The independence assumption is optimistic in one way and pessimistic in another. Errors correlate within a task (a misunderstood request poisons every step), which makes long tasks worse than $p^n$; but agents also recover (a later observation reveals an earlier mistake), which makes them better. Measure per-step and per-task rates on your own trajectories (§77.14) rather than trusting the formula's inputs. The simulation below checks the formula and adds the cost side: how many attempts retries consume.
@@ -697,7 +697,7 @@ Three techniques keep it bounded. **Trimming** tool results at the tool layer: r
 ### 77.7.2 Long-term memory: episodic and semantic
 
 ::: definition
-**Definition — Episodic and semantic memory.** **Episodic memory** stores records of specific past events ("on 3 May the customer reported a missing drink on order Q-0877 and received \$4"). **Semantic memory** stores general facts distilled from many events or sources ("this customer prefers contactless delivery"; "the late-delivery policy grants 50% above 30 minutes"). In agents, both are usually stored outside the model and retrieved into the prompt by relevance.
+**Definition — Episodic and semantic memory.** **Episodic memory** stores records of specific past events ("on 3 May the customer reported a missing drink on order Q-0877 and received \$4"). **Semantic memory** stores general facts distilled from many events or sources ("this customer prefers contactless delivery"; "the late-order refund policy grants 50% above 30 minutes"). In agents, both are usually stored outside the model and retrieved into the prompt by relevance.
 :::
 
 The terms come from cognitive psychology, and the generative agents of Park et al. made them concrete for LLMs. Each of 25 simulated characters kept a **memory stream** of natural-language observations; retrieval scored each memory by a weighted sum of **recency** (exponential decay since last access), **importance** (a 1–10 score the model assigned when writing) and **relevance** (embedding similarity to the current situation); periodic **reflection** synthesized higher-level memories from recent ones, which then fed planning [Park et al. 2023]. Production memory systems keep this shape: an event store, a retrieval score and background consolidation into facts.
@@ -1031,7 +1031,7 @@ QuickBite's refund policy, expressed as code in the policy engine (§50.5.4) rat
 
 1. **Ownership.** The order belongs to the authenticated session's customer.
 2. **Precondition.** The order was looked up in this task, and the refund reason matches its facts (late-delivery refunds require `late_min ≥ 30`).
-3. **Amount.** At most the order total minus prior refunds; at most the policy entitlement (50% for 30–59 minutes late, 100% for 60+ or a missing order).
+3. **Amount.** At most the order total minus prior refunds; at most the refund entitlement for late orders with a food complaint, which Chapter 75's automatic 20% late credit does not settle (50% for 30–59 minutes late, 100% for 60+ or a missing order).
 4. **Auto-approval limit.** At most \$25 per refund without approval.
 5. **Spend caps.** At most \$40 per customer per 30 days automatically; at most \$75,000 per day across the agent fleet. A breach of the fleet cap halts automatic refunds and pages the on-call.
 6. **Allow-lists.** Reasons from an enum; tools from the agent's registry; no tool may take a free-form payment destination.
@@ -1106,7 +1106,7 @@ $$a = \lambda_\text{peak}\, S, \qquad c = \left\lceil \frac{a}{\rho_\text{target
 
 1. $\lambda_\text{peak} = 90$ per hour; $a = 90 \times 2/60 = 3.0$ reviewers busy.
 2. At $\rho_\text{target} = 0.75$: $c = \lceil 3.0 / 0.75 \rceil = 4$.
-3. Waiting, treating the queue as M/M/c (§4): with 4 reviewers, the Erlang C probability of waiting is 0.51 and the mean wait $0.51 \times 2/(4 - 3) = 1.0$ minute; the probability of waiting more than 5 minutes is $0.51\, e^{-(4-3) \times 5/2} = 0.042$. With 5 reviewers: mean wait 0.24 minutes, and 0.2% wait over 5 minutes.
+3. Waiting, treating the queue as M/M/c (§4.10.4): with 4 reviewers, the Erlang C probability of waiting is 0.51 and the mean wait $0.51 \times 2/(4 - 3) = 1.0$ minute; the probability of waiting more than 5 minutes is $0.51\, e^{-(4-3) \times 5/2} = 0.042$. With 5 reviewers: mean wait 0.24 minutes, and 0.2% wait over 5 minutes.
 4. Cost: $900 \times 2/60 = 30$ reviewer-hours of work a day, \$900 at \$30/hour, or \$1.00 per approval; staffed hours exceed this, since utilization outside the peak is lower.
 
 **Interpretation.** Four or five reviewers at peak keep approvals within the 15-minute promise with large margin; the human cost is \$1 per gated refund. **Engineering implication.** The threshold is an economic dial: raising the auto-limit from \$25 to \$35 shrinks the queue by however many refunds fall between the two amounts, but increases the money at risk per silent error. Choose it from measured error rates and amounts, and revisit it as the agent improves. Watch for **automation bias**: reviewers who approve 99.5% of items are not reviewing; seed the queue with known-bad items and measure catch rate.
@@ -1199,28 +1199,7 @@ Chapter 78 owns evaluation methodology (benchmarks, LLM-as-a-judge, human evalua
 
 **Offline scenario suites** are the agent's integration tests: a few hundred scripted tasks with a simulated customer, mocked tools with fixed data and an expected final state. τ-bench builds this for retail and airline customer service, judging success by comparing the final database state to the goal (§78.6.4); its authors found that even state-of-the-art function-calling agents such as GPT-4o succeeded on fewer than half of the tasks and were inconsistent, with pass^8 below 25% in the retail domain [Yao et al. 2024]. SWE-bench does the same for coding agents with 2,294 real GitHub issues from 12 Python repositories, judged by the repositories' own tests [Jimenez et al. 2024]. Kapoor et al. argue that agent evaluations must report cost alongside accuracy, because accuracy can be bought with repeated calls [Kapoor et al. 2024].
 
-::: formula
-**pass^k from repeated trials**
-
-$$\widehat{\text{pass}^k} = \frac{1}{|T|}\sum_{t \in T} \frac{\binom{c_t}{k}}{\binom{n_t}{k}}$$
-
-| Symbol | Meaning | Units |
-|---|---|---|
-| $T$ | Set of tasks in the suite | tasks |
-| $n_t$ | Trials run for task $t$ | trials |
-| $c_t$ | Successful trials for task $t$ | trials |
-| $k$ | Number of runs that must all succeed | trials |
-:::
-
-::: example
-**Worked example — Consistency hidden by the average.** Two refund scenarios, 8 trials each. Scenario A succeeds 8 of 8; scenario B succeeds 6 of 8.
-
-1. pass^1 $= (8/8 + 6/8)/2 = 0.875$.
-2. pass^4: A $= \binom{8}{4}/\binom{8}{4} = 1$; B $= \binom{6}{4}/\binom{8}{4} = 15/70 = 0.214$. Mean $= 0.607$.
-3. pass^8: A $= 1$, B $= 0$. Mean $= 0.5$.
-
-**Interpretation.** An 87.5% success rate hides that scenario B fails one customer in four, and with 6,000 refund tasks a day, similar customers will hit it hundreds of times. **Engineering implication.** Run each scenario several times at production temperature, report pass^k with $k$ matched to how often a task type recurs, and gate releases on it.
-:::
+pass^k, the probability that all $k$ repeated runs of a task succeed, is estimated from $n$ trials with $c$ successes per task as $\binom{c}{k}/\binom{n}{k}$, averaged over tasks (§78.6.3). It exposes inconsistency that the average hides: a refund scenario that succeeds in 6 of 8 trials has pass^1 = 0.75 but pass^4 = 0.21, and with 6,000 refund tasks a day similar customers will hit its failing path hundreds of times. Run each scenario several times at production temperature, report pass^k with $k$ matched to how often a task type recurs, and gate releases on it.
 
 **Figure 77.17 — Offline and online evaluation loop.**
 
@@ -1349,7 +1328,7 @@ $$T_\text{first} = \sum_{i=1}^{n-1}\left(t_\text{ovh} + o_i\, t_\text{tok} + t_{
 **Interpretation.** 82% of each step is output decoding ($2.0$ of $2.45$ s), so the lever is fewer output tokens per step (terse tool calls, no restated reasoning) and fewer steps, not faster tools. **Engineering implication.** Stream the final reply, send a progress message ("checking your order...") after the first step, collapse steps with parallel calls, and set a per-task deadline (§22.11) that leaves time for a graceful handoff.
 :::
 
-**Figure 77.19 — Critical path of task T-501, p50, in milliseconds.**
+**Figure 77.19 — Critical path of a p50 refund task, in milliseconds.**
 
 ```mermaid
 gantt

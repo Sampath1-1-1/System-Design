@@ -538,7 +538,7 @@ $$C_\text{ICL} = R \cdot n_\text{ex} \cdot t_\text{ex} \cdot p_\text{in} \cdot \
 2. Static examples in the cached prefix, $h = 0.95$, $\delta = 0.1$: factor $1 - 0.95 \times 0.9 = 0.145$, so \$2.28 a day; TTFT $+0.05 \times 29.7 = 1.5$ ms.
 3. Per-request retrieved examples cannot be cached ($h = 0$): back to \$15.75 a day and 29.7 ms, plus an embedding lookup.
 4. Capacity: $\lfloor (5{,}882 - 1{,}050)/440 \rfloor = \lfloor 10.98 \rfloor = 10$ chunks fit instead of 13.
-5. KV memory: 1,050 tokens × 524 KB = 550 MB per concurrent sequence if not shared; with 46 concurrent sequences on a GPU (§73.8) that is 25 GB of KV cache, unless the shared prefix is stored once.
+5. KV memory: 1,050 tokens × 524 KB = 550 MB per concurrent sequence if not shared; with the roughly 24 RAG-length sequences that fill a 103,000-token KV pool (§73.5), 13 GB of KV cache, unless the shared prefix is stored once.
 
 **Interpretation.** Static few-shot examples are cheap when cached; dynamic ones cost full price and latency, and both consume context and, without prefix sharing, KV memory. **Engineering implication.** Prefer static, cached demonstrations; retrieve examples only where they measurably help; and treat "we need more and more examples" as evidence for fine-tuning.
 :::
@@ -569,7 +569,7 @@ A base model continues documents; an assistant answers. Ouyang et al. found that
 2. **Render with the chat template** of the model you will serve, byte-for-byte the same template the inference server uses (§72.4.6). A mismatch is a silent training–serving skew.
 3. **Tokenize and build labels**: copy input IDs to labels, then replace every system, user and tool token with an ignore value. Keep the end-of-turn token in the loss, or the model never learns to stop.
 4. **Pack** short conversations into fixed-length sequences (2,048 tokens here) with attention masks that stop examples attending to each other, to avoid wasting compute on padding.
-5. **Train** for one to three epochs at a small learning rate with warmup (§58), evaluating on a held-out set every few hundred steps; stop on validation loss and on task metrics.
+5. **Train** for one to three epochs at a small learning rate with warmup (§58.5.3), evaluating on a held-out set every few hundred steps; stop on validation loss and on task metrics.
 
 **Figure 76.7 — From a logged conversation to a masked training sequence.**
 
@@ -969,7 +969,7 @@ flowchart LR
   E2 --> OUT
 ```
 
-**Reading the diagram.** Each request names its adapter; the router prefers a replica already holding it, as prefix-aware routing does for KV blocks (§73.8). Adapters load asynchronously from the registry (object storage, §15) into a host cache and are paged into GPU memory beside the KV cache. One batch mixes adapters: the base multiply is shared and a gathered kernel applies each $B_iA_i$. Hot-swapping is a pointer change plus a load. Failure points: cold-load latency in TTFT, hot spots for popular adapters, and an adapter trained on another base version producing garbage silently, so key adapters by base checksum.
+**Reading the diagram.** Each request names its adapter; the router prefers a replica already holding it, as prefix-aware routing does for KV blocks (§73.8). Adapters load asynchronously from the registry (object storage, §15.4) into a host cache and are paged into GPU memory beside the KV cache. One batch mixes adapters: the base multiply is shared and a gathered kernel applies each $B_iA_i$. Hot-swapping is a pointer change plus a load. Failure points: cold-load latency in TTFT, hot spots for popular adapters, and an adapter trained on another base version producing garbage silently, so key adapters by base checksum.
 
 ::: formula
 **GPU memory for resident adapters**
@@ -988,7 +988,7 @@ $$M_\text{adapters} = n_a \cdot 2\,N_\text{LoRA} \qquad T_\text{displaced} = \fr
 **Worked example — Twelve chatbot variants.** QuickBite wants adapters for three audiences (customers, couriers, merchants) in four markets: 12 variants, attention-only $r = 16$ adapters of 33.6 MB. An H100 replica holds the 13.5 GB base and a KV pool of about 103,000 tokens (§73.8).
 
 1. Merged: 12 models × 13.5 GB = 162 GB of weights; with two replicas each for availability, 24 GPUs, most of them idle at 8 queries per second.
-2. Multi-LoRA: $12 \times 33.6$ MB $= 0.40$ GB per replica, displacing $0.40 \times 10^9 / 524{,}288 = 769$ KV tokens, 0.75% of the pool. Three replicas serve every variant (§73.15).
+2. Multi-LoRA: $12 \times 33.6$ MB $= 0.40$ GB per replica, displacing $0.40 \times 10^9 / 524{,}288 = 769$ KV tokens, 0.75% of the pool. The shared pool of §79.8 serves every variant.
 3. Extra compute per token: $2 \times 16.8 \times 10^6 = 3.4 \times 10^7$ FLOPs against $2 \times 6.74 \times 10^9 = 1.35 \times 10^{10}$ for the base, 0.25%; the real overhead is kernel efficiency on mixed batches.
 
 **Interpretation.** Multi-LoRA turns "one GPU fleet per variant" into "one fleet for all variants" at a fraction of a percent of memory. **Engineering implication.** Merge when you serve one or two variants at high volume and want the fastest kernels; use multi-LoRA when variants multiply (per market, per tenant, per experiment), and version adapters against the exact base checksum.
