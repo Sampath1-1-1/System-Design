@@ -2,11 +2,9 @@
 
 > **Level:** 4–5 · **Track:** B (ML/AI) · **Estimated reading time:** 5.5 h
 
-Chapter 73 served one model well: one engine, one fleet, one set of service-level objectives (SLOs). Real organizations rarely stop at one. Within a year of its first chatbot, a company typically has a support assistant, a batch job enriching catalog data, internal agents calling a frontier model through an external API, embedding models behind search, and a dozen teams asking for "just an API key". Each team that builds its own stack repeats the same work: provider keys in config files, retry logic, cost spreadsheets, prompt logs with customer data in them, and a GPU fleet that idles at 10% because nobody else may use it.
+Chapter 73 served one model well: one engine, one fleet, one set of service-level objectives (SLOs). Real organizations rarely stop at one: within a year there is a support assistant, a batch job enriching catalog data, internal agents calling a frontier API, embedding models behind search, and a dozen teams asking for "just an API key". Each team that builds its own stack repeats the same work: provider keys in config files, retry logic, cost spreadsheets, prompt logs full of customer data, and a GPU fleet idling at 10%.
 
-This chapter is about the **platform layer** that serves many AI applications and teams at once: the model gateway every request passes through, the inference router that picks a replica, multi-model serving on shared GPUs, GPU cluster management, quotas measured in tokens, tenant isolation, multi-region operation, caching, AI-specific observability, privacy controls, cost allocation and the build-versus-buy decision. It is to LLM serving what Chapter 47 (multi-tenancy) and Chapter 22 (API traffic management) are to ordinary services, and it reuses their mechanisms wherever it can.
-
-The chapter builds on others and does not re-teach them. Single-model LLM serving (continuous batching, KV-cache memory, prefix caching, capacity per GPU) is Chapter 73; classic model serving and autoscaling are Chapter 66; *which* model should answer (quality-aware routing, fallback models, evaluation) is Chapter 78, while this chapter implements routing and fallback in the platform; tenancy models and fair queuing are Chapter 47; token buckets are §22.4; multi-region topologies and residency are Chapter 44; observability foundations are Chapter 40; privacy engineering is Chapter 50; FinOps is Chapter 51; the model registry is §69.8. Building and operating training clusters of 10,000+ GPUs belongs to Chapter 80.
+This chapter is about the **platform layer** that serves many AI applications and teams at once: gateways, routers, multi-model serving, GPU cluster management, token quotas, tenant isolation, multi-region operation, caching, observability, privacy, cost allocation and build versus buy. It reuses the mechanisms of Chapters 22, 40, 44, 47, 50 and 51 and cross-references them. Single-model serving is Chapter 73; *which* model should answer (quality-aware routing, fallbacks, evaluation) is Chapter 78, while this chapter implements routing in the platform; training clusters of 10,000+ GPUs are Chapter 80.
 
 ::: note
 **Assumptions used in this chapter.** These extend the Book II design point and are teaching assumptions, not measurements of any real company. Units are SI (1 GB = 10⁹ bytes). GPUs are NVIDIA H100 80 GB at an illustrative \$2.50 per GPU-hour (§60.11). From Chapter 73 (§73.15), the self-hosted **7B chatbot model** in FP16 on one H100 costs **28.3 µs of GPU time per uncached prompt token** and **0.567 ms per output token** at its memory-limited batch of 46 (decode step 26.1 ms); the **70B option** on four GPUs costs 283 µs per prompt token and 0.586 ms per output token per GPU. **Support chatbot** (Chapter 75): 75,000 retrieval-augmented generation (RAG) queries a day, peak 8 queries/s, each about 4,500 input tokens (of which a 700-token system prompt is prefix-cached) and 230 output tokens. **New in this chapter**, QuickBite consolidates its AI workloads onto one **AI platform** with the tenants of Table 79.1. External API prices are illustrative round numbers, not any provider's price list: a **frontier API** at \$3.00 per million input tokens and \$15.00 per million output tokens, and a **small-model API** at \$0.15 and \$0.60. Regions are those of Chapter 44: United States (Virginia), European Union (Frankfurt) and Asia-Pacific (Tokyo).
@@ -26,16 +24,14 @@ The chapter builds on others and does not re-teach them. Single-model LLM servin
 
 After this chapter you should be able to:
 
-- Explain why organizations centralize AI serving into a platform, and name its users and the governance, cost and reuse problems it solves.
-- Draw a reference architecture for an AI platform that separates the control plane (registry, policy, quotas, billing) from the data plane (gateway, router, serving pools, caches, logs).
+- Explain why organizations centralize AI serving, and draw a reference architecture that separates the control plane from the data plane.
 - Design a model gateway that normalizes requests across providers, streams responses, retries safely and fits within an overhead budget you can compute.
 - Compare round-robin, least-outstanding-tokens and prefix-affinity routing for LLM pools, and reproduce their trade-offs with a simulator.
 - Place many models and LoRA adapters on shared GPUs, size node pools and MIG partitions, autoscale on LLM signals, and plan for cold starts of large models.
 - Enforce quotas in tokens per minute with estimated-then-reconciled accounting, reservations and priority tiers.
 - Isolate tenants on shared GPUs with per-tenant queues, fair scheduling, data isolation and dedicated capacity tiers.
-- Operate AI services across regions under GPU scarcity and data-residency rules, and decide where caching pays.
-- Instrument per-request tokens, time to first token (TTFT), time per output token (TPOT) and cost; protect prompts and responses; and allocate the platform's cost to teams.
-- Compute the break-even volume between self-hosting and external APIs in tokens per month.
+- Operate across regions under GPU scarcity and residency rules, and decide where caching pays.
+- Instrument tokens, time to first token (TTFT), time per output token (TPOT) and cost; protect prompts; allocate cost to teams; and compute the self-host versus API break-even.
 
 ## 79.2 Prerequisites
 
@@ -58,7 +54,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of a hospital pharmacy. Every ward could keep its own drug cabinet, ordered from its own suppliers, but then nobody knows what is stocked, expired drugs accumulate, controlled substances are untracked and each ward pays retail. A central pharmacy buys in bulk, tracks every dose to a patient and a prescriber, enforces rules about who may dispense what and lets wards focus on patients. An AI platform is the central pharmacy for model calls: it knows every model in use, every caller, every token, and the rules that apply to each.
+Think of a hospital pharmacy. Every ward could keep its own drug cabinet, but then nobody knows what is stocked, controlled substances are untracked and each ward pays retail. A central pharmacy buys in bulk, tracks every dose to a patient and enforces who may dispense what. An AI platform is the central pharmacy for model calls: it knows every model, caller and token, and the rules that apply to each.
 
 #### Why does this exist?
 
@@ -68,43 +64,9 @@ Three pressures push organizations from per-team stacks to a platform:
 2. **Cost.** GPU fleets sized per team idle most of the day; QuickBite's chatbot alone needs three GPUs to do about one GPU's work (§73.15). Pooling tenants with different peaks (online by day, batch by night) raises utilization, and one negotiated contract per provider beats twenty credit-card accounts. Spend becomes visible per team (§79.15).
 3. **Reuse.** Retries, fallbacks, streaming, token counting, caching, evaluation hooks and dashboards are the same for every team. Built once, they are built better.
 
-The pressures compound: centralization makes cost visible, and visible cost makes governance enforceable.
-
-#### How it works internally
-
-A request from any client takes the same path:
-
-1. The client calls one OpenAI-style endpoint with a platform key, a model *alias* (for example `support-default`) and its prompt.
-2. The **gateway** authenticates the key, maps it to a tenant, checks token quotas, applies policy (allowed models, redaction, residency) and normalizes the request.
-3. The **router** resolves the alias to a concrete deployment (self-hosted pool or external provider, region, version) and picks a replica.
-4. The **serving pool** runs the model; tokens stream back through the router and gateway.
-5. Asynchronously, the platform records usage (tokens, latency, cost), logs the prompt and response under privacy rules, and updates quotas and bills.
-
-**Figure 79.1 — From per-team stacks to a shared AI platform.**
-
-```mermaid
-flowchart LR
-  subgraph Before["Before: one stack per team"]
-    A1([Support app]) -->|own key| P1{{Provider A}}
-    A2([Menu job]) -->|own GPU| G1["Dedicated GPU,<br/>idle at night"]
-    A3([Ops agent]) -->|own key| P2{{Provider B}}
-  end
-  subgraph After["After: shared platform"]
-    B1([Support app]) --> GW["Model gateway"]
-    B2([Menu job]) --> GW
-    B3([Ops agent]) --> GW
-    GW --> RT["Router"]
-    RT --> POOL["Shared GPU pool"]
-    RT --> EXT{{External providers}}
-    GW -.->|usage, logs| LED[("Usage ledger")]
-  end
-```
-
-**Reading the diagram.** On the left, each team holds its own provider key or GPU: three contracts, three logging practices and one GPU that idles all night. On the right, every client sends synchronous HTTPS requests (solid arrows) to the gateway, which forwards them through the router to either the shared GPU pool or an external provider. Usage and logs flow asynchronously (dotted) into a ledger, the storage boundary for billing and audit. The gateway is now a single point of failure, so it runs as a stateless, horizontally scaled tier in every region; the shared pool scales by adding replicas, and batch work fills the troughs that online work leaves.
-
 #### Advantages and disadvantages
 
-A platform gives one enforcement point, pooled capacity, consistent observability and negotiated prices. It costs a platform team, a new hop on every request (§79.5.2), a shared fate (a gateway bug breaks every AI feature at once) and a temptation to standardize too early on one provider's API shape. Most organizations start with a thin gateway (keys, quotas, logs) and add routing, caching and self-hosted pools as volume justifies them.
+A platform gives one enforcement point, pooled capacity, consistent observability and negotiated prices. It costs a platform team, a new hop on every request (§79.5), a shared fate (a gateway bug breaks every AI feature at once) and a temptation to standardize too early on one provider's API shape. Most organizations start with a thin gateway (keys, quotas, logs) and add routing, caching and self-hosted pools as volume justifies them.
 
 ::: mistake
 **Misconception — "A platform means self-hosting everything."** Most platforms route the majority of tokens to external APIs at first. The platform's value is the control point, not the GPUs; self-hosting is a separate, per-model decision made with the break-even analysis of §79.16.
@@ -118,9 +80,9 @@ A platform gives one enforcement point, pooled capacity, consistent observabilit
 **Definition — AI platform control plane and data plane.** The **data plane** carries requests and tokens: clients, model gateway, inference router, serving pools (self-hosted engines on GPU clusters and external providers), caches and the request log stream. The **control plane** decides how the data plane behaves and is off the request path: the model registry and deployment catalog, policy (who may call what, with which data controls), quota and tenant configuration, the billing and usage ledger, and the controllers that place models on GPUs and scale them (§47.10).
 :::
 
-The split matters for availability. The data plane must keep serving if the control plane is down: gateways cache keys, quotas and routing tables and keep the last good configuration, as service-mesh sidecars do (§34.10). The control plane may lag by seconds without harm; a request path that synchronously calls the billing database on every token would not survive the first database incident.
+The split matters for availability: the data plane must keep serving if the control plane is down, so gateways cache keys, quotas and routing tables and keep the last good configuration, as service-mesh sidecars do (§34.10).
 
-**Figure 79.2 — Reference architecture of an AI platform.**
+**Figure 79.1 — Reference architecture of an AI platform.**
 
 ```mermaid
 flowchart TB
@@ -149,24 +111,19 @@ flowchart TB
   PLACE -.-> GPU
 ```
 
-**Reading the diagram.** The data plane runs top to bottom. Clients send HTTPS requests, streamed back as Server-Sent Events (SSE, §9.5); the gateway authenticates, checks quotas and policy and may answer from the response cache; the router chooses between self-hosted pools (gRPC or HTTP inside the cluster) and external providers (HTTPS over the internet). Pools run on GPU clusters split into node pools and MIG slices (§79.8). Every request emits usage and log events asynchronously into a stream (dotted), consumed by the usage ledger and a redacted prompt log store, the two main storage boundaries. The control plane pushes configuration asynchronously: the registry tells the router what exists, policy and quota services configure the gateway, billing reads the ledger, and the placement controller decides which models run on which GPUs. Failure points: the gateway and router are on every request and must be replicated per region; the quota service must fail open or closed by policy (§79.9); external providers fail independently and need fallbacks. Scaling: gateways scale horizontally on CPU; pools scale on LLM signals (§79.8.3).
+**Reading the diagram.** The data plane runs top to bottom: clients send HTTPS requests, streamed back as Server-Sent Events (SSE, §9.5); the gateway authenticates, checks quotas and policy and may answer from the response cache; the router chooses between self-hosted pools (gRPC or HTTP) and external providers (HTTPS). Usage and log events flow asynchronously (dotted) into the usage ledger and a redacted prompt log store, the two main storage boundaries. The control plane pushes configuration asynchronously: registry to router, policy and quotas to gateway, ledger to billing, placement to GPUs. Failure points: the gateway and router are on every request and must be replicated per region; the quota service must fail open or closed by policy (§79.9); external providers fail independently and need fallbacks. Scaling: gateways scale horizontally on CPU; pools scale on LLM signals (§79.8).
 
 #### How it works internally
 
 1. **Registration.** A team registers a model version in the registry (§69.8) with its serving metadata: engine, GPU type, memory, context length, adapters, evaluation results and data-handling class.
 2. **Deployment.** The placement controller creates or updates a serving pool, the router learns its endpoints, and an alias (`support-default → qb-7b@v14 + support-lora@v6`) is published.
 3. **Serving.** Requests flow gateway → router → pool, with fallbacks to other pools or providers.
-4. **Metering.** Usage events (tenant, alias, deployment, input, cached and output tokens, latency, status) land in the ledger within seconds; quotas reconcile against them (§79.9.3).
+4. **Metering.** Usage events (tenant, alias, deployment, input, cached and output tokens, latency, status) land in the ledger within seconds; quotas reconcile against them (§79.9).
 5. **Accounting.** Billing aggregates the ledger monthly and produces showback or chargeback (§79.15).
 
 ::: industry
-**Open-source platform building blocks.** As of 2026, several open-source projects implement parts of this architecture. LiteLLM provides a Python SDK and a proxy server that expose many providers behind an OpenAI-compatible API, with virtual keys, per-key and per-team budgets, tokens-per-minute and requests-per-minute limits, fallbacks and spend tracking [LiteLLM Docs]. Envoy AI Gateway extends Envoy Gateway with a unified API to multiple providers, upstream credential injection and token-usage-based rate limiting [Envoy AI Gateway Docs]. The Kubernetes Gateway API Inference Extension adds LLM-aware endpoint selection to Kubernetes gateways (§79.6.4) [Kubernetes Blog 2025], and KServe provides Kubernetes custom resources for deploying and autoscaling model servers, including LLM runtimes [KServe Docs].
+**Open-source platform building blocks.** As of 2026, several open-source projects implement parts of this architecture. LiteLLM provides a Python SDK and a proxy server that expose many providers behind an OpenAI-compatible API, with virtual keys, per-key and per-team budgets, tokens-per-minute and requests-per-minute limits, fallbacks and spend tracking [LiteLLM Docs]. Envoy AI Gateway extends Envoy Gateway with a unified API to multiple providers, upstream credential injection and token-usage-based rate limiting [Envoy AI Gateway Docs]. The Kubernetes Gateway API Inference Extension adds LLM-aware endpoint selection to Kubernetes gateways (§79.6.3) [Kubernetes Blog 2025], and KServe provides Kubernetes custom resources for deploying and autoscaling model servers, including LLM runtimes [KServe Docs].
 *Evidence: Primary* — project documentation.
-:::
-
-::: industry
-**Uber's GenAI Gateway.** Uber has described an internal gateway that gives its teams one interface to both external and self-hosted LLMs, with centralized logging, cost attribution and personally identifiable information (PII) redaction, so product teams need not integrate each provider separately [Uber Engineering 2024].
-*Evidence: Primary* — company engineering blog (details as published; see Open verification items).
 :::
 
 #### Alternatives and trade-offs
@@ -180,15 +137,6 @@ flowchart TB
 | Central gateway | All calls pass one proxy | Enforceable policy, metering, keys never leave platform | Extra hop and shared fate | Several teams, customer data in prompts |
 | Full AI platform | Gateway + router + self-hosted pools + billing | Pooled GPUs, chargeback, multi-region | Largest investment | Large or regulated token volumes |
 
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| All AI features fail at once | Bad gateway config pushed globally | Error rate on every alias | Roll back config | Staged config rollout per region and tenant |
-| Requests succeed but nothing is billed | Usage stream consumer lagging or dropping | Ledger tokens below gateway counters | Replay stream from retained offsets | Reconcile ledger with gateway counters hourly |
-| Control-plane outage blocks traffic | Gateway calls policy service synchronously | Latency rises with policy service latency | Serve from cached config | Cache config with TTL; fail static |
-| Teams bypass the platform | Provider keys leak into repositories | Provider bills include unknown keys | Rotate keys | Platform holds all provider keys; secret scanning |
-
 ## 79.5 Model gateways
 
 ### 79.5.1 One API in front of many models
@@ -199,11 +147,11 @@ flowchart TB
 
 #### First-principles explanation
 
-A travel adapter lets one plug fit sockets in many countries. The gateway is a travel adapter for model APIs, plus a meter on the wire: whatever the socket (a self-hosted vLLM pool, a frontier provider, an embedding service), the client's plug stays the same, and every unit of electricity is counted and billed to a room.
+The gateway is a travel adapter plus a meter: whatever the socket (a vLLM pool, a frontier provider, an embedding service), the client's plug stays the same, and every unit of electricity is counted and billed to a room.
 
 #### Why does this exist?
 
-Provider APIs differ in small, expensive ways: where the system prompt goes, how tool calls and their results are represented, the names of streaming events, how token usage is reported, which errors mean "retry" and which mean "give up". A team that switches provider rewrites its client; a platform that wants fallbacks across providers must translate on the fly. Credentials are the second reason: if provider keys live in every service, they leak, and nobody can revoke one team's access without breaking another's. The gateway holds provider keys and hands teams **virtual keys** that map to a tenant, a budget and a set of allowed models.
+Provider APIs differ in small, expensive ways: where the system prompt goes, how tool calls are represented, the names of streaming events, how usage is reported, which errors mean "retry". A platform that wants fallbacks across providers must translate on the fly. And provider keys spread across services leak and cannot be revoked per team. The gateway holds provider keys and hands teams **virtual keys** that map to a tenant, a budget and a set of allowed models.
 
 #### How it works internally
 
@@ -219,7 +167,7 @@ A request passes a chain of filters, each cheap and ordered so that the cheapest
 8. **Stream back.** Relay tokens as they arrive without buffering, translating each streamed event into the client format and counting output tokens.
 9. **Finalize.** Read the provider's reported usage, reconcile the quota reservation, emit the usage event and the (redacted) log record asynchronously.
 
-**Figure 79.3 — Request lifecycle through the gateway, with a fallback before the first token.**
+**Figure 79.2 — Request lifecycle through the gateway, with a fallback before the first token.**
 
 ```mermaid
 sequenceDiagram
@@ -248,13 +196,13 @@ sequenceDiagram
 
 #### Normalization, streaming, retries and timeouts
 
-**Normalization** maps a canonical request (messages with roles, tools, response format, sampling parameters, `max_tokens`) to each target and back. The canonical shape most platforms choose, as of 2026, is the OpenAI-style chat-completions schema, because most open-source engines (vLLM, SGLang) also expose it [vLLM Docs]. Lossy cases need explicit policy: a parameter one provider lacks (a sampling knob, a structured-output mode) is either dropped with a warning header or the request is rejected; silently dropping it changes behavior without telling the caller.
+**Normalization** maps a canonical request (messages, tools, response format, sampling parameters, `max_tokens`) to each target and back. Most platforms choose the OpenAI-style chat-completions schema, which open-source engines such as vLLM also expose (as of 2026) [vLLM Docs]. A parameter a target lacks is either rejected or dropped with a warning header, never silently. Some differences are features (cached-token discounts, structured-output modes), so pass explicitly marked extensions through rather than flattening to the lowest common denominator.
 
-**Streaming** keeps TTFT, not end-to-end latency, as the user-visible number (§73.4). Three rules keep a streaming proxy honest: never buffer the body (an output guardrail that needs the whole text must run on chunks or after the fact); flush each event as it arrives; and count tokens from the provider's final usage report, not by re-tokenizing streamed text, which drifts.
+**Streaming** makes TTFT the user-visible number (§73.4). Never buffer the body (an output guardrail needing the whole text must run on chunks or after the fact), flush each event, and count tokens from the provider's final usage report rather than by re-tokenizing streamed text.
 
-**Timeouts** come in three kinds for LLM calls: a **TTFT timeout** (no first token within, say, 5 s means the replica is stuck or the queue is deep), an **idle-stream timeout** (no token for 10 s during decode), and an overall **deadline** propagated from the caller (§22.11). A single 60 s request timeout, the default in many proxies, is wrong in both directions: too long to detect a stuck queue, too short for a legitimate 3,000-token answer.
+**Timeouts** come in three kinds for LLM calls: a **TTFT timeout** (no first token within, say, 5 s means the replica is stuck or the queue is deep), an **idle-stream timeout** (no token for 10 s during decode), and an overall **deadline** propagated from the caller (§22.11). A single 60 s request timeout is wrong both ways: too long to detect a stuck queue, too short for a 3,000-token answer.
 
-**Retries** (§22.12) are safe only before the first byte reaches the client, and only for errors that mean "not processed": connection failures, 429 and 503 from a pool, provider overload codes. A retry after output has started is a new request that bills tokens again and may produce different text. Retries also multiply load during an overload, so they consume a per-tenant retry budget, and the router prefers a *different* pool or provider for the retry (a fallback, Chapter 78) over the same overloaded one.
+**Retries** (§22.12) are safe only before the first byte reaches the client, and only for errors that mean "not processed": connection failures, 429 and 503 from a pool, provider overload codes. A retry after output has started bills tokens again and may produce different text. Retries draw on a per-tenant retry budget and go to a *different* pool or provider (a fallback, Chapter 78).
 
 #### Mathematical foundations: the gateway overhead budget
 
@@ -285,13 +233,6 @@ $$B_\text{gw} = S_\text{TTFT} - T_\text{net} - T_\text{engine,p95} - M \qquad T_
 **Interpretation.** A well-built gateway is cheap relative to LLM latency, so the budget is spent by optional filters (model-based redaction and guardrails) and by retries, not by proxying. **Engineering implication.** Put every filter in the budget with a measured p99; run expensive checks on a sampled or asynchronous path, or in parallel with prefill when a failed check can still cancel the stream before tokens reach the user.
 :::
 
-#### Real-world industry applications
-
-::: industry
-**Managed and open-source gateways.** As of 2026, cloud and API-management vendors offer gateway features for model traffic: for example, Azure API Management documents token-limit and token-metric policies for Azure OpenAI backends, and Cloudflare and Kong offer AI gateway products with caching, rate limiting and analytics. Open-source options include LiteLLM's proxy and Envoy AI Gateway [LiteLLM Docs; Envoy AI Gateway Docs]. The common core is the same filter chain; they differ in where they run (your cluster or the vendor's edge), which providers they translate, and how they meter tokens.
-*Evidence: Primary* — vendor and project documentation (feature names as of 2026; see Open verification items).
-:::
-
 #### Failure scenarios
 
 | What goes wrong | Why | Detection | Recovery | Prevention |
@@ -299,12 +240,6 @@ $$B_\text{gw} = S_\text{TTFT} - T_\text{net} - T_\text{engine,p95} - M \qquad T_
 | Users see answers pause, then appear all at once | A filter or proxy buffers SSE | TTFT at gateway ≫ TTFT at engine | Disable buffering filter | Streaming integration test per release |
 | Double billing and duplicated text | Retry after first token | Two usage events per request ID | Refund; fix retry policy | Retry only before first byte |
 | Retry storm during provider outage | Every client and gateway retries | Request rate to provider ≫ client rate | Circuit breaker opens (§22.13) | Retry budgets; fallback to other provider |
-| Quota service slow, all requests slow | Synchronous reservation on every call | Gateway p99 tracks quota p99 | Fall back to local per-node limits | Local token buckets with periodic sync (§22.8) |
-| Tokens under-counted | Re-tokenizing streamed text with the wrong tokenizer | Ledger vs provider invoice gap | Use provider-reported usage | Reconcile monthly against invoices |
-
-::: mistake
-**Misconception — "The gateway should hide all provider differences."** Some differences are features (a provider's cached-token discount, a specific structured-output mode). A gateway that flattens them to the lowest common denominator forces teams around it. Normalize the common path, and pass explicitly marked extensions through.
-:::
 
 ## 79.6 Inference routers
 
@@ -316,11 +251,11 @@ $$B_\text{gw} = S_\text{TTFT} - T_\text{net} - T_\text{engine,p95} - M \qquad T_
 
 #### First-principles explanation
 
-A hospital triage desk decides first *which department* (cardiology or the walk-in clinic, by severity, cost and opening hours) and then *which doctor* (the one who is free, or the one who saw this patient yesterday and already knows the history). The second choice is worth a lot: a doctor who knows the patient skips twenty minutes of reading notes. An LLM replica that already holds a conversation's KV cache skips its prefill.
+A triage desk decides first *which department*, then *which doctor*: the one who is free, or the one who saw this patient yesterday and skips twenty minutes of reading notes. An LLM replica that already holds a conversation's KV cache skips its prefill.
 
 #### Why does this exist?
 
-Classic load balancing (Chapter 19) assumes requests are short and roughly alike, so counting in-flight requests is a good load signal. LLM requests break that assumption twice. Their cost varies by 100× (a 50-token classification versus a 6,000-token agent step with a 1,000-token answer), and it is unknown at arrival because output length is unknown. And replicas are *stateful*: a replica's prefix cache (§73.8) makes the same request several times cheaper on one replica than on another. A router that ignores either fact wastes GPU time or misses latency objectives.
+Classic load balancing (Chapter 19) assumes requests are short and alike. LLM request cost varies by 100× and is unknown at arrival, because output length is unknown; and replicas are *stateful*: a prefix cache (§73.8) makes the same request several times cheaper on one replica than another.
 
 #### How it works internally
 
@@ -339,7 +274,7 @@ Classic load balancing (Chapter 19) assumes requests are short and roughly alike
 - **Prefix affinity:** score replicas by how many of the request's leading tokens they hold. Routers keep an approximate per-replica prefix tree built from the requests they sent there, since engines evict independently [Zheng et al. 2024].
 - **Bounded affinity:** follow the cache only while the target is not overloaded relative to the pool; otherwise fall back to least-loaded. Without the bound, one hot prefix (a batch job's shared system prompt) piles onto one replica.
 
-**Figure 79.4 — Router decision flow.**
+**Figure 79.3 — Router decision flow.**
 
 ```mermaid
 flowchart TB
@@ -530,22 +465,18 @@ What to notice:
 - **Bounded affinity** keeps 91% of the hits and the lowest TTFT p99 (0.07 s); its end-to-end p99 (13.2 s) is between the two because conversations hashed to the slow replica stay there while it is under the bound. A per-replica speed weight on $L_k$ would close the gap.
 - Simplifications: the router reads replica caches exactly (real routers approximate them), prefill and decode share an iteration without chunking, and there is no preemption. The ranking of policies, not the absolute numbers, is the result.
 
-### 79.6.2 Session affinity versus prefix affinity
-
-Session affinity hashes a session or conversation ID to a replica (§19.6); it is simple and works when the prefix that matters is the conversation's own history. Prefix affinity matches on token content, so it also captures sharing *across* sessions: the same system prompt, few-shot examples or retrieved document used by many users. Agents benefit most, because each step resends the whole growing context (Chapter 77). Both need consistent hashing with bounded loads (§14.8) so that adding a replica moves only a fraction of sessions, and both lose their cache on replica restarts, so a deployment rollout shows a temporary TTFT rise that should not trip alerts.
-
-### 79.6.3 Load-aware routing for LLM pools
+### 79.6.2 Load-aware routing for LLM pools
 
 Request counts are a weak signal for LLMs; outstanding tokens, queue depth and KV-cache usage are better (§73.15). Two refinements matter at scale. **Weight prompt and output tokens by cost**: in the 7B chatbot an output token costs 20× a prompt token in GPU time (0.567 ms versus 28.3 µs), so a fair "outstanding work" counter weights them accordingly. **Account for in-flight migration**: Llumnix showed that live-migrating requests (and their KV cache) between instances at runtime can rebalance load, reduce fragmentation and prioritize requests better than placement-only routing [Sun et al. 2024]; Preble studied scheduling prompts across GPUs to balance prefix reuse against load [Srivatsa et al. 2025].
 
-### 79.6.4 Routing inside Kubernetes
+### 79.6.3 Routing inside Kubernetes
 
 ::: industry
 **Gateway API Inference Extension.** A Kubernetes SIG Network project that extends Gateway API (§42.10) for self-hosted model servers. An **InferencePool** resource groups model-server pods, like a Service, and names an **Endpoint Picker** (EPP): for each request the gateway asks the picker which pod to use, and the picker decides from model-server metrics such as queue length, KV-cache utilization and active LoRA adapters, with prefix-cache-aware scoring among its plugins. A further resource maps client-facing model names to pools with a criticality level, so the picker can shed less critical traffic first [Kubernetes Blog 2025; Gateway API Inference Extension Docs].
 *Evidence: Primary* — Kubernetes project documentation and blog (API names change between versions; as of 2026).
 :::
 
-**Figure 79.5 — Endpoint selection with the Gateway API Inference Extension.**
+**Figure 79.4 — Endpoint selection with the Gateway API Inference Extension.**
 
 ```mermaid
 flowchart LR
@@ -574,7 +505,7 @@ Other systems implement the same idea: SGLang's router combines cache-aware and 
 | One replica at 100% KV, others idle | Unbounded affinity on a hot prefix | Per-replica queue spread | Drain hot replica, rebalance | Bounded affinity |
 | Tail latency doubles after scaling out | New replicas get affinity misses and full load | TTFT p99 rises with replica count changes | Ramp new replica weight | Slow start (§19.5) |
 | Herding onto the least-loaded replica | Many routers see the same stale metric | Load oscillates between replicas | Randomize | Power of two choices; shorter scrape interval |
-| Requests routed to a region the tenant may not use | Fallback rule ignores policy | Residency audit query | Block and purge logs | Policy filter before fallback (Figure 79.4) |
+| Requests routed to a region the tenant may not use | Fallback rule ignores policy | Residency audit query | Block and purge logs | Policy filter before fallback (Figure 79.3) |
 
 ## 79.7 Multi-model serving and model registries
 
@@ -592,11 +523,11 @@ An AI platform accumulates models faster than traffic: fine-tuned variants per t
 
 1. **Registry as source of truth.** Each registry entry (§69.8) carries serving metadata the platform needs: base model and adapter lineage, engine and version, precision, GPU memory at the target context, required GPU type, evaluation status, data-handling class and an owner. Aliases (`support-default`) point to entries; changing an alias is a deployment.
 2. **Placement.** A controller assigns models to pools using demand, memory and SLO class. Hot models get dedicated replicas; warm models share replicas; cold models load on demand.
-3. **Loading and eviction.** A replica loads weights from a node-local cache or object storage, warms up and joins the router; under memory pressure it evicts the least recently used model or adapter (Figure 79.6).
-4. **Adapters.** Engines such as vLLM load LoRA adapters at runtime and batch requests for different adapters together; S-LoRA stores adapters in a unified paged memory pool with the KV cache and uses custom kernels for heterogeneous-adapter batches, serving thousands of adapters on one GPU [Sheng et al. 2024a]; Punica introduced a batched kernel (SGMV) for the same purpose [Chen et al. 2024]. The router should prefer replicas that already hold the requested adapter, a filter the Endpoint Picker of §79.6.4 also applies.
+3. **Loading and eviction.** A replica loads weights from a node-local cache or object storage, warms up and joins the router; under memory pressure it evicts the least recently used model or adapter (Figure 79.5).
+4. **Adapters.** Engines such as vLLM load LoRA adapters at runtime and batch requests for different adapters together; S-LoRA stores adapters in a unified paged memory pool with the KV cache and uses custom kernels for heterogeneous-adapter batches, serving thousands of adapters on one GPU [Sheng et al. 2024a]; Punica introduced a batched kernel (SGMV) for the same purpose [Chen et al. 2024]. The router should prefer replicas that already hold the requested adapter, a filter the Endpoint Picker of §79.6.3 also applies.
 5. **Model parallelism as multiplexing.** AlpaServe showed that splitting models across GPUs with model parallelism, even when each fits on one GPU, lets several models share a larger GPU group and absorb each other's bursts, improving SLO attainment for bursty multi-model workloads [Li et al. 2023].
 
-**Figure 79.6 — Lifecycle of a model on a serving replica.**
+**Figure 79.5 — Lifecycle of a model on a serving replica.**
 
 ```mermaid
 stateDiagram-v2
@@ -642,14 +573,6 @@ $$S_\text{LoRA} = L \cdot n_\text{mat} \cdot r \cdot (d_\text{in} + d_\text{out}
 **Interpretation.** Adapters are cheap to hold; the costs are the slight per-token compute overhead of the adapter matmuls and batches split across many adapters. **Engineering implication.** Default to adapters for team-specific variants of one base; give a variant its own full model only when evaluation shows an adapter cannot reach the required quality (§76.9).
 :::
 
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Wrong model answers | Alias moved without evaluation gate | Quality metrics drop for one alias (Chapter 78) | Repoint alias | Alias changes go through CD with evaluation (§69.6) |
-| Adapter mismatched to base | Adapter trained on another base version | Garbled output, eval failure | Unload adapter | Registry enforces base lineage |
-| Load thrash | Too many warm models for memory | Load events per minute rise; TTFT spikes | Pin hot models | Admission by memory budget; fewer warm tiers |
-
 ## 79.8 GPU cluster management for inference
 
 ### 79.8.1 Node pools, bin-packing and partitions
@@ -668,9 +591,9 @@ Inference models span four orders of magnitude: a 33M-parameter reranker, a 110M
 2. **Pack small models.** First-fit decreasing by memory, subject to each replica's compute share and SLO class; latency-critical models go on MIG slices (hardware isolation), cooperative batch models may share a slice or use time-slicing.
 3. **Spread for availability.** Replicas of one model go to different nodes and, where possible, failure zones (topology spread constraints).
 4. **Autoscale on LLM signals.** Scale on queue depth, KV-cache usage and TTFT p95, or on tokens per second per replica against a measured capacity at the SLO, not on GPU utilization, which reads near 100% whenever anything runs (§73.15). Schedule pre-scaling for known peaks. Energy-aware controllers such as DynamoLLM also reconfigure instance count, parallelism and GPU frequency as load changes [Stojkovic et al. 2025].
-5. **Plan for cold starts.** A new replica needs a node, an image, weights and warm-up; size warm headroom for the time this takes (Figure 79.8).
+5. **Plan for cold starts.** A new replica needs a node, an image, weights and warm-up; size warm headroom for the time this takes (Figure 79.7).
 
-**Figure 79.7 — QuickBite's inference node pools and MIG layout.**
+**Figure 79.6 — QuickBite's inference node pools and MIG layout.**
 
 ```mermaid
 flowchart TB
@@ -725,7 +648,7 @@ $$R_\text{peak} = \left\lceil \frac{\lambda_\text{peak}\, g_\text{req}}{\rho} \r
 **Interpretation.** Sharing makes the two batch tenants free at the margin, but the pool is still 89% idle, because its size is set by one tenant's peak plus redundancy. **Engineering implication.** At QuickBite's volume, the pool's economics depend on filling valleys (more batch work, evaluation runs), on smaller GPUs for the 7B model, or on the external-API comparison of §79.16; the chargeback rules of §79.15 make this visible to the teams.
 :::
 
-**Figure 79.8 — Cold-start timeline: 7B replica on a warm node versus 70B group on a new node (illustrative).**
+**Figure 79.7 — Cold-start timeline: 7B replica on a warm node versus 70B group on a new node (illustrative).**
 
 ```mermaid
 gantt
@@ -744,15 +667,6 @@ gantt
 ```
 
 **Reading the diagram.** Each bar is a sequential step of one cold start, with durations that are assumptions rather than measurements: 1 GB/s weight loading, a 10 GB engine image at about 110 MB/s, and a few minutes to provision a GPU node. The 7B replica on a node that already caches the image is ready in about one minute, dominated by warm-up; the 70B group on a new node takes about 500 s, dominated by node provisioning and weight loading from the object store (the storage boundary). Failure points: in a GPU shortage, provisioning may not complete at all (§79.11). Scaling options: keep warm nodes, pre-pull images, stage weights on node-local NVMe, or load from peer GPUs.
-
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| Autoscaler never scales in | Scales on GPU utilization | Replicas at max off-peak | Switch signal | Queue, KV usage, TTFT p95 |
-| Lunch peak breaches TTFT | Cold start slower than ramp | TTFT p95 rises during ramps | Pre-scale on schedule | Warm headroom $H$ |
-| 70B group placed across nodes | Missing topology constraint | TPOT 2× expected | Reschedule | Gang scheduling inside one NVLink node |
-| Small models strand big GPUs | Whole GPUs per encoder | Allocated memory ≪ capacity | Repack | MIG pool for small models |
 
 ## 79.9 Rate limiting and quotas in tokens
 
@@ -775,7 +689,7 @@ A restaurant that limits tables per hour, not diners, is easily gamed by a party
 5. **Priority tiers.** Separate buckets, or one bucket with reserved shares, for P0 (interactive), P1 (agents) and P2 (batch); P2 is admitted only from capacity P0 leaves unused and is the first shed (§22.9).
 6. **Reservations.** Tenants that need guaranteed capacity buy a **reserved** throughput (dedicated tokens per minute backed by dedicated replicas, §79.10); cloud providers sell the same idea as provisioned throughput.
 
-**Figure 79.9 — Token quota lifecycle: reserve, admit, reconcile.**
+**Figure 79.8 — Token quota lifecycle: reserve, admit, reconcile.**
 
 ```mermaid
 sequenceDiagram
@@ -947,7 +861,7 @@ GPUs make noisy neighbors worse than CPUs do. Requests from all tenants share on
 4. **Data isolation.** Prefix caches are partitioned or salted per tenant (or sharing is limited to platform-owned prompts); logs and adapters are stored per tenant with their own access controls and keys (§79.14).
 5. **Dedicated tiers.** Tenants with strict objectives or contracts get dedicated replicas or node pools.
 
-**Figure 79.10 — Per-tenant queues, fair scheduler and dedicated tier.**
+**Figure 79.9 — Per-tenant queues, fair scheduler and dedicated tier.**
 
 ```mermaid
 flowchart LR
@@ -997,14 +911,6 @@ $$s_i \mathrel{+}= \frac{c_\text{in}\, n_\text{in}^\text{uncached} + c_\text{out
 | Dedicated replicas | Tenant-pinned replicas in shared cluster | Compute isolated; node shared | Medium | Contractual SLOs, large steady tenants |
 | Dedicated pool or cluster | Own nodes, keys, logs, network | Strongest short of separate account | High | Regulated data, enterprise contracts |
 
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| P0 TPOT doubles during a batch run | Batch fills shared batches | TPOT p95 per tenant vs batch share | Pause P2 queue | P2 slot cap; preempt P2 first |
-| Cross-tenant timing leak | Shared prefix cache across tenants | Security review, timing tests | Partition cache | Per-tenant cache salt |
-| Tenant starved | Weight or counter bug | Queue age per tenant | Reset counters | Alert on max queue age |
-
 ## 79.11 Multi-region AI systems
 
 ### 79.11.1 Scarce capacity, residency and failover
@@ -1020,11 +926,11 @@ Three properties make AI traffic different from ordinary web traffic across regi
 #### How it works internally
 
 1. **Regional gateways** terminate traffic close to users (GeoDNS or anycast, §44.5) and tag each request with its data class and allowed regions.
-2. **Region-aware routing**: the router's policy filter (Figure 79.4) keeps only compliant deployments; then it prefers the local pool, then a compliant remote pool, then a compliant external provider endpoint.
+2. **Region-aware routing**: the router's policy filter (Figure 79.3) keeps only compliant deployments; then it prefers the local pool, then a compliant remote pool, then a compliant external provider endpoint.
 3. **Failover tiers**: within-region replica failover (seconds); cross-region shift within the same jurisdiction; spillover to a provider's regional endpoint; finally a degraded mode (smaller model, canned answers, hand-off to humans).
 4. **Residency of everything**: logs, caches, quota stores and evaluation samples for EU prompts stay in the EU, not only the inference.
 
-**Figure 79.11 — Region-aware routing with residency and spillover.**
+**Figure 79.10 — Region-aware routing with residency and spillover.**
 
 ```mermaid
 flowchart LR
@@ -1068,14 +974,6 @@ $$C_\text{standby} = n_\text{gpu}\, H\, p_\text{gpu} \qquad C_\text{spill} = f\,
 **Interpretation.** For a modest, latency-tolerant workload, renting failover capacity per token is far cheaper than owning idle GPUs. **Engineering implication.** Pre-approve and evaluate a compliant fallback model, keep its contract and quotas sized for full failover traffic, and test the path regularly (§39.11); keep standby GPUs only where no compliant provider exists or the custom model cannot be replaced.
 :::
 
-#### Failure scenarios
-
-| What goes wrong | Why | Detection | Recovery | Prevention |
-|---|---|---|---|---|
-| EU prompts processed in the US | Failover rule ignores data class | Residency audit on usage ledger | Stop route; purge; notify | Policy filter before every fallback |
-| Failover region cannot scale | GPU capacity exhausted | Pending pods; provisioning errors | Spill to provider | Capacity reservations or contracts |
-| Fallback provider rejects load | Its rate limits sized for normal use | 429s from provider | Shed P2; degrade | Raise provider quotas for failover volume |
-
 ## 79.12 Caching
 
 ### 79.12.1 Four caches and their economics
@@ -1087,21 +985,6 @@ $$C_\text{standby} = n_\text{gpu}\, H\, p_\text{gpu} \qquad C_\text{spill} = f\,
 #### Why does this exist?
 
 Model calls are the most expensive requests most platforms serve, and many are repeated: chains list the same dish in hundreds of branches; agents resend the same growing context at every step; search users type the same queries. But a generated answer is not a static resource: it depends on the full prompt, the model version and the sampling settings, and an answer correct for one customer can be wrong for another. Each cache type trades savings against that risk differently.
-
-**Figure 79.12 — Where each cache sits on the request path.**
-
-```mermaid
-flowchart LR
-  C([Client]) --> GW["Gateway"]
-  GW -->|1 exact key| EX[("Exact response cache")]
-  GW -->|2 embedding lookup| SEM[("Semantic cache,<br/>vector index")]
-  GW --> RT["Router: prefix affinity"]
-  RT --> ENG["Engine"]
-  ENG -->|3 KV reuse| KV[("Prefix KV cache<br/>in GPU memory")]
-  GW -->|4 vectors| EMB[("Embedding cache")]
-```
-
-**Reading the diagram.** The gateway checks the exact cache first (a key-value lookup, under a millisecond), then optionally the semantic cache (an embedding plus a vector search, milliseconds), before routing. Prefix caching happens inside the engine, so the router's prefix affinity (§79.6) determines its hit ratio; the embedding cache sits in front of embedding models. All four are storage boundaries with their own TTLs and must be keyed or partitioned by tenant (§79.10). Failure points: stale entries after a model or prompt-template change, and false hits in the semantic cache. Scaling: exact and embedding caches shard by key (§20.14); the prefix cache scales with replicas and affinity.
 
 ::: formula
 **Expected saving of a response cache, with false hits**
@@ -1164,7 +1047,7 @@ HTTP dashboards report a support-chat call as "200 OK in 6.2 s" and say nothing 
 4. **Content logging under policy.** Prompts and responses go to a separate, redacted, access-controlled store with short retention, sampled for most tenants (§79.14); metrics and traces carry no content.
 5. **Dashboards and alerts** per tenant and per deployment (Table 79.5).
 
-**Figure 79.13 — Tracing one agent task across model and tool calls.**
+**Figure 79.11 — Tracing one agent task across model and tool calls.**
 
 ```mermaid
 sequenceDiagram
@@ -1239,12 +1122,12 @@ A support prompt contains a customer's name, address, phone number and order his
 
 1. **Classify** each tenant and alias with a data class (public, internal, personal, sensitive) that drives every later control.
 2. **Redact or pseudonymize at the gateway** before external providers and before logging: pattern matchers for structured identifiers (phones, emails, card numbers), NER models for names and addresses, and reversible tokens from a vault (`<CUSTOMER_1>`) where the model needs to refer to an entity and the response must be re-identified for the user.
-3. **Choose provider data controls** per data class. As published in 2026: OpenAI documents that API abuse-monitoring logs are retained for up to 30 days by default, with Modified Abuse Monitoring or Zero Data Retention available to approved customers on eligible endpoints [OpenAI Docs: Your data]; Anthropic documents zero data retention as available on request through its account team, with listed exceptions [Anthropic Docs: API and data retention]; Google documents data-governance and zero-data-retention conditions for generative AI on Vertex AI [Google Cloud Docs: Vertex AI data governance]. Terms change; the platform's provider registry records the contract actually signed, and the router enforces it (Figure 79.4).
+3. **Choose provider data controls** per data class. As published in 2026: OpenAI documents that API abuse-monitoring logs are retained for up to 30 days by default, with Modified Abuse Monitoring or Zero Data Retention available to approved customers on eligible endpoints [OpenAI Docs: Your data]; Anthropic documents zero data retention as available on request through its account team, with listed exceptions [Anthropic Docs: API and data retention]; Google documents data-governance and zero-data-retention conditions for generative AI on Vertex AI [Google Cloud Docs: Vertex AI data governance]. Terms change; the platform's provider registry records the contract actually signed, and the router enforces it (Figure 79.3).
 4. **Retain briefly, by tier.** Usage records (no content) for years for billing; redacted content for days to weeks for debugging; unredacted content only in break-glass scenarios with approval.
 5. **Encrypt and separate.** TLS everywhere; content stores encrypted with per-tenant keys so that deleting a key erases a tenant's logs (crypto-shredding).
 6. **Control and audit access.** Reading prompts requires a role, a reason and leaves an audit record; dashboards show aggregates only.
 
-**Figure 79.14 — Privacy controls on the prompt path.**
+**Figure 79.12 — Privacy controls on the prompt path.**
 
 ```mermaid
 flowchart LR
@@ -1293,7 +1176,7 @@ External API costs are easy to attribute: the invoice is in tokens, and the gate
 4. **Allocate platform overhead** (gateways, logging, observability, on-call) by requests or by tokens.
 5. **Publish rates** per alias, so teams can forecast: dollars per million input, cached and output tokens.
 
-**Figure 79.15 — Cost allocation pipeline.**
+**Figure 79.13 — Cost allocation pipeline.**
 
 ```mermaid
 flowchart LR
@@ -1389,7 +1272,7 @@ $$C_\text{self}(V) = F + c\,V \qquad C_\text{api}(V) = p\,V \qquad V^\star = \fr
 **Interpretation.** At QuickBite's volume, buying is cheaper for both workloads by a wide margin. Self-hosting the chatbot is justified only by things the formula omits: the model is QuickBite's own continued-pre-trained 7B (§65.9), which a generic API cannot serve; data controls; and the option to grow. **Engineering implication.** Price the alternatives honestly, including providers that host custom fine-tunes or adapters, and revisit the decision when volume reaches a third of $V^\star$, when GPU prices move, or when the custom model's quality advantage is measured rather than assumed.
 :::
 
-**Figure 79.16 — Build-versus-buy decision per model.**
+**Figure 79.14 — Build-versus-buy decision per model.**
 
 ```mermaid
 flowchart TB

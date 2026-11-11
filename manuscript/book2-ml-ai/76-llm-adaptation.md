@@ -49,7 +49,7 @@ After this chapter you should be able to:
 
 #### First-principles explanation
 
-Think of hiring an experienced chef for your restaurant. On day one you hand them a note: "we plate small, no garnish" (an **instruction**). If they still get it wrong you show them three finished plates (**few-shot examples**). For today's specials you give them the recipe card rather than expecting them to know it (**retrieval**). If your house style is subtle and used on every dish, you spend a few weeks training them (**fine-tuning**). If your cuisine is one they have never cooked, you send them on a long course first (**continued pre-training**). You would only raise a chef from childhood (**pre-training from scratch**) if no chef anywhere could learn your cuisine. Each step costs more and is harder to undo, so you climb only when the step below has demonstrably failed.
+Think of hiring an experienced chef. You hand them a note, "we plate small" (an **instruction**); if that fails, you show three finished plates (**few-shot examples**); for today's specials you give them the recipe card (**retrieval**); for a subtle house style used on every dish, you train them for weeks (**fine-tuning**); for a cuisine they have never cooked, you send them on a long course (**continued pre-training**). You would raise a chef from childhood (**pre-training**) only if no chef anywhere could learn your cuisine. Each step costs more and is harder to undo.
 
 #### Why does this exist?
 
@@ -78,7 +78,7 @@ flowchart BT
   end
 ```
 
-**Reading the diagram.** Read from the bottom up. The three lower rungs change only what is sent to an unchanged model, so they deploy like configuration and roll back instantly; the storage they touch is a prompt registry and, for RAG, the indexes of Chapter 75. The three upper rungs produce new weights that must pass through a training pipeline, an evaluation gate and the model registry (Chapter 69) before serving. Arrows mean "climb when the rung below fails", a design-time decision rather than a runtime call, so there are no synchronous paths here. The failure point at each step is climbing without evidence; the scaling consideration is that input-side rungs add per-request tokens forever, while weight-side rungs add a one-off training cost.
+**Reading the diagram.** Read bottom up. The lower three rungs change only the input to an unchanged model, so they deploy like configuration and roll back instantly; they touch a prompt registry and, for RAG, the indexes of Chapter 75. The upper three produce new weights that pass through training, an evaluation gate and the model registry (Chapter 69). Arrows mean "climb when the rung below fails", a design-time decision with no runtime path. Input-side rungs add per-request tokens forever; weight-side rungs add a one-off training cost. The failure point is climbing without evidence.
 
 Rungs are not exclusive: the production QuickBite bot combines a system prompt, retrieval, a LoRA fine-tune and a continued pre-trained base. The ladder orders what to *try first*.
 
@@ -120,7 +120,7 @@ flowchart TD
   CPT --> GATE
 ```
 
-**Reading the diagram.** Every path starts at an evaluation set: without a measurable pass bar you cannot tell whether a rung failed. Knowledge gaps branch to retrieval or tools; behavior gaps go to prompting first and to fine-tuning only when prompting fails *and* enough examples exist. Continued pre-training is the last resort before training from scratch, which this flowchart deliberately omits because almost no product team needs it. All branches end at a release gate, the same gate for a prompt change and a weight change. These are offline engineering decisions; the loops (build an eval set, collect data) are where most calendar time goes.
+**Reading the diagram.** Every path starts at an evaluation set, because without a pass bar you cannot tell whether a rung failed. Knowledge gaps go to retrieval or tools; behavior gaps go to prompting, then to fine-tuning only when prompting fails *and* enough examples exist. Pre-training from scratch is omitted: almost no product team needs it. Every branch ends at the same release gate, for prompt and weight changes alike. These are offline decisions; the data-collection loops consume most calendar time.
 
 #### Mathematical foundations
 
@@ -196,7 +196,7 @@ flowchart LR
   REN -.->|prompt version,<br/>hash, slot sizes| LOG[[Request log]]
 ```
 
-**Reading the diagram.** Templates live in a registry (the storage boundary) with immutable versions; a feature-flag service picks the version per request so two versions can run as an experiment (§57.14). The renderer fills slots from the orchestrator, escapes delimiter strings inside untrusted text, and trims to the token budget of §75.11 using the serving model's tokenizer. The chat template then adds the model-specific turn markers. Every request logs the prompt version and a hash asynchronously (dotted), which is how you attribute a quality change to a prompt change. Failure points: an unversioned edit made in place, a renderer that tokenizes differently from the server, or a slot that silently overflows. The renderer is stateless and scales with request rate.
+**Reading the diagram.** Templates live in a registry (the storage boundary) as immutable versions; a feature-flag service picks the version per request, enabling experiments (§57.14). The stateless renderer fills slots, escapes delimiters in untrusted text and enforces the token budget of §75.11 with the serving tokenizer; the chat template adds turn markers. Each request logs prompt version and hash asynchronously (dotted), which attributes quality changes to prompt changes. Failure points: in-place unversioned edits, a renderer that tokenizes differently from the server, slots that silently overflow.
 
 ### 76.4.2 Instructions, examples and chain-of-thought
 
@@ -204,7 +204,7 @@ flowchart LR
 
 **Few-shot examples** teach by imitation. They are most valuable for format and for edge cases that are hard to describe ("customer is angry and the order was actually on time"). They are also the most expensive part of a prompt per unit of behavior and carry biases of their own (§76.6).
 
-**Chain-of-thought (CoT)** prompting asks the model to write intermediate reasoning before the answer. Wei et al. showed that including worked reasoning in few-shot exemplars substantially improved large models on arithmetic, commonsense and symbolic reasoning benchmarks, and that the benefit appeared only at large model scale [Wei et al. 2022]; Kojima et al. found that simply adding "Let's think step by step" elicited similar gains zero-shot [Kojima et al. 2022]. Sampling several reasoning paths and taking the majority answer, **self-consistency**, improves further at proportional cost [Wang et al. 2023a]. For a system designer, CoT is a trade: more output tokens, the slowest and most expensive kind (§72.10), in exchange for accuracy on multi-step problems. QuickBite's refund-eligibility decisions involve two or three rules, so the bot reasons in a hidden `analysis` field that is logged but not shown, and the eligibility arithmetic itself is done by deterministic code the model calls (Chapter 77), not by the model.
+**Chain-of-thought (CoT)** prompting asks the model to write intermediate reasoning before the answer. Wei et al. showed that worked reasoning in few-shot exemplars substantially improved large models on arithmetic, commonsense and symbolic reasoning, with the benefit appearing only at large scale [Wei et al. 2022]; Kojima et al. elicited similar gains zero-shot with "Let's think step by step" [Kojima et al. 2022]; sampling several paths and voting, **self-consistency**, improves further at proportional cost [Wang et al. 2023a]. CoT trades output tokens, the slowest kind (§72.10), for accuracy on multi-step problems. QuickBite's bot reasons in a hidden, logged `analysis` field, and refund-eligibility arithmetic is done by deterministic code the model calls (Chapter 77).
 
 ::: warning
 **Reasoning text is not an explanation.** A chain of thought is generated text; it can be plausible and still not reflect how the answer was produced. Do not show it to customers as a justification, and do not use it as an audit trail for decisions that need one: log the inputs, the tools called and the rule that fired.
@@ -236,7 +236,7 @@ flowchart LR
   GOLD[("Golden set<br/>+ past incidents")] --> CI
 ```
 
-**Reading the diagram.** A pull request that changes a template triggers CI, which renders every golden case (the storage boundary holding curated conversations and incident replays), calls a staging model pinned to the production version, and runs two kinds of check: cheap deterministic assertions and a slower judged evaluation. The comparison is against the current production version on the same cases, with confidence intervals because outputs vary run to run (Chapter 78). Calls are synchronous inside the CI job; at 400 cases and 4,250 tokens each the run costs well under a dollar on the internal price list. Failure points: a golden set that never grows, so new failure modes are untested; temperature left above zero in CI, making results noisy; or judging only averages, which hides regressions on rare intents.
+**Reading the diagram.** A template change triggers CI, which renders every golden case (the storage boundary of curated conversations and incident replays), calls a staging model pinned to the production version, and runs deterministic assertions plus a slower judged evaluation, comparing against the production version with confidence intervals (Chapter 78). Calls are synchronous inside the job; 400 cases of 4,250 tokens cost well under a dollar. Failure points: a golden set that never grows, nonzero temperature making results noisy, and averages that hide regressions on rare intents.
 
 ::: mistake
 **"A better prompt is a longer prompt."** Each added rule competes for the model's attention with every other rule and with the user's message, adds tokens to every request, and makes conflicts more likely. Delete rules that tests show are unnecessary; move stable, well-specified behavior into the weights (§76.7) when the prompt becomes a rulebook.
@@ -260,7 +260,7 @@ LLM outputs feed programs: QuickBite's reply goes to a renderer, its proposed ac
 
 #### How it works internally
 
-**Function-calling formats.** The application describes each available tool with a name, a description and a JSON Schema for its arguments. The chat template renders these descriptions into the prompt; the model was fine-tuned to answer either with text or with a special tool-call block containing a name and arguments; the serving layer parses the block and returns it as a structured field. The application validates and executes the call and sends the result back as a tool message. Chapter 77 builds agents on this loop; here it matters only as a contract that must be validated.
+**Function-calling formats.** The application describes each tool with a name, a description and a JSON Schema for its arguments; the chat template renders them into the prompt; the model, fine-tuned for this, answers with text or a tool-call block; the server parses the block into a structured field, and the application validates and executes it. Chapter 77 builds agents on this loop.
 
 **Constrained decoding** works inside the sampling loop (§72.13):
 
@@ -283,7 +283,7 @@ flowchart LR
   SAMP -->|accepting state| OUT([Valid JSON])
 ```
 
-**Reading the diagram.** The schema is compiled once per version and cached (the storage boundary); the per-state token index makes each step's mask a lookup rather than a scan of the vocabulary. Every decode step is synchronous: forward pass, mask, sample, advance. Output is guaranteed to parse and to match types and enumerations. Failure points: a schema too permissive to be useful, a tokenizer mismatch between compile time and serving time, compile latency for large schemas on first use, and the subtle one: forcing the model down a path it assigns low probability can degrade content quality. The mask costs CPU time per step, so engines batch it alongside GPU work.
+**Reading the diagram.** The schema is compiled once per version and cached (the storage boundary); the per-state token index makes each mask a lookup. Every decode step is synchronous: forward pass, mask, sample, advance; the mask costs CPU time per step, overlapped with GPU work. Output always parses and matches types and enumerations. Failure points: a permissive schema, a tokenizer mismatch between compile and serving, compile latency for new schemas, and degraded content when the grammar forces low-probability paths.
 
 **Table 76.2 — Ways to obtain structured output.**
 
@@ -324,7 +324,7 @@ sequenceDiagram
   Note over O,L: after max retries, fall back to handoff
 ```
 
-**Reading the diagram.** Each model call is a full synchronous generation, so a retry roughly doubles that request's latency. The validator is deterministic code with no model in it, and it is the only component allowed to pass actions to the refund service, which receives an idempotency key (§22.15) so a retried request cannot refund twice. The refund itself is only *proposed*: authority stays with the service and its rules, not with the model. Failure points: retries that repeat the same mistake (failures are correlated, not independent), a retry storm when a model regression makes every first attempt fail, and unbounded loops. Scaling: retries multiply load, so retry rate is a capacity input and an alerting metric.
+**Reading the diagram.** Each model call is a full synchronous generation, so a retry roughly doubles that request's latency. The validator is deterministic code and the only component allowed to pass actions to the refund service, which receives an idempotency key (§22.15) so a retry cannot refund twice; the refund is only *proposed*, and authority stays with the service. Failure points: correlated failures that repeat on retry, retry storms after a model regression, unbounded loops. Retry rate is therefore a capacity input and an alerting metric.
 
 #### Mathematical foundations
 
@@ -501,16 +501,16 @@ In-context learning is like briefing a temp worker at the start of every shift: 
 
 #### Why does this exist?
 
-ICL is the reason the lower rungs of the ladder work at all, and its limits are the reason the upper rungs exist. Four limits matter for system design.
+ICL's limits are the reason the upper rungs exist. Four matter for system design.
 
-1. **Context cost.** Every demonstration is prompt tokens on every request: money, prefill time (TTFT) and KV-cache memory (§73.5).
+1. **Context cost.** Demonstrations are prompt tokens on every request: money, TTFT and KV-cache memory (§73.5).
 2. **Context capacity.** Examples compete with retrieved evidence for the same window (§75.11).
-3. **Sensitivity.** Results depend on which examples are chosen, their order and their label balance. Lu et al. showed that merely permuting the same few-shot examples could move accuracy from near state-of-the-art to near chance on some tasks [Lu et al. 2022]. Zhao et al. identified **majority-label bias** (favoring the label most frequent among the examples), **recency bias** (favoring labels of the last examples) and common-token bias, and proposed calibrating the output probabilities with a content-free input [Zhao et al. 2021].
-4. **Position effects.** Information in the middle of a long context is used less reliably than information near its start or end [Liu et al. 2024], so adding more examples has diminishing and sometimes negative returns.
+3. **Sensitivity.** Lu et al. showed that merely permuting the same few-shot examples could move accuracy from near state-of-the-art to near chance on some tasks [Lu et al. 2022]; Zhao et al. identified **majority-label bias**, **recency bias** and common-token bias, and proposed calibrating outputs with a content-free input [Zhao et al. 2021].
+4. **Position effects.** The middle of a long context is used less reliably than its ends [Liu et al. 2024], so more examples bring diminishing, sometimes negative, returns.
 
 #### How it works internally
 
-Mitigations follow from the causes. **Retrieve examples** per request (pick the three demonstrations most similar to the current message from a labeled pool, using the embedding search of Chapter 74), which raises relevance and lets you send fewer. **Balance and shuffle** demonstrations offline and test several orders in the regression suite; report the spread, not the best order. **Put examples in the cached prefix** when they are static, so that their marginal cost is the cached-token price. And when the example set keeps growing, take that as the signal to fine-tune (§76.7): a few thousand examples in the weights cost nothing per request.
+Mitigations follow from the causes: **retrieve** the few most similar demonstrations per request from a labeled pool (Chapter 74), **balance and shuffle** them and test several orders, reporting the spread, **cache** static examples in the prefix, and treat an ever-growing example set as the signal to fine-tune (§76.7).
 
 #### Mathematical foundations
 
@@ -561,7 +561,7 @@ SFT is apprenticeship: the chef cooks a few thousand dishes alongside the head c
 
 #### Why does this exist?
 
-A base model continues documents; an instruction-following assistant answers. Ouyang et al. found that a 1.3B-parameter model fine-tuned on demonstrations and then aligned with human preferences was preferred by labelers over the 175B GPT-3 base model [Ouyang et al. 2022]: the right behavior mattered more than 100× the parameters. For QuickBite, SFT turns the domain-adapted base model into a bot that follows the house format, tone and escalation rules without a long rulebook in every prompt.
+A base model continues documents; an assistant answers. Ouyang et al. found that a 1.3B-parameter model fine-tuned on demonstrations and then aligned with preferences was preferred by labelers over the 175B GPT-3 [Ouyang et al. 2022]: behavior mattered more than 100× the parameters.
 
 #### How it works internally
 
@@ -584,7 +584,7 @@ flowchart LR
   TRAIN --> CKPT[("Checkpoint or<br/>adapter")]
 ```
 
-**Reading the diagram.** Reviewed conversations (the input storage boundary) pass through a deterministic, versioned preprocessing pipeline that runs as a batch job; the output is a tokenized dataset with labels, stored so that training is reproducible (§61.13). The chat template must be the serving template, which is the most common failure point. The trainer reads packed sequences and writes a full checkpoint or, with LoRA, a small adapter (§76.8). The pipeline is embarrassingly parallel by conversation; training scales by data parallelism (Chapter 65).
+**Reading the diagram.** Reviewed conversations (the input storage boundary) pass through a deterministic, versioned batch pipeline whose output, a tokenized and labeled dataset, is stored for reproducible training (§61.13). The chat template must be the serving template, the most common failure point. The trainer writes a full checkpoint or, with LoRA, a small adapter. Preprocessing is parallel by conversation; training scales by data parallelism (Chapter 65).
 
 #### Mathematical foundations
 
@@ -668,7 +668,7 @@ What to notice:
 
 ### 76.7.2 Data quality over quantity
 
-Zhou et al. fine-tuned a 65B LLaMA model on only 1,000 carefully curated prompts and responses, with no preference optimization, and in their human study its answers were equivalent to or preferred over GPT-4's in 43% of cases; they proposed the **superficial alignment hypothesis**, that a model's knowledge comes from pre-training and alignment mostly teaches it which format and style to use [Zhou et al. 2023]. The practical lesson is that a few thousand consistent, correct, diverse examples beat hundreds of thousands of noisy ones. Every bad example (an agent who promised an invalid refund, a curt reply to an allergy question) is a behavior you are paying to teach. QuickBite therefore reviews conversations before training on them (§76.11), at a cost that dwarfs the GPU bill.
+Zhou et al. fine-tuned a 65B LLaMA model on only 1,000 curated prompts and responses, and in their human study its answers were equivalent to or preferred over GPT-4's in 43% of cases; they proposed the **superficial alignment hypothesis**, that knowledge comes from pre-training and alignment mostly teaches format and style [Zhou et al. 2023]. A few thousand consistent, correct, diverse examples beat hundreds of thousands of noisy ones, and every bad example is a behavior you pay to teach, so QuickBite reviews conversations before training (§76.11).
 
 ### 76.7.3 Memory and compute of full fine-tuning
 
@@ -712,8 +712,6 @@ $$M_\text{full} = N\,(b_w + b_g + b_m + b_o) + M_\text{act} \qquad G = \frac{k\,
 | Model never stops generating | End-of-turn token masked out | Lengths hit max tokens | Retrain with end token in loss | Unit test on label construction |
 | Quality fine offline, poor in production | Training and serving chat templates differ | Token-by-token diff of golden prompts | Re-render data; retrain | One template source for both |
 | Model copies agents' bad habits | Unreviewed logs used as targets | Eval on tone and policy slices | Filter and retrain | Review and quality filters (§76.11) |
-| General skills degrade | Too many epochs, narrow data | General benchmark regression | Earlier checkpoint; mix general data | Replay mixture, early stopping |
-| Safety refusals weaken | Fine-tuning erodes alignment | Safety eval regression (§76.15) | Add safety data; retrain | Safety gate before release |
 
 ::: mistake
 **"More epochs on our data means a better bot."** Past one to three epochs, small SFT sets are memorized: validation loss rises, responses become formulaic and personal data in the data becomes extractable (§71.9). Stop on held-out task metrics.
@@ -733,7 +731,7 @@ Rather than repainting a mural (full fine-tuning), you paint on a thin transpare
 
 #### Why does this exist?
 
-Hu et al. observed that the weight changes learned in fine-tuning have low "intrinsic rank", and showed that on GPT-3 175B, LoRA matched or exceeded full fine-tuning on their benchmarks while cutting trainable parameters by about 10,000× and GPU memory by about 3×, with no added inference latency once merged [Hu et al. 2022]. Freezing the base removes its gradients and optimizer state, the 14 of 16 bytes per parameter that made full fine-tuning need eight GPUs.
+Hu et al. observed that fine-tuning updates have low "intrinsic rank" and showed that on GPT-3 175B, LoRA matched or exceeded full fine-tuning on their benchmarks while cutting trainable parameters about 10,000× and GPU memory about 3×, with no added inference latency once merged [Hu et al. 2022]. Freezing the base removes 14 of the 16 bytes per parameter of training state.
 
 **Figure 76.8 — A LoRA layer.**
 
@@ -895,7 +893,7 @@ flowchart LR
   NEXT -.->|backward| LA
 ```
 
-**Reading the diagram.** The base weights (the GPU's largest storage) are stored in NF4 and dequantized per tile on the fly, so 16-bit weights never exist in full. Activations and adapters stay in BF16. The backward pass (dotted) updates only the adapters, whose Adam state is small and can be paged to CPU memory asynchronously when a long sequence spikes memory. Failure points: dequantization overhead makes each step slower than BF16 LoRA, and the adapter is trained against quantized weights, so merging it into a BF16 base gives slightly different numerics than training saw. Scale-out uses data parallelism.
+**Reading the diagram.** The NF4 base weights (the largest storage on the GPU) are dequantized per tile on the fly, so full 16-bit weights never exist; activations and adapters stay in BF16. The backward pass (dotted) updates only the adapters, whose Adam state can be paged to CPU memory asynchronously during spikes. Failure points: dequantization makes steps slower than BF16 LoRA, and an adapter trained against quantized weights sees slightly different numerics when merged into a BF16 base. Scale-out uses data parallelism.
 
 ::: formula
 **QLoRA training memory on one GPU**
@@ -955,7 +953,7 @@ $$M_\text{QLoRA} = N_q\,\frac{4 + c}{8} + 2\,N_{16} + 16\,N_\text{LoRA} + b\,m_\
 
 You can serve a LoRA fine-tune in two ways. **Merging** folds $\frac{\alpha}{r}BA$ into $W_0$ and serves an ordinary model: zero overhead, but one full copy of the weights per variant. **Multi-LoRA serving** keeps one shared base in GPU memory and applies each request's adapter on the fly, so a single replica can serve many variants in the same batch. The difficulty is efficiency: a batch now mixes requests for different adapters, so the small $BAx$ products differ per request and do not form one large matrix multiply.
 
-Two systems published the main techniques. **Punica** introduced a CUDA kernel, segmented gather matrix–vector multiplication (SGMV), that batches the LoRA computations of requests using different adapters, and reported 12× higher throughput than state-of-the-art serving systems on a fixed cluster when serving multiple LoRA models, adding about 2 ms per token [Chen et al. 2024]. **S-LoRA** keeps all adapters in host memory, loads those needed by running requests into GPU memory, and manages adapter weights and KV cache in one paged memory pool (**unified paging**), reporting up to 4× higher throughput than HuggingFace PEFT and vLLM with naive LoRA support, and serving thousands of adapters on one GPU or across several [Sheng et al. 2024]. Mainstream engines now offer multi-LoRA serving with adapter loading at runtime (as of 2026; check your engine's documentation for rank limits and kernel support).
+Two systems published the main techniques. **Punica**'s CUDA kernel, segmented gather matrix–vector multiplication (SGMV), batches LoRA computations across different adapters; it reported 12× higher throughput than state-of-the-art serving systems when serving multiple LoRA models, adding about 2 ms per token [Chen et al. 2024]. **S-LoRA** keeps adapters in host memory, loads those needed by running requests, and manages adapter weights and KV cache in one paged pool (**unified paging**), reporting up to 4× higher throughput than HuggingFace PEFT and vLLM with naive LoRA support and serving thousands of adapters [Sheng et al. 2024]. Mainstream engines now support multi-LoRA serving (as of 2026).
 
 **Figure 76.10 — Multi-LoRA serving with adapter hot-swapping.**
 
@@ -971,7 +969,7 @@ flowchart LR
   E2 --> OUT
 ```
 
-**Reading the diagram.** Each request names its adapter (market, audience or experiment arm). The router prefers a replica that already holds that adapter, as prefix-aware routing does for KV blocks (§73.8). Adapters are fetched asynchronously from the registry (object storage, §15) into a host-memory cache and paged into GPU memory beside the KV cache. Inside a replica one batch mixes adapters; the base multiply is shared and a gathered kernel applies each request's $B_iA_i$. Hot-swapping is a registry pointer change plus a load, with no restart. Failure points: a cold adapter adds load latency to TTFT; a popular adapter pinned on one replica creates a hot spot; an adapter trained for a different base version produces garbage silently, so registries must key adapters by base checksum.
+**Reading the diagram.** Each request names its adapter; the router prefers a replica already holding it, as prefix-aware routing does for KV blocks (§73.8). Adapters load asynchronously from the registry (object storage, §15) into a host cache and are paged into GPU memory beside the KV cache. One batch mixes adapters: the base multiply is shared and a gathered kernel applies each $B_iA_i$. Hot-swapping is a pointer change plus a load. Failure points: cold-load latency in TTFT, hot spots for popular adapters, and an adapter trained on another base version producing garbage silently, so key adapters by base checksum.
 
 ::: formula
 **GPU memory for resident adapters**
@@ -1020,7 +1018,7 @@ Writing the perfect support reply is hard; recognizing the better of two replies
 
 #### Why does this exist?
 
-SFT teaches the model to imitate, including the average agent's mediocre phrasing; it gives no signal about which of two acceptable replies is *better*, and no signal against subtle failures such as over-apologizing or promising what policy does not allow. Christiano et al. showed that agents could learn complex behaviors from human comparisons of short clips, with feedback on less than 1% of the agent's interactions [Christiano et al. 2017]. Ouyang et al. applied the recipe to language models in three steps: SFT on labeler demonstrations, a reward model trained on labelers' rankings of model outputs, and PPO against that reward model; the result, InstructGPT, was preferred by labelers to GPT-3 outputs and showed improvements in truthfulness and reductions in toxic output [Ouyang et al. 2022].
+SFT imitates, including the average agent's mediocre phrasing, and gives no signal about which of two acceptable replies is *better*. Christiano et al. showed that agents could learn complex behaviors from human comparisons, with feedback on less than 1% of their interactions [Christiano et al. 2017]. Ouyang et al. applied this to language models in three steps (SFT, a reward model trained on rankings, PPO against it); labelers preferred the resulting InstructGPT to GPT-3, and it improved truthfulness and reduced toxic output [Ouyang et al. 2022].
 
 **Figure 76.11 — The RLHF pipeline.**
 
@@ -1043,7 +1041,7 @@ flowchart LR
   end
 ```
 
-**Reading the diagram.** Step 1 produces the SFT model, which also serves as the frozen reference $\pi_\text{ref}$. Step 2 samples several replies per prompt from it, collects human rankings (an asynchronous labeling pipeline, Chapter 63) and trains a reward model. Step 3 loops synchronously: the policy generates, the reward model scores, the reference model supplies log-probabilities for the KL penalty, and PPO updates the policy. Four models are live at once in step 3 (policy, reference, reward model and a value model inside PPO), which is the main systems cost. Failure points: **reward hacking**, where the policy finds outputs the reward model overrates (long, flattering, confident replies), and labeler disagreement that caps reward-model accuracy.
+**Reading the diagram.** The SFT model from step 1 is also the frozen reference $\pi_\text{ref}$. Step 2 samples replies from it, collects human rankings through an asynchronous labeling pipeline (Chapter 63) and trains the reward model. Step 3 loops synchronously: generate, score, compute the KL term from the reference, update with PPO. Four models are live at once (policy, reference, reward and PPO's value model), the main systems cost. Failure points: **reward hacking**, where the policy finds outputs the reward model overrates (long, flattering replies), and labeler disagreement capping reward-model accuracy.
 
 ### 76.10.2 The reward model: Bradley–Terry
 
@@ -1219,7 +1217,7 @@ flowchart TB
   REF --> DPO
 ```
 
-**Reading the diagram.** Both paths start from the same stored preference pairs and the same frozen reference. RLHF (left) adds a trained reward model and an online loop that generates and scores new replies, so it can explore beyond the dataset but runs four models and is sensitive to tuning. DPO (right) is a single offline pass over fixed data, as cheap and stable as SFT, but it learns only from replies in the dataset, so data must come from a model close to the one being trained. Failure points: reward hacking on the left, overfitting to stale pairs on the right.
+**Reading the diagram.** Both paths read the same stored pairs and frozen reference. RLHF (left) adds a reward model and an online generate-and-score loop: it can explore beyond the dataset but runs four models and is sensitive to tuning. DPO (right) is one offline pass, as cheap and stable as SFT, but learns only from replies in the dataset, so pairs should come from a model close to the one being trained. Failure points: reward hacking on the left, stale pairs on the right.
 
 **Table 76.6 — Preference-alignment methods.**
 
@@ -1262,7 +1260,7 @@ flowchart LR
   DECON --> DS[("Versioned dataset<br/>+ datasheet")]
 ```
 
-**Reading the diagram.** Logs (the source storage boundary) flow through batch stages in order: selection by outcome and consent, PII scrubbing, deduplication, stratified sampling, human review. A parallel branch generates and filters synthetic examples for intents too rare in logs (allergen questions, courier safety). Both branches merge with a general-instruction replay set, are checked against the evaluation set, which feeds a blocklist asynchronously, and land in a versioned dataset with a datasheet (§63.13). Failure points: PII that survives scrubbing becomes memorizable (§71.9); near-duplicates over-weight templated replies; evaluation leakage inflates every later metric. Stages are partitioned by conversation and scale horizontally; human review is the throughput bottleneck.
+**Reading the diagram.** Logs (the source storage boundary) flow through batch stages: selection by outcome and consent, PII scrubbing, deduplication, stratified sampling, human review. A parallel branch generates and filters synthetic examples for rare intents. Both merge with general replay data, are checked against an evaluation-set blocklist fed asynchronously, and land in a versioned dataset with a datasheet (§63.13). Failure points: surviving PII becomes memorizable (§71.9), near-duplicates over-weight templated replies, evaluation leakage inflates every metric. Stages partition by conversation; human review is the bottleneck.
 
 The stages, briefly:
 
@@ -1301,9 +1299,9 @@ $$D = E \sum_{s} n_s\, \bar t_s \qquad D_\text{loss} = f_\text{resp}\, D$$
 
 ## 76.12 Continued pre-training and domain adaptation
 
-**Continued pre-training (CPT)**, also called domain-adaptive pre-training, runs the ordinary next-token objective on large amounts of unlabeled domain text, before SFT. Gururangan et al. showed that a second phase of pre-training on in-domain text improved downstream tasks across four domains (biomedical and computer-science papers, news, reviews), and that further pre-training on task-specific unlabeled text helped again [Gururangan et al. 2020]. It is worth considering when the domain's vocabulary or style is far from the base model's pre-training data and you have billions of tokens of it, and it is rarely worth it otherwise: QuickBite's 50-billion-token run (§65.9.1) processed 278 times more tokens than its whole SFT budget.
+**Continued pre-training (CPT)**, or domain-adaptive pre-training, runs the next-token objective on large amounts of unlabeled domain text before SFT. Gururangan et al. showed that it improved downstream tasks in four domains (biomedical and computer-science papers, news, reviews), and that further pre-training on task text helped again [Gururangan et al. 2020]. It pays when the domain's vocabulary or style is far from the base model's data and you have billions of tokens; QuickBite's run (§65.9.1) processed 278 times more tokens than its whole SFT budget.
 
-The main risk is **catastrophic forgetting**: training on a narrow distribution overwrites general abilities [Kirkpatrick et al. 2017]. The standard defenses are a **replay mixture** (keep 5–30% general-domain text in every batch), a lower peak learning rate with warmup, and evaluating general benchmarks alongside domain ones at every checkpoint. §65.9.1 described QuickBite's mixture as transcripts, menus and policies only; a production run should add general replay data and an ablation comparing "SFT on the base" with "SFT on the CPT model". If the ablation shows no gain on the evaluation set, the CPT stage should be dropped from the pipeline, saving 1,458 GPU-hours on every base-model upgrade.
+The main risk is **catastrophic forgetting**: narrow training overwrites general abilities [Kirkpatrick et al. 2017]. Defenses are a **replay mixture** (5–30% general text in every batch), a lower peak learning rate, and general benchmarks at every checkpoint. §65.9.1 described QuickBite's mixture as domain text only; a production run should add replay data and an ablation of "SFT on the base" against "SFT on the CPT model". If the ablation shows no gain, drop CPT and save 1,458 GPU-hours per base-model upgrade.
 
 ::: mistake
 **"Continued pre-training on our documents will make the model know our policies."** It teaches language and associations, not reliably retrievable facts, and policies change. Use CPT for vocabulary and style at scale; use RAG for facts (§76.14).
@@ -1311,7 +1309,7 @@ The main risk is **catastrophic forgetting**: training on a narrow distribution 
 
 ## 76.13 Distillation from large to small models
 
-LLM distillation trains a small student on a large teacher's behavior, using the soft-target principle of §67.8 at token level or, more commonly, at sequence level: the teacher generates complete responses and the student is fine-tuned on them [Kim and Rush 2016]. It is how many small open models were built, and how QuickBite can generate synthetic SFT data (§76.11) or train a 1B intent router that decides whether a message needs the 7B model at all (Chapter 78 previews routing). Stanford's Alpaca fine-tuned LLaMA 7B on 52,000 instruction-following demonstrations generated with a stronger commercial model, and released it for research use only because of the teacher's terms of use and the base model's license [Taori et al. 2023]: a reminder that the teacher's license governs what you may do with its outputs.
+LLM distillation applies §67.8 at token level or, more commonly, sequence level: the teacher generates complete responses and the student is fine-tuned on them [Kim and Rush 2016]. QuickBite uses it to generate synthetic SFT data (§76.11) and could train a 1B router that decides whether a message needs the 7B model (Chapter 78). Stanford's Alpaca fine-tuned LLaMA 7B on 52,000 demonstrations generated with a commercial model and was released for research use only because of the teacher's terms and the base license [Taori et al. 2023]: the teacher's license governs its outputs.
 
 ::: example
 **Worked example — Storing teacher logits for token-level distillation.** The SFT budget is $1.8 \times 10^8$ tokens with a 32,000-token vocabulary.
@@ -1356,7 +1354,7 @@ flowchart LR
   TRAIN[("SFT data rendered<br/>with RAG contexts")] -.->|train adapter| LLM
 ```
 
-**Reading the diagram.** At request time the path is the RAG pipeline of Chapter 75 with two changes: the system prompt shrinks to about 150 tokens because the adapter carries the rules, and the output is validated JSON. Offline (dotted), the adapter is trained on conversations rendered *with* their retrieved sources, so the model learns to use, cite and refuse based on evidence, including examples where the sources are irrelevant and the right answer is "I don't know". Failure points: training contexts that differ from production contexts (another chunker or $k$), and a policy change that makes trained behavior wrong, which is why facts must stay in retrieval.
+**Reading the diagram.** At request time the path is Chapter 75's synchronous RAG pipeline, with a system prompt shrunk to about 150 tokens because the adapter carries the rules, and validated JSON output. Offline (dotted), the adapter is trained on conversations rendered *with* their retrieved sources, including cases where the sources are irrelevant and the right answer is "I don't know". Failure points: training contexts that differ from production (another chunker or $k$), and policy changes that make trained behavior wrong, which is why facts stay in retrieval.
 
 ::: example
 **Worked example — QuickBite's decision.** The complaint list from the chapter opening, classified:

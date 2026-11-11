@@ -182,7 +182,7 @@ flowchart TB
   ORCH -.->|traces, feedback| LOG[[Query and feedback log]]
 ```
 
-**Reading the diagram.** Three document sources feed the asynchronous ingestion pipeline (dotted arrows) by webhook, commit hook or nightly crawl; the order database is never indexed but queried live. The index writer fans each chunk out to a vector index, a BM25 inverted index and a chunk store under one chunk ID; the document store keeps canonical versions and access-control lists (ACLs). The synchronous query path (solid arrows, HTTPS then internal RPC) runs behind a gateway that authenticates users and rate-limits (§22). Failure points: a stalled ingestion stage makes answers stale with no error on the query path; the reranker and LLM depend on GPUs; the order lookup depends on the order service. Ingestion scales with document churn and embedding throughput (§75.7), the query path with request rate, and its cost is dominated by the reranker and LLM (§75.15).
+**Reading the diagram.** Three document sources feed the asynchronous ingestion pipeline (dotted arrows) by webhook, commit hook or nightly crawl; the order database is never indexed but queried live. The index writer fans each chunk out to a vector index, a BM25 inverted index and a chunk store under one chunk ID; the document store keeps canonical versions and access-control lists (ACLs). The synchronous query path (solid arrows, HTTPS then internal RPC) runs behind a gateway that authenticates users and rate-limits (§22.3). Failure points: a stalled ingestion stage makes answers stale with no error on the query path; the reranker and LLM depend on GPUs; the order lookup depends on the order service. Ingestion scales with document churn and embedding throughput (§75.7), the query path with request rate, and its cost is dominated by the reranker and LLM (§75.15).
 
 ### 75.4.2 One query, step by step
 
@@ -650,7 +650,7 @@ flowchart LR
 
 **Reading the diagram.** Index v7 (model A) keeps serving while v8 is backfilled with model B from the chunk store; change events are dual-written to both so v8 misses no edits. Queries reach indexes through an alias; the router shadows, then canaries, then switches traffic to v8, gated by offline metrics (§75.13). The query encoder is pinned to the index version: a query embedded with B searching vectors from A fails silently. Storage doubles during migration, and v7 is kept for rollback for a week.
 
-The index version, embedding-model version, chunker version and parser version are recorded together in a manifest, in the same way a model registry records a model's lineage (§69). Changing the chunker or the header template also changes every vector and needs the same blue–green procedure.
+The index version, embedding-model version, chunker version and parser version are recorded together in a manifest, in the same way a model registry records a model's lineage (§69.8.3). Changing the chunker or the header template also changes every vector and needs the same blue–green procedure.
 
 ## 75.8 Retrieval: dense, sparse and hybrid
 
@@ -1159,7 +1159,7 @@ Citation quality is measurable: **citation precision** (does the cited source su
 
 ### 75.13.1 Metrics
 
-Evaluate the retriever separately from the generator: if the right chunk never reaches the context, no prompt can fix the answer. The metrics are those of §57.12, computed per query against a labeled set of relevant chunks and averaged.
+Evaluate the retriever separately from the generator: if the right chunk never reaches the context, no prompt can fix the answer. The metrics are those of §57.12, computed per query against a labeled set of relevant chunks and averaged. Unlike the ANN recall@$k$ of §74.6, which measures agreement with exact search, recall@$k$ here counts labeled relevant chunks found.
 
 ::: formula
 **Retrieval metrics for RAG**
@@ -1205,7 +1205,7 @@ flowchart LR
   GATE -->|no| BACK[Iterate]
 ```
 
-**Reading the diagram.** Queries come from a stratified sample of production traffic, LLM-generated questions per chunk (cheap coverage, but more literal than real questions) and curated hard and unanswerable cases. Candidates are **pooled** from several retrievers so labelers judge anything a system might return, as in TREC-style evaluation. Graded labels (§63) are versioned with the corpus, because document edits can invalidate them, and the set gates every change. Failure point: a purely synthetic set rewards surface word matching.
+**Reading the diagram.** Queries come from a stratified sample of production traffic, LLM-generated questions per chunk (cheap coverage, but more literal than real questions) and curated hard and unanswerable cases. Candidates are **pooled** from several retrievers so labelers judge anything a system might return, as in TREC-style evaluation. Graded labels (Chapter 63) are versioned with the corpus, because document edits can invalidate them, and the set gates every change. Failure point: a purely synthetic set rewards surface word matching.
 
 ### 75.13.3 Code example: retrieval metrics with a confidence interval
 
@@ -1378,7 +1378,7 @@ gantt
   Prefill 4050 tokens       :p1, 345, 575
 ```
 
-**Reading the diagram.** Overlapping bars run in parallel: the order fetch hides behind condensation and BM25 behind the dense path. The longest bars are model work, condensation and prefill. The GPU-backed stages queue sharply near saturation (§4), so each needs a timeout and fallback: skip condensation, use RRF order without reranking, or refuse if the LLM is unavailable.
+**Reading the diagram.** Overlapping bars run in parallel: the order fetch hides behind condensation and BM25 behind the dense path. The longest bars are model work, condensation and prefill. The GPU-backed stages queue sharply near saturation (§4.10), so each needs a timeout and fallback: skip condensation, use RRF order without reranking, or refuse if the LLM is unavailable.
 
 ### 75.15.2 Caching
 

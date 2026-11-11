@@ -122,7 +122,7 @@ Do not use an agent when a workflow will do, which is most of the time. Concrete
 4. **Latency must be sub-second.** A five-step agent takes seconds (§77.17).
 5. **You cannot evaluate it.** Without a way to tell good trajectories from bad (§77.14), you cannot ship it responsibly.
 
-QuickBite's design follows the rule. A router (one small-model call) sends FAQ questions to the RAG pipeline of Chapter 75; only conversations that need account actions reach the agent, and inside the agent the refund itself is a fixed, code-enforced sub-workflow.
+QuickBite follows the rule: a router sends FAQs to the RAG pipeline of Chapter 75; only account actions reach the agent, and the refund itself is a fixed, code-enforced sub-workflow.
 
 ::: mistake
 **"Agent" as a synonym for "LLM feature".** The label hides the decision that matters: who controls the sequence of steps. If your code does, test it as a workflow. If the model does, you have taken on this chapter's obligations: budgets, guardrails, durable state, trajectory evaluation and injection defense.
@@ -166,7 +166,7 @@ flowchart TB
   OBS -.-> TS[(Trace and eval store)]
 ```
 
-**Reading the diagram.** Customers connect over WebSocket to the chat gateway (§9.6). A router, one small-model call, sends questions to RAG and actions to the orchestrator. The orchestrator runs on a workflow engine so each step is checkpointed in the task state store. It calls the policy LLM over HTTPS, passes every proposed tool call through guardrails, and executes allowed calls through the tool layer, which holds per-tool scoped credentials and attaches idempotency keys to side-effecting calls. Actions above policy limits go asynchronously to a review queue read by human agents. Traces flow asynchronously to the trace pipeline. Storage boundaries: task state, memory and traces are separate stores with separate retention rules (§77.7.4). Failure points: the policy LLM (latency, outages, wrong calls), downstream services (timeouts) and the review queue (backlog). Scaling: orchestrator workers are stateless and scale horizontally; the policy LLM is the bottleneck in cost and latency (§77.17).
+**Reading the diagram.** Customers connect over WebSocket to the chat gateway (§9.6). A router, one small-model call, sends questions to RAG and actions to the orchestrator. The orchestrator runs on a workflow engine that checkpoints each step; it calls the policy LLM over HTTPS and sends every proposed tool call through guardrails before the tool layer executes it with scoped credentials. Actions above policy limits go asynchronously to a review queue read by human agents. Traces flow asynchronously to the trace pipeline. Storage boundaries: task state, memory and traces are separate stores with separate retention rules (§77.7.4). Failure points: the policy LLM (latency, outages, wrong calls), downstream services (timeouts) and the review queue (backlog). Scaling: orchestrator workers are stateless and scale horizontally; the policy LLM is the bottleneck in cost and latency (§77.17).
 
 ### 77.4.2 Where control and trust live
 
@@ -224,13 +224,13 @@ The model makes four kinds of tool errors, and each needs a different defense.
 | Wrong tool | Refunds before looking up the order | Precondition checks in code | Reject with a reason ("call lookup_order first") |
 | Right tool, wrong arguments | Refunds order Q-1002 instead of Q-1001 | Policy checks; cross-checks against looked-up state | Deny or escalate; count as a trajectory error |
 
-The first three are **detectable**: code can tell the call is wrong and give the model another try. The fourth is often **silent**: the call is well formed and allowed, and it does the wrong thing. §77.6.4 shows why the ratio of silent to detectable errors sets the ceiling on agent reliability. The defense against silent errors is to make more of them detectable: require the order to have been looked up in this task before it can be refunded, compare the amount against the policy's computed entitlement, and keep humans on high-value actions.
+The first three are **detectable**: code can tell the call is wrong and give the model another try. The fourth is often **silent**: the call is well formed and allowed, and it does the wrong thing. Silent errors set the ceiling on reliability (§77.6.4), so make more of them detectable: require a lookup before a refund, compare the amount with the policy's entitlement, and keep humans on high-value actions.
 
-Returning errors to the model as tool results, rather than raising exceptions that end the task, is the standard practice; the MCP specification distinguishes protocol errors (an unknown tool, a malformed request) from **tool execution errors**, which are returned in a normal result with `isError: true` so the model can self-correct [MCP 2025]. Cap corrections at two per tool per task; a model that fails three times rarely succeeds on the fourth.
+Errors go back to the model as tool results rather than ending the task; the MCP specification distinguishes protocol errors (an unknown tool, a malformed request) from **tool execution errors**, which are returned in a normal result with `isError: true` so the model can self-correct [MCP 2025]. Cap corrections at two per tool per task; a model that fails three times rarely succeeds on the fourth.
 
 ### 77.5.3 Parallel tool calls
 
-Models can emit several tool calls in one response when they are independent: `lookup_order` and `get_refund_history` for the same customer. The orchestrator executes them concurrently and returns all results in the next prompt. That saves one model round trip, about 2.4 s in QuickBite's step model (§77.17.2), and the input tokens of one extra step. Two rules apply. Run concurrently only calls that are read-only or independent; never let two side-effecting calls race (two refunds on one order). And bound concurrency per task and per downstream service with bulkheads (§22.14), because one confused model can emit twenty calls in one turn.
+Models can emit several tool calls in one response when they are independent: `lookup_order` and `get_refund_history` for the same customer. Executing them concurrently saves a model round trip, about 2.4 s in QuickBite's step model (§77.17.2). Run concurrently only read-only or independent calls, never two side effects on one order, and bound concurrency per task and per downstream service with bulkheads (§22.14), because one confused model can emit twenty calls in one turn.
 
 **Figure 77.4 — One tool-call round trip with parallel reads and a validated write.**
 
@@ -294,7 +294,7 @@ flowchart LR
   S3 --> PSP{{Payment provider}}
 ```
 
-**Reading the diagram.** The host owns the model, the full conversation and the security policy; each client is an isolated session to one server, so the payments server never sees what the orders server returned. The local server runs as a subprocess over stdio; the remote servers use Streamable HTTP with OAuth tokens scoped to that server. All protocol traffic is synchronous JSON-RPC requests and responses, with optional asynchronous notifications such as `notifications/tools/list_changed`. Storage stays behind each server. Failure points: a remote server is slow or down (the host times out the call and the model is told the tool failed), and a malicious or compromised server can return injected text or misleading tool descriptions, which is why the specification says tool annotations "should be considered untrusted, unless obtained from a trusted server" [MCP 2025]. Scaling: servers scale independently of the host; the number of tools advertised to the model is the practical limit (§77.5.6).
+**Reading the diagram.** The host owns the model, the full conversation and the security policy; each client is an isolated session to one server, so the payments server never sees what the orders server returned. The local server runs as a subprocess over stdio; the remote servers use Streamable HTTP with OAuth tokens scoped to that server. All protocol traffic is synchronous JSON-RPC requests and responses, with optional asynchronous notifications such as `notifications/tools/list_changed`. Failure points: a slow or down server (the host times out and tells the model), and a malicious server can return injected text or misleading tool descriptions, which is why the specification says tool annotations "should be considered untrusted, unless obtained from a trusted server" [MCP 2025]. Scaling: servers scale independently of the host; the number of tools advertised to the model is the practical limit (§77.5.6).
 
 **Figure 77.6 — MCP session: initialize, discover, call.**
 
@@ -316,7 +316,7 @@ sequenceDiagram
   C-->>H: result to append to context
 ```
 
-**Reading the diagram.** Initialization negotiates the protocol version and capabilities before any tool is used; `tools/list` returns each tool's `name`, `description` and `inputSchema` (JSON Schema), optionally an `outputSchema` and `annotations`. A `tools/call` request carries the tool name and arguments; the result carries `content` blocks (text, images, resource links), optional `structuredContent`, and `isError` for execution failures. All exchanges are request–response over one session; the host, not the server, decides whether the model may call a tool, and the specification asks hosts to obtain user consent and keep a human able to deny invocations [MCP 2025]. Failure point: tool definitions are fetched at run time, so a server update can change a description the model relies on; pin server versions and review description changes as you would code.
+**Reading the diagram.** Initialization negotiates the protocol version and capabilities before any tool is used; `tools/list` returns each tool's `name`, `description` and `inputSchema` (JSON Schema); a `tools/call` result carries `content` blocks, optional `structuredContent` and `isError` for execution failures. All exchanges are request–response over one session; the host, not the server, decides whether the model may call a tool, and the specification asks hosts to obtain user consent and keep a human able to deny invocations [MCP 2025]. Failure point: tool definitions are fetched at run time, so a server update can change a description the model relies on; pin server versions and review description changes as you would code.
 
 ::: warning
 **MCP is a connector protocol, not a security boundary.** MCP standardizes how tools are described and invoked. It does not decide whether a refund is within policy, whether a server's description is honest, or whether text in a tool result is an instruction. Policy checks, least-privilege credentials and injection defenses (§77.11, §77.13) remain the host's job.
@@ -524,7 +524,7 @@ What to notice:
 
 ### 77.5.6 How many tools?
 
-Every tool definition is sent on every model call. QuickBite's four tools cost about 1,800 tokens of schema; fifty tools from several MCP servers could cost 20,000 tokens per call, or \$0.05 per call at \$2.50 per million input tokens before caching, and models select less accurately among many similar tools. Three remedies: group tools behind a router (the router picks the tool family, then only that family is shown); retrieve tool definitions by relevance to the task, as RAG retrieves passages; and merge fine-grained tools into coarser, task-shaped ones (`resolve_late_delivery` instead of six primitive calls), which moves sequencing back into deterministic code.
+Every tool definition is sent on every model call. QuickBite's four tools cost about 1,800 tokens of schema; fifty tools from several MCP servers could cost 20,000 tokens per call, or \$0.05 per call at \$2.50 per million input tokens before caching, and models select less accurately among many similar tools. Remedies: route to a tool family first, retrieve tool definitions by relevance, or merge fine-grained tools into task-shaped ones (`resolve_late_delivery`), which moves sequencing back into code.
 
 ## 77.6 Planning patterns
 
@@ -532,7 +532,7 @@ A **planning pattern** is the shape of the loop: how much the model thinks befor
 
 ### 77.6.1 ReAct: interleaving reasoning and acting
 
-ReAct prompts the model to alternate a **thought** (free-text reasoning about what to do next), an **action** (a tool call) and an **observation** (the tool result), repeating until it answers [Yao et al. 2023a]. Reasoning alone, as in chain-of-thought prompting [Wei et al. 2022], can reason from wrong facts; acting alone cannot recover from a surprising result. Interleaving lets observations correct the reasoning. On two interactive decision-making benchmarks, ALFWorld and WebShop, ReAct prompted with one or two examples outperformed imitation-learning and reinforcement-learning methods by absolute success rates of 34 and 10 percentage points [Yao et al. 2023a]. ReAct is the default loop of most agents, including Figure 77.1; modern tool-calling models often perform the "thought" internally or in a hidden reasoning block.
+ReAct prompts the model to alternate a **thought** (free-text reasoning about what to do next), an **action** (a tool call) and an **observation** (the tool result), repeating until it answers [Yao et al. 2023a]. Reasoning alone, as in chain-of-thought prompting [Wei et al. 2022], can reason from wrong facts; interleaving lets observations correct it. On two interactive decision-making benchmarks, ALFWorld and WebShop, ReAct prompted with one or two examples outperformed imitation-learning and reinforcement-learning methods by absolute success rates of 34 and 10 percentage points [Yao et al. 2023a]. ReAct is the default loop of most agents, including Figure 77.1.
 
 Cost and latency: one model call per step, each with the full history, so input tokens grow linearly per step and quadratically per task (§77.17.1). Latency is the sum of all steps, because each depends on the last.
 
@@ -788,7 +788,7 @@ sequenceDiagram
   W2-->>E: record issue_refund, continue
 ```
 
-**Reading the diagram.** The engine stores the history durably; workers are stateless. Worker 1 records the model's decision, then calls payments and dies before recording completion. Worker 2 replays: the model is *not* called again (its result is in the history), and the refund activity is retried with the same idempotency key, so payments returns the original refund. All calls are synchronous RPCs; the history write is the commit point of each step. The remaining failure window, side effect done but not recorded, is closed by idempotency, not by the engine. Scaling: add workers; histories are sharded by workflow ID.
+**Reading the diagram.** The engine stores the history durably; workers are stateless. Worker 1 records the model's decision, then calls payments and dies before recording completion. Worker 2 replays: the model is *not* called again (its result is in the history), and the refund activity is retried with the same idempotency key, so payments returns the original refund. The history write is each step's commit point. The remaining failure window, side effect done but not recorded, is closed by idempotency, not by the engine. Scaling: add workers; histories are sharded by workflow ID.
 
 The program below reduces durable execution to its essence: a history of step results, replay, and a crash between a side effect and its record.
 
@@ -903,9 +903,9 @@ flowchart TB
 
 ### 77.9.1 When multiple agents help, and when they just add cost
 
-Multiple agents help when the task decomposes into **independent, context-heavy** subtasks: each worker can read far more than fits in one context, in parallel, and return only what matters. Anthropic reports that its multi-agent research system, a Claude Opus 4 lead with Claude Sonnet 4 subagents, outperformed single-agent Claude Opus 4 by 90.2% on an internal research evaluation; it also reports that agents use about 4× the tokens of chat interactions and multi-agent systems about 15×, that token usage alone explained 80% of performance variance on the BrowseComp evaluation, and that domains where agents must share the same context, and most coding tasks, are poorer fits [Anthropic 2025]. More agents mostly means more tokens spent in parallel; that pays when the value of the task is high and the subtasks are separable.
+Multiple agents help when the task decomposes into **independent, context-heavy** subtasks: each worker can read far more than fits in one context, in parallel, and return only what matters. Anthropic reports that its multi-agent research system, a Claude Opus 4 lead with Claude Sonnet 4 subagents, outperformed single-agent Claude Opus 4 by 90.2% on an internal research evaluation; it also reports that agents use about 4× the tokens of chat interactions and multi-agent systems about 15×, that token usage alone explained 80% of performance variance on the BrowseComp evaluation, and that domains where agents must share the same context, and most coding tasks, are poorer fits [Anthropic 2025].
 
-They add cost without benefit when subtasks are sequential, when all agents need the same context, or when the split exists for organizational neatness ("a refund agent, a lookup agent, a reply agent") rather than context limits. A QuickBite refund is short and sequential; it runs as one agent.
+They add cost without benefit when subtasks are sequential, when all agents need the same context, or when the split mirrors an org chart rather than context limits. A QuickBite refund is short and sequential; it runs as one agent.
 
 ::: formula
 **Token overhead of an orchestrator–worker system**
@@ -962,11 +962,11 @@ stateDiagram-v2
 
 **Reading the diagram.** The key state is **Unknown**: a call was sent and no answer came back, so the side effect may or may not have happened. Retrying from Unknown is safe only because the idempotency key was assigned before the first attempt and is reused. If retries are exhausted, the step does not guess; it goes to **Reconcile**, which queries the provider by key. Rejected and approval paths happen before any side effect. Every transition is a durable write, so a crash in any state resumes there.
 
-The idempotency protocol is that of §22.15: the client generates a key, the server stores the result under the key and returns it for repeats, with a fingerprint of the request to reject a reused key with different arguments. For agents the key must identify the **logical action**: `hash(task_id, action_type, target)`, such as `T-501|refund|Q-1001`. Keys built from the step number or attempt number fail when the model re-plans and proposes the same refund at a later step. Where the downstream service offers no idempotency, the tool layer wraps it: record intent with the key in its own database, call the service, record the result, and reconcile intents left without results.
+The idempotency protocol is that of §22.15. For agents the key must identify the **logical action**: `hash(task_id, action_type, target)`, such as `T-501|refund|Q-1001`. Keys built from step or attempt numbers fail when the model re-plans. Where the downstream service offers no idempotency, the tool layer wraps it: record intent with the key in its own database, call the service, record the result, and reconcile intents left without results.
 
 ### 77.10.2 Compensation for multi-step actions
 
-Some tasks perform several side effects: refund an item, issue a \$5 voucher, and cancel a replacement order. If the third fails after the first two succeeded, the task needs **compensation**, the saga pattern of §32.7. Order the steps so that the irreversible or least-compensable one (the pivot) comes last, define a compensating action for each earlier step (void the voucher), and run compensations with unlimited retries. Some actions have no compensation: a sent message cannot be unsent; a refund can be reversed only by charging the customer again, which is a business decision, not an automatic undo. Put such steps after the pivot or behind approval. The agent should not improvise compensation: compensations are code paths defined with the tools, and the agent can at most choose to trigger them.
+Some tasks perform several side effects: refund an item, issue a \$5 voucher, and cancel a replacement order. If the third fails after the first two succeeded, the task needs **compensation**, the saga pattern of §32.7. Order the steps so that the irreversible or least-compensable one (the pivot) comes last, define a compensating action for each earlier step (void the voucher), and run compensations with unlimited retries. Some actions have no compensation (a sent message cannot be unsent); put them after the pivot or behind approval. Compensations are code paths defined with the tools, never improvised by the agent.
 
 ### 77.10.3 Retry budgets
 
@@ -1004,7 +1004,7 @@ $$A_\text{nested} = \prod_{\ell=1}^{L} (1 + r_\ell), \qquad R_\text{max}(t) = \m
 **Definition — Guardrail.** A check, outside the policy model, that constrains what enters the agent, what the agent may do and what leaves it: input filters, tool-call policy checks, spend and rate limits, allow-lists, and output filters. A guardrail that is deterministic code gives a guarantee; one that is a classifier or LLM judge gives a probability.
 :::
 
-Think of a bank teller: they may be persuaded by a convincing customer, but the vault has a time lock and transfers above a limit need a second signature. Guardrails are the time lock and the second signature. They are layered so that each layer catches what earlier ones miss.
+A bank teller can be persuaded, but the vault has a time lock and large transfers need a second signature. Guardrails are the time lock and the signature, layered so each catches what earlier ones miss.
 
 **Figure 77.13 — Guardrail layers around the agent loop.**
 
@@ -1059,8 +1059,8 @@ The fleet cap is the most important and least glamorous control: if a prompt reg
 **Human-in-the-loop** design puts people at the points where the agent's error cost exceeds a person's time cost. Three mechanisms:
 
 1. **Approval gates.** The agent proposes a side effect; a person approves or rejects it before execution. QuickBite gates refunds above \$25 and any refund on an account with more than five claims in 30 days.
-2. **Escalation (hand-off).** The agent transfers the conversation, with a structured summary, to a human agent: when the customer asks, when the policy engine denies twice, when the budget runs out, or when the topic is outside scope (safety incidents, legal threats).
-3. **Confidence thresholds.** Route to a human when a calibrated signal is weak, such as a low retrieval score (§75.15.4), a router probability below a threshold, or disagreement between two sampled plans. Raw model self-reported confidence is poorly calibrated; prefer signals you can validate against outcomes (§57.11 on calibration).
+2. **Escalation (hand-off).** Transfer the conversation with a structured summary when the customer asks, the policy engine denies twice, the budget runs out, or the topic is out of scope (safety, legal).
+3. **Confidence thresholds.** Route to a human when a calibrated signal is weak, such as a low retrieval score (§75.15.4), a router probability below a threshold, or disagreement between two sampled plans. Prefer signals validated against outcomes over the model's self-reported confidence (§57.10.3 on calibration).
 
 **Figure 77.14 — An approval gate as a durable wait.**
 
@@ -1083,7 +1083,7 @@ sequenceDiagram
   A->>C: refund confirmed
 ```
 
-**Reading the diagram.** The agent never blocks a thread while waiting: the workflow sleeps durably on a signal with a timeout (§77.8.2), and the customer is told the expected delay. The reviewer sees an **evidence pack**: order facts, the policy rule triggered, the amount computed by the policy engine and the agent's rationale, so the review takes minutes, not a re-investigation. Approval arrives asynchronously as a signal; execution then proceeds through the same idempotent tool. Failure points: queue backlog at peak, reviewers rubber-stamping, and a timeout that must resolve to a safe default (escalate to a human agent, not auto-approve).
+**Reading the diagram.** The agent never blocks a thread while waiting: the workflow sleeps durably on a signal with a timeout (§77.8.2), and the customer is told the expected delay. The reviewer sees an **evidence pack** (order facts, rule triggered, computed amount, agent rationale), so review takes minutes. Approval arrives asynchronously as a signal; execution then proceeds through the same idempotent tool. Failure points: queue backlog at peak, reviewers rubber-stamping, and a timeout that must resolve to a safe default (escalate to a human agent, not auto-approve).
 
 ### 77.12.2 Capacity, latency and cost of humans
 
@@ -1118,7 +1118,7 @@ $$a = \lambda_\text{peak}\, S, \qquad c = \left\lceil \frac{a}{\rho_\text{target
 
 An agent reads text from places its operator does not control: customer messages, order notes typed by customers, restaurant menus, web pages, emails, retrieved documents and the outputs of third-party MCP servers. **Indirect prompt injection** places instructions in such content so that the model, reading it as part of a tool result, follows them. Greshake et al. demonstrated it against real LLM-integrated applications, showing data theft, manipulation of outputs and propagation through content the model later reads [Greshake et al. 2023]; the OWASP Top 10 for LLM Applications (2025 edition) lists prompt injection first and **excessive agency**, granting an LLM more functionality, permissions or autonomy than it needs, as a separate risk [OWASP 2025].
 
-No current model reliably distinguishes instructions from data in its context, so the defenses are architectural (§78.13 covers testing them). Simon Willison's **lethal trifecta** names the dangerous combination: an agent with access to **private data**, exposure to **untrusted content**, and the ability to **communicate externally** can be made to exfiltrate the data [Willison 2025]. Remove any one leg for a given task and the attack has no payoff. CaMeL takes a stronger approach: a privileged model writes a program from the trusted user request only; untrusted data is processed by a quarantined model that cannot call tools; and capabilities attached to each value enforce, at tool-call time, where data may flow [Debenedetti et al. 2025].
+No current model reliably distinguishes instructions from data in its context, so the defenses are architectural (§78.13 covers testing them). Simon Willison's **lethal trifecta** names the dangerous combination: an agent with access to **private data**, exposure to **untrusted content**, and the ability to **communicate externally** can be made to exfiltrate the data [Willison 2025]. Remove one leg per task and the attack has no payoff. CaMeL takes a stronger approach: a privileged model writes a program from the trusted user request only; untrusted data is processed by a quarantined model that cannot call tools; and capabilities attached to each value enforce, at tool-call time, where data may flow [Debenedetti et al. 2025].
 
 **Figure 77.15 — Indirect injection and the confused deputy.**
 
@@ -1139,10 +1139,10 @@ flowchart LR
 
 ### 77.13.2 Least privilege per tool and per task
 
-1. **Act as the user, not as the agent.** Tools receive the end user's identity from the authenticated session (a token exchanged for a narrowly scoped, short-lived credential), not from model arguments. The order service then enforces ownership itself, as it would for the mobile app.
-2. **Per-tool credentials.** The lookup tool holds read-only order scope; the refund tool holds a refund-only scope with server-side limits. No tool holds a general database credential or an admin API key.
-3. **Per-task tool sets.** A conversation classified as "where is my order" gets read-only tools; refund tools are exposed only after the router classifies a refund intent. Fewer tools means fewer ways to be misused.
-4. **Treat tool output as data.** Wrap tool results and retrieved text in delimiters with provenance labels, strip markup that renders as links or images (an exfiltration channel when rendered), and never let tool output modify the system prompt or tool registry.
+1. **Act as the user, not as the agent.** Tools get the user's identity from the session (exchanged for a scoped, short-lived credential), never from model arguments, so services enforce ownership as they would for the app.
+2. **Per-tool credentials.** The lookup tool holds read-only order scope; the refund tool holds a refund-only scope with server-side limits. No tool holds an admin key.
+3. **Per-task tool sets.** A conversation classified as "where is my order" gets read-only tools; refund tools are exposed only after the router classifies a refund intent.
+4. **Treat tool output as data.** Delimit and label tool results, strip markup that renders as links or images (an exfiltration channel), and never let tool output change the prompt or registry.
 
 ### 77.13.3 Sandboxed code execution and egress
 
@@ -1164,7 +1164,7 @@ flowchart LR
   EP -.->|denied, logged| SIEM[[Security log]]
 ```
 
-**Reading the diagram.** Each task gets a fresh sandbox with no credentials, CPU, memory and time limits, and a scratch disk destroyed afterward. Results return synchronously to the orchestrator, which treats them as untrusted data. All network traffic goes through an egress proxy with a destination allow-list and size limits; denied attempts are logged asynchronously. Failure points: a sandbox escape (mitigated by the kernel boundary), exfiltration through allowed destinations (keep the list minimal) and resource exhaustion (hard limits). Scaling: microVMs start in a fraction of a second, so per-task sandboxes are affordable.
+**Reading the diagram.** Each task gets a fresh sandbox with no credentials, CPU, memory and time limits, and a scratch disk destroyed afterward. Results return synchronously to the orchestrator, which treats them as untrusted data. All network traffic goes through an egress proxy with a destination allow-list and size limits; denied attempts are logged asynchronously. Failure points: a sandbox escape (mitigated by the kernel boundary), exfiltration through allowed destinations (keep the list minimal) and resource exhaustion (hard limits).
 
 **Table 77.6 — Agent threats and controls.**
 
@@ -1195,9 +1195,9 @@ Chapter 78 owns evaluation methodology (benchmarks, LLM-as-a-judge, human evalua
 | Policy-denial rate | Proposed side effects denied by guardrails | Track; spikes signal regressions or attacks |
 | Wrong-action rate | Side effects later reversed or found wrong on audit | ≤ 0.5% of refunds |
 
-**Trajectory evaluation** checks the path as well as the endpoint: did the agent look up the order before refunding, call no forbidden tool, avoid redundant calls, and stay within budget? A correct refund reached by refunding twice and reversing once is a failure. Trajectory checks are mostly deterministic assertions over the recorded steps, with an LLM judge for qualities such as tone.
+**Trajectory evaluation** checks the path as well as the endpoint: did the agent look up the order before refunding, call no forbidden tool, avoid redundant calls, and stay within budget? A correct refund reached by refunding twice and reversing once is a failure. Most trajectory checks are deterministic assertions over recorded steps.
 
-**Offline scenario suites** are the agent's integration tests: a few hundred scripted tasks with a simulated customer, mocked tools with fixed data and an expected final state. τ-bench builds exactly this for retail and airline customer service: an LLM-simulated user, domain APIs and policy documents, with success judged by comparing the final database state to the goal; its authors found that even state-of-the-art function-calling agents such as GPT-4o succeeded on fewer than half of the tasks and were inconsistent, with pass^8 below 25% in the retail domain [Yao et al. 2024]. SWE-bench does the same for coding agents with 2,294 real GitHub issues from 12 Python repositories, judged by the repositories' own tests [Jimenez et al. 2024]. Kapoor et al. argue that agent evaluations must report cost alongside accuracy, because accuracy can be bought with repeated calls, and that simple baselines are often on the cost–accuracy Pareto frontier [Kapoor et al. 2024].
+**Offline scenario suites** are the agent's integration tests: a few hundred scripted tasks with a simulated customer, mocked tools with fixed data and an expected final state. τ-bench builds this for retail and airline customer service, judging success by comparing the final database state to the goal (§78.6.4); its authors found that even state-of-the-art function-calling agents such as GPT-4o succeeded on fewer than half of the tasks and were inconsistent, with pass^8 below 25% in the retail domain [Yao et al. 2024]. SWE-bench does the same for coding agents with 2,294 real GitHub issues from 12 Python repositories, judged by the repositories' own tests [Jimenez et al. 2024]. Kapoor et al. argue that agent evaluations must report cost alongside accuracy, because accuracy can be bought with repeated calls [Kapoor et al. 2024].
 
 ::: formula
 **pass^k from repeated trials**
@@ -1236,7 +1236,7 @@ flowchart LR
   TRI -.->|new scenarios| SC
 ```
 
-**Reading the diagram.** Offline (solid arrows), each candidate change runs every scenario $k$ times against mocked tools; graders compare end states and check trajectory rules; a gate blocks releases that regress success, pass^k or cost. Online (dotted, asynchronous), canary traffic is monitored on escalation, reopen and denial rates; failed production trajectories are triaged and turned into new scenarios. Failure point: a simulated user that is easier than real customers. Scaling: suites run in parallel; their cost is itself tokens, budgeted per release.
+**Reading the diagram.** Offline (solid arrows), each candidate change runs every scenario $k$ times against mocked tools; graders compare end states and check trajectory rules; a gate blocks releases that regress success, pass^k or cost. Online (dotted, asynchronous), canary traffic is monitored on escalation, reopen and denial rates; failed production trajectories are triaged and turned into new scenarios. Failure point: a simulated user easier than real customers.
 
 ## 77.15 Observability
 
@@ -1258,9 +1258,9 @@ flowchart TB
   A --> G["chat model-x<br/>final answer"]
 ```
 
-**Reading the diagram.** The root span is the agent invocation, tagged with conversation and task IDs; children are model calls (three of five shown), tool executions and guardrail decisions in time order. The refund span's two children show a timeout followed by an idempotent replay. Spans are exported asynchronously to the trace pipeline (Figure 77.3); trace context propagates into downstream services so the payments span joins the same trace. Failure points: unbounded attribute size (truncate), personal data in content (redact or keep content in the access-controlled task store and link by ID), and cost (sample successful traces, keep all failed ones, as in tail sampling, §40.6.3).
+**Reading the diagram.** The root span is the agent invocation, tagged with conversation and task IDs; children are model calls (three of five shown), tool executions and guardrail decisions in time order. The refund span's two children show a timeout followed by an idempotent replay. Spans export asynchronously; trace context propagates so downstream spans join the same trace. Failure points: unbounded attribute size (truncate), personal data in content (redact or keep content in the access-controlled task store and link by ID), and cost (sample successful traces, keep all failed ones, as in tail sampling, §40.6.3).
 
-**Replaying failures.** Because every model output and tool result is recorded in the task history (§77.8), a failed task can be replayed exactly: feed recorded outputs back, step by step, to reproduce the decision path. **Counterfactual replay** goes further: replay steps $1 \ldots k$ from the record, then let a *new* prompt or model take over from step $k+1$ against mocked tools, to test whether a fix would have changed the outcome. Failed production tasks become regression scenarios (Figure 77.17).
+**Replaying failures.** Because every model output and tool result is recorded in the task history (§77.8), a failed task can be replayed exactly: feed recorded outputs back, step by step, to reproduce the decision path. **Counterfactual replay** replays steps $1 \ldots k$ from the record, then lets a *new* prompt or model continue against mocked tools, to test a fix. Failed production tasks become regression scenarios (Figure 77.17).
 
 ## 77.16 Failure handling
 
@@ -1277,7 +1277,7 @@ flowchart TB
 | Silent wrong action | Plausible but wrong arguments | Audits, reversals, complaints | Reverse; human review of cluster | Preconditions; approval gates |
 | Prompt regression | New prompt or model version | Scenario suite; canary metrics | Roll back version | Versioned prompts; release gate |
 
-**Circuit breakers** (§22.13) apply at two levels. Per tool: if payments fails 50% of calls in a 30-second window, the breaker opens, the tool immediately returns a non-retryable "payments unavailable" result, and the model is instructed to tell the customer the refund will be processed and to hand off. Per model provider: if the policy model's error rate or TTFT crosses a threshold, route new tasks to a fallback model (§78.15) with a reduced tool set, or to human agents. A **watchdog** on wall-clock time per task catches whatever the other limits miss: a task older than 10 minutes without a human wait is escalated.
+**Circuit breakers** (§22.13) apply at two levels. Per tool: if payments fails 50% of calls in a 30-second window, the breaker opens, the tool immediately returns a non-retryable "payments unavailable" result, and the model is instructed to tell the customer the refund will be processed and to hand off. Per model provider: if the policy model's error rate or TTFT crosses a threshold, route new tasks to a fallback model (§78.15) with a reduced tool set, or to human agents. A **watchdog** escalates any task older than 10 minutes that is not waiting on a human.
 
 ::: mistake
 **Letting the model handle infrastructure failures.** Telling the model "the tool failed, try again" hands retry policy to a component that does not know about retry budgets, breakers or idempotency. Retry in code; tell the model only what the customer needs to hear.
@@ -1393,38 +1393,32 @@ gantt
 ## 77.19 Knowledge checkpoint
 
 1. What distinguishes an agent from a workflow with LLM steps?
-2. Give two situations in which an agent is the wrong design.
-3. Why must the customer ID not be a tool argument the model fills?
-4. In MCP, what is the relationship between hosts, clients and servers?
-5. What are the three MCP server primitives, and who controls each?
-6. With per-step success 0.95, what is the success probability of an 8-step task?
-7. With $q_d = 0.04$, $q_u = 0.01$ and unlimited retries, what is the per-step ceiling?
-8. Why must an LLM call be recorded in the workflow history rather than re-executed on replay?
-9. Why should an idempotency key not include the step number?
-10. Three layers each allow two retries. What is the worst-case call amplification?
-11. 120 reviews arrive in the peak hour at 3 minutes each; how many reviewers at 75% target utilization?
-12. A task succeeds in 5 of 8 trials. What is pass^2 for that task?
-13. Name the three legs of the lethal trifecta.
-14. Why is a step budget needed in addition to loop detection?
-15. In QuickBite's cost model, which term dominates, and what follows?
+2. Why must the customer ID not be a tool argument the model fills?
+3. In MCP, what is the relationship between hosts, clients and servers?
+4. With per-step success 0.95, what is the success probability of an 8-step task?
+5. With $q_d = 0.04$, $q_u = 0.01$ and unlimited retries, what is the per-step ceiling?
+6. Why must an LLM call be recorded in the workflow history rather than re-executed on replay?
+7. Why should an idempotency key not include the step number?
+8. Three layers each allow two retries. What is the worst-case call amplification?
+9. 120 reviews arrive in the peak hour at 3 minutes each; how many reviewers at 75% target utilization?
+10. A task succeeds in 5 of 8 trials. What is pass^2 for that task?
+11. Why is a step budget needed in addition to loop detection?
+12. In QuickBite's cost model, which term dominates, and what follows?
 
 <details><summary>Answers</summary>
 
 1. Who chooses the sequence of steps: code (workflow) or the model at run time (agent).
-2. Any two of: steps are known in advance; a single prediction under a tight latency budget; frequent irreversible actions; no way to evaluate trajectories.
-3. The model can be confused or injected into supplying another customer's ID (confused deputy); identity must come from the authenticated session.
-4. A host creates many clients; each client holds one stateful session with exactly one server.
-5. Tools (model-controlled), resources (application-controlled context) and prompts (user-selected templates).
-6. $0.95^8 = 0.663$.
-7. $0.95 / 0.96 = 0.9896$.
-8. The model is nondeterministic; re-calling it on replay can produce a different decision, breaking determinism and possibly the idempotency of later side effects.
-9. A re-planning model may propose the same refund at a later step; only a key built from the logical action deduplicates it.
-10. $(1 + 2)^3 = 27$.
-11. $a = 120 \times 3/60 = 6$; $c = \lceil 6/0.75 \rceil = 8$.
-12. $\binom{5}{2}/\binom{8}{2} = 10/28 = 0.357$.
-13. Access to private data, exposure to untrusted content, ability to communicate externally.
-14. Loop detection catches exact repetition only; a wandering policy never repeats exactly (scenario D in §77.5.5).
-15. Escalations (73% of the blended cost); resolution rate matters far more than token prices.
+2. The model can be confused or injected into supplying another customer's ID (confused deputy); identity must come from the authenticated session.
+3. A host creates many clients; each client holds one stateful session with exactly one server.
+4. $0.95^8 = 0.663$.
+5. $0.95 / 0.96 = 0.9896$.
+6. The model is nondeterministic; re-calling it on replay can produce a different decision, breaking determinism and possibly the idempotency of later side effects.
+7. A re-planning model may propose the same refund at a later step; only a key built from the logical action deduplicates it.
+8. $(1 + 2)^3 = 27$.
+9. $a = 120 \times 3/60 = 6$; $c = \lceil 6/0.75 \rceil = 8$.
+10. $\binom{5}{2}/\binom{8}{2} = 10/28 = 0.357$.
+11. Loop detection catches exact repetition only; a wandering policy never repeats exactly (scenario D in §77.5.5).
+12. Escalations (73% of the blended cost); resolution rate matters far more than token prices.
 
 </details>
 
@@ -1433,7 +1427,7 @@ gantt
 ### Basic
 
 **Q1. What is an AI agent, and how is it different from a chatbot with RAG?**
-**Answer.** A RAG chatbot runs a fixed pipeline: retrieve, then generate. An agent loops: the model chooses tool calls based on intermediate results, code executes them, and the loop ends on a final answer, handoff or budget. It can act, not just answer, so it needs validation, policy checks, idempotency and budgets.
+**Answer.** A RAG chatbot runs a fixed pipeline: retrieve, then generate. An agent loops: the model chooses tool calls based on intermediate results, code executes them, and the loop ends on a final answer, handoff or budget. Acting requires validation, policy checks, idempotency and budgets.
 
 **Q2. How do you stop an agent from looping forever?**
 **Answer.** Budgets on steps, tokens, dollars and wall-clock time enforced by the orchestrator; repeated-call detection; caps on corrections per tool; a watchdog per task; and a graceful handoff with a summary when a limit is hit.
@@ -1441,10 +1435,10 @@ gantt
 ### Intermediate
 
 **Q3. An agent's refund tool timed out. Was the customer refunded?**
-**Answer.** Unknown. The step stays in an Unknown state; retry with the same idempotency key, derived from task and logical action, so the provider returns the original result if it executed. If retries are exhausted, reconcile by querying the provider by key, and never let the model decide to "try again" with a new request.
+**Answer.** Unknown. The step stays in an Unknown state; retry with the same idempotency key, derived from task and logical action, so the provider returns the original result if it executed. If retries run out, reconcile by querying the provider by key.
 
 **Q4. When would you use multiple agents?**
-**Answer.** When the task splits into independent, context-heavy subtasks whose parallel execution cuts latency or overcomes context limits, and the task is valuable enough to pay several times the tokens. Not for short sequential tasks or tasks that need shared context. Use hub-and-spoke communication with compact summaries.
+**Answer.** When the task splits into independent, context-heavy subtasks whose parallel execution cuts latency or overcomes context limits, and the task is valuable enough to pay several times the tokens. Not for short sequential or shared-context tasks.
 
 ### Advanced
 
