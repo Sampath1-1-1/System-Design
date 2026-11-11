@@ -272,7 +272,7 @@ Classic load balancing (Chapter 19) assumes requests are short and alike. LLM re
 - **Least outstanding tokens:** send to the replica with the fewest prompt-plus-expected-output tokens assigned and not yet finished. It adapts to slow replicas and long requests, which round robin cannot.
 - **Queue depth and KV-cache usage**, scraped from engine metrics every few hundred milliseconds, identify replicas about to preempt (§73.14).
 - **Prefix affinity:** score replicas by how many of the request's leading tokens they hold. Routers keep an approximate per-replica prefix tree built from the requests they sent there, since engines evict independently [Zheng et al. 2024].
-- **Bounded affinity:** follow the cache only while the target is not overloaded relative to the pool; otherwise fall back to least-loaded. Without the bound, one hot prefix (a batch job's shared system prompt) piles onto one replica.
+- **Bounded affinity:** follow the cache only while the target is not overloaded relative to the pool; otherwise fall back to least-loaded. Without the bound, one hot prefix (a batch job's shared system prompt) piles onto one replica. **Session affinity**, hashing a conversation ID (§19.6), is the simple special case; both need consistent hashing with bounded loads (§14.8).
 
 **Figure 79.3 — Router decision flow.**
 
@@ -291,7 +291,7 @@ flowchart TB
   BND -->|no| LOT
 ```
 
-**Reading the diagram.** The top half is deployment selection, evaluated synchronously from cached registry and policy tables: a request the tenant's policy forbids is rejected or redirected to a compliant deployment; an unhealthy or saturated pool sends it to a fallback. The bottom half is endpoint selection inside the chosen pool: prefer the replica holding the longest prefix, but only within a load bound, else use least outstanding tokens. The router's state (prefix trees, outstanding counts, health) is soft and rebuilt from traffic if lost; the only storage boundary is the registry it caches. Failure points: stale load data sends bursts to one replica, and several router instances with independent views can all choose the same replica, which power-of-two-choices sampling mitigates (§19.4).
+**Reading the diagram.** The top half is deployment selection, evaluated synchronously from cached registry and policy tables: forbidden requests are rejected or redirected, and an unhealthy pool sends traffic to a fallback. The bottom half is endpoint selection: prefer the longest prefix holder within a load bound, else least outstanding tokens. Router state is soft and rebuilt from traffic; the only storage boundary is the cached registry. Failure points: stale load data sends bursts to one replica, and several router instances with independent views can all choose the same replica, which power-of-two-choices sampling mitigates (§19.4).
 
 #### Mathematical foundations: bounded affinity
 
@@ -322,7 +322,7 @@ $$k^\star = \arg\max_k \; m_k(x) \quad \text{subject to} \quad L_{k^\star} \le \
 
 #### Code example: routing policies compared
 
-The simulator below models four replicas of the 7B chatbot (one on an older, half-speed GPU node, as happens when a pool borrows capacity). Each replica runs continuous batching with a 4,096-token prefill budget per iteration and keeps a least-recently-used prefix cache of 60,000 tokens. Traffic is three new support conversations per second, each with four turns that resend a growing history behind a 1,200-token system prompt, plus a batch tenant that sends a burst of 40 requests sharing a 2,000-token system prompt every minute. Costs come from Chapter 73.
+The simulator models four replicas of the 7B chatbot, one on an older, half-speed GPU node. Each runs continuous batching with a 4,096-token prefill budget per iteration and a 60,000-token LRU prefix cache. Traffic: three support conversations per second, each four turns resending a growing history behind a 1,200-token system prompt, plus a batch tenant sending 40 requests with a shared 2,000-token system prompt every minute. Costs come from Chapter 73.
 
 ```python
 import heapq, random, zlib
@@ -460,10 +460,10 @@ affinity_bounded   91%            38    0.02s    0.07s   13.2s                21
 
 What to notice:
 
-- **Round robin** gives the half-speed replica a full 25% share, so its batches fill and its decode slows: end-to-end p99 is 21.5 s, twice least-outstanding-tokens. Counting outstanding *tokens* cuts the slow replica's share to 15% without being told it is slow.
-- Both load-aware policies leave the cache to chance: 67% of prompt tokens hit, almost all of it the system prompt every replica holds. **Pure affinity** raises the hit ratio to 92% and cuts prefill GPU time 4× (134 to 34 GPU-seconds), but it sends every batch request, which shares one system prompt, to one replica: TTFT p99 jumps to 4.2 s.
-- **Bounded affinity** keeps 91% of the hits and the lowest TTFT p99 (0.07 s); its end-to-end p99 (13.2 s) is between the two because conversations hashed to the slow replica stay there while it is under the bound. A per-replica speed weight on $L_k$ would close the gap.
-- Simplifications: the router reads replica caches exactly (real routers approximate them), prefill and decode share an iteration without chunking, and there is no preemption. The ranking of policies, not the absolute numbers, is the result.
+- **Round robin** gives the half-speed replica 25% of requests, doubling end-to-end p99 (21.5 s versus 10.6 s). Counting outstanding *tokens* cuts its share to 15% without being told it is slow.
+- Load-aware policies leave the cache to chance: 67% of prompt tokens hit, mostly the shared system prompt. **Pure affinity** reaches 92% and cuts prefill GPU time 4× (134 to 34 GPU-s), but sends every batch request to one replica: TTFT p99 jumps to 4.2 s.
+- **Bounded affinity** keeps 91% of the hits with the lowest TTFT p99 (0.07 s); its end-to-end p99 sits between the others because conversations hashed to the slow replica stay there; weighting $L_k$ by replica speed would close the gap.
+- The router reads caches exactly and there is no preemption; the ranking of policies, not the absolute numbers, is the result.
 
 ### 79.6.2 Load-aware routing for LLM pools
 

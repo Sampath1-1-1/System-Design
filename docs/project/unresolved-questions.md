@@ -355,3 +355,5 @@ This register feeds Appendix H. Each chapter's "Open verification items" are cop
 | UQ-348 | 78 | Zheng et al. 2023 "over 80% agreement" wording; Perez et al. 2022 "tens of thousands of offensive replies" (280B chatbot); FrugalGPT and RouteLLM savings as author-reported | Open | |
 | UQ-349 | 78 | τ-bench pass^k estimator C(c,k)/C(n,k); current RAGAS context precision/recall formulas; OWASP Top 10 for LLM Applications 2025 category names (prompt injection still #1) | Open | Time-sensitive |
 | UQ-350 | 78 | CaMeL (Debenedetti et al. 2025) and Dubois et al. 2024 author lists and venues; DoorDash 2024 90%/99% reductions | Open | |
+| UQ-351 | 77 | Anthropic "Building effective agents" (Dec 2024) second author full name (Erik Schluntz); MCP details from 2025-06-18 / 2025-11-25 spec revisions (site blocked; read from spec repo) | Open | |
+| UQ-352 | 77 | OpenTelemetry GenAI semantic conventions moved repo, still Development status — attribute names may change; τ-bench figures from secondary summaries; ReAct, Reflexion, Toolformer headline figures quoted from memory | Open | Re-check against papers |
