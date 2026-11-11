@@ -1519,3 +1519,135 @@ sequenceDiagram
 - **Responsible ML**: audit enforcement disparities across languages and dialects, since classifiers often over-flag some dialects (§71.5); publish transparency reports.
 - **Security and privacy**: severe content is access-controlled and retained only as law requires; reviewer tools log access; user data minimized (§50.8).
 - **Cost**: reviewers first, then video processing; automation that preserves precision is the main lever.
+
+## 82.8 Summary and revision notes
+
+::: summary
+- Risk and trust systems share rare, costly positives, errors with victims on both sides, and adversaries who adapt. Price both error types before choosing any threshold.
+- **Payment fraud** decides inside card authorization: an 80 ms deadline, five batched feature reads, velocity counters updated within seconds by a stream processor, and a degraded rules-only policy when the model cannot answer.
+- Downsampled fraud models must be recalibrated before thresholds apply; the decline threshold $t^{*}(A) = C_{FP}/(C_{FP} + C_{FN})$ depends on the amount and minimizes dollars, not counts.
+- Fraud labels mature over months and declines censor them: train on matured windows, use fast analyst labels, evaluate with shadow scoring and a small random holdout.
+- **Credit risk** is governed rather than fast: point-in-time bureau data, a scorecard baseline, monotonic gradient boosting, reason codes from attributions, fairness tests with proxies, and SR 11-7 validation before champion–challenger rollout with early-performance proxies.
+- Expected loss $PD \times LGD \times EAD$ and the break-even $PD^{*}$ connect the model to policy; reject inference is weak without a small, budgeted exploration cell.
+- **Spam** is decided mostly by authenticated-sender reputation before the body is read; a CPU model handles most messages and a GPU model the uncertain few.
+- MinHash LSH groups campaign copies so that one verdict acts on all of them; bands and rows set the similarity threshold $(1/b)^{1/r}$.
+- User feedback is noisy and manipulable: weight by reporter trust and estimate false positives from graded spam-folder samples.
+- **Content moderation** layers hash matching (PhotoDNA, PDQ), multimodal classifiers, LLM policy classifiers and human review; humans dominate cost, so size queues with Erlang C plus an occupancy cap for well-being.
+- Policy versions belong in every label, score and action; prevalence from random samples measures what the models miss; appeals and regional scope are requirements.
+:::
+
+## 82.9 Knowledge checkpoint
+
+1. Why does the fraud system log the feature values it served instead of recomputing them for training?
+2. A model trained with 2% of negatives outputs 0.30. What is the corrected probability at the true prior?
+3. Compute $t^{*}$ for a \$100 payment with $f = \$25$, $g = 0.15$, $k = \$15$.
+4. Why is a standard A/B test a poor way to evaluate a new fraud model, and what replaces it?
+5. What should the fraud decision service do when the model servers time out?
+6. Why must credit features come from the bureau report pulled at decision time?
+7. What problem does reject inference address, and why does the design prefer an exploration cell?
+8. Give two reasons to impose monotonic constraints on a credit model.
+9. Compute $PD^{*}$ for $R = \$200$, $LGD = 0.8$, $EAD = \$2{,}000$.
+10. Why is spam reputation keyed on authenticated domains rather than on the From address?
+11. With $b = 20$ bands of $r = 5$, what is the LSH threshold similarity?
+12. Why are false positives under-reported in spam feedback, and how is the rate measured?
+13. Which content goes to pre-publish checks, and why not everything?
+14. Why must every moderation label carry a policy version?
+15. A queue receives 300 items an hour with 2-minute handle time. Why does a 75% occupancy cap require at least 14 reviewers?
+
+<details><summary>Answers</summary>
+
+1. Logged values are exactly what the model saw, including stale counters and the read-before-write timing; recomputing would introduce training–serving skew (§62.9).
+2. $p = 0.02 \times 0.30/(0.02 \times 0.30 + 0.70) = 0.006/0.706 = 0.0085$.
+3. $C_{FP} = 15 + 15 = \$30$; $C_{FN} = \$125$; $t^{*} = 30/155 = 0.194$.
+4. Labels arrive over weeks and declined transactions are never labeled, so the arm that declines more has fewer labels. Use shadow scoring, a small random holdout and early proxies, then matured cohorts.
+5. Apply a degraded policy (rules, request-only features, merchant limits, step-up above an amount), never fail the payment, and mark the decision as fallback.
+6. A later report contains information from after the decision, including the outcome itself, which leaks the label.
+7. Outcomes are observed only for approved applicants, biasing the model in declined regions. Statistical reject inference relies on unverifiable assumptions; approving a random sample below the cut-off measures real outcomes at a known cost.
+8. They encode domain knowledge and reduce overfitting, and they make reasons coherent and the model easier to validate.
+9. $PD^{*} = 200/(200 + 1{,}600) = 11.1\%$.
+10. The From address is easily forged; reputation on domains proven by DKIM or aligned SPF cannot be borrowed by a spoofer.
+11. $(1/20)^{1/5} = 0.549$.
+12. Few users look in the spam folder, so missed legitimate mail is rarely rescued. Graded random samples from the spam folder estimate it.
+13. Known severe content (hash matches) and the most severe policies with fast models; full checks would add latency and over-block, while post-publish tiers act within minutes.
+14. A policy change changes what a label means; versions keep training data, thresholds and statements of reasons interpretable.
+15. Offered load is $300 \times 120/3{,}600 = 10$ busy reviewers; at 75% occupancy, $\lceil 10/0.75 \rceil = 14$.
+
+</details>
+
+## 82.10 Interview questions
+
+### Basic
+
+**Q1. Why is accuracy a poor metric for fraud or spam?** **Answer.** With 0.1% fraud, approving everything is 99.9% accurate. Use precision–recall curves, recall at a fixed false-positive or decline rate, and cost-weighted metrics, with calibration checked separately (§57.10).
+
+**Q2. What is a velocity feature and how is it kept fresh?** **Answer.** A count or sum of recent activity per entity (cards used on a device in 24 hours). A stream processor updates windowed counters from the event log within seconds; feature age is logged and alerted on.
+
+### Intermediate
+
+**Q3. Design the fallback for a fraud model in the authorization path.** **Answer.** A deadline per dependency inside an 80 ms budget; on timeout, a degraded policy of rules, request-only features and merchant limits, with step-up above a conservative amount; circuit breakers; fallback rate as a paging metric; decisions marked for analysis. Never fail open or closed wholesale.
+
+**Q4. How do you generate adverse-action reasons from a gradient-boosted credit model?** **Answer.** Compute TreeSHAP attributions relative to a documented reference, group features into reviewed reason codes, rank by adverse contribution, return the top four, store everything with the decision, and test consistency and direction. Monotonic constraints make reasons coherent.
+
+### Advanced
+
+**Q5. A spam campaign rotates every copy's text and URL. How do you catch it without hurting newsletters?** **Answer.** Normalize templates, MinHash shingles with LSH tuned so that campaign copies collide and shared templates rarely do, confirm by signature similarity, use sender and URL-domain reputation, require reports from distinct trusted reporters before acting, and gate large retroactive actions behind review with reversal.
+
+**Q6. Policy narrows the definition of a prohibited threat. Walk through the system changes.** **Answer.** New policy version in the registry; experts label a golden set; evaluate the LLM classifier with the updated prompt and the current models; reset thresholds; update reviewer guidelines and training; re-label or retire old labels; retrain; monitor overturns and prevalence; statements of reasons cite the new version.
+
+## 82.11 Practical exercises
+
+1. Extend the fraud program of §82.4.8 with a step-up action that costs \$2 per legitimate customer and stops 90% of fraud; derive and test the three-action policy.
+2. Simulate a 12-month credit label and a cut-off policy, train only on approved applicants, and measure the bias of PD in the declined region; then add a 1% exploration cell and compare.
+3. Implement MinHash with 128 values and LSH with $(b, r) = (16, 8)$ on synthetic campaign messages with random personalization; plot candidate rate against Jaccard similarity and compare with $P(s)$.
+4. Use the reviewer program of §82.7.8 to compare one pooled queue for three languages at 100 items an hour each against three separate queues, with and without the occupancy cap.
+
+## 82.12 Design challenges
+
+1. **Account-takeover detection** for a consumer app: login-time risk scoring with device and behavior signals, step-up authentication, and labels from user-confirmed takeovers. Specify the latency budget, label delay and fallback.
+2. **Buy-now-pay-later decisioning** at checkout: credit risk within a 300 ms checkout budget, adverse-action reasons and fraud checks in one decision. Show how the credit and fraud designs combine.
+3. **Livestream moderation**: detect severe violations in live video within 30 seconds across 100,000 concurrent streams, with human escalation. Size frame sampling, GPUs and reviewer queues.
+
+## 82.13 References
+
+1. Dal Pozzolo, A., Caelen, O., Johnson, R. A., Bontempi, G. *Calibrating Probability with Undersampling for Unbalanced Classification*. IEEE Symposium Series on Computational Intelligence (SSCI), 2015.
+2. Drapeau, R. *How We Built It: Stripe Radar*. Stripe Blog, 2023. https://stripe.com/blog/how-we-built-it-stripe-radar
+3. Zuo, Q., Zhang, D., Zhang, Y., et al. *How PayPal Uses Real-time Graph Database and Graph Analysis to Fight Fraud*. The PayPal Technology Blog, 2021. https://medium.com/paypal-tech/how-paypal-uses-real-time-graph-database-and-graph-analysis-to-fight-fraud-96a2b918619a
+4. Hand, D. J., Henley, W. E. *Statistical Classification Methods in Consumer Credit Scoring: A Review*. Journal of the Royal Statistical Society, Series A 160(3), 1997.
+5. Siddiqi, N. *Credit Risk Scorecards: Developing and Implementing Intelligent Credit Scoring*. Wiley, 2006.
+6. Crook, J., Banasik, J. *Does Reject Inference Really Improve the Performance of Application Scoring Models?* Journal of Banking & Finance 28(4), 2004.
+7. Consumer Financial Protection Bureau. *Using Publicly Available Information to Proxy for Unidentified Race and Ethnicity*. 2014.
+8. Consumer Financial Protection Bureau. *Circular 2022-03: Adverse Action Notification Requirements in Connection with Credit Decisions Based on Complex Algorithms*. 2022.
+9. Equal Credit Opportunity Act (Regulation B), 12 CFR Part 1002, §1002.9 Notifications.
+10. Kozodoi, N., Jacob, J., Lessmann, S. *Fairness in Credit Scoring: Assessment, Implementation and Profit Implications*. European Journal of Operational Research 297(3), 2022.
+11. Board of Governors of the Federal Reserve System and Office of the Comptroller of the Currency. *Supervisory Guidance on Model Risk Management* (SR 11-7). 2011.
+12. Lundberg, S. M., Erion, G., Chen, H., et al. *From Local Explanations to Global Understanding with Explainable AI for Trees*. Nature Machine Intelligence 2, 2020.
+13. Kumaran, N. *Ridding Gmail of 100 Million More Spam Messages with TensorFlow*. Google Cloud Blog, 2019.
+14. Bursztein, E., Zhang, M. *Improving Text Classification Resilience and Efficiency with RETVec*. Google Security Blog, 2023. https://security.googleblog.com/2023/11/improving-text-classification.html
+15. Taylor, B. *Sender Reputation in a Large Webmail Service*. Conference on Email and Anti-Spam (CEAS), 2006.
+16. Google. *Email Sender Guidelines*. Gmail Help, 2024. https://support.google.com/mail/answer/81126
+17. Kitterman, S. *Sender Policy Framework (SPF) for Authorizing Use of Domains in Email, Version 1*. RFC 7208, 2014.
+18. Crocker, D., Hansen, T., Kucherawy, M. *DomainKeys Identified Mail (DKIM) Signatures*. RFC 6376, 2011.
+19. Kucherawy, M., Zwicky, E. *Domain-based Message Authentication, Reporting, and Conformance (DMARC)*. RFC 7489, 2015.
+20. Broder, A. Z. *On the Resemblance and Containment of Documents*. Compression and Complexity of Sequences, 1997.
+21. Charikar, M. S. *Similarity Estimation Techniques from Rounding Algorithms*. STOC, 2002.
+22. Manku, G. S., Jain, A., Das Sarma, A. *Detecting Near-Duplicates for Web Crawling*. WWW, 2007.
+23. Graham, P. *A Plan for Spam*. 2002. http://www.paulgraham.com/spam.html
+24. Microsoft. *PhotoDNA*. https://www.microsoft.com/en-us/photodna
+25. Facebook. *Open-Sourcing Photo- and Video-Matching Technology to Make the Internet Safer* (PDQ and TMK+PDQF). 2019. Code: https://github.com/facebook/ThreatExchange
+26. Dalins, J., Wilson, C., Boudry, D. *PDQ & TMK + PDQF — A Test Drive of Facebook's Perceptual Hashing Algorithms*. arXiv:1912.07745, 2019.
+27. Inan, H., Upasani, K., Chi, J., et al. *Llama Guard: LLM-based Input-Output Safeguard for Human-AI Conversations*. arXiv:2312.06674, 2023.
+28. OpenAI. *Using GPT-4 for Content Moderation*. OpenAI Blog, 2023.
+29. Steiger, M., Bharucha, T. J., Venkatagiri, S., Riedl, M. J., Lease, M. *The Psychological Well-Being of Content Moderators*. CHI, 2021.
+30. European Parliament and Council. *Regulation (EU) 2022/2065 on a Single Market for Digital Services (Digital Services Act)*. Official Journal of the European Union, 2022.
+31. Germany. *Netzwerkdurchsetzungsgesetz (Network Enforcement Act, NetzDG)*. 2017.
+32. Meta. *Community Standards Enforcement Report*. Meta Transparency Center. https://transparency.meta.com/reports/community-standards-enforcement/
+
+## 82.14 Open verification items
+
+- Publication year of Drapeau's "How We Built It: Stripe Radar" (2023 assumed; the architecture change is dated mid-2022 in the post) and its exact wording on the under-100 ms latency (stripe.com was unreachable from the authoring environment).
+- Publication date (December 2021 per secondary coverage) and full author list of the PayPal graph post.
+- Authors of the RETVec Google Security Blog post (Bursztein and Zhang assumed).
+- Gmail sender-guideline spam-rate thresholds (0.10% target, 0.30% limit per Postmaster Tools) were not quoted because they could not be confirmed from Google's page.
+- Recommended PDQ match threshold (sources cite 30–32 of 256 bits).
+- Regulation B record retention (25 months for consumer credit) and the four-reason guidance in the official commentary.
+- Typical card-network time limits for fraud chargebacks (120 days assumed in §82.4.1).

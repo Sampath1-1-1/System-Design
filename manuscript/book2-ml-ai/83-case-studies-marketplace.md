@@ -936,3 +936,570 @@ sequenceDiagram
 - **Privacy.** GPS traces are sensitive: keep raw traces short-lived, use matched traversals for training, and restrict access (§50.10).
 - **Cost.** Router plus model about \$35/h at peak capacity, roughly \$0.00003 per trip; logging and map matching cost more than inference.
 
+## 83.6 Dynamic (Surge) Pricing
+
+### 83.6.1 Problem statement
+
+On a rainy Friday at 23:00, 300 riders near a stadium want cars and 40 drivers are nearby. Without a price response, the platform dispatches drivers from ever farther away; each spends 15 minutes driving empty to a pickup, so fewer trips are completed per driver-hour exactly when they are scarcest, and riders wait, cancel and retry. Castillo, Knoepfle and Weyl call this the **wild goose chase** and show that raising prices when supply is short avoids it, by keeping enough idle drivers close to riders [Castillo et al. 2017]. **Dynamic pricing** (surge) sets a price multiplier per area and minute that balances requests with nearby supply: some riders wait or walk, some drivers come online or move in, and the riders who do request get a car quickly.
+
+A good analogy is a thermostat with a very sensitive room: it measures the gap between demand and supply, adjusts the price and watches the response, but people react to the thermostat itself, and a jerky setting makes them oscillate.
+
+**Formulation.** Surge is an optimization and control system that consumes ML models rather than a single model. Every 60 s, for each active H3 resolution-8 hexagon (0.737 km²), choose a multiplier $m \ge 1$ that keeps expected pickup ETA and the unfulfilled-request rate within targets, subject to caps, smoothness and regulatory limits. Its learned inputs are the demand forecast (§83.4), pickup ETAs (§83.5), a **conversion model** (probability that a rider requests given the quoted price and context, which encodes rider price elasticity) and a **supply response model** (how many drivers come online or move in as the multiplier rises). Labels for the conversion model come from the quote log: each quote either becomes a request within its validity window or not.
+
+**Why ML is warranted.** The rule "multiplier = demand ÷ supply" is the right baseline, but how demand and supply respond to price varies by city, hour, weather and trip type, and must be estimated from data that the pricing system itself confounds.
+
+### 83.6.2 Functional requirements
+
+1. **Pricing tick.** Every 60 s, compute a multiplier for each active resolution-8 hexagon from current supply, demand, forecasts and models.
+2. **Quotes.** Return a signed, expiring upfront quote (§55.4.8) that the request must reference; the rider never pays more than the quoted price for the quoted trip.
+3. **Guardrails.** Enforce per-city caps, a maximum step per tick, emergency caps when a declared emergency applies, and operator overrides with audit.
+4. **Driver signal.** Publish surge areas to driver apps.
+5. **Experiments.** Assign cities and time blocks to pricing-policy variants (switchback) and log the assignment with every quote.
+6. **Logging.** Log every multiplier decision with inputs, and every quote with its outcome.
+
+Out of scope: base fare tables, driver pay design and payment (§55.9).
+
+### 83.6.3 Non-functional requirements
+
+**Table 83.15 — Surge pricing non-functional requirements.**
+
+| Property | Target | Why |
+|---|---|---|
+| Tick period and input freshness | 60 s; supply and demand counts ≤ 60 s old | Imbalances form within minutes |
+| Quote latency | p99 ≤ 10 ms for the multiplier lookup inside a 300 ms fare estimate | Fare estimate budget of §55.4.3 |
+| Availability | 99.99% for quotes; if the tick fails, last-good multipliers for 5 min, then decay toward 1.0 | Never block quotes; never freeze a high price |
+| Quote integrity | 100% of trips charged at or below the signed quote, except route changes the rider makes | Trust and consumer law |
+| Stability | Step ≤ 0.3 per tick; neighbor difference ≤ 0.5 after smoothing | Prevents oscillation and driver chasing |
+| Reliability outcome | Median pickup ETA ≤ 6 min and unfulfilled requests ≤ 5% in 95% of hexagon-hours | The purpose of surge |
+| Model quality | Conversion model log loss and calibration per city; elasticity estimates with confidence intervals | Elasticity drives the price |
+| Fairness and compliance | No protected attributes or proxies as inputs; caps per jurisdiction; quarterly disparity audit | Regulation and trust (§71.13) |
+
+### 83.6.4 Capacity estimation
+
+::: example
+**Worked example — Ticks, quotes and logs.** Assumptions: 400,000 active resolution-8 hexagons at peak of 900,000 ever active; 32 bytes of multiplier state per hexagon; 30 million trips/day with 5 quotes each (§55.4.4); 500 bytes per quote record; 100 bytes per multiplier decision.
+
+1. Hexagons priced per second: $400{,}000 / 60 = 6{,}667$/s, each a few microseconds of arithmetic plus model calls batched per city.
+2. Multiplier table: $900{,}000 \times 32 = 28.8$ MB, small enough to replicate into every pricing node's memory.
+3. Quote lookups: 5,208/s at peak (§55.4.4), served from that in-memory table.
+4. Decision log: $400{,}000 \times 1{,}440 = 5.76 \times 10^8$ rows/day, 57.6 GB/day.
+5. Quote log: $30 \times 10^6 \times 5 = 1.5 \times 10^8$ quotes/day, 75 GB/day, 27.4 TB/year: the training data for elasticity.
+6. Inputs: the 500,000 location updates/s and the session and request streams of §83.4.4, aggregated per hexagon-minute by the stream job of §55.4.8.
+
+**Interpretation.** Pricing is computationally tiny. **Engineering implication.** The design is about correctness, freshness, stability and experimentation, not throughput; replicate the table everywhere and spend effort on the loop.
+:::
+
+The core of the multiplier is a market-clearing calculation. Assume constant-elasticity responses over the next 15 minutes.
+
+::: formula
+**Market-clearing multiplier under constant elasticities**
+
+$$D(m) = D_1\, m^{-\varepsilon}, \qquad S(m) = S_1\, m^{\eta}, \qquad m^\ast = \left(\frac{D_1}{S_1}\right)^{1/(\varepsilon + \eta)}, \qquad m = \min(m^\ast,\ m_{\text{cap}})$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $D_1$ | Forecast requests at multiplier 1 in the next 15 min (§83.4, unconstrained) | requests |
+| $S_1$ | Trips nearby supply can serve in 15 min at multiplier 1 | trips |
+| $\varepsilon$ | Rider price elasticity (magnitude), from the conversion model | dimensionless |
+| $\eta$ | Short-run supply elasticity | dimensionless |
+| $m^\ast$, $m_{\text{cap}}$ | Clearing multiplier; regulatory or policy cap | dimensionless |
+:::
+
+::: example
+**Worked example — A stadium hexagon.** $D_1 = 120$, $S_1 = 80$, $\varepsilon = 0.5$, $\eta = 0.3$.
+
+1. $D_1/S_1 = 1.5$; exponent $1/(0.5 + 0.3) = 1.25$; $m^\ast = 1.5^{1.25} = 1.66$.
+2. Check: demand $120 \times 1.66^{-0.5} = 93.1$; supply $80 \times 1.66^{0.3} = 93.1$. They match.
+3. With a cap of 1.5: demand $120 \times 1.5^{-0.5} = 98.0$, supply $80 \times 1.5^{0.3} = 90.3$, so about 7.6 requests per 15 minutes go unserved or wait longer.
+
+**Interpretation.** With inelastic riders ($\varepsilon < 1$), a 50% supply gap needs a 66% price rise, and a cap converts the remaining gap into waiting. **Engineering implication.** The elasticities are the most consequential numbers in the system, so they need the most careful estimation (§83.6.8), and caps must be chosen knowing they trade price protection for reliability.
+:::
+
+**Table 83.16 — Surge pricing capacity summary.**
+
+| Quantity | Value |
+|---|---|
+| Hexagons priced | 400,000 per minute (6,667/s) |
+| Multiplier table | 28.8 MB, replicated in memory |
+| Quote lookups | ~5,200/s at peak |
+| Decision log | 576 million rows/day, 57.6 GB/day |
+| Quote log | 150 million quotes/day, 75 GB/day |
+
+### 83.6.5 API design
+
+```text
+# Fare estimate (called by the rider app via the API gateway)
+POST /v1/quotes
+{ "pickup": {"lat": 37.78, "lng": -122.39}, "dropoff": {...}, "product": "economy" }
+201 Created
+{ "quote_id": "q_9b2...", "fare": {"amount": 2860, "currency": "USD"},
+  "multiplier": 1.4, "eta_pickup_s": 240, "eta_trip_s": 1140,
+  "expires_at": "2026-11-11T23:04:30Z", "signature": "ed25519:...",
+  "policy": {"variant": "B", "block_id": "sfo-2026-11-11T23:00"} }
+
+# Ride request must reference a valid quote
+POST /v1/trips  { "quote_id": "q_9b2...", "signature": "ed25519:..." }
+
+# Internal: multiplier lookup (in-process table, exposed for debugging)
+GET /internal/surge/{h3_r8}       -> { "m": 1.4, "computed_at": "...", "inputs_ref": "..." }
+
+# Operations: caps and overrides (audited, two-person approval for raises)
+PUT /v1/surge/caps/{city}  { "max_multiplier": 2.0, "reason": "...", "until": "..." }
+POST /v1/surge/emergency   { "region": "...", "mode": "cap_at_1.0", "declared_by": "..." }
+```
+
+The signature makes the quote tamper-evident, and `expires_at` (typically a few minutes) bounds how long a rider can hold a price while the market moves. The `policy` field records the experiment variant and switchback block for the analysis of §83.6.8. Emergency mode is a kill switch (§43.7.2) that operators can trigger without a deploy.
+
+### 83.6.6 Data model and database schema
+
+**Table 83.17 — Surge pricing data.**
+
+| Data | Key | Freshness | Store |
+|---|---|---|---|
+| Hexagon state: idle drivers, open requests, sessions, pickup ETA | (h3_r8, minute) | ≤ 60 s | Stream job output in a key–value store |
+| Forecast gap from §83.4 | (h3_r7, horizon) | 5 min | Forecast store |
+| Multiplier decision with inputs and model versions | (h3_r8, minute) | Per tick | Replicated in-memory table; log to lake |
+| Quote | quote_id | Per request | Key–value store with TTL; log to lake |
+| Conversion examples: quote features, price, outcome | quote_id | Outcome known at expiry | Lakehouse |
+| Caps, overrides, emergencies | city or region | On change | Strongly consistent config store, audited |
+
+```sql
+CREATE TABLE quote_log (
+  quote_id        VARCHAR(32) PRIMARY KEY,
+  created_at      TIMESTAMP   NOT NULL,
+  rider_id_hash   BYTEA       NOT NULL,   -- pseudonymized
+  h3_r8           CHAR(15)    NOT NULL,
+  multiplier      NUMERIC(4,2) NOT NULL,
+  multiplier_raw  NUMERIC(5,3) NOT NULL,  -- before rounding: enables discontinuity analysis
+  fare_cents      INT         NOT NULL,
+  eta_pickup_s    INT,
+  policy_variant  VARCHAR(8),
+  block_id        VARCHAR(48),            -- switchback block
+  requested       BOOLEAN,                -- label, set at expiry
+  trip_id         BIGINT
+);
+```
+
+Keeping `multiplier_raw` alongside the rounded value is deliberate: it is what lets analysts estimate elasticity from rounding discontinuities, described next. Rider identity is pseudonymized and excluded from pricing inputs.
+
+### 83.6.7 High-level architecture
+
+**Figure 83.10 — Surge pricing as a control loop.**
+
+```mermaid
+flowchart LR
+  subgraph Sense[Sense]
+    K[[Location, session,<br/>request streams]] -.-> AGG[Stream aggregator<br/>per hex per minute]
+    AGG --> HS[(Hex state KV)]
+  end
+  subgraph Decide[Decide - every 60 s]
+    TICK[Pricing tick per city] --> HS
+    TICK --> FC[(Forecast store 83.4)]
+    TICK --> CM[Conversion and<br/>supply models]
+    TICK --> GR[Guardrails:<br/>smooth, step, caps]
+    CFG[(Caps, overrides,<br/>experiments)] --> GR
+    GR --> MT[(Multiplier table)]
+  end
+  subgraph Act[Act]
+    MT -.->|replicate| PS[Pricing service]
+    APP([Rider app]) -->|POST quotes| PS
+    PS -->|ETA batch| ETA[ETA service 83.5]
+    MT -.->|surge map| DRV([Driver app])
+  end
+  PS -.->|quote log| LAKE[(Lakehouse)]
+  MT -.->|decision log| LAKE
+  LAKE --> TR[Elasticity and<br/>conversion training]
+  TR -.-> CM
+```
+
+**Reading the diagram.** The loop has three stages. *Sense*: a stream aggregator counts idle drivers, sessions and requests per resolution-8 hexagon per minute (§55.4.8) and writes hexagon state. *Decide*: once a minute per city, the tick reads state and forecasts, calls the conversion and supply models in a batch, computes raw multipliers, then applies guardrails (spatial smoothing, maximum step, caps, overrides and experiment variants from a strongly consistent config store) and writes the multiplier table. *Act*: the table is replicated asynchronously to every pricing node, which answers quote requests synchronously, calling the ETA service for durations; driver apps receive the surge map. Logs of decisions and quotes flow to the lake, where elasticity and conversion models are retrained. Failure points: stale hexagon state (the loop acts on old data), a failed tick (last-good table, then decay), replication lag (different nodes quote different prices for a minute). Scaling: ticks partition by city; quote serving scales with stateless pricing nodes.
+
+### 83.6.8 Detailed component design
+
+#### The control loop: smoothing, stability and guardrails
+
+Raw multipliers from the formula are noisy, because a resolution-8 hexagon sees only a handful of requests per minute. Three filters turn them into prices people can live with. **Spatial smoothing** averages the supply–demand gap over each hexagon's k-ring (7 cells for $k = 1$, §17.9.5), which also prevents a sharp price edge one street wide. **Temporal smoothing** blends the new value with the previous one and limits the step to 0.3 per tick, with hysteresis so that a multiplier does not flicker around a threshold. **Caps** bound the result per city and drop to 1.0 under emergency mode. Finally the multiplier is rounded to one decimal place, which matters for elasticity estimation below.
+
+The loop has a delay: drivers need 5–15 minutes to respond, so a controller that reacts only to the current gap overshoots. Driver surge maps lure drivers into a hexagon; supply rises, the multiplier falls, drivers leave, and the cycle repeats. Using the **forecast** gap over the next 15–30 minutes rather than only the current gap, and showing drivers a smoothed, slower-moving surge map, damps that oscillation.
+
+::: industry
+**Uber — what happens when surge stops.** In a published case study, Hall, Kendrick and Nosko examined a sold-out concert in New York, where surge drew drivers to the venue and requests continued to be served, and a New Year's Eve outage of surge pricing in New York, during which completion rates fell sharply and pickup times rose as nearby drivers were exhausted [Hall et al. 2015]. Uber's SIGMOD paper names surge as a mission-critical consumer of its Kafka and Flink streaming stack [Fu and Soman 2021].
+*Evidence: Primary* — [Hall et al. 2015; Fu and Soman 2021]
+:::
+
+#### Estimating price elasticity from confounded data
+
+The conversion model predicts $P(\text{request} \mid \text{price}, \text{context})$. Fit naively on the quote log and price appears to *raise* conversion, because high multipliers occur exactly when riders are most determined (rain, late night, after a concert). Price is **confounded** with unobserved urgency. Four remedies, in order of preference:
+
+1. **Natural experiments from rounding.** The raw multiplier is continuous but riders see it rounded. Quotes with raw values of 1.249 and 1.251 face nearly identical conditions but see 1.2 and 1.3, so the conversion difference across the rounding boundary is a clean, local causal estimate (a regression-discontinuity design). Cohen, Hahn, Hall, Levitt and Metcalfe used this structure in Uber data to estimate demand curves and found rider demand to be inelastic at surge prices [Cohen et al. 2016]. This is why `multiplier_raw` is logged.
+2. **Small randomized perturbations** of the multiplier within a narrow band, applied at the hexagon-block level, give unconfounded variation; they must be approved as a policy, disclosed where required, and kept small enough to be fair.
+3. **Rich controls**: features for weather, events, time and the forecast gap absorb much of the urgency signal, so the model compares like with like.
+4. **Monotonicity constraints**: conversion must not increase with price; enforce it in the model so that residual confounding cannot produce an upward-sloping curve.
+
+The resulting elasticities are reported with confidence intervals per city and hour band, and the pricing tick uses a shrunken estimate when the interval is wide.
+
+#### Why naive A/B tests fail, and switchbacks
+
+Suppose you test a 10% discount by randomizing riders 50/50, as §57.14 would suggest. Treated riders request more often, but both arms share the same drivers. When supply is short, every extra treated trip takes a driver away from a control rider, so treatment looks better and control looks worse than either would be on its own. The difference overstates the effect of rolling the discount out to everyone. This is **interference**: the stable unit treatment value assumption fails. Chamandy described this problem in ride-sharing experiments at Lyft and the alternative of randomizing over time [Chamandy 2016].
+
+A **switchback experiment** randomizes the whole market (a city or region) between policies in time blocks, such as 60 minutes, so that within a block everyone shares the same policy. Carryover (drivers still busy with trips from the previous block) biases the boundary minutes, so analysts drop a burn-in period or model the carryover. Bojinov, Simchi-Levi and Zhao formalize switchback designs, derive optimal designs when carryover lasts a bounded number of periods, and give estimators and inference for them [Bojinov et al. 2023].
+
+```python
+import numpy as np
+
+DAYS, D, DRIVERS = 14, 20, 600            # 14 days, 20-minute trips, 600 drivers on shift
+T = DAYS * 1440
+minute = np.arange(T) % 1440
+openers = 20 + 50 * np.exp(-((minute - 1080) / 120.0) ** 2)   # app opens/min, evening peak
+CONV = {0: 0.60, 1: 0.66}                  # request probability: control price, 10% discount
+
+def simulate(seed, arm_of):
+    """arm_of(t, n) -> array of 0/1 arms for the n openers in minute t."""
+    rng = np.random.default_rng(seed)
+    release = np.zeros(T + D, dtype=int)   # drivers freed at each minute
+    idle = DRIVERS
+    done = np.zeros((T, 2)); seen = np.zeros((T, 2))
+    for t in range(T):
+        idle += release[t]
+        n = rng.poisson(openers[t])
+        arms = arm_of(t, n)
+        req = arms[rng.random(n) < np.where(arms == 1, CONV[1], CONV[0])]
+        rng.shuffle(req)
+        served = req[:idle]                # first-come, first-served while drivers last
+        idle -= len(served); release[t + D] += len(served)
+        np.add.at(done[t], served, 1); np.add.at(seen[t], arms, 1)
+    return done, seen
+
+per_day = lambda x: x / DAYS
+res = {"true": [], "naive": [], "switch": [], "switch_burn": []}
+base = []
+for rep in range(10):
+    s = 1000 + rep
+    c, _ = simulate(s, lambda t, n: np.zeros(n, int))
+    tr, _ = simulate(s, lambda t, n: np.ones(n, int))
+    base.append(per_day(c.sum()))
+    res["true"].append(per_day(tr.sum() - c.sum()))
+    # naive A/B: randomize riders 50/50 inside the same market
+    rng = np.random.default_rng(s + 7)
+    d, v = simulate(s, lambda t, n: rng.integers(0, 2, n))
+    rate = d.sum(0) / v.sum(0)             # completed trips per app open, by arm
+    res["naive"].append(per_day((rate[1] - rate[0]) * v.sum()))
+    # switchback: randomize 60-minute blocks of the whole city
+    blocks = np.random.default_rng(s + 9).integers(0, 2, T // 60 + 1)
+    d, _ = simulate(s, lambda t, n: np.full(n, blocks[t // 60]))
+    arm_t = blocks[np.arange(T) // 60]
+    for key, burn in (("switch", 0), ("switch_burn", 20)):
+        keep = (np.arange(T) % 60) >= burn
+        tot = d.sum(1)
+        diff = sum(
+            tot[keep & (arm_t == 1) & (minute // 60 == h)].mean()
+            - tot[keep & (arm_t == 0) & (minute // 60 == h)].mean()
+            for h in range(24))            # compare like hours, then add up the day
+        res[key].append(diff * 60)
+print(f"control trips/day: {np.mean(base):.0f}")
+for k, v in res.items():
+    print(f"{k:12s} extra trips/day: mean {np.mean(v):7.0f}   sd {np.std(v):5.0f}")
+```
+
+Output:
+
+```text
+control trips/day: 22330
+true         extra trips/day: mean    1686   sd    50
+naive        extra trips/day: mean    2199   sd    41
+switch       extra trips/day: mean    1698   sd    58
+switch_burn  extra trips/day: mean    1714   sd    82
+```
+
+What to notice:
+
+- The true global effect of the discount is about +1,686 trips/day (+7.6%). The naive rider-randomized test reports +2,199, overstating it by 30%, with a *smaller* standard deviation: it is precisely wrong.
+- The switchback estimate is close to the truth. Here 60-minute blocks are long relative to 20-minute trips, so carryover bias is small and the burn-in mainly adds variance; with longer trips or shorter blocks the burn-in earns its cost.
+
+The price of a switchback is statistical power: the unit is a city-block, not a rider.
+
+::: formula
+**Switchback experiment size**
+
+$$n = C \times \text{Days} \times \frac{1{,}440}{B}, \qquad \text{SE} \approx \frac{2\,\sigma_b}{\sqrt{n}}\sqrt{\frac{B}{B - b}}, \qquad \text{MDE} \approx 2.8 \times \text{SE}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $n$ | Number of randomized blocks, split half and half | blocks |
+| $C$ | Cities (or independent regions) in the experiment | count |
+| $B$, $b$ | Block length; burn-in dropped from each block | minutes |
+| $\sigma_b$ | Standard deviation of the block-level metric after removing hour-of-week effects | metric units |
+| SE, MDE | Standard error; minimum detectable effect at $\alpha = 0.05$, 80% power (§57.14.2) | metric units |
+:::
+
+::: example
+**Worked example — Sizing a pricing switchback.** $C = 20$ cities, 14 days, $B = 60$ min, completion-rate metric with $\sigma_b = 0.12$.
+
+1. $n = 20 \times 14 \times 24 = 6{,}720$ blocks.
+2. Without burn-in: $\text{SE} = 2 \times 0.12 / \sqrt{6{,}720} = 0.00293$; $\text{MDE} = 2.8 \times 0.00293 = 0.0082$, or 0.82 percentage points.
+3. With $b = 20$ min: inflation $\sqrt{60/40} = 1.22$; $\text{SE} = 0.00359$; $\text{MDE} = 1.00$ percentage point.
+
+**Interpretation.** Twenty cities for two weeks detect about a 1-point change in completion rate, far coarser than a rider-level test with millions of riders. **Engineering implication.** Reduce $\sigma_b$ with hour-of-week and pre-period adjustments, pick block length from carryover (trip duration) rather than convenience, and reserve switchbacks for decisions that touch shared supply; display-only changes can still be rider-randomized.
+:::
+
+#### Fairness, regulation and transparency
+
+Pricing by location and time is legal in most places, but surge decisions affect access to transport. Inputs exclude protected attributes and plausible proxies for individual willingness to pay (device type, battery level, rider history); the price is a property of the place and time, not the person, and is shown up front. Audits compare multipliers and wait times across neighborhoods with different demographics (§71.5) and check that caps hold. Some jurisdictions and agreements restrict surge during declared emergencies; emergency mode implements those rules, and city-level caps implement local regulation (§71.13).
+
+**Figure 83.11 — Feedback loops between price, supply and the forecast.**
+
+```mermaid
+flowchart LR
+  M[Higher multiplier] -->|riders deterred| DQ[Fewer requests]
+  M -->|drivers attracted| SQ[More nearby supply]
+  SQ -->|gap closes| MD[Multiplier falls]
+  MD -->|drivers leave| SL[Supply falls]
+  SL -->|gap reopens| M
+  DQ -.->|logged as low demand| FC[Demand forecast 83.4]
+  FC -.->|under-forecast| POS[Fewer drivers positioned]
+  POS -.->|shortage| M
+```
+
+**Reading the diagram.** Solid arrows are the fast loop (minutes): price deters riders and attracts drivers, which closes the gap, lowers the price, and lets drivers drift away, an oscillation damped by smoothing and forecast-based pricing. Dotted arrows are the slow loop (days): price-suppressed requests enter the forecaster's training data as low demand, the forecaster under-predicts, positioning sends fewer drivers, and the shortage raises prices again. The slow loop is broken by forecasting unconstrained demand with price as a feature (§83.4.8). Failure points: removing smoothing, or training the forecaster on completed trips. Scaling: the loops are local to each city, which is also why city-level switchbacks are valid.
+
+### 83.6.9 Data flow
+
+**Figure 83.12 — Write path: one pricing tick.**
+
+```mermaid
+sequenceDiagram
+  participant AG as Stream aggregator
+  participant HS as Hex state
+  participant T as Pricing tick
+  participant M as Conversion and supply models
+  participant G as Guardrails
+  participant MT as Multiplier table
+  participant L as Lakehouse
+  AG->>HS: upsert per-hex counts each minute
+  Note over T: every 60 s per city
+  T->>HS: read hex state for city
+  T->>T: read forecast gap and pickup ETAs
+  T->>M: batch elasticity and supply response
+  M-->>T: epsilon and eta per hex
+  T->>T: compute raw multiplier per hex
+  T->>G: smooth over k-ring, limit step, apply caps and variant
+  G->>MT: write versioned table for city
+  MT-)L: decision log with inputs
+```
+
+**Reading the diagram.** The aggregator writes hexagon state every minute; the tick reads one city's state, forecasts and ETAs, calls the models in one batch and computes raw multipliers, then guardrails apply smoothing, step limits, caps and the experiment variant for the current switchback block. The table is written as a new version for the whole city at once, so pricing nodes never mix two ticks. The decision log is asynchronous. Failure points: missing state (hexagon keeps its previous multiplier, decaying), model error (fall back to the ratio rule), config store unavailable (keep last caps; never raise caps on error). Scaling: one tick worker per group of cities.
+
+**Figure 83.13 — Read path: a quote and the request that uses it.**
+
+```mermaid
+sequenceDiagram
+  participant A as Rider app
+  participant P as Pricing service
+  participant E as ETA service
+  participant Q as Quote store
+  participant TS as Trip service
+  A->>P: POST quotes pickup, dropoff
+  P->>P: lookup multiplier for pickup hex in memory
+  P->>E: pickup and trip ETA batch
+  E-->>P: etas
+  P->>P: fare from base, distance, time, multiplier
+  P->>Q: put signed quote with TTL
+  P-->>A: quote with expiry and signature
+  A->>TS: POST trips with quote_id
+  TS->>Q: get quote, verify signature and expiry
+  alt valid
+    TS->>TS: create trip at quoted price
+  else expired
+    TS-->>A: re-quote required
+  end
+```
+
+**Reading the diagram.** All calls are synchronous. The multiplier lookup is an in-memory read; the ETA batch is the main latency cost. The quote is stored with a TTL and signed, so the trip service can verify it without trusting the client. An expired quote forces a new quote at the current price, which is how the market's movement reaches riders without surprising them. Failure points: ETA timeout (fallback ETAs, degraded flag), quote store unavailable (signature alone verifies, with expiry checked from the signed payload). Scaling: stateless pricing nodes.
+
+### 83.6.10 Bottlenecks
+
+1. **Input freshness.** The loop is only as good as its one-minute counts; stream lag directly degrades prices.
+2. **Elasticity uncertainty.** Wide intervals make prices either sluggish or jumpy; exploration budget is limited by fairness and policy.
+3. **Experiment power.** Switchbacks need many city-blocks; experiments queue behind each other.
+4. **Replication of the table** to thousands of pricing nodes each minute; use versioned snapshots and deltas.
+
+### 83.6.11 Failure scenarios
+
+**Table 83.18 — Surge pricing failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Stream aggregator stalls | Prices act on old gaps | Hex-state age per city | Last-good table for 5 min, then decay to 1.0 | Lag alerts; redundant aggregation |
+| Runaway multiplier (bug or bad elasticity) | Extreme prices, public harm | Multiplier distribution and complaint spikes | Caps enforced in a separate guardrail stage; kill switch | Independent guardrails; canary per city |
+| Oscillation | Drivers chase surge, riders see flicker | Autocorrelation of multiplier; driver movement | Increase smoothing, use forecast gap | Step limits; slower driver map |
+| Confounded elasticity | Prices too high or too low | Discontinuity estimates disagree with model | Shrink to prior; use experimental estimates | Monotonic models; rounding analysis |
+| Forecast feedback (§83.4) | Chronic under-supply in surge areas | Unconstrained-demand audits | Retrain forecaster with corrected labels | Price as forecast feature |
+| Naive A/B launches a bad policy | Wrong decision at scale | Post-launch city metrics disagree with test | Roll back | Switchbacks for supply-affecting changes |
+| Emergency declared | Legal and ethical exposure | External alert | Emergency mode caps | Pre-built, tested kill switch |
+| Replication lag between nodes | Two riders in one hexagon see different prices for a minute | Version skew metric | Serve the older version consistently per hexagon | Versioned snapshots |
+| Manipulation (drivers collectively going offline to trigger surge) | Inflated prices | Coordinated offline patterns | Exclude anomalous supply drops from gap | Supply anomaly detection |
+
+### 83.6.12 Scaling strategy
+
+**At 10×** (4 million hexagons, more cities), ticks remain cheap; the work is operational: per-city configuration, caps and experiments at scale. Move to finer hexagons (resolution 9) only in dense cores, with stronger spatial smoothing.
+
+**At 100×** (multiple products sharing drivers), pricing becomes a joint optimization across products and time: one supply pool, several demand curves, possibly with optimization-based pricing that plans over the next hour rather than a per-hexagon formula, and experimentation moves to region-level switchbacks with carryover modeling.
+
+### 83.6.13 Trade-offs
+
+**Table 83.19 — Surge pricing trade-offs.**
+
+| Decision | Option chosen | Alternative | Why |
+|---|---|---|---|
+| Granularity | Resolution 8, k-ring smoothing | Resolution 9 or city zones | Enough signal per hexagon; no sharp edges |
+| Signal | Forecast gap plus current gap | Current gap only | Damps oscillation caused by response delay |
+| Price guarantee | Signed, expiring upfront quote | Price at trip end | Riders pay what they saw; market movement via expiry |
+| Elasticity | Discontinuities and small randomized bands | Observational regression | Confounding makes naive estimates wrong-signed |
+| Experiments | Switchback by city and hour | Rider-level A/B | Interference biases rider-level tests |
+| Safety | Separate guardrail stage, caps, kill switch | Caps inside the model | A model bug cannot bypass the guardrail |
+
+### 83.6.14 Alternative designs
+
+- **Fixed prices with queues** (airport-style waiting lists): simple and perceived as fair, but slow to attract supply.
+- **Driver-side incentives only** (bonuses for driving in an area without raising rider prices): attracts supply, does not ration demand.
+- **Optimization over a dispatch model**: solve for prices that maximize completed trips subject to wait-time constraints with a marketplace simulator; more principled, harder to explain.
+- **Reinforcement learning** for pricing policies: attractive for delayed effects, but needs a trustworthy simulator and strict guardrails (§57.4.4).
+
+### 83.6.15 Interview discussion
+
+**Table 83.20 — 45-minute pacing plan for surge pricing.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Purpose | Reliability, wild goose chase; price per hexagon per minute |
+| 5–10 | Estimates | 400,000 hexagons/min, 28.8 MB table, 5,200 quotes/s; compute is trivial |
+| 10–20 | Architecture | Figure 83.10: sense, decide, act; signed quotes |
+| 20–30 | Deep dive: the loop | Clearing formula, smoothing, step limits, caps, forecast gap |
+| 30–40 | Deep dive: elasticity and experiments | Confounding, rounding discontinuity, interference, switchbacks and sizing |
+| 40–45 | Guardrails and fairness | Emergency mode, no personal inputs, audits, feedback into forecasting |
+
+**Likely follow-ups.**
+
+- *"Why not A/B test the new pricing on half the riders?"* They share drivers; the estimate is biased. Use switchbacks.
+- *"What if the pricing service is down?"* Quotes use the last-good table, decaying toward 1.0; never block quotes.
+- *"How do you know riders' price sensitivity?"* Not from raw correlations; from discontinuities and randomized bands, with monotonic models.
+
+**What distinguishes senior and staff answers.** Senior answers build the sense–decide–act loop with caps and quotes. Staff answers explain why surge exists (throughput, not revenue), quantify the cap trade-off, handle confounded elasticity, design and size a switchback, and close the loop with the demand forecaster.
+
+### 83.6.16 Production considerations
+
+- **Monitoring.** Multiplier distribution per city; hex-state age; pickup ETA and unfulfilled rate against targets; conversion-model calibration; oscillation metrics; complaint and refund rates (Chapter 70).
+- **Retraining.** Conversion models weekly; elasticity estimates monthly with intervals; supply models after any driver-pay change.
+- **Responsible ML and compliance.** No personal inputs; neighborhood disparity audits; documented caps and emergency rules per jurisdiction; reason codes for support ("high demand in this area").
+- **Cost.** Negligible compute; the main costs are streaming aggregation and experimentation time.
+- **Operations.** Two-person approval for raising caps; kill switch drills; per-city canary for any pricing-policy change.
+
+## 83.7 Summary and revision notes
+
+::: summary
+- Marketplace models change the world they predict: forecasts move drivers, prices suppress demand, ETAs steer dispatch. Name the decision, the loss and the feedback loop before the architecture.
+- **Demand forecasting** (§83.4): quantile forecasts per H3 resolution-7 hexagon and 15-minute bucket from a global model; the label is unconstrained demand, not completed trips; evaluate with pinball loss and coverage in rolling-origin backtests; reconcile across the hierarchy, remembering that quantiles do not add. Compute is tiny; input freshness and event knowledge are the hard parts.
+- **ETA** (§83.5): routing engine plus a learned trip-level residual at about 230,000 predictions/s, driven mostly by display and refresh loops; labels from HMM map matching of GPS; asymmetric Huber loss for promises; per-slice conformal intervals, because one global width under-covers rush hour.
+- **Surge pricing** (§83.6): a sense–decide–act loop every 60 s with smoothing, step limits, caps, signed quotes and a kill switch; elasticity is confounded by urgency, so estimate it from rounding discontinuities and small randomized bands; rider-randomized tests are biased by shared supply, so use switchbacks and size them by city-blocks.
+- All three are coupled: pricing consumes forecasts and ETAs, and must not poison the forecaster's training labels.
+:::
+
+## 83.8 Knowledge checkpoint
+
+1. Why is "completed trips" the wrong label for demand forecasting?
+2. Why forecast at H3 resolution 7 rather than resolution 9?
+3. What does rolling-origin backtesting add over a single time split?
+4. Why can you not add hexagon 0.9 quantiles to get the city's 0.9 quantile?
+5. In OLS reconciliation of a parent and two children, how is a disagreement of 9 distributed?
+6. Which consumer generates the most ETA requests in §83.5.4, and what is the cheapest mitigation?
+7. Why predict a residual over the routing estimate instead of the full ETA?
+8. With $\delta = 60$ s and $\omega = 0.7$, what is the asymmetric Huber loss of a 120 s early error?
+9. Why did one global conformal width fail in the ETA example?
+10. Why does dispatch create a feedback loop for the ETA model?
+11. Why does naive regression of conversion on price often show a positive slope?
+12. Why does a rider-randomized pricing test overstate the effect of a discount?
+13. What sets the block length and burn-in of a switchback?
+14. What should pricing do when the pricing tick stops producing tables?
+
+<details><summary>Answers</summary>
+
+1. Completed trips are capped by supply and suppressed by price; a model trained on them learns past shortages and repeats them.
+2. Resolution 9 hexagons see well under one request per bucket; resolution 7 aggregates enough counts to learn, and consumers can disaggregate.
+3. Many origins across seasons and events, so the score reflects varied conditions and is not one lucky week.
+4. Quantiles of sums are not sums of quantiles; adding upper quantiles produces intervals that are far too wide (100% coverage in the example).
+5. Equally: each of the three nodes moves by 3, the parent up and the children down.
+6. App-open display ETAs (100,000/s); cache per hexagon and lower refresh rates for idle sessions.
+7. The router handles physics and rare routes; the model only needs to learn systematic errors such as turns, friction and route deviation.
+8. $h = 60 \times (120 - 30) = 5{,}400$; $L = 0.3 \times 5{,}400 = 1{,}620$.
+9. Rush-hour errors are larger, so the global width covered only 52.5% there; per-slice calibration fixes it.
+10. Labels exist mainly for chosen drivers, who tend to be under-predicted; non-chosen candidates are never observed unless logged and sampled.
+11. High prices coincide with urgent riders (rain, late nights), so price is confounded with willingness to ride.
+12. Both arms share drivers; treated riders take supply from control riders, inflating the difference.
+13. Carryover duration (trip and repositioning times) and the need for many blocks; burn-in drops minutes affected by the previous block.
+14. Serve the last-good table for a few minutes, then decay toward 1.0; never block quotes or freeze a high price.
+</details>
+
+## 83.9 Interview questions
+
+### Basic
+
+**Q1.** What is pinball loss, and why is it used for demand forecasts? **Answer.** The quantile loss of §57.11.2: under-predictions cost $q$ per unit and over-predictions $1 - q$, so its minimizer is the $q$-quantile. Forecast consumers act on quantiles (position for the 0.75 quantile), and it handles zero counts where MAPE fails.
+
+**Q2.** What is a switchback experiment? **Answer.** A design that randomizes the entire market between policies in time blocks, so that everyone in a block shares one policy; it avoids interference between arms at the cost of fewer, larger units.
+
+### Intermediate
+
+**Q3.** Your forecaster backtests well but performs poorly live. What do you check? **Answer.** Point-in-time correctness of lag features (leakage), differences between streaming and batch aggregations (late events), event and weather feature availability at issue time, and whether the live label definition matches the training label.
+
+**Q4.** How would you serve 230,000 ETAs per second within 5 ms of model time? **Answer.** In-process CPU inference of a small model, caller-side batching of candidates, one feature multi-get per batch, per-hexagon caching of display ETAs, regional partitioning with N+1 nodes, and a fallback ladder to correction tables.
+
+### Advanced
+
+**Q5.** Design the measurement of rider price elasticity without harming riders. **Answer.** Log raw and rounded multipliers and use rounding discontinuities; add small, policy-approved randomized bands at block level; control for weather, events and forecast gap; enforce monotonicity; report estimates with intervals per city and shrink noisy ones; audit for disparate effects.
+
+**Q6.** A new ETA model improves offline MAE by 8%. How do you launch it? **Answer.** Shadow-score to check skew and per-slice calibration; recalibrate intervals; because ETAs change dispatch and fares, run a city-level switchback measuring pickup time, completion and cancellations, with a canary per region and rollback to the previous model and router pairing.
+
+## 83.10 Practical exercises
+
+1. Extend the §83.4.8 code with a gradient-boosted quantile model using lag and calendar features, and compare its pinball loss and coverage with the negative-binomial baseline across the four origins.
+2. Implement MinT reconciliation for one parent and 49 children using backtest residuals to estimate a diagonal $W$, and compare parent and child pinball losses with OLS.
+3. Modify the ETA example to train with an asymmetric loss (for example, a quantile loss at 0.6) and measure the share of late arrivals before and after.
+4. In the switchback simulation, shorten blocks to 20 minutes and lengthen trips to 40 minutes; measure the bias with and without burn-in.
+
+## 83.11 Design challenges
+
+1. **Scheduled rides.** Riders can book a trip for 06:00 tomorrow. Design how demand forecasting, ETA and pricing change when the price must be fixed hours ahead and supply is uncertain.
+2. **Food delivery and rides sharing drivers.** Combine QuickBite's courier supply (§60.15) with ride-hailing drivers: design a joint forecast, a shared ETA platform and a pricing loop that does not starve either product.
+3. **Regulated city.** A city caps multipliers at 1.5 and requires published pricing rules. Redesign surge to keep pickup times acceptable using driver incentives, forecasts and queues.
+
+## 83.12 References
+
+1. Angelopoulos, A. N., Bates, S. *A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification*. arXiv:2107.07511, 2021.
+2. Bell, F., Smyl, S. *Forecasting at Uber: An Introduction*. Uber Engineering Blog, 2018.
+3. Bojinov, I., Simchi-Levi, D., Zhao, J. *Design and Analysis of Switchback Experiments*. Management Science 69(7):3759–3777, 2023.
+4. Brodsky, I. *H3: Uber's Hexagonal Hierarchical Spatial Index*. Uber Engineering Blog, 2018.
+5. Castillo, J. C., Knoepfle, D., Weyl, E. G. *Surge Pricing Solves the Wild Goose Chase*. Proceedings of the ACM Conference on Economics and Computation (EC), 2017.
+6. Chamandy, N. *Experimentation in a Ridesharing Marketplace*. Lyft Engineering Blog, 2016.
+7. Cohen, P., Hahn, R., Hall, J., Levitt, S., Metcalfe, R. *Using Big Data to Estimate Consumer Surplus: The Case of Uber*. NBER Working Paper 22627, 2016.
+8. Derrow-Pinion, A., et al. *ETA Prediction with Graph Neural Networks in Google Maps*. Proceedings of CIKM, 2021.
+9. Fu, Y., Soman, C. *Real-time Data Infrastructure at Uber*. Proceedings of ACM SIGMOD, 2021.
+10. Gneiting, T., Raftery, A. E. *Strictly Proper Scoring Rules, Prediction, and Estimation*. Journal of the American Statistical Association 102(477), 2007.
+11. Hall, J., Kendrick, C., Nosko, C. *The Effects of Uber's Surge Pricing: A Case Study*. Uber and University of Chicago, 2015.
+12. Hu, X., Binaykiya, T., Frank, E., Cirit, O. *DeeprETA: An ETA Post-processing System at Scale*. arXiv:2206.02127, 2022. (Hu et al. 2022a)
+13. Hu, X., Cirit, O., Binaykiya, T., Hora, R. *DeepETA: How Uber Predicts Arrival Times Using Deep Learning*. Uber Engineering Blog, 2022. (Hu et al. 2022b)
+14. Hyndman, R. J., Athanasopoulos, G. *Forecasting: Principles and Practice*, 3rd ed. OTexts, 2021. https://otexts.com/fpp3/
+15. Laptev, N., Yosinski, J., Li, L. E., Smyl, S. *Time-series Extreme Event Forecasting with Neural Networks at Uber*. ICML Time Series Workshop, 2017.
+16. Newson, P., Krumm, J. *Hidden Markov Map Matching Through Noise and Sparseness*. Proceedings of ACM SIGSPATIAL GIS, 2009.
+17. Romano, Y., Patterson, E., Candès, E. *Conformalized Quantile Regression*. NeurIPS, 2019.
+18. Salinas, D., Flunkert, V., Gasthaus, J., Januschowski, T. *DeepAR: Probabilistic Forecasting with Autoregressive Recurrent Networks*. International Journal of Forecasting 36(3), 2020.
+19. Taylor, S. J., Letham, B. *Forecasting at Scale*. The American Statistician 72(1), 2018.
+20. Wickramasuriya, S. L., Athanasopoulos, G., Hyndman, R. J. *Optimal Forecast Reconciliation for Hierarchical and Grouped Time Series Through Trace Minimization*. Journal of the American Statistical Association 114(526), 2019.
+
+## 83.13 Open verification items
+
+- Hu et al. 2022b (DeepETA blog): confirm the author list and that it describes an asymmetric Huber loss; the arXiv paper's authors (Hu, Binaykiya, Frank, Cirit) were checked.
+- Bell and Smyl 2018: confirm title, authors and year of Uber's forecasting introduction post.
+- Hall, Kendrick and Nosko 2015: confirm the concert and New Year's Eve outage descriptions as summarized.
+- Cohen et al. 2016: confirm the characterization of demand as inelastic at surge prices and the rounding-discontinuity design.
+- Chamandy 2016: confirm the Lyft post's title and its discussion of time-based randomization.
+- Emergency surge restrictions (§83.6.8): jurisdiction-specific rules and agreements were not cited; verify per jurisdiction before stating specifics.

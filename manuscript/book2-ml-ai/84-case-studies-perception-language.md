@@ -1293,3 +1293,362 @@ sequenceDiagram
 - **Responsible ML.** Slice WER by accent and dialect as a launch gate; transcriber guidelines and well-being for sensitive audio (§63.14.3).
 - **Security and privacy.** Encrypted streams; audio and bias lists in memory only; donation store encrypted with retention limits and access logging.
 - **Cost.** 66 cloud GPUs at peak, autoscaled with traffic; the device fleet is free compute but costs engineering for each device class.
+
+## 84.7 Real-time Translation
+
+### 84.7.1 Problem statement
+
+Design a translation service for a communications platform. **Text translation** translates chat messages, documents and interface strings between any pair of 200 languages. **Speech translation** gives participants in a live meeting captions, and optionally synthesized speech, in their own language while the speaker is still talking. Enterprise tenants supply **glossaries**: their product names must never be translated, and their terms must be translated their way.
+
+The ML formulation is conditional sequence generation: given a source sequence (text, or audio) and a target language, generate the target text that maximizes adequacy and fluency; labels are human reference translations, plus large mined and back-translated parallel corpora. ML is warranted because translation is open-ended generation; neural models replaced phrase-based systems in production years ago [Vaswani et al. 2017; Johnson et al. 2017].
+
+The distinctive hard problems are three. **Latency versus quality for simultaneous translation**: a translator who waits for the full sentence translates better but lags by a sentence, and word order differs between languages (a German verb may arrive last). **Many-language serving**: 200 languages are 39,800 directed pairs, far too many for one model per pair. **Control**: terminology, do-not-translate terms and formality must be honored by a model that generates freely.
+
+### 84.7.2 Functional requirements
+
+1. **Text translation** of a segment or a batch of segments from a source language (given or detected) to one or more targets, with optional formality and glossary.
+2. **Document translation** preserving markup and formatting, asynchronously.
+3. **Live speech translation**: per meeting, captions in each listener's language within seconds; optional synthesized voice.
+4. **Glossaries**: tenants create, version and attach glossaries per language pair; do-not-translate lists.
+5. **Quality feedback**: users can flag or correct a translation; tenants can review and post-edit.
+6. **Language coverage**: report per-pair quality tier so clients know when to show a warning.
+
+### 84.7.3 Non-functional requirements
+
+**Table 84.15 — Translation non-functional requirements.**
+
+| Requirement | Target |
+|---|---|
+| Availability | 99.9% for text and live speech |
+| Latency | Text segment of 25 tokens p95 ≤ 400 ms; live captions with average lagging ≤ 3 s behind the speaker; caption revisions affect at most the last 4 words |
+| Model quality | No regression in COMET on any of the 40 high-volume directions; release gate on human MQM evaluation for the top 10 directions; glossary term accuracy ≥ 98% |
+| Coverage | All 200 languages via at least one path; per-direction quality tier published |
+| Privacy | Content not retained beyond processing unless the tenant enables logging; no training on tenant content without contract |
+| Freshness | Glossary changes effective within 1 minute; models released monthly |
+
+### 84.7.4 Capacity estimation
+
+::: example
+**Worked example — Text translation tokens and GPUs.** Assumptions: 500 million segments/day; 25 source and 28 target tokens per segment; a segment cache (interface strings and repeated messages) answers 20%; peak-to-average 3; one GPU serving a 1.3-billion-parameter multilingual encoder–decoder with continuous batching (§73.6) sustains 5,000 output tokens/s within the latency objective (measure it); utilization 0.6.
+
+1. Output tokens: $5 \times 10^8 \times 0.8 \times 28 = 1.12 \times 10^{10}$/day; average 129,630/s; **peak 388,889/s**.
+2. GPUs: $388{,}889 / (5{,}000 \times 0.6) = 130$.
+3. Weights: $1.3 \times 10^9 \times 2$ B = 2.6 GB in FP16, so every GPU holds the full multilingual model with most memory left for KV caches (§73.5).
+
+**Interpretation.** Decoding output tokens dominates, as in any autoregressive model (§72.10). **Engineering implication.** Cache segments, batch continuously, and send the highest-volume directions to smaller distilled bilingual models (§84.7.8) to cut tokens per GPU-second.
+:::
+
+::: example
+**Worked example — Live speech translation.** Assumptions: 1 million meeting-hours/day with translation on; peak concurrency 2× average (business hours); one active speaker per meeting at a time; 1.5 target languages per meeting on average; speech at 2.5 words/s ≈ 3.5 target tokens/s per language; ASR as in §84.6.4 (420 effective streams per GPU).
+
+1. Concurrent meetings at peak: $10^6 / 24 \times 2 = 83{,}333$.
+2. ASR GPUs: $83{,}333 / 420 = 198$.
+3. MT output: $83{,}333 \times 1.5 \times 3.5 = 437{,}500$ tokens/s, more than all text traffic: 146 GPUs if each word is translated once.
+4. With **re-translation** (re-translating the whole current sentence on every ASR partial, about three times per word), $3 \times 146 = 438$ GPUs.
+
+**Interpretation.** Live speech is the larger workload, and the simultaneous-translation policy changes MT cost threefold. **Engineering implication.** The latency policy is also a capacity decision; choose it with both numbers in view (§84.7.8).
+:::
+
+### 84.7.5 API design
+
+```text
+POST /v1/translate
+{ "segments": ["Restart the Acme Hub to apply the update."],
+  "source": "en" | null, "targets": ["de", "ja"],
+  "glossary": { "id": "g-acme", "version": 12 }, "formality": "formal",
+  "format": "text" | "html" }
+-> 200 { "translations": [ { "target": "de",
+           "text": "Starten Sie den Acme Hub neu, um das Update anzuwenden.",
+           "detected_source": "en", "model": "mt-en-de-2026-10", "quality_tier": "A",
+           "glossary_hits": [ { "term": "Acme Hub", "applied": true } ] } ] }
+
+PUT  /v1/glossaries/{id}           { "pairs": { "en-de": [ { "src": "update", "tgt": "Update" } ] },
+                                     "do_not_translate": ["Acme Hub"] }
+-> 200 { "version": 13 }
+
+stream LiveTranslate(stream AudioOrControl) returns (stream CaptionEvent)
+  config { meeting_id, source_lang?, targets: ["es","ja"], glossary, voice: false }
+  CaptionEvent { lang, segment_id, text, stable_len, final: bool, src_offset_ms }
+
+POST /v1/feedback { "request_id", "target", "flag": "wrong_term" | "mistranslation", "fix"? }
+```
+
+Captions carry `segment_id` and `stable_len` so clients can replace the unstable tail of a caption without re-rendering what the listener has already read.
+
+### 84.7.6 Data model and database schema
+
+```sql
+CREATE TABLE glossary_version (
+  tenant_id TEXT, glossary_id TEXT, version INT,
+  entries JSONB NOT NULL,        -- per pair: src term, tgt term, case and inflection rules
+  dnt     TEXT[] NOT NULL,       -- do-not-translate terms
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (tenant_id, glossary_id, version)
+);
+CREATE TABLE direction_route (
+  src_lang TEXT, tgt_lang TEXT,
+  route TEXT NOT NULL,           -- 'bilingual:mt-en-de-2026-10' | 'multilingual' | 'pivot:en'
+  quality_tier CHAR(1) NOT NULL, -- A, B, C from the latest evaluation
+  comet REAL, evaluated_at TIMESTAMPTZ,
+  PRIMARY KEY (src_lang, tgt_lang)
+);
+```
+
+The segment cache is a key–value store keyed by `hash(source text, src, tgt, model version, glossary version, formality)`, so a glossary or model change can never serve a stale translation. Training data is a corpus of `(src_lang, tgt_lang, source, target, origin, quality_score)` rows, with origin = human, mined or back-translated, and a per-row score from a quality-estimation model used for filtering. Labels for evaluation are human references and MQM annotations (§84.7.8), with a delay of weeks per release; user flags arrive within minutes but are sparse and biased toward visible errors.
+
+### 84.7.7 High-level architecture
+
+**Figure 84.13 — Text and live speech translation.**
+
+```mermaid
+flowchart LR
+  C([Chat or doc client]) -->|HTTPS| API[Translate API]
+  API --> SC[(Segment cache)]
+  API --> GL[Glossary service]
+  API --> RTE[Direction router]
+  RTE --> BI[Bilingual models:<br/>top 40 directions]
+  RTE --> ML[Multilingual model:<br/>200 languages]
+  M([Meeting client]) -->|WebRTC audio| MS[Media server]
+  MS --> ASR[Streaming ASR<br/>see 84.6]
+  ASR -->|partials and finals| SEG[Segmenter and<br/>stability policy]
+  SEG --> RTE
+  BI --> POST[Glossary check,<br/>detokenize, format]
+  ML --> POST
+  POST -->|captions over WebSocket| M
+  POST -.->|optional| TTS[Speech synthesis]
+  TTS -.-> MS
+  GL --> POST
+  REG[(Route table and<br/>model registry)] --> RTE
+```
+
+**Reading the diagram.** The **text path** is synchronous: the API checks the segment cache, resolves the tenant's glossary version, and the direction router sends the segment to a dedicated bilingual model for high-volume directions or to the multilingual model otherwise; post-processing restores masked terms, checks glossary compliance and formats the output. The **speech path** receives meeting audio via WebRTC at the media server (§9.7), runs streaming ASR (§84.6), and a segmenter applies the simultaneous policy, deciding how much source to commit before translating. Translations flow back as caption events over the meeting's WebSocket; optional speech synthesis feeds audio back into the media server (dotted, because it lags captions). Storage boundaries: segment cache, glossary store, route table. Failure points: ASR errors that propagate into translation, the router sending a direction to a model that does not support it, glossary service unavailability (fail to cached version). Scaling: bilingual and multilingual pools scale independently by token rate; ASR by streams.
+
+### 84.7.8 Detailed component design
+
+#### Cascade or end-to-end
+
+A **cascade** chains ASR → MT → TTS. Each stage is trained on abundant data of its own kind, can be evaluated and improved separately, and exposes an intermediate transcript that glossaries, logging and captions in the source language can use. Its weaknesses are error propagation (ASR mistakes become fluent mistranslations), lost prosody and speaker voice, and summed latency. An **end-to-end** model translates speech directly into target text or speech: Translatotron showed direct speech-to-speech translation with a single sequence model [Jia et al. 2019], and SeamlessM4T offered one multitask model for speech and text input and output across about 100 languages [Seamless Communication et al. 2023]. End-to-end avoids compounding errors and can keep voice characteristics, but parallel speech data is scarce, terminology control is harder without an intermediate transcript, and each component cannot be fixed independently.
+
+**Choice:** a cascade for captions, because captions *are* the text, glossaries need text, and the ASR and MT stages already exist and are monitored; an end-to-end speech-to-speech model as an option for voice output in the top directions, evaluated against cascade plus TTS.
+
+#### Simultaneous translation: wait-k and average lagging
+
+A simultaneous translator interleaves **read** (take another source word) and **write** (emit a target word) actions. The **wait-k** policy reads $k$ words, then alternates one write per read, and finishes writing after the source ends; training the model under the same prefix-to-prefix policy teaches it to anticipate (for example, to predict a verb before it is heard) [Ma et al. 2019]. Latency is measured by **average lagging (AL)**, also introduced by Ma et al.
+
+::: formula
+**Average lagging**
+
+$$\text{AL} = \frac{1}{\tau} \sum_{t=1}^{\tau} \left( g(t) - \frac{t-1}{r} \right) \qquad r = \frac{|y|}{|x|} \qquad \tau = \min\{\, t : g(t) = |x| \,\}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $g(t)$ | Source words read when target word $t$ is written | words |
+| $\lvert x \rvert$, $\lvert y \rvert$ | Source and target lengths | words |
+| $r$ | Target-to-source length ratio | dimensionless |
+| $\tau$ | First target word written after the whole source was read | index |
+| AL | Average number of source words the translator lags behind an ideal simultaneous translator | words |
+:::
+
+The term $(t-1)/r$ is how many source words an ideal translator with no lag would have read when writing word $t$. Multiply AL by the speaking rate's seconds per word to get seconds.
+
+```python
+def average_lagging(g, src_len, tgt_len):
+    """Average Lagging (Ma et al. 2019): g[t-1] = source words read before writing target word t."""
+    r = tgt_len / src_len
+    tau = next(t for t in range(1, tgt_len + 1) if g[t - 1] >= src_len)  # first word written after full source
+    return sum(g[t - 1] - (t - 1) / r for t in range(1, tau + 1)) / tau
+
+def wait_k(k, src_len, tgt_len):
+    return [min(k + t - 1, src_len) for t in range(1, tgt_len + 1)]
+
+src = 20
+for tgt in (20, 26):
+    for k in (1, 3, 5, 9):
+        al = average_lagging(wait_k(k, src, tgt), src, tgt)
+        print(f"|x|={src} |y|={tgt} wait-{k}: AL = {al:.2f} words = {al / 2.5:.2f} s at 2.5 words/s")
+full = [src] * 20
+print(f"full-sentence: AL = {average_lagging(full, src, 20):.2f} words")
+```
+
+Output:
+
+```text
+|x|=20 |y|=20 wait-1: AL = 1.00 words = 0.40 s at 2.5 words/s
+|x|=20 |y|=20 wait-3: AL = 3.00 words = 1.20 s at 2.5 words/s
+|x|=20 |y|=20 wait-5: AL = 5.00 words = 2.00 s at 2.5 words/s
+|x|=20 |y|=20 wait-9: AL = 9.00 words = 3.60 s at 2.5 words/s
+|x|=20 |y|=26 wait-1: AL = 3.19 words = 1.28 s at 2.5 words/s
+|x|=20 |y|=26 wait-3: AL = 4.96 words = 1.98 s at 2.5 words/s
+|x|=20 |y|=26 wait-5: AL = 6.73 words = 2.69 s at 2.5 words/s
+|x|=20 |y|=26 wait-9: AL = 10.27 words = 4.11 s at 2.5 words/s
+full-sentence: AL = 20.00 words
+```
+
+What to notice:
+
+- When source and target have equal length, wait-$k$ lags by exactly $k$ words; full-sentence translation lags by the whole sentence.
+- When the target is 30% longer (common from English into German or French), one write per read falls behind, so lag grows; STACL adds a *catch-up* schedule that writes extra words in proportion to $r$.
+
+::: example
+**Worked example — Choosing k from the caption budget.** The requirement is AL ≤ 3 s. ASR finals lag speech by about 0.5 s (§84.6.4), so MT may add 2.5 s, or $2.5 \times 2.5 = 6.25$ words at 2.5 words/s.
+
+1. For equal-length pairs (English to Spanish, roughly), wait-5 (AL 5 words, 2.0 s) fits with 0.5 s to spare; wait-9 (3.6 s) does not.
+2. For English to German with $r = 1.3$, wait-5 lags 6.73 words (2.69 s), over budget; use wait-3 (1.98 s) or wait-5 with catch-up.
+3. For Japanese, whose verb-final order differs most from English, a larger $k$ is needed for acceptable quality; publish a higher lag target for such directions rather than forcing one $k$.
+
+**Interpretation.** One latency target implies a different $k$ per direction. **Engineering implication.** Store $k$ (or the adaptive policy's threshold) per direction in the route table, tuned on a quality-versus-AL curve from the direction's test set.
+:::
+
+The alternative in production is **re-translation**: translate the current partial sentence from scratch each time ASR updates, and let the caption change [Arivazhagan et al. 2020]. It works with any full-sentence MT model and gives full-sentence quality at the end of each sentence, at the cost of **flicker** (captions that change under the reader) and roughly three times the MT compute (§84.7.4). A **stability policy** caps flicker by showing only the prefix that has not changed for the last two updates, plus masking the final $m$ words. **Choice:** re-translation with a stability mask for the top directions, where existing high-quality bilingual models make it the cheapest path to quality, and wait-k models for the long tail of directions served by the multilingual model, where compute matters more.
+
+#### Many languages: one multilingual model, many pairs, or pivoting
+
+Three options. **Pairwise models** give the best quality per direction for high-resource pairs but scale with $L(L-1)$. **Pivoting** through English needs only $2(L-1)$ models but doubles latency and compounds errors, and loses information English does not mark (formality, gender). **One multilingual model** with a target-language token serves all directions, transfers from high-resource to low-resource languages and can translate directions never seen in training [Johnson et al. 2017]. NLLB-200 scaled this to 200 languages, with a mixture-of-experts model and smaller distilled dense versions, evaluated on the FLORES-200 benchmark [NLLB Team 2022].
+
+**Design:** route by direction (Table `direction_route`). The 40 highest-volume directions, perhaps 80% of tokens, go to distilled bilingual or small multi-pair models, cheaper per token and better for those pairs; everything else goes to a 1.3-billion-parameter multilingual model; directions whose multilingual quality is poor are pivoted through English if that measures better. Each direction carries a quality tier from its last evaluation, shown to clients. Continuous batching across directions works for the multilingual model because the target-language token is just part of the input (§73.6).
+
+#### Terminology and glossary control
+
+Three mechanisms, combined:
+
+1. **Masking** for do-not-translate terms: replace "Acme Hub" with a placeholder token before translation and restore it afterwards. Robust, but the model cannot inflect or position the term naturally.
+2. **Constrained decoding**: beam search must include the glossary target term [Hokamp & Liu 2017; Post & Vilar 2018]. Guarantees presence, costs beam width and latency, and forces the exact surface form, which breaks in inflected languages (German case endings).
+3. **Training with inline term annotations**, so the model learns to use a supplied target term and inflect it [Dinu et al. 2019]. Natural output, but no guarantee.
+
+The production path applies (3) for glossary terms, (1) for do-not-translate terms, and a post-check that verifies each glossary term's lemma appears in the output, falling back to (2) for that segment if it does not. **Glossary term accuracy** (fraction of source occurrences rendered with the required term) is reported per tenant.
+
+#### Evaluation
+
+**BLEU** (§78.6.2) measures n-gram overlap with references; compute it with sacreBLEU's standard tokenization, or numbers are not comparable [Post 2018]. **chrF** works on character n-grams and suits morphologically rich languages [Popović 2015]. **COMET** is a learned metric that scores a translation given source and reference with a multilingual encoder trained on human judgments [Rei et al. 2020]; a large comparison found it ranked systems in agreement with humans more often than BLEU [Kocmi et al. 2021]. Learned metrics can be gamed and have their own biases, so the release gate for top directions is a human **MQM** evaluation, in which professional translators mark error spans by category and severity [Freitag et al. 2021]. Online, the experiment unit is the meeting or the conversation; guardrails are user flags per 1,000 segments, caption-off rate in meetings and post-edit distance for tenants who post-edit. Speech translation adds AL and flicker (fraction of displayed words later changed) to every report.
+
+### 84.7.9 Data flow
+
+**Figure 84.14 — Read path: live caption for one listener.**
+
+```mermaid
+sequenceDiagram
+  participant S as Speaker client
+  participant MS as Media server
+  participant A as Streaming ASR
+  participant P as Segmenter and policy
+  participant T as MT model
+  participant Q as Post-processor
+  participant L as Listener client
+  S->>MS: audio over WebRTC
+  MS->>A: audio stream
+  A-->>P: partial: we will ship the
+  P->>T: translate stable source prefix, target de
+  T-->>Q: draft German prefix
+  Q->>Q: restore masked terms, glossary check
+  Q-->>L: caption segment 7, stable_len 3, final false
+  A-->>P: final: we will ship the Acme Hub on Monday
+  P->>T: translate full sentence
+  T-->>Q: final German sentence
+  Q-->>L: caption segment 7, final true
+```
+
+**Reading the diagram.** Audio reaches ASR through the media server; ASR partials flow to the segmenter, which decides, under the direction's policy, what source prefix to send. The MT model translates the prefix (re-translation) or extends its output (wait-k); the post-processor restores masked terms and checks the glossary, then sends a caption event over the listener's WebSocket. When ASR finalizes the sentence, a final translation replaces the draft, and `stable_len` keeps the words the listener has already read in place where possible. All arrows inside the pipeline are asynchronous stream events. Failure points: an ASR error (it is translated fluently; showing source captions alongside helps), MT overload (fall back to finals only, lowering cost and raising lag), and listener network loss (captions resume from the latest segment). Scaling: one pipeline per meeting and target language, packed onto shared GPU pools.
+
+**Figure 84.15 — Write path: a tenant updates a glossary.**
+
+```mermaid
+sequenceDiagram
+  participant AD as Tenant admin
+  participant GS as Glossary service
+  participant DB as Glossary store
+  participant V as Validator
+  participant CA as Caches
+  participant TR as Translate API
+  AD->>GS: PUT glossary g-acme entries
+  GS->>V: validate terms per language pair
+  V-->>GS: warnings: ambiguous term, inflection rule missing
+  GS->>DB: write version 13, immutable
+  GS-)CA: publish g-acme version 13
+  CA->>CA: new cache key space for version 13
+  TR->>GS: resolve g-acme latest
+  GS-->>TR: version 13 within 1 minute
+```
+
+**Reading the diagram.** A glossary edit creates an immutable new version after validation (for example, warning about terms that are also common words, or a missing inflection rule for a German noun). The new version is published asynchronously to API instances' local caches; because the segment cache key includes the glossary version, old translations are never served for the new glossary, and no cache flush is needed. Requests that pin a version keep it, giving tenants reproducible output for regulated documents. Failure points: the glossary service is down (API uses the last cached version and marks responses), and a bad glossary (tenant rolls back by pointing to the previous version). Scaling: glossaries are small and read-heavy, so local caching is enough.
+
+### 84.7.10 Bottlenecks
+
+1. **Decode throughput**: output tokens dominate GPU time; live speech MT exceeds all text traffic.
+2. **Re-translation compute**: three MT calls per word in exchange for quality and simplicity.
+3. **Long-tail directions**: little evaluation data, so quality is uncertain and regressions go unnoticed.
+4. **Constrained decoding** widens beams and adds latency for glossary-heavy tenants.
+5. **Human evaluation throughput** limits how often top directions can be released.
+
+### 84.7.11 Failure scenarios
+
+**Table 84.16 — Translation failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| ASR error propagates | Fluent but wrong caption | Low ASR confidence on translated span | Show source caption alongside | Confidence-aware display |
+| Hallucination: output unrelated to input, often on short or noisy segments | Misleading content | Length-ratio and quality-estimation checks | Suppress or show source | QE gating per segment |
+| Wrong-language output in multilingual model (off-target translation) | Unusable output | Language ID on output | Retry with pivot route | Off-target rate per direction in the gate |
+| Glossary term dropped or wrongly inflected | Tenant-visible error, contractual | Term post-check | Constrained re-decode | Term-annotated training; validation |
+| Stale cache after model or glossary change | Old translations served | Version mismatch counters | None needed | Versions in cache key |
+| Gender or formality bias (defaulting to masculine forms) | Representational harm | Bias test suites per language | Offer alternatives | Targeted data; evaluation slices |
+| Drift: new product names, slang | Untranslated or mistranslated terms | User flags, OOV rate | Glossaries; data refresh | Monthly data refresh |
+| Training contamination: test references in mined web data | Inflated metrics, false release | Overlap checks with test sets | Re-evaluate | Deduplicate training against all test sets |
+| Flicker storm from unstable ASR | Unreadable captions | Flicker rate per meeting | Switch to finals-only | Stability mask |
+
+### 84.7.12 Scaling strategy
+
+**At 10× text traffic**: about 1,300 GPUs at the same efficiency; first raise the cache hit ratio for interface strings (pre-translate them at release time), move more directions to distilled models, and quantize to INT8 or FP8 (§73.13) after COMET and MQM checks.
+
+**At 10× live meetings**: ASR and MT pools grow together; switch top directions from re-translation to trained simultaneous models to cut MT compute by up to two thirds, and run per-region pools to keep the media path short.
+
+**At 100×**: on-device translation for common directions with small distilled models (privacy, offline), a mixture-of-experts multilingual model in the cloud for capacity per FLOP, and LLM-based translation for documents where context across sentences matters, with the same glossary and evaluation machinery.
+
+### 84.7.13 Trade-offs
+
+**Table 84.17 — Translation design trade-offs.**
+
+| Decision | Option chosen | Alternative | Why |
+|---|---|---|---|
+| Speech architecture | Cascade for captions | End-to-end | Text is needed for captions and glossaries; components improve separately |
+| Simultaneous policy | Re-translation with stability mask (top directions); wait-k (tail) | One policy | Quality where volume is, compute where the tail is |
+| Language coverage | Bilingual top 40 plus multilingual | All pairwise, or all multilingual | Quality and cost on high-volume pairs; coverage for the rest |
+| Glossary | Annotated training, masking, post-check, constrained fallback | Constrained decoding always | Natural inflection, with a guarantee only when needed |
+| Metric | COMET plus MQM gate | BLEU only | Better agreement with human judgment |
+| Caching | Exact-segment cache with versions in key | No cache | 20% of tokens saved at zero staleness risk |
+
+### 84.7.14 Alternative designs
+
+- **LLM-based translation**: a general LLM prompted with the glossary and document context handles style and cross-sentence coherence well, at higher cost per token and with less predictable terminology; useful for documents, not for low-latency captions.
+- **Pivot-only architecture** through English: fewest models, worst latency and information loss.
+- **End-to-end speech-to-speech** for all directions: best voice continuity, weakest control and auditability.
+- **Human-in-the-loop** post-editing for regulated content, with machine output as a draft.
+
+### 84.7.15 Interview discussion
+
+**Table 84.18 — 45-minute pacing plan for real-time translation.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Scope | Text and live speech; 200 languages; glossaries; latency target in seconds of lag |
+| 5–10 | Estimates | Output tokens/s; live speech larger than text; re-translation 3× |
+| 10–18 | Architecture | Figure 84.13; cascade; direction router |
+| 18–30 | Deep dive: simultaneous | wait-k, AL, per-direction $k$, re-translation and flicker |
+| 30–38 | Deep dive: languages and control | Multilingual vs pairs vs pivot; glossary mechanisms; COMET, MQM |
+| 38–45 | Wrap-up | Failures (hallucination, off-target), scaling |
+
+**Likely follow-ups.**
+
+- *"How do you handle a verb-final source?"* Larger $k$ or an adaptive policy for that direction, anticipation learned by prefix-to-prefix training, and a published higher lag target.
+- *"One model or 39,800?"* A multilingual model for coverage, distilled bilingual models for the top directions, pivot where it measures better.
+- *"How do you know a new model is better?"* COMET on frozen test sets for every routed direction with no-regression gates, MQM for top directions, then an online test on flag and caption-off rates.
+- *"How do you guarantee a brand name is not translated?"* Placeholder masking plus a post-check.
+
+**What distinguishes senior and staff answers.** A senior answer picks a cascade, mentions BLEU and a multilingual model. A staff answer quantifies lag with AL and sets $k$ per direction, shows that the simultaneous policy is also a capacity decision, routes directions by volume and measured quality, treats glossaries as versioned data with layered enforcement, and prefers learned metrics plus human MQM to BLEU alone.
+
+### 84.7.16 Production considerations
+
+- **Monitoring.** Per direction: COMET on sampled traffic with reference-free quality estimation, off-target rate, flag rate; for live speech: AL, flicker, ASR confidence; glossary term accuracy per tenant.
+- **Retraining.** Monthly model releases gated per direction; glossary changes take effect in a minute without retraining.
+- **Responsible ML.** Gender and formality bias suites; quality tiers disclosed so users of low-resource languages know when to double-check; no training on tenant content without contract.
+- **Security and privacy.** Content encrypted in transit, processed in memory, logged only with tenant opt-in; meeting audio not retained.
+- **Cost.** Roughly 130 GPUs for text and 344 to 636 for live speech (ASR plus MT, depending on the simultaneous policy); the policy choice and the share of directions on distilled models are the largest cost levers.

@@ -1096,3 +1096,330 @@ At **10×** developers, completion GPUs scale linearly (about 1,200) and dominat
 
 **Monitoring.** Latency by region and editor, cancellation and late-discard rates, acceptance and retention by language and model, prefix-hit ratio, filter hits, and agent resolve rates on a nightly internal suite (§70). **Retraining cadence.** The completion model is refreshed every one to three months on fresh permissively licensed code and opted-in data, distilled from the current larger model; every refresh goes through the offline gates and a two-week developer-randomized experiment. **Security and privacy.** Zero retention for business customers, encryption per organization, content exclusion enforced on the client and the server, secret redaction, audit logs of agent commands, and least-privilege code-host tokens scoped to one repository (§79.14, Chapter 50). **Responsible ML.** Suggestions that reproduce insecure patterns are a known risk; security-focused evaluation slices and static analysis on agent diffs reduce it (§71). **Cost.** Completion is cheap per developer; agents are twenty times more, and their cost is controlled by step budgets, caching and routing routine steps to smaller models.
 
+## 86.7 Customer-Support Agent at Scale (multi-brand e-commerce)
+
+### 86.7.1 Problem statement
+
+Design an AI support agent for an e-commerce group that runs eight retail brands in 30 markets. Customers write through chat and email about orders: where a parcel is, how to return an item, why a refund has not arrived, how to cancel or change an address. The agent answers questions, and, within policy, acts: it creates return authorizations, issues refunds, cancels orders and updates addresses. It hands conversations to human agents when it cannot or should not act, and it also runs in **agent-assist** mode, drafting replies and proposed actions for human agents on conversations it does not own.
+
+Chapter 77 built QuickBite's support agent to teach the mechanisms: tool schemas, durable execution, idempotency keys, approval gates and cost per task. This case applies them to a different setting and emphasizes what scale and multiple brands add: per-brand and per-market **policies as code**, **conversations that last days** across channels, **rollout by intent**, and **cost per resolution against human handling** as the business case.
+
+The ML formulation: an LLM policy maps conversation state to the next action (reply, tool call or handoff), a classification head or small model predicts intent and risk, and the target is a **resolution**: the customer's issue closed correctly without a human and without a repeat contact within 7 days. Labels are delayed and partly implicit: repeat contacts, chargebacks and refund reversals arrive days to weeks later (§63.4). ML is warranted because the language is open-ended; deterministic code is still required for everything that moves money.
+
+### 86.7.2 Functional requirements
+
+1. **Converse** in chat and email in the customer's language, with brand voice and market-specific policy.
+2. **Look up** orders, shipments, returns and refunds for the authenticated customer only.
+3. **Act** within policy: create returns, issue refunds up to limits, cancel unshipped orders, change addresses before dispatch; every action confirmed to the customer from the tool's result, never from the model's intent.
+4. **Hand off** to a human with a structured summary when asked, when policy requires, or when confidence is low; continue in agent-assist mode for the human.
+5. **Persist** conversation state across channels and days, including pending approvals and asynchronous events such as "parcel delivered" or "refund settled".
+6. **Roll out per intent, brand and market**, with kill switches.
+
+### 86.7.3 Non-functional requirements
+
+**Table 86.13 — Support agent non-functional requirements.**
+
+| Property | Target | Why |
+|---|---|---|
+| Availability | 99.9% for chat; on failure, route to humans or a static help flow within 5 s | Customers must always reach someone |
+| Latency | First reply token p95 ≤ 2 s; tool-backed answer p95 ≤ 8 s | Chat expectations |
+| Action correctness | Wrong-action rate ≤ 0.4% of automated contacts; zero duplicate refunds | Money and trust |
+| Policy compliance | 100% of money-moving actions pass the policy engine; promises only from tool results | Legal exposure for statements made by the agent [Moffatt v. Air Canada 2024] |
+| Resolution | ≥ 70% of covered contacts resolved without a human; 7-day repeat contact rate not above human baseline | The business objective |
+| Handoff | Human picks up p90 ≤ 3 min in staffed hours, with full summary | Escalation must not feel like starting over |
+| Durability | No lost conversation state or action intent; exactly-once effect per logical action | Conversations span days; workers restart |
+| Privacy | Customer data used only for the conversation and audited improvement; PII redacted from training sets | §50.8.3 purpose limitation |
+
+### 86.7.4 Capacity estimation
+
+::: example
+**Worked example — Traffic, concurrency and model calls.** Assumptions: 100,000 contacts a day (70% chat, 30% email); peak-to-average 3, and 5 on sale days; chat conversations last 9 minutes; a chat has 6 customer turns and an email thread 2; each turn needs 2.2 model calls on average (reply plus tool steps).
+
+1. Average 1.16 contacts/s; peak 3.47/s; sale-day peak 5.79/s.
+2. Concurrent chats at peak, by Little's law (§4.6): $3.47 \times 0.7 \times 540 = 1{,}313$; sale day 2,188.
+3. Model calls: $100{,}000 \times (0.7 \times 6 + 0.3 \times 2) \times 2.2 = 1.06 \times 10^6$ a day; peak $1.06 \times 10^6 / 86{,}400 \times 3 = 36.7$ calls/s.
+4. State-store writes, two per step: 73 per second at peak, trivial for any durable store; the hard part is correctness, not throughput.
+
+**Interpretation.** The load is modest; a single workflow cluster and an LLM gateway quota of about 37 calls/s (2.5 million tokens per minute at the token counts below) suffice. **Engineering implication.** Scale is not the challenge. Correctness of actions under retries, policy fidelity across 240 brand-market combinations and the economics of resolution are.
+:::
+
+::: example
+**Worked example — Agent-side cost per chat contact (§77.17.1).** $n = 13$ calls; base context $B = 4{,}500$ tokens (3,500 static instructions, policy summary and tool schemas, plus 1,000 of conversation and order facts); $\Delta = 600$ per step; output 120 tokens per call, $O = 1{,}560$; frontier API at \$2.50 input, \$0.25 cached input, \$10 output per million.
+
+1. Input: $13 \times 4{,}500 + 600 \times 13 \times 12/2 = 58{,}500 + 46{,}800 = 105{,}300$ tokens. Cached static prefix $13 \times 3{,}500 = 45{,}500$; uncached 59,800.
+2. $C_\text{LLM} = 45{,}500 \times 0.25 \times 10^{-6} + 59{,}800 \times 2.50 \times 10^{-6} + 1{,}560 \times 10 \times 10^{-6} = 0.0114 + 0.1495 + 0.0156 = \$0.176$ (\$0.279 without caching).
+3. Auxiliary intent, risk and guardrail calls on a small model, four of 800 input and 20 output tokens: \$0.0005. Orchestration, tracing and storage: an assumed \$0.04.
+4. Approvals for 5% of contacts at \$1.20 each: \$0.060. Wrong actions: 0.4% at an average loss of \$25: \$0.100.
+5. Agent-side cost $C_a = 0.176 + 0.0005 + 0.04 + 0.06 + 0.10 = \$0.377$.
+
+**Interpretation.** Tokens are under half of the agent-side cost; approvals and wrong actions are 42%. **Engineering implication.** The model bill matters less than the error rate and the review rate, both of which the policy engine and rollout plan control.
+:::
+
+::: formula
+**Blended cost per contact under partial automation**
+
+$$C_\text{contact} = c\,\big[C_a + e\,k\,C_h\big] + (1 - c)\,C_h \qquad C_\text{res} = \frac{C_a}{1 - e}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $c$ | Share of contacts whose intent is in the agent's rollout | fraction |
+| $C_a$ | Agent-side cost per covered contact (§77.17.1) | \$ |
+| $e$ | Escalation rate of covered contacts | fraction |
+| $k$ | Human cost of an escalated contact relative to a fresh one | dimensionless |
+| $C_h$ | Cost of a human-handled contact | \$ |
+| $C_\text{res}$ | Agent-side cost per contact the agent resolves | \$ |
+| $C_\text{contact}$ | Blended cost per contact across all contacts | \$ |
+:::
+
+::: example
+**Worked example — The business case.** $C_h = \$4.50$ (blended chat and email for this group, higher than QuickBite's \$3.00 because emails take longer); $C_a = \$0.377$; $e = 0.30$; $k = 0.9$ (the handoff summary saves a tenth of handling time); $c = 0.65$ once the first five intents of Table 86.14 are live.
+
+1. Covered contact: $0.377 + 0.30 \times 0.9 \times 4.50 = 0.377 + 1.215 = \$1.59$.
+2. $C_\text{contact} = 0.65 \times 1.59 + 0.35 \times 4.50 = 1.035 + 1.575 = \$2.61$, against \$4.50: \$189,000 a day saved at 100,000 contacts, about \$69 million a year.
+3. Cost per agent resolution: $C_\text{res} = 0.377/0.70 = \$0.54$.
+4. Human staffing at peak (8-minute handling, 80% occupancy): human-only needs $12{,}500 \text{ contacts/h} \times 8/60 = 1{,}667$ busy agents, 2,084 on shift; with the agent, humans handle $35{,}000 + 65{,}000 \times 0.30 = 54{,}500$ contacts a day, 908 busy, 1,136 on shift.
+
+**Interpretation.** Escalations are three-quarters of a covered contact's cost; each point of escalation rate is worth $0.65 \times 0.01 \times 0.9 \times 4.50 = \$0.026$ per contact, \$2,600 a day, more than switching to a model with half the token price would save. **Engineering implication.** Invest in resolution quality and safe coverage of more intents; optimize tokens last. Count repeat contacts as failures, or the business case is overstated.
+:::
+
+### 86.7.5 API design
+
+```text
+POST /v1/conversations/{cid}/messages         (chat: SSE stream; email: async)
+  { "channel": "chat", "brand": "northwind", "market": "DE", "customer_token": "...",
+    "text": "My jacket arrived torn, can I get my money back?" }
+GET  /v1/conversations/{cid}                   -> state, intent, pending actions, owner (agent|human)
+POST /v1/conversations/{cid}/handoff           { "reason": "customer_request", "summary": {...} }
+POST /v1/assist/{cid}/draft                    -> { "reply": "...", "proposed_actions": [...] }
+POST /v1/events                                (shipment delivered, refund settled; resumes workflows)
+POST /v1/conversations/{cid}/outcome           { "resolved": true, "csat": 5, "repeat_within_7d": false }
+
+# Tool contracts (called by the orchestrator, never by the model directly)
+create_return(order_id, line_ids[], reason, idempotency_key) -> { rma_id, label_url }
+issue_refund(order_id, amount, currency, reason, idempotency_key) -> { refund_id, status }
+policy.evaluate(action, context) -> { decision: allow|deny|needs_approval, rule_id, max_amount }
+```
+
+The orchestrator injects the customer identity into every tool call from the authenticated session; the model can choose an order only from those the lookup returned for that customer (§75.14, point 4).
+
+### 86.7.6 Data model and database schema
+
+```sql
+CREATE TABLE conversations (
+  cid TEXT PRIMARY KEY, brand TEXT, market TEXT, customer_id BIGINT, channel TEXT,
+  state TEXT,                    -- active|awaiting_customer|awaiting_event|awaiting_approval|human|closed
+  owner TEXT, intent TEXT, intent_conf REAL, workflow_id TEXT,
+  opened_at TIMESTAMPTZ, closed_at TIMESTAMPTZ, resolution TEXT);
+CREATE TABLE conversation_events (           -- append-only, the source of truth for replay
+  cid TEXT, seq BIGINT, ts TIMESTAMPTZ, kind TEXT,   -- msg_in|msg_out|tool_call|tool_result|handoff|signal
+  payload JSONB, model_version TEXT, prompt_version TEXT, PRIMARY KEY (cid, seq));
+CREATE TABLE actions (
+  idempotency_key TEXT PRIMARY KEY,         -- hash(cid, action_type, target): T-…|refund|order line
+  cid TEXT, action_type TEXT, target TEXT, amount NUMERIC, currency TEXT,
+  policy_rule TEXT, decision TEXT, state TEXT,       -- proposed|approved|executing|succeeded|failed|unknown
+  provider_ref TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ);
+CREATE TABLE outcome_labels (
+  cid TEXT PRIMARY KEY, resolved BOOLEAN, repeat_7d BOOLEAN, refund_reversed BOOLEAN,
+  chargeback BOOLEAN, csat SMALLINT, qa_score SMALLINT, labeled_at TIMESTAMPTZ);
+```
+
+The event log and action table live in a relational database with the workflow engine's own persistence (§77.8.2); the action table's primary key enforces one effect per logical action (§77.10.1). Policies are versioned code in a repository, not rows edited in production. Training examples join conversation events with outcome labels after the 7-day window, with PII redacted.
+
+### 86.7.7 High-level architecture
+
+**Figure 86.12 — Support agent: channels, durable orchestrator, policy engine and tools.**
+
+```mermaid
+flowchart LR
+  CU([Customer]) -->|chat, email| CH[Channel adapters]
+  CH --> ORC[Conversation orchestrator<br/>durable workflows]
+  ORC --> GR[Guardrails<br/>input, output]
+  ORC --> MG[Model gateway]
+  MG --> LLM{{Agent model,<br/>small intent model}}
+  ORC --> KB[Help-content RAG]
+  ORC --> PE[Policy engine<br/>per brand, market]
+  ORC --> TL[Tool layer<br/>idempotent wrappers]
+  TL --> OMS{{Orders, shipping,<br/>payments}}
+  ORC -->|handoff| HQ[[Human queue]]
+  HQ --> HA([Human agent<br/>with assist])
+  HA --> ORC
+  ORC --> ST[(Conversation events,<br/>actions)]
+  EV[[Business events]] -.->|signals| ORC
+  ST -.-> LAB[(Outcome labels,<br/>eval sets)]
+```
+
+**Reading the diagram.** Channel adapters normalize chat and email into messages for a durable workflow per conversation. The orchestrator calls guardrails, the model through the gateway, help-content retrieval, and tools only through the tool layer, after the policy engine has decided; tools reach the order, shipping and payment systems with idempotency keys. Handoffs go to a human queue; human agents work in the same conversation with drafts from assist mode. Business events (delivered, refund settled) arrive asynchronously as workflow signals. Every step is appended to the event store, which also feeds outcome labels and evaluation sets. Failure points: the payment system (circuit breaker, then handoff), the model gateway (fallback chain of §78.15, then humans), and the human queue at peak. Scaling: workflows shard by conversation; the stateless services scale horizontally.
+
+### 86.7.8 Detailed component design
+
+#### Policy as code and the action boundary (the hardest part)
+
+The model **proposes**; deterministic code **decides** and **executes**. A refund proposal goes to the policy engine with facts fetched by the orchestrator, not supplied by the model: order date, delivery date, item category, amount, customer's refund history and market. Rules are versioned per brand and market ("DE apparel: refund without return under €20 if damaged within 14 days of delivery"), unit-tested and reviewed like code, and return `allow`, `deny` with a reason the model can explain, or `needs_approval` (§77.12.1). Executed actions use an idempotency key derived from the logical action (§77.10.1), so retries and worker restarts cannot double-refund; when a call times out, the action enters an unknown state and is reconciled with the payment provider before anything else happens. Multi-step remedies (refund plus voucher plus cancel replacement) run as sagas with compensations defined by the tool authors (§32.7, §77.10.2). Customer-facing confirmations are generated from tool results ("refund R-882 of €18.99 issued") and an output guardrail blocks any message that promises an action without a matching successful action record.
+
+#### Conversation state durability
+
+A chat may pause for a photo of the damage, an email thread may wait three days for a courier scan, and a refund may wait for approval. Each conversation is a durable workflow (§77.8.2) whose state survives deploys and crashes, with timers ("if no reply in 24 h, send reminder; close after 72 h") and signals for business events. The model's context is rebuilt at each step from the event log, summarized when long, so no state lives only in a prompt.
+
+**Figure 86.13 — Conversation lifecycle.**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Active: first message
+  Active --> AwaitingCustomer: question asked
+  AwaitingCustomer --> Active: reply
+  AwaitingCustomer --> Closed: 72 h timeout
+  Active --> AwaitingApproval: needs approval
+  AwaitingApproval --> Active: approved or denied
+  Active --> AwaitingEvent: waiting for scan or settlement
+  AwaitingEvent --> Active: business event signal
+  Active --> Human: handoff
+  Human --> Active: human returns to agent
+  Human --> Closed: resolved by human
+  Active --> Closed: resolved
+  Closed --> Active: customer reopens within 7 days
+```
+
+**Reading the diagram.** Each state is durable and has a timer or signal that leaves it, so no conversation waits forever. Approvals and business events are asynchronous waits, not blocked threads. Handoff can return to the agent (the human resolves one point and hands back). A reopen within 7 days moves the conversation back to Active and also marks the original resolution as a failure for the outcome label. Failure points: a lost signal (reconciliation polls the order system for awaited events) and a timer misconfigured per market.
+
+#### Intent routing and rollout by intent
+
+A small, fast intent-and-risk classifier (fine-tuned on labeled historical contacts) runs on the first message and on topic shifts. Its output, with brand and market, selects whether the agent may own the conversation, which tools are exposed (least privilege, §77.13.2) and which prompt and policy apply. Rollout follows risk, not volume.
+
+**Table 86.14 — Rollout by intent (illustrative shares).**
+
+| Stage | Intent | Share of contacts | Tools exposed | Risk |
+|---|---|---|---|---|
+| 1 | Where is my order | 35% | Read only | Low: wrong answers, no money |
+| 1 | Product and policy questions | 10% | Read only, help RAG | Low |
+| 2 | Returns | 12% | `create_return` | Medium: labels cost money |
+| 3 | Refunds for damaged or missing items | 5% | `issue_refund` under limits | High: direct loss |
+| 3 | Cancellations before dispatch | 3% | `cancel_order` | Medium |
+| 4 | Address changes, payment issues | 15% | Write tools with step-up verification | High: account takeover |
+| Never | Fraud disputes, legal, safety | 20% (incl. other) | Handoff only | Unbounded |
+
+Each stage starts in agent-assist mode, where human agents see the agent's proposed reply and action and accept, edit or reject them; the acceptance rate and edit distance are offline evidence before autonomy. Then autonomy is enabled for one brand and market at 5% of traffic, compared with human handling on resolution, repeat contact and wrong-action rate, and widened.
+
+#### Model choice, guardrails and evaluation
+
+The **baseline** is a deterministic flow for the top intents (order lookup and a templated answer) with the classifier: it resolves a surprising share of "where is my order" contacts and sets the bar. The **production** agent is a frontier model with tool calling and cached instructions, with a small model for intent, risk and guardrails, and a fallback chain to a second provider and then to the deterministic flow or humans (§78.15). Guardrails check input (injection, abuse, out-of-scope), tool arguments (schema and policy) and output (unsupported promises, PII of other customers, tone) (§77.11). Offline evaluation replays a suite of several thousand historical conversations per intent in a simulator with mocked tools, scoring end states (correct action, correct amount, correct handoff) rather than wording (§78.6.4); a release must not regress any intent's end-state accuracy. Online experiments randomize by customer within brand and market, with resolution without repeat contact as the primary metric and wrong-action rate, complaints and CSAT as guardrails (§57.14).
+
+::: industry
+**Klarna's AI assistant.** In February 2024 Klarna announced that its assistant had handled 2.3 million conversations in its first month, two-thirds of its customer-service chats, doing the work of 700 full-time agents, with resolution in under 2 minutes instead of 11, a 25% drop in repeat inquiries and customer satisfaction on par with human agents; it estimated a \$40 million profit improvement in 2024. These are company-reported figures, not independently audited, and the announcement does not describe the architecture.
+*Evidence: Primary* — [Klarna 2024] (company-reported)
+:::
+
+### 86.7.9 Data flow
+
+**Figure 86.14 — Write path: a damaged-item refund with policy check and idempotent execution.**
+
+```mermaid
+sequenceDiagram
+  participant C as Customer
+  participant O as Orchestrator
+  participant M as Agent model
+  participant P as Policy engine
+  participant T as Tool layer
+  participant Pay as Payments
+  C->>O: jacket arrived torn, photo
+  O->>M: context, order facts, tools
+  M-->>O: propose issue_refund 18.99 on line 2
+  O->>P: evaluate with fetched facts
+  P-->>O: allow, rule DE-APP-07, max 20.00
+  O->>O: persist action, key cid-refund-line2
+  O->>T: issue_refund with key
+  T->>Pay: refund request with key
+  Pay--xT: timeout
+  T->>Pay: retry same key
+  Pay-->>T: refund R-882 succeeded
+  T-->>O: succeeded, R-882
+  O->>M: tool result
+  M-->>O: confirmation draft
+  O->>O: output guardrail matches action record
+  O-->>C: refund R-882 of 18.99 issued
+```
+
+**Reading the diagram.** The model only proposes; the orchestrator fetches facts and asks the policy engine, then records the action intent with its key before calling the tool. The first payment call times out, and the retry with the same key returns the original result instead of a second refund. The confirmation passes an output guardrail that checks it against the succeeded action. Failure points: payments down (circuit breaker opens, the customer is told the refund is queued, the workflow waits on a timer), and a policy deny (the model explains the rule and offers a return).
+
+**Figure 86.15 — Read path: order status with low-confidence handoff and agent assist.**
+
+```mermaid
+sequenceDiagram
+  participant C as Customer
+  participant O as Orchestrator
+  participant I as Intent model
+  participant M as Agent model
+  participant S as Shipping API
+  participant H as Human agent
+  C->>O: where is order 4471
+  O->>I: classify
+  I-->>O: order status, risk low
+  O->>S: track shipments for customer
+  S-->>O: stuck at depot 6 days
+  O->>M: facts, policy for stuck parcels
+  M-->>O: reply and handoff, needs carrier claim
+  O->>H: handoff with summary and draft
+  H->>O: edits draft, opens carrier claim
+  O-->>C: human reply with claim number
+```
+
+**Reading the diagram.** The shipping lookup uses the authenticated customer's identity, not an order number from the text alone. The model recognizes that a six-day stall needs a carrier claim, which is outside its tools, and hands off with a summary and a drafted reply; the human edits and sends it, and the edit is logged as assist-mode feedback. Failure points: the shipping API (answer from the last known scan with a caveat) and the human queue at peak (the customer gets an honest wait estimate).
+
+### 86.7.10 Bottlenecks
+
+1. **Human queue capacity** for escalations and approvals, sized with the Erlang methods of §77.12.2; on sale days, escalations arrive at five times the average rate.
+2. **Downstream system rate limits**: order and payment APIs sized for the web shop, not for 37 agent calls per second plus retries; use retry budgets (§77.10.3).
+3. **Policy authoring**: 240 brand-market combinations; policies must be shared with overrides, or they diverge.
+4. **Evaluation coverage** for long-tail intents and languages.
+
+### 86.7.11 Failure scenarios
+
+**Table 86.15 — Support agent failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Payment timeout, naive retry | Duplicate refund | Duplicate key attempts; reconciliation | Reverse duplicate | Idempotency key per logical action |
+| Model promises refund that policy denies | Binding commitment, complaint | Output guardrail; QA sampling | Honor or escalate | Confirmations only from tool results |
+| Prompt injection in customer message or order note | Tool misuse | Guardrail flags; policy denies | Handoff; block user | Facts fetched by code; least-privilege tools |
+| Refund abuse adapts to agent | Loss grows | Refund rate per customer and SKU; chargebacks | Tighten rule; require return | Per-customer limits; fraud model (§70) |
+| Policy change not deployed to one market | Wrong refunds | Policy version per decision | Re-deploy; remediate | Policy CI with market tests |
+| Feedback loop: training on accepted drafts | Assist mode learns human rubber-stamping | Edit rate falls while QA scores fall | Re-weight data | QA-reviewed labels only |
+| Drift after a new product line | Unknown intents, more handoffs | Handoff rate by intent | Add intent and help content | Monitor intent distribution (§70) |
+| Lost workflow signal | Conversation stuck | Age of awaiting states | Reconcile with order system | Timers on every wait |
+
+### 86.7.12 Scaling strategy
+
+At **10×** (1 million contacts a day), throughput remains modest; the challenges are human-queue staffing for sale days, regional deployment for latency and data residency, and the policy library. At **100×** the agent becomes a platform: brands and partner merchants onboard their own policies and tools through MCP servers behind the tool layer (§77.5.4), with per-merchant quotas and isolation (§79.10), and evaluation suites become per merchant, like the per-tenant suites of §86.4.
+
+### 86.7.13 Trade-offs
+
+**Table 86.16 — Support agent trade-offs.**
+
+| Decision | Chosen | Alternative | Why |
+|---|---|---|---|
+| Who decides on money | Policy engine | Model with instructions | Instructions are not controls |
+| Control flow | Agent within a durable workflow | Free-running agent | Days-long conversations, timers, signals |
+| Rollout | By intent and risk, assist first | All intents at once | Errors cost differently per intent |
+| Model | Frontier with cached prompt | Small model only | Escalation cost dwarfs token savings |
+| Success metric | Resolution without 7-day repeat | Deflection | Deflection counts failures as wins |
+
+### 86.7.14 Alternative designs
+
+**Scripted bots with an LLM for language only** are safer and resolve fewer contacts. **Agent-assist only** keeps a human on every contact: lower risk, smaller savings, and an excellent first stage. **Full autonomy with post-hoc audit** is cheaper to run and risky where loss per error is high. **Multi-agent designs** with a separate refund agent add hand-offs between models without adding control; a single agent with scoped tools and a policy engine is simpler (§77.9.1).
+
+### 86.7.15 Interview discussion
+
+**Pacing plan (45 minutes).** 0–5: scope, channels, which actions. 5–12: metrics and the cost-per-resolution model. 12–22: architecture and the action boundary. 22–30: durability, idempotency, sagas. 30–37: rollout by intent, assist mode, handoff. 37–42: evaluation. 42–45: failures and abuse.
+
+**Likely follow-ups.**
+
+- *How do you prevent duplicate refunds?* An idempotency key derived from the logical action, persisted before the call, with reconciliation from the unknown state.
+- *What if the model says "your refund is approved" before the tool runs?* The output guardrail blocks promises without a succeeded action record.
+- *Why not count deflection?* A customer who gives up and calls is a failure; measure resolution without repeat contact.
+- *How do you start?* Assist mode on top intents, then autonomy for read-only intents, then low-limit refunds in one market.
+
+**What distinguishes senior and staff answers.** A senior answer has tools, guardrails and handoff. A staff answer separates proposal from decision, quantifies cost per resolution with escalation as the dominant term, designs rollout by intent with assist mode as the evidence stage, and anticipates adversarial adaptation of refund abuse.
+
+### 86.7.16 Production considerations
+
+**Monitoring.** Per intent, brand and market: resolution, repeat contact, handoff and approval rates, wrong-action rate from QA sampling, refund amounts per customer, guardrail triggers, latency and cost per contact (§77.15, §70). **Retraining and prompt cadence.** Intent models retrain monthly on newly labeled contacts; prompts and policies change weekly through the offline replay suite and staged rollout. **Security.** Step-up verification before address or payment changes, least-privilege tools per intent, injection defenses, audit trail per action (§77.13). **Responsible ML.** Customers are told they are talking to an AI and can always reach a human; outcome metrics are checked across markets and languages so that one population is not served worse (§71). **Cost.** Track blended cost per contact and cost per resolution weekly; escalation rate is the lever that matters most.
+

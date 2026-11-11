@@ -1513,3 +1513,350 @@ At **10× queries**, L2 cores and L3 GPUs grow tenfold; the levers are score cac
 - **Retraining.** Weekly rankers; daily dictionaries; propensities weekly from randomized traffic.
 - **Responsible ML.** Query logs are personal data: minimum-user thresholds for mined rewrites, retention limits (§50.8); audit ranking for systematic demotion of languages or regions (§71.5).
 - **Cost.** L3 GPUs and L2 cores dominate; the cost per 1,000 queries tracks documents read by the cross-encoder.
+
+## 81.8 E-commerce product recommendation
+
+### 81.8.1 Problem statement
+
+Design the recommendations of a large online store: "recommended for you" on the home page, "similar items" and "frequently bought together" on the product page, "customers who viewed this also viewed", and add-on suggestions in the cart. The store is the platform of §55.7 (100 million daily active customers, 500 million products, 10 million orders a day), which consumes recommendations as optional widgets with strict timeouts (§55.7.8). This case designs the system behind those widgets.
+
+E-commerce has a different shape from media. A customer buys a refrigerator once a decade, so last week's purchase is a reason *not* to recommend another; most products have almost no interactions; a large share of sessions are anonymous; new products arrive by the million; and every recommendation must respect facts the model does not own, such as stock at the customer's location. The distinctive problems are **sparsity**, **cold start for new products**, **session-based recommendation**, **complementary versus substitute relations** ("frequently bought together" is not "similar") and **business constraints**.
+
+**ML formulation.** Several models, each matched to a widget: (a) item-to-item relations from co-view and co-purchase statistics (substitutes from co-view, complements from co-purchase); (b) a two-tower retrieval model over customer history and product content for the home page; (c) a session model predicting the next product of interest from the current session's sequence of views; (d) a ranker predicting purchase probability per (customer, product) in context, trained on impressions with purchase labels whose delay ranges from minutes to days. The business objective is long-run gross merchandise value and customer satisfaction, so the ranker's value is purchase probability multiplied by a value term, subject to constraints.
+
+### 81.8.2 Functional requirements
+
+1. **Product page.** Similar items (substitutes) and frequently bought together (complements) for any product, including products listed today.
+2. **Home page.** Personalized rows for signed-in customers; session-based rows for anonymous visitors from their first few clicks.
+3. **Cart add-ons.** Complements of items in the cart, excluding items already owned or in the cart.
+4. **Constraints.** Recommend only products in stock and deliverable to the customer's address; respect age restrictions and regional legal limits; collapse variants (sizes, colors) into one item; keep sponsored placements separate and labeled (§81.9).
+5. **Repurchase awareness.** Do not recommend durable goods the customer just bought; do recommend consumables near their repurchase cycle.
+6. **Logging and experiments.** Impressions with widget, position and features; attribution of purchases to widgets.
+
+### 81.8.3 Non-functional requirements
+
+**Table 81.24 — E-commerce recommendation requirements.**
+
+| Property | Target | Why |
+|---|---|---|
+| Latency | Product-page widgets p99 ≤ 50 ms; home rows p99 ≤ 120 ms | Optional widgets with strict timeouts (§55.7.8) |
+| Availability | Widget may be omitted; never block the page | Commerce path must not depend on recommendations |
+| Stock correctness | ≤ 0.5% of recommended items out of stock at the address when shown | Out-of-stock recommendations waste the slot and frustrate |
+| New-product coverage | New listings recommendable within 1 hour | Sellers expect visibility |
+| Session freshness | Anonymous session features ≤ 5 s | Session models are useless if slow |
+| Offline gates | Recall@50 for next-purchase by widget; NDCG for ranker; calibration of purchase head | Filters before A/B |
+| Online metrics | Revenue per session and purchases attributed (primary); return rate, out-of-stock clicks, seller concentration (guardrails) | Prevent pushing items people return |
+
+### 81.8.4 Capacity estimation
+
+::: example
+**Worked example — Traffic and serving compute.** Assumptions (from §55.7.4): 100 million daily active customers; 20 product page views and 3 home-page loads per customer per day; sales-event peak 5× average. Home rows rank 500 candidates at 20 µs each; product-page widgets re-rank 100 precomputed neighbors at 5 µs each.
+
+1. Product pages: $10^8 \times 20 = 2 \times 10^9$ per day; 23,148/s average; **115,741/s at peak**.
+2. Home loads: $3 \times 10^8$ per day; 3,472/s average; **17,361/s at peak**.
+3. Home ranking: $17{,}361 \times 500 \times 20\ \mu\text{s} / 0.5 = 347$ cores. Product-page re-ranking: $115{,}741 \times 100 \times 5\ \mu\text{s} / 0.5 = 116$ cores.
+
+**Interpretation.** Serving compute is small: most work is precomputed per item, and the request path is lookups plus light re-ranking. **Engineering implication.** The capacity problems are in the batch jobs and in the constraint lookups (stock by address), not in the models.
+:::
+
+::: example
+**Worked example — Sparsity, pair counting and the item-to-item table.** Assumptions: 2.5 items per order; a 90-day window; 20 product views per session; 100 million products with enough signal to have neighbors, top 50 neighbors at 12 bytes each (8-byte ID, 4-byte score).
+
+1. Purchased items in 90 days: $10^7 \times 2.5 \times 90 = 2.25 \times 10^9$. Over $10^8$ customers × $5 \times 10^8$ products ($5 \times 10^{16}$ cells), the purchase matrix has density $4.5 \times 10^{-8}$.
+2. Co-view pairs per day: a session of 20 views yields $20 \times 19/2 = 190$ pairs; $10^8 \times 190 = 1.9 \times 10^{10}$ pair increments; at 16 bytes per record before combining, 304 GB of shuffle per day.
+3. Item-to-item table: $10^8 \times 50 \times 12 = 60$ GB, replicated in memory in each serving region.
+
+**Interpretation.** Purchases alone are far too sparse to relate most products; views are 100 times denser and supply most of the signal, at the cost of measuring interest rather than satisfaction. **Engineering implication.** Count pairs with map-side combining and salting for hot products (§29.6.3), cap sessions, and blend co-view (dense, noisy) with co-purchase (sparse, strong).
+:::
+
+::: example
+**Worked example — Exploration budget for new products.** Assumptions: 2 million new listings per day (23 per second); each needs about 200 impressions in recommendation widgets to estimate its purchase rate against a category prior (§68.15); widgets show 3 rows of 8 items on each product page.
+
+1. Exploration impressions needed: $2 \times 10^6 \times 200 = 4 \times 10^8$ per day.
+2. Widget impressions available: $2 \times 10^9 \times 3 \times 8 = 4.8 \times 10^{10}$ per day.
+3. Share: $4 \times 10^8 / 4.8 \times 10^{10} = 0.83\%$.
+
+**Interpretation.** Giving every new product a fair trial costs under 1% of slots. **Engineering implication.** Reserve exploration slots with a budget per category and allocate them by Thompson sampling over priors from content similarity, so that promising new products earn exposure quickly and poor ones stop consuming slots.
+:::
+
+### 81.8.5 API design
+
+```protobuf
+service ProductRecs {
+  rpc Widget(WidgetRequest) returns (WidgetResponse);
+}
+message WidgetRequest {
+  WidgetType type = 1;           // SIMILAR, FBT, ALSO_VIEWED, FOR_YOU, CART_ADDONS
+  string customer_id = 2;        // empty if anonymous
+  string session_id = 3;         // always present
+  repeated string anchor_ids = 4;// product on page, or cart contents
+  string ship_to_region = 5;     // drives stock and delivery filters
+  int32 count = 6; int64 deadline_ms = 7;
+}
+message WidgetResponse {
+  repeated Rec items = 1;        // product_id, variant_group, reason, propensity
+  string rec_token = 2; bool degraded = 3;
+}
+```
+
+Session events (`view`, `add_to_cart`, `search`) are streamed by the client; purchases and returns arrive from the order system (§55.7) and are joined by `rec_token` and product ID with an attribution window of 7 days.
+
+### 81.8.6 Data model and database schema
+
+**Table 81.25 — Data for e-commerce recommendations.**
+
+| Data | Key | Content | Freshness |
+|---|---|---|---|
+| Item neighbors (substitutes) | product_id | Top 50 co-viewed products, normalized | Daily, plus hourly deltas |
+| Item complements | product_id | Top 20 co-purchased with lift and support | Daily |
+| Product content | product_id | Title and description embedding, image embedding, category path, brand, price band | On listing |
+| Content neighbors | product_id | Top 50 by content embedding (for new products) | Within 1 hour of listing |
+| Customer history | customer_id | Purchases with timestamps, views, returns | Minutes |
+| Session state | session_id | Last 30 events | ≤ 5 s |
+| Stock and delivery | (product_id, region) | Available quantity, delivery promise | Seconds (event-driven from inventory, §55.7.8) |
+| Repurchase cycle | category | Median days between purchases | Monthly |
+
+**Labels.** Click (seconds), add-to-cart (minutes), purchase (minutes to days, 7-day attribution), return (up to 30 days). Returns are a negative label for the ranker's value term, which means its training data for the value head lags a month; the purchase head uses a 7-day window and is retrained daily.
+
+The complement table stores support and lift, not only a score, so that thresholds can be changed without recomputation:
+
+```sql
+CREATE TABLE item_complements (
+  product_id     BIGINT,
+  complement_id  BIGINT,
+  support        INT,      -- orders containing both, 90 days
+  confidence     FLOAT,    -- P(complement | product)
+  lift           FLOAT,
+  same_category  BOOLEAN,  -- likely substitute if true
+  computed_on    DATE,
+  PRIMARY KEY (product_id, complement_id)
+);
+```
+
+### 81.8.7 High-level architecture
+
+**Figure 81.13 — E-commerce recommendation system.**
+
+```mermaid
+flowchart LR
+  WEB([Store page]) -->|widget call| RS[Recs service]
+  RS -->|anchor ids| NB[(Neighbor and complement tables)]
+  RS -->|session id| SS[(Session state)]
+  RS -->|session sequence| SM[Session model]
+  RS -->|customer vector| ANN[(Product ANN index)]
+  RS --> RK[Ranker]
+  RK --> CF[Constraint filter and re-rank]
+  CF -->|product, region| INV[(Stock and delivery)]
+  CF --> RS
+  WEB -.->|views, carts| EV[[Event stream]]
+  ORD{{Order system}} -.->|purchases, returns| EV
+  EV -.-> SS
+  EV -.-> LK[(Lakehouse)]
+  LK -.-> PC[Pair counting jobs]
+  PC -.-> NB
+  CAT{{Catalog}} -.->|new listing| CE[Content embedder]
+  CE -.-> ANN
+  CE -.->|content neighbors| NB
+  LK -.-> TR[Model training]
+  TR -.-> RK
+  TR -.-> SM
+```
+
+**Reading the diagram.** Solid arrows are synchronous within a widget call. The recs service gathers candidates from precomputed tables keyed by the anchor product, from a session model over the visitor's recent events, and from ANN retrieval for signed-in customers; the ranker scores them, and the constraint filter checks stock and delivery for the customer's region before re-ranking. Asynchronously, client events and the order system's purchases and returns update session state and land in the lakehouse; daily pair-counting jobs rebuild neighbor and complement tables; new listings from the catalog are embedded within minutes, inserted into the ANN index and given content neighbors. Failure points: the stock service (fail toward omitting items), the session model (fall back to anchor neighbors), stale tables (yesterday's are acceptable). Scaling: tables replicate per region; services scale with page views.
+
+### 81.8.8 Detailed component design
+
+#### Substitutes, complements and "frequently bought together"
+
+Item-to-item collaborative filtering (§68.5.3) [Linden et al. 2003] produces neighbors, but which *relation* it captures depends on the signal. Products viewed in the same session are usually **substitutes** (two similar jackets compared); products bought in the same order are often **complements** (a camera and its memory card). Showing substitutes after a purchase or complements before one confuses customers. Co-purchase needs a statistic that corrects for popular items that are in every basket, which association-rule mining provides [Agrawal and Srikant 1994].
+
+::: formula
+**Association-rule statistics for "frequently bought together"**
+
+$$\text{supp}(A, B) = \frac{n_{AB}}{N} \qquad \text{conf}(A \to B) = \frac{n_{AB}}{n_A} \qquad \text{lift}(A \to B) = \frac{\text{conf}(A \to B)}{n_B / N}$$
+
+| Symbol | Meaning | Units |
+|---|---|---|
+| $N$ | Orders in the window | orders |
+| $n_A$, $n_B$ | Orders containing $A$; containing $B$ | orders |
+| $n_{AB}$ | Orders containing both | orders |
+| conf | Probability an order with $A$ also contains $B$ | probability |
+| lift | How many times more likely $B$ is in an order with $A$ than in an average order | ratio |
+:::
+
+::: example
+**Worked example — Phone case: screen protector or cable?** $N = 10^7$ orders; phone case A in 20,000; screen protector B in 50,000; popular USB cable C in 500,000; A with B in 6,000 orders; A with C in 8,000.
+
+1. $\text{conf}(A \to B) = 6{,}000/20{,}000 = 0.30$; base rate of B $= 50{,}000/10^7 = 0.005$; lift $= 60$.
+2. $\text{conf}(A \to C) = 8{,}000/20{,}000 = 0.40$; base rate of C $= 0.05$; lift $= 8$.
+3. Support of (A, B): $6{,}000/10^7 = 0.06\%$, comfortably above a minimum of, say, 50 orders.
+
+**Interpretation.** Confidence prefers the cable because everyone buys cables; lift reveals that the screen protector is specifically associated with this case. **Engineering implication.** Rank complements by lift with a minimum support (which also prevents tiny-sample rules and protects privacy, since a rule supported by three orders can reveal individuals' purchases), exclude same-category pairs (substitutes), and let the ranker re-order the survivors by predicted purchase.
+:::
+
+Amazon's own retrospective describes how item-to-item relations were refined over two decades, including the observation that what counts as "related" depends on time and context: a purchase of one book in a series makes the next book relevant, while some purchases make similar items irrelevant [Smith and Linden 2017].
+
+#### Cold start for new products
+
+A product listed today has no co-views and no purchases, so collaborative tables cannot contain it. Three mechanisms cover it:
+
+1. **Content embeddings.** A content tower embeds title, description, image and category into the same space as the two-tower item tower (§68.6), so a new product is retrievable by ANN within minutes and has content neighbors for the product page.
+2. **Side-information embeddings.** Alibaba described learning item embeddings from session graphs with side information (category, brand, shop) aggregated into the item embedding, so that new items inherit an embedding from their attributes [Wang et al. 2018].
+3. **Exploration slots.** A budgeted share of widget slots, under 1% by the estimate above, goes to new products by Thompson sampling over a category prior (§68.11, §68.15).
+
+The reverse direction matters too: a new product should appear in *other* products' widgets. Insert it as a content neighbor of its nearest products, with a decaying boost until collaborative signal accumulates.
+
+#### Session-based recommendation for anonymous visitors
+
+Perhaps 40% of sessions (an assumption) are anonymous or from customers with no relevant history. Their only signal is the session itself: the last few views, searches and cart additions. Session models treat the sequence as language: GRU4Rec applied recurrent networks to predict the next click in a session [Hidasi et al. 2016], and self-attentive models such as SASRec predict the next item from the sequence with a transformer [Kang and McAuley 2018]. Served as a user tower whose input is the session sequence, the model emits a vector for ANN retrieval after each event; the session state store holds the last 30 events with 5-second freshness. Target attention over the session (weighting history items by relevance to each candidate) is the ranking-side counterpart [Zhou et al. 2018].
+
+#### Business constraints and re-ranking
+
+**Table 81.26 — Business constraints applied after ranking.**
+
+| Constraint | Rule | Where enforced | Failure mode if missing |
+|---|---|---|---|
+| Stock and delivery | In stock at the customer's region with a delivery promise | Constraint filter, live lookup | Wasted slot; frustration |
+| Variant collapse | One tile per variant group | Candidate merge | Six sizes of one shirt |
+| Repurchase cycle | Suppress durables bought recently; boost consumables near cycle | Re-ranker with customer history | "You bought a fridge; here are fridges" |
+| Legal and age | Region and age restrictions | Eligibility filter | Compliance breach |
+| Sponsored separation | Ads only in labeled ad slots (§81.9) | Page assembly | Undisclosed advertising |
+| Seller diversity | At most 3 items per seller per widget | Re-ranker | Concentration; marketplace fairness |
+| Return risk | Penalize products with high return rates for this customer segment | Ranker value term | Revenue that reverses |
+
+The ranker's value combines predicted purchase with expected value net of returns: $\text{value} = \hat{p}(\text{purchase}) \times \text{price} \times (1 - \hat{r}_{\text{return}})$, with weights from experiments. Pure revenue optimization favors expensive items; the guardrails on return rate and satisfaction keep it honest.
+
+#### Evaluation
+
+Offline: recall@50 of next-day purchases per widget (time-split), NDCG of the ranker on logged impressions, calibration of the purchase head, and coverage. Online: A/B by customer for signed-in surfaces and by session for anonymous ones, with revenue per session as the primary metric and return rate, out-of-stock click rate and seller concentration as guardrails. Attribution matters: a purchase may follow views of several widgets, so compare total revenue per customer between arms rather than summing per-widget attributed revenue, which double counts.
+
+::: industry
+**Item-to-item collaborative filtering at Amazon.** Linden, Smith and York described building a similar-items table offline from customers' purchases, with online cost independent of the number of customers and catalog size; Smith and Linden's 2017 retrospective describes the algorithm's later refinements and its spread across Amazon's pages and e-mails.
+*Evidence: Primary* — [Linden et al. 2003; Smith and Linden 2017]
+:::
+
+### 81.8.9 Data flow
+
+**Figure 81.14 — Write path: tables and models rebuilt from events.**
+
+```mermaid
+sequenceDiagram
+  participant CL as Client
+  participant OS as Order system
+  participant ES as Event stream
+  participant SS as Session state
+  participant LK as Lakehouse
+  participant PC as Pair counting
+  participant NB as Neighbor tables
+  participant CE as Content embedder
+  CL-)ES: view, cart, search events
+  OS-)ES: purchase, return events
+  ES-)SS: append last 30 events per session
+  ES-)LK: hourly partitions
+  Note over PC: daily, 90-day window
+  PC->>LK: read sessions and orders
+  PC->>PC: co-view and co-purchase counts, salted
+  PC->>PC: normalize, lift, support, substitute flag
+  PC->>NB: write versioned tables
+  Note over CE: per new listing
+  CE->>CE: embed title, image, category
+  CE-)NB: content neighbors, both directions
+```
+
+**Reading the diagram.** All writes are asynchronous. Session state updates within seconds; the lakehouse receives hourly partitions; the daily job counts pairs over 90 days with salting for hot items, computes normalized similarities and lift, flags same-category pairs as substitutes, and writes versioned tables that the serving tier swaps atomically. New listings are embedded on arrival and inserted as content neighbors of nearby products, in both directions. Failure points: the daily job's shuffle (skew), late return events (value labels lag), and a bad table version (rolled back by version pin).
+
+**Figure 81.15 — Read path: frequently-bought-together widget.**
+
+```mermaid
+sequenceDiagram
+  participant PG as Product page
+  participant RS as Recs service
+  participant NB as Complement table
+  participant RK as Ranker
+  participant INV as Stock and delivery
+  PG->>RS: Widget FBT, anchor A, region, 50 ms
+  RS->>NB: complements of A
+  NB-->>RS: 20 by lift with support
+  RS->>RK: candidates, customer and session features
+  RK-->>RS: purchase probability, value
+  RS->>INV: batch stock check, 20 items, region
+  INV-->>RS: available and promise
+  RS->>RS: drop unavailable, collapse variants, cap sellers
+  RS-->>PG: top 3 complements, rec_token
+  RS-)RS: log impressions with propensities
+```
+
+**Reading the diagram.** All calls are synchronous within a 50 ms deadline. The complement table returns candidates by lift; the ranker personalizes their order; a single batched stock call checks all candidates for the customer's region. Items failing constraints are dropped *before* truncation to three, so the widget is rarely empty. If the stock service is slow, the widget is omitted rather than showing possibly unavailable items, because the product page treats it as optional.
+
+### 81.8.10 Bottlenecks
+
+1. **Pair counting skew.** A bestseller co-occurs with millions of products; salt hot keys and cap per-session pairs (§29.6.3).
+2. **Stock lookups.** Every widget checks stock for 20–100 items; batch, cache with seconds of TTL, and subscribe to stock-change events for hot items.
+3. **Sales-event peaks.** 5× traffic and fast-changing stock at the same time; precompute event-specific candidate lists and widen cache TTLs only for non-stock data.
+4. **ANN inserts for new listings.** 23 per second continuously; a delta index merged hourly.
+
+### 81.8.11 Failure scenarios
+
+**Table 81.27 — E-commerce recommendation failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Stock data stale during a sale | Recommending sold-out items | Out-of-stock click rate | Shorten TTL; omit widget | Event-driven stock updates |
+| Substitutes shown as complements | Odd FBT pairs, lost trust | Same-category share in FBT | Filter | Substitute flag in table |
+| Popularity feedback loop | Same bestsellers everywhere | Coverage; Gini of impressions | Raise exploration; lift-based scores | Normalization, exploration slots |
+| Cold-start starvation | New sellers churn | Impressions of products < 7 days old | Increase budget | Content neighbors; slot budgets |
+| Training–serving skew on price | Ranker misjudges value | Price feature skew detector | Fix join | Log price as served |
+| Return-label delay | Value head rewards items later returned | Return rate guardrail | Reweight | Separate, slower value-head training |
+| Fake reviews or incentivized purchases | Manipulated co-purchase signals | Anomalous pair growth from new accounts | Purge, recompute | Fraud signals in counting job |
+
+### 81.8.12 Scaling strategy
+
+At **10× catalog** (5 billion products, typical of marketplaces with many sellers), neighbor tables are built only for products with signal and served for the rest by content neighbors; ANN indexes shard by category; variant grouping becomes a model (product matching) rather than seller-supplied metadata. At **10× traffic**, serving scales horizontally and tables replicate further. At **100×**, regional specialization grows (separate tables per country), and session models run on-device to cut latency and protect privacy for anonymous visitors.
+
+### 81.8.13 Trade-offs
+
+**Table 81.28 — E-commerce recommendation trade-offs.**
+
+| Decision | Choice | Alternative | Why |
+|---|---|---|---|
+| Relations | Separate substitute (co-view) and complement (co-purchase, lift) tables | One similarity table | Different widgets need different relations |
+| Complement score | Lift with minimum support | Confidence | Popular items dominate confidence |
+| Anonymous visitors | Session sequence model | Popular items only | 40% of sessions |
+| Constraints | Filter before truncation | Filter after | Avoid empty widgets |
+| Stock failure | Omit widget | Show unchecked items | Optional widget; trust |
+| Value | Purchase × price × (1 − return) | Purchase probability only | Align with net revenue |
+
+### 81.8.14 Alternative designs
+
+- **Matrix factorization over purchases** (§68.5.2) is elegant but starved by $4.5 \times 10^{-8}$ density; it works better on views or within categories.
+- **Graph neural networks** over a product–customer graph learn embeddings that combine relations and content, at higher training cost.
+- **A single foundation sequence model** trained on all customers' event sequences can serve every widget by conditioning on widget type, replacing several tables; operationally heavier and harder to constrain.
+- **Rules from merchandisers** remain valuable for launches and seasonal events; run them as a candidate source with quotas rather than overrides.
+
+### 81.8.15 Interview discussion
+
+**Table 81.29 — 45-minute pacing plan for e-commerce recommendations.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Scope | Widgets and their relations; constraints in scope |
+| 5–10 | Formulation | Substitutes vs complements; session model; purchase ranker with value |
+| 10–15 | Estimates | 116k product pages/s; density $4.5 \times 10^{-8}$; 60 GB tables; 0.83% exploration |
+| 15–25 | Architecture | Figure 81.13; precompute vs request time |
+| 25–37 | Deep dives | Lift for FBT; cold start; session-based recs |
+| 37–45 | Constraints and failures | Stock, variants, returns; feedback loops; evaluation and attribution |
+
+**Likely follow-ups.**
+
+- *"Why not use confidence for frequently bought together?"* Popular items appear in every basket; lift divides by their base rate.
+- *"How does a product listed an hour ago get recommended?"* Content embedding, content neighbors in both directions, and budgeted exploration slots.
+- *"How do you measure a widget's revenue?"* Randomize and compare total revenue per customer; per-widget attribution double counts.
+
+**What distinguishes senior and staff answers.** Senior answers use item-to-item tables and a ranker sensibly. Staff answers distinguish relations by signal, quantify sparsity and the exploration budget, place constraints so widgets do not empty, and design attribution and guardrails so that revenue gains are not returns-in-waiting.
+
+### 81.8.16 Production considerations
+
+- **Monitoring.** Out-of-stock click rate; coverage and new-product impression share; table version age; session-state freshness; calibration of the purchase head; return rate of recommended purchases.
+- **Retraining.** Tables daily with hourly deltas; ranker daily; value head weekly once returns mature; session model weekly.
+- **Responsible ML.** Minimum support on co-purchase rules (privacy); seller exposure fairness for small sellers; avoid sensitive inferences from purchases (health, pregnancy) in recommendations and e-mail without explicit policy (§71.9).
+- **Cost.** Batch pair counting and storage dominate; serving is cheap.

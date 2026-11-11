@@ -1022,7 +1022,7 @@ CREATE TABLE tenant_quota (
 );
 ```
 
-Placement is high-churn, small state kept in a replicated key-value store with watches (etcd-class, §26.6) so routers learn of new copies within a second; deployments and quotas are low-churn configuration; artifacts live in object storage addressed by digest; per-minute usage records feed the cost ledger.
+Placement is high-churn, small state kept in a replicated key-value store with watches (etcd-class, §26.9) so routers learn of new copies within a second; deployments and quotas are low-churn configuration; artifacts live in object storage addressed by digest; per-minute usage records feed the cost ledger.
 
 ### 85.6.7 High-level architecture
 
@@ -1177,3 +1177,131 @@ The platform is evaluated on density (cost against the dedicated baseline), cold
 **Published multi-model serving systems.** Clipper placed a model abstraction layer, with one container per model framework, under a selection layer that could combine or choose among models, and introduced adaptive batching and prediction caching for online serving [Crankshaw et al. 2017]. INFaaS made serving "model-less": clients state latency and accuracy requirements, and the system chooses among model variants (hardware, batch size, precision), shares hardware among models and scales variants automatically [Romero et al. 2021]. KServe's ModelMesh treats a pool of serving pods as a distributed LRU cache of models, loading and unloading copies by recency and request volume [KServe ModelMesh Docs].
 *Evidence: Primary* — the cited papers and documentation
 :::
+
+### 85.6.9 Data flow
+
+**Figure 85.9 — Write path: deploying a new model version.**
+
+```mermaid
+sequenceDiagram
+  participant E as Team CI
+  participant R as Registry
+  participant V as Validator
+  participant C as Placement controller
+  participant P as Placement store
+  participant S as Multi-model server
+  E->>R: register version 8, digest, signature
+  E->>C: set alias canary to 8 at 5 percent
+  C->>V: validate artifact
+  V->>V: load in sandbox, measure memory, run test inputs
+  V-->>C: ok, 0.45 GB, p99 4 ms
+  C->>P: desired copies of v8 on top rendezvous servers
+  P--)S: watch event
+  S->>S: load v8 from cache or store, warm up
+  S->>P: state serving
+  P--)C: router views updated, 5 percent to v8
+```
+
+**Reading the diagram.** CI registers a version with its digest; changing an alias is the deployment. The controller has the artifact validated in a sandbox, which measures resident memory and latency on test inputs (the numbers placement needs) and rejects artifacts that fail to load or produce wrong outputs. It then writes desired placement; servers learn of it through an asynchronous watch, load and warm the model, and report `serving`, after which routers send the canary share to the new version. Failure points: an artifact that passes validation but leaks memory (server memory alarms, quarantine), a stuck watch (controller reconciles every 30 s). Rollback is an alias change; the old version is still resident.
+
+**Figure 85.10 — Read path: a request for a model with no resident copy.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as Gateway
+  participant R as Router
+  participant S as Server, top candidate
+  participant N as Node cache
+  participant O as Artifact store
+  C->>G: infer acme.churn, deadline 3 s
+  G->>G: tenant token bucket and concurrency check
+  G->>R: forward
+  R->>R: no holder, pick top rendezvous server
+  R->>S: infer, load if absent
+  S->>N: read artifact
+  N-->>S: miss
+  S->>O: fetch by digest, coalesced
+  O-->>S: 300 MB
+  S->>S: deserialize, warm up, run inference
+  S-->>C: outputs, cold true, 1.6 s
+  S--)R: placement update, now holder
+```
+
+**Reading the diagram.** The gateway applies the tenant's quotas synchronously. The router finds no holder and picks the model's top rendezvous server, which coalesces concurrent loads of the same model, reads the node cache and, on a miss, the artifact store by digest, loads and warms the model, and answers with a `cold` flag. The placement update is asynchronous; later requests go to the new holder. Storage boundaries: node cache, artifact store, placement store. Failure points: a load longer than the deadline (fallback or error), the artifact store throttled during a load storm, the chosen server out of memory (evicts by policy). Scaling: rendezvous candidates spread models across the fleet; the cache absorbs repeated loads.
+
+### 85.6.10 Bottlenecks
+
+1. **Memory, not CPU,** sizes the multi-model fleet; resident-memory estimates must come from measurement, not file size.
+2. **Artifact-store bandwidth** during mass deploys or after a fleet restart; limit concurrent loads and pre-warm node caches.
+3. **Router placement freshness**; watches plus retry on `model not here` responses.
+4. **Hot models on shared servers** before graduation; graduate on a sustained rate, not a spike.
+5. **Per-request overhead** for tiny models: serialization and routing can exceed inference time; batch rows per request and keep connections pooled.
+
+### 85.6.11 Failure scenarios
+
+**Table 85.12 — Multi-tenant serving failure scenarios.**
+
+| What fails | Impact | Detection | Recovery | Prevention |
+|---|---|---|---|---|
+| Eviction thrash | Many cold requests, store overloaded | Load rate per server, cold-request ratio | Add memory, raise minimum residency | Size-aware eviction; affinity routing; capacity alerts |
+| Load storm after restart | Every model cold at once | Artifact-store throughput, queue of loads | Throttle loads, prioritize hot and warm models | Persistent node caches; staged restarts |
+| Noisy tenant | Other tenants' p99 rises | Per-tenant queue delay; fair-share deviation | Throttle at gateway | Token buckets, fair queuing, per-model concurrency |
+| Malicious or unsafe artifact | Code execution in shared server | Sandbox violations; artifact scanning | Kill container, revoke version | Safe formats; sandboxed custom runtimes; signed artifacts |
+| Wrong memory estimate | Out-of-memory kills co-resident models | OOM events per server | Restart, reload others, quarantine model | Measured memory at validation; memory limits per runtime process |
+| Stale model served after rollback | Bad predictions continue | Version on logged predictions | Force alias, evict version | Version in every response; reconcile loop |
+| Training–serving skew in a tenant's pre-processing | Silent quality loss for that model | Drift and skew monitors on logs (Chapter 70) | Tenant rolls back | Transforms packaged with the model (§69.6.1) |
+| Region or zone loss | Copies on lost servers vanish | Health checks | Reload on survivors; cold spike | Two-zone copies for `critical` and warm models |
+
+### 85.6.12 Scaling strategy
+
+**At 10×** (50,000 models, 3 million predictions/s): placement churn grows; shard the controller by tenant ranges and partition the fleet into cells of a few hundred servers, each with its own placement store, routing tenants to cells (§47.4.3). **At 100×**, per-customer models become a data problem: consider one model with a customer embedding or multi-task head instead of thousands of separate models, or adapter-style variants over shared weights, as Chapter 79 does for LLMs with multi-LoRA serving (§79.7).
+
+### 85.6.13 Trade-offs
+
+**Table 85.13 — Multi-tenant serving design trade-offs.**
+
+| Decision | Choice | Alternative | Why |
+|---|---|---|---|
+| Unit of scaling | Resident copies on a warm fleet | Pods per model | Seconds instead of minutes to scale from zero; far fewer floors |
+| Routing | Rendezvous candidates + least in-flight | Random or round robin | Cache affinity; whole catalog fits in fleet memory |
+| Eviction | Size-aware frequency (GDSF-like) | LRU | Higher hit ratio for the same memory |
+| Hot models | Dedicated deployments | Same multi-model servers | Independent autoscaling and isolation for 85% of traffic |
+| Custom code | Sandboxed containers | Shared process | Isolation at a few ms and some memory cost |
+| Billing | Memory-hours + CPU | Per request | Reflects what idle and busy models actually consume |
+
+### 85.6.14 Alternative designs
+
+- **Serverless per model** (Knative-style scale to zero of pods, §48): simple and isolated, but cold starts of tens of seconds and per-pod overhead.
+- **Batch-scored predictions** for models whose inputs are known in advance (§60.8): many cold per-customer models need no online serving at all.
+- **One generalized model** in place of thousands of variants: fewer artifacts, shared capacity, but per-customer behavior must be learned from features.
+- **Managed multi-model endpoints** in cloud ML services (as of 2026) offer similar load-on-demand behavior with less control over routing and isolation.
+
+### 85.6.15 Interview discussion
+
+**Table 85.14 — 45-minute pacing plan for the multi-tenant serving platform.**
+
+| Minutes | Focus | What to produce |
+|---|---|---|
+| 0–5 | Scope | Model count, popularity skew, runtimes, SLO classes |
+| 5–12 | Estimates | Dedicated \$450/h versus shared \$72/h; cold start about 1.5 s |
+| 12–20 | Architecture | Figure 85.8; tiers, router, controller |
+| 20–32 | Deep dive: density | Affinity routing, eviction policy, scale to zero |
+| 32–40 | Deep dive: isolation | Quotas, fair queuing, sandboxes, cost per model |
+| 40–45 | Wrap-up | Failures (thrash, load storms), 10× with cells |
+
+**Likely follow-ups.**
+
+- *"Why not one Kubernetes deployment per model?"* Redundancy floors for 5,000 models cost \$3.9 million a year for 600 vCPU of real work.
+- *"How do you avoid every server caching every model?"* Rendezvous placement gives each model a few home servers.
+- *"How does a slow model not hurt others?"* Per-model concurrency limits, timeouts and quarantine; per-tenant fair queuing.
+- *"How is this different from an LLM gateway?"* LLMs add token-based quotas, KV-cache-aware routing and adapters (Chapter 79); the density and isolation principles are the same.
+
+**What distinguishes senior and staff answers.** A senior answer proposes multi-model servers and LRU. A staff answer quantifies the popularity tiers, separates scaling models from scaling servers, shows that affinity routing matters more than the eviction policy, treats artifacts as untrusted code, and gives tenants a price for each choice.
+
+### 85.6.16 Production considerations
+
+- **Observability.** Per model and tenant: RED metrics, cold-request rate and latency, resident copies, evictions; per server: memory, load queue, fair-share deviation (§40.5); version on every logged prediction.
+- **Security.** Signed artifacts, digest checks, safe formats, sandboxes, per-tenant credentials for feature and data access (§47.12).
+- **Cost.** Ledger with memory-hours and CPU per model; show teams their cold models' cost and the price of `min_copies`.
+- **Operations.** Staged fleet restarts with cache preservation; quotas reviewed against usage; monitoring and retraining remain the tenant's responsibility, with platform-provided drift dashboards (Chapter 70).
