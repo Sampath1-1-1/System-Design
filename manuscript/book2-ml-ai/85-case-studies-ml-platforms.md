@@ -141,7 +141,7 @@ The three terms of $R_{\text{tiled}}$ are the full coarse tiles inside the windo
 **Worked example — A 30-day count for typical and heavy users.** $W = 720$ h, $\Delta_1 = 1$ h, $\Delta_2 = 24$ h. A typical user produces 200 events in 30 days ($\rho = 0.278$/h); a heavy user (a reseller, a bot under investigation) 50,000 ($\rho = 69.4$/h).
 
 1. Typical user: $R_{\text{raw}} = 200$; $R_{\text{tiled}} = 29 + 23 + 0.28 = 52.3$. A 3.8× saving.
-2. Heavy user: $R_{\text{raw}} = 50{,}000$; $R_{\text{tiled}} = 29 + 23 + 69.4 = 121$. A 411× saving.
+2. Heavy user: $R_{\text{raw}} = 50{,}000$; $R_{\text{tiled}} = 29 + 23 + 69.4 = 121$. A 412× saving.
 3. A 500-million-row spine at the typical rate: $10^{11}$ raw reads versus $2.6 \times 10^{10}$ tile reads.
 
 **Interpretation.** Tiles help most exactly where raw scans hurt most: the heavy-tailed entities that also cause skew in a distributed join. **Engineering implication.** Materialize hourly and daily tiles for every windowed aggregate as part of the view's definition; the training-set builder and the backfill both read tiles, and the tile size bounds how precisely a window edge can be placed unless edge events are also read.
@@ -696,7 +696,7 @@ flowchart LR
 
 #### Quotas, fair share and borrowing
 
-Each team's queue has a **nominal quota** per GPU type, sized by budget, and the sum of quotas equals the fleet. Admission has two phases, which map onto Kueue's ClusterQueues and cohorts (§46.10.2):
+Each team's queue has a **nominal quota** per GPU type, sized by budget, and the sum of quotas equals the fleet. Admission has two phases and a reclaim rule, which map onto Kueue's ClusterQueues and cohorts (§46.10.2):
 
 1. **Guaranteed.** A team's jobs are admitted, whole gangs only, while the team stays within its quota.
 2. **Borrowing.** Idle GPUs are lent to teams with pending jobs, choosing the team with the lowest ratio of allocation to quota whose next gang fits (weighted max-min fairness, §46.9.1). Borrowed jobs are marked preemptible.

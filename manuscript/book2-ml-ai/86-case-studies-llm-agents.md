@@ -434,7 +434,7 @@ At **10×** (20,000 tenants, 60 million questions a day, 30 billion chunks): the
 
 ### 86.4.16 Production considerations
 
-**Observability.** Per tenant and source: freshness lag, revocation lag p99, reconciliation mismatches, empty-retrieval rate, groundedness on sampled answers, citation-click rate and cost per answer (§75.15.4, §79.13). **Security.** Least-privilege connector scopes, signed webhooks, per-tenant encryption keys, audit of every retrieval (who, which documents, which answer), and red-team tests for cross-tenant and injection attacks (§78.12). **Retraining and refresh.** Rerankers and routers retrain quarterly on pooled, consented judgments; embedding upgrades follow the blue–green procedure. **Responsible ML.** Answers about people (performance, salaries) are where oversharing hurts most; tenants can exclude HR spaces and sensitivity labels (§71). **Cost.** Model tokens dominate; the levers are routing, $k$ and prefix caching, then index memory, which compression (INT8 or binary with rescoring) cuts by four to thirty-two times (§74.9).
+**Observability.** Per tenant and source: freshness lag, revocation lag p99, reconciliation mismatches, empty-retrieval rate, groundedness on sampled answers, citation-click rate and cost per answer (§75.15.4, §79.13). **Security.** Least-privilege connector scopes, signed webhooks, per-tenant encryption keys, audit of every retrieval (who, which documents, which answer), and red-team tests for cross-tenant and injection attacks (§78.12). **Retraining and refresh.** Rerankers and routers retrain quarterly on pooled, consented judgments; embedding upgrades follow the blue–green procedure. **Responsible ML.** Answers about people (performance, salaries) are where oversharing hurts most; tenants can exclude HR spaces and sensitivity labels (Chapter 71). **Cost.** Model tokens dominate; the levers are routing, $k$ and prefix caching, then index memory, which compression (INT8 or binary with rescoring) cuts by four to thirty-two times (§74.9).
 
 ## 86.5 LLM Inference Platform (company-wide, self-hosted)
 
@@ -482,12 +482,12 @@ Throughout, the reference GPU is an H100 80 GB at \$2.50 per GPU-hour, engines r
 The 70B model has the Llama-2-70B-like shape of §73.15 (80 layers, 8 KV heads of 128 dimensions), so its FP8 KV cache is $2 \times 80 \times 8 \times 128 \times 1 = 163{,}840$ bytes per token; the 8B model (32 layers, 8 KV heads) needs 65,536.
 
 ::: example
-**Worked example — GPU time per call by class.** Prefill on the 70B model costs $2 \times 70 \times 10^9 / 494.5 \times 10^{12} = 283\ \mu$s of GPU time per uncached token (§79's figure).
+**Worked example — GPU time per call by class.** Prefill on the 70B model costs $2 \times 70 \times 10^9 / 494.5 \times 10^{12} = 283\ \mu$s of GPU time per uncached token (Chapter 79's figure).
 
 1. *RAG:* prefill $5{,}200 \times 283\ \mu\text{s} = 1.472$ GPU-s (368 ms of wall time on four GPUs). Decode: each GPU holds 33 GB of KV budget; at $6{,}250$ tokens per sequence the batch is 128 and a step takes 27.0 ms, so 250 output tokens cost $4 \times 250 \times 0.0270/128 = 0.211$ GPU-s. $g_\text{req} = 1.683$ GPU-s.
 2. *Chat:* prefill $800 \times 283\ \mu\text{s} = 0.226$; decode at the cap of 256 sequences, 23.6 ms per step, 0.129; $g_\text{req} = 0.355$.
 3. *Agent steps:* prefill $2{,}000 \times 283\ \mu\text{s} = 0.566$; decode at batch 78 (10,250-token contexts), 0.348; $g_\text{req} = 0.914$.
-4. *Busy GPUs at peak:* RAG $250 \times 1.683 = 420.9$; chat $300 \times 0.355 = 106.6$; agents $100 \times 0.914 = 91.4$; 70B total 618.9, of which prefill is 492.6 (80%). The 8B pool: $1{,}000 \times 0.010 = 10.2$ busy GPUs, 19 GPUs at $\rho = 0.6$ with N+1.
+4. *Busy GPUs at peak:* RAG $250 \times 1.683 = 420.9$; chat $300 \times 0.355 = 106.6$; agents $100 \times 0.914 = 91.4$; 70B total 618.9, of which prefill is 492.6 (80%). The 8B pool: $1{,}000 \times 0.0102 = 10.2$ busy GPUs, 19 GPUs at $\rho = 0.6$ with N+1.
 
 **Interpretation.** RAG is 38% of the 70B calls and 68% of the 70B GPU time, almost all of it prefill. Cutting the RAG prompt from 6,000 to 4,000 tokens frees $250 \times 2{,}000 \times 283\ \mu\text{s} = 142$ busy GPUs. **Engineering implication.** In a fleet dominated by long prompts, the first capacity lever is the prompt (fewer, shorter chunks, prefix caching), not the engine; the second is routing RAG to a smaller model where evaluation allows.
 :::
@@ -503,7 +503,7 @@ The 70B model has the Llama-2-70B-like shape of §73.15 (80 layers, 8 KV heads o
 **Interpretation.** Disaggregation does not reduce GPU-seconds per call; it raises the utilization at which both SLOs hold, here saving 348 GPUs (28%). Whether it does depends on the measured $\rho$ each layout sustains, which is why DistServe states its gains as goodput under SLOs [Zhong et al. 2024]. **Engineering implication.** Disaggregate the long-prompt 70B classes, where prefill is 80% of the work and transfer is under 2% of prefill time; keep the 8B pool colocated.
 :::
 
-The night trough absorbs batch work. Ten million documents a day at 2,500 input and 250 output tokens cost $0.80$ GPU-s each on the 70B model, $8.0 \times 10^6$ GPU-s, or 247 GPUs for a 10-hour window at $\rho = 0.9$; interactive traffic at night runs at about a quarter of peak, freeing more than 600 GPUs. With roughly 915 GPUs provisioned around the clock, \$54,900 a day, for about 169 billion tokens a day (114 billion interactive on the 70B model, 27.5 billion batch, 28 billion on the 8B model), the blended cost is about \$0.32 per million tokens.
+The night trough absorbs batch work. Ten million documents a day at 2,500 input and 250 output tokens cost $0.81$ GPU-s each on the 70B model, $8.1 \times 10^6$ GPU-s, or 249 GPUs for a 10-hour window at $\rho = 0.9$; interactive traffic at night runs at about a quarter of peak, freeing more than 600 GPUs. With roughly 915 GPUs provisioned around the clock, \$54,900 a day, for about 169 billion tokens a day (interactive traffic averaging 40% of its peak: 114 billion on the 70B model and 28 billion on the 8B model; 27.5 billion batch), the blended cost is about \$0.32 per million tokens. Busy time is about 8,300 of 21,960 GPU-hours, 38%; filling more of the trough with batch work is what lifts it to the 45% target of Table 86.6.
 
 #### The QuickBite sub-example: resolving the prompt-length mismatch
 
@@ -576,11 +576,11 @@ What to notice:
 1. Chapter 73's plan: $6.9 \times 0.075 = 0.52$ busy GPUs, $\lceil 0.52/0.6 \rceil + 1 = 2$ GPUs.
 2. §79.8's tenant alone at RAG length, FP16 KV: support chat (classes B and C) is $2.54 + 0.13 = 2.67$ busy GPUs, so $\lceil 2.67/0.6 \rceil + 1 = \lceil 4.45 \rceil + 1 = 6$ GPUs at peak instead of 5. (Pricing §79.8's lumped call at 1.11 ms per output token gives the same answer: $3{,}800 \times 28.3\ \mu\text{s} + 230 \times 1.11\ \text{ms} = 0.363$ GPU-s, $8 \times 0.363 = 2.90$ busy, 6 GPUs.)
 3. Combined workload, FP16 KV: adding the plain chatbot turns and the agent's 7B calls, which §79.8 did not include, gives $0.30 + 2.54 + 0.13 + 0.13 = 3.10$ busy GPUs, six times Chapter 73's figure; $\lceil 3.10/0.6 \rceil + 1 = \lceil 5.17 \rceil + 1 = 7$ GPUs at peak. Scheduled as in §79.8 (peak count for 8 hours, 2 GPUs for 16): $7 \times 8 + 2 \times 16 = 88$ GPU-hours, \$220 a day.
-4. Combined workload, FP8 KV: $0.24 + 1.65 + 0.12 + 0.12 = 2.13$; $\lceil 3.55 \rceil + 1 = 5$ GPUs, the count §79.8 reached, now justified for the whole workload: 72 GPU-hours, \$180 a day (the figure §78.16 uses). Busy GPU-hours: 6.4 a day, so utilization is $6.4/72 = 8.9\%$. Tokens: 494 million input and 37 million output a day, \$0.34 per million.
+4. Combined workload, FP8 KV: $0.24 + 1.65 + 0.12 + 0.12 = 2.13$; $\lceil 3.55 \rceil + 1 = 5$ GPUs, the count §79.8 reached, now justified for the whole workload: 72 GPU-hours, \$180 a day (the figure §78.16 uses). Busy GPU-hours: 6.4 a day, so utilization is $6.4/72 = 8.9\%$ (§79.8's 11% priced every output token at 0.567 ms, overstating short calls). Tokens: 494 million input and 37 million output a day, \$0.34 per million.
 5. Transfer price: billed at Chapter 75's internal prices of \$0.20 and \$0.60 per million, the same tokens bring in $494 \times 0.20 + 37 \times 0.60 = \$121$ a day, 67% of the \$180 FP8 plan and 55% of the \$220 FP16 plan. The GPU time actually used is worth only $6.4 \times \$2.50 = \$16$; the gap is idle redundancy, which §79.15's chargeback must allocate explicitly (as a reserved-capacity charge) rather than hide in a per-token price.
 6. Warm headroom (§79.8) is unchanged at one replica: the lunch ramp adds $0.0033 \times 360 = 1.2$ RAG queries/s during a cold start, $\lceil 1.2 \times 0.206/0.6 \rceil = 1$.
 
-**Interpretation.** Retrieval made QuickBite's chatbot generation call 2.7 times longer and its peak GPU need six times larger; the pool is 6 GPUs for §79.8's tenants and 7 for the whole workload with an FP16 KV cache, and the five-GPU pool of Chapter 79 holds only with an FP8 KV cache, which must pass the parity gate of Table 86.6 on QuickBite's evaluation suite before it is the plan of record. **Engineering implication.** Size fleets from logged token histograms per class, never from one average call; record the KV precision as part of the capacity plan; and re-run the plan whenever a feature changes prompt length, as adding retrieval did. At 8.9% utilization QuickBite remains far below the break-even of §79.16; the generic company above, at about 45%, is the case self-hosting was made for.
+**Interpretation.** Retrieval made QuickBite's chatbot generation call 2.7 times longer and its peak GPU need six times larger; the pool is 6 GPUs for §79.8's tenants and 7 for the whole workload with an FP16 KV cache, and the five-GPU pool of Chapter 79 holds only with an FP8 KV cache, which must pass the parity gate of Table 86.6 on QuickBite's evaluation suite before it is the plan of record. **Engineering implication.** Size fleets from logged token histograms per class, never from one average call; record the KV precision as part of the capacity plan; and re-run the plan whenever a feature changes prompt length, as adding retrieval did. At 8.9% utilization QuickBite remains far below the break-even of §79.16; the generic company above, at about 38% and rising toward 45%, is the case self-hosting was made for.
 :::
 
 ### 86.5.5 API design
@@ -795,13 +795,13 @@ At **10×** (about 9,000 GPUs), the fleet spans several regions and GPU generati
 
 ### 86.5.16 Production considerations
 
-**Observability.** Per pool: TTFT and TPOT percentiles by class, queue depth, KV usage, preemptions, prefix-hit ratio, prefill:decode utilization and KV-transfer latency; per team: tokens, GPU-seconds and quota rejections (§79.13). **Retraining cadence.** The platform does not train models, but it re-runs capacity plans monthly from the ledger and re-runs parity suites on every engine, driver or precision change. **Security.** Weights are verified by hash on load; prompts are not logged by default; adapters are isolated per team; network policy separates pools by data class (§79.14). **Responsible ML.** The platform publishes model cards for every alias and blocks models without safety evaluations from interactive use (§71). **Cost.** Report busy versus provisioned GPU-hours per pool weekly; the generic fleet's \$0.32 per million tokens holds only at its utilization, while QuickBite's pool costs \$0.34 per million at 8.9% busy and would be cheaper bought.
+**Observability.** Per pool: TTFT and TPOT percentiles by class, queue depth, KV usage, preemptions, prefix-hit ratio, prefill:decode utilization and KV-transfer latency; per team: tokens, GPU-seconds and quota rejections (§79.13). **Retraining cadence.** The platform does not train models, but it re-runs capacity plans monthly from the ledger and re-runs parity suites on every engine, driver or precision change. **Security.** Weights are verified by hash on load; prompts are not logged by default; adapters are isolated per team; network policy separates pools by data class (§79.14). **Responsible ML.** The platform publishes model cards for every alias and blocks models without safety evaluations from interactive use (Chapter 71). **Cost.** Report busy versus provisioned GPU-hours per pool weekly; the generic fleet's \$0.32 per million tokens holds only at its utilization, while QuickBite's pool costs \$0.34 per million at 8.9% busy and would be cheaper bought.
 
 ## 86.6 AI Coding Assistant (completion, chat and agentic edits)
 
 ### 86.6.1 Problem statement
 
-Design an AI assistant for software developers that works inside their editors. It has three modes. **Inline completion** proposes the next few lines as grey "ghost text" while the developer types, accepted with one key. **Chat** answers questions about the code and proposes edits. **Agent mode** takes a task ("make the retry policy configurable and update the tests"), edits several files, runs tests in a sandbox and presents a diff for review. The assistant is sold to companies, so customer code is confidential data.
+Design an AI assistant for software developers that works inside their editors. It has three modes. **Inline completion** proposes the next few lines as gray "ghost text" while the developer types, accepted with one key. **Chat** answers questions about the code and proposes edits. **Agent mode** takes a task ("make the retry policy configurable and update the tests"), edits several files, runs tests in a sandbox and presents a diff for review. The assistant is sold to companies, so customer code is confidential data.
 
 The ML formulation differs by mode. Completion is **conditional generation of a code span given the text before and after the cursor**: the label is what the developer actually typed next, and the online signal is whether a shown suggestion is accepted and survives. Chat and agent mode are instruction-following generation and tool use (Chapter 77), judged by execution: do tests pass, is the diff accepted? ML is warranted because no rule system predicts arbitrary code; what is not obvious is how much latency and privacy shape the design.
 
@@ -867,7 +867,7 @@ $$T_\text{show} = t_\text{deb} + t_\text{ctx} + t_\text{rtt} + t_\text{gw} + t_\
 **Worked example — The p50 path.** $t_\text{deb} = 50$, $t_\text{ctx} = 10$, $t_\text{rtt} = 40$ (developer within one region), $t_\text{gw} = 5$, $t_\text{q} = 10$, prefill 7.3, decode 51.7, $t_\text{post} = 10$ ms.
 
 1. $T_\text{show} = 50 + 10 + 40 + 5 + 10 + 7.3 + 51.7 + 10 = 184$ ms, under the 200 ms target.
-2. Without speculation, decode is 135 ms and $T_\text{show} = 267$ ms; without the prefix cache, prefill is 24 ms more.
+2. Without speculation, decode is 135 ms and $T_\text{show} = 267$ ms; without the prefix cache, prefill takes 24 ms, 17 ms more.
 3. A cross-continent round trip of 150 ms instead of 40 alone breaks the target.
 
 **Interpretation.** Network and debounce are half the budget; the model gets about 60 ms. **Engineering implication.** Serve completion from regions near developers, keep the model small (a 3B model, not the 70B chat model), use speculation, and let the client show suggestions only if the text before the cursor still matches.
@@ -1095,7 +1095,7 @@ At **10×** developers, completion GPUs scale linearly (about 1,200) and dominat
 
 ### 86.6.16 Production considerations
 
-**Monitoring.** Latency by region and editor, cancellation and late-discard rates, acceptance and retention by language and model, prefix-hit ratio, filter hits, and agent resolve rates on a nightly internal suite (§70). **Retraining cadence.** The completion model is refreshed every one to three months on fresh permissively licensed code and opted-in data, distilled from the current larger model; every refresh goes through the offline gates and a two-week developer-randomized experiment. **Security and privacy.** Zero retention for business customers, encryption per organization, content exclusion enforced on the client and the server, secret redaction, audit logs of agent commands, and least-privilege code-host tokens scoped to one repository (§79.14, Chapter 50). **Responsible ML.** Suggestions that reproduce insecure patterns are a known risk; security-focused evaluation slices and static analysis on agent diffs reduce it (§71). **Cost.** Completion is cheap per developer; agents are twenty times more, and their cost is controlled by step budgets, caching and routing routine steps to smaller models.
+**Monitoring.** Latency by region and editor, cancellation and late-discard rates, acceptance and retention by language and model, prefix-hit ratio, filter hits, and agent resolve rates on a nightly internal suite (Chapter 70). **Retraining cadence.** The completion model is refreshed every one to three months on fresh permissively licensed code and opted-in data, distilled from the current larger model; every refresh goes through the offline gates and a two-week developer-randomized experiment. **Security and privacy.** Zero retention for business customers, encryption per organization, content exclusion enforced on the client and the server, secret redaction, audit logs of agent commands, and least-privilege code-host tokens scoped to one repository (§79.14, Chapter 50). **Responsible ML.** Suggestions that reproduce insecure patterns are a known risk; security-focused evaluation slices and static analysis on agent diffs reduce it (Chapter 71). **Cost.** Completion is cheap per developer; agents are twenty times more, and their cost is controlled by step budgets, caching and routing routine steps to smaller models.
 
 ## 86.7 Customer-Support Agent at Scale (multi-brand e-commerce)
 
@@ -1137,11 +1137,11 @@ The ML formulation: an LLM policy maps conversation state to the next action (re
 **Worked example — Traffic, concurrency and model calls.** Assumptions: 100,000 contacts a day (70% chat, 30% email); peak-to-average 3, and 5 on sale days; chat conversations last 9 minutes; a chat has 6 customer turns and an email thread 2; each turn needs 2.2 model calls on average (reply plus tool steps).
 
 1. Average 1.16 contacts/s; peak 3.47/s; sale-day peak 5.79/s.
-2. Concurrent chats at peak, by Little's law (§4.6): $3.47 \times 0.7 \times 540 = 1{,}313$; sale day 2,188.
+2. Concurrent chats at peak, by Little's law (§4.11): $3.47 \times 0.7 \times 540 = 1{,}313$; sale day 2,188.
 3. Model calls: $100{,}000 \times (0.7 \times 6 + 0.3 \times 2) \times 2.2 = 1.06 \times 10^6$ a day; peak $1.06 \times 10^6 / 86{,}400 \times 3 = 36.7$ calls/s.
 4. State-store writes, two per step: 73 per second at peak, trivial for any durable store; the hard part is correctness, not throughput.
 
-**Interpretation.** The load is modest; a single workflow cluster and an LLM gateway quota of about 37 calls/s (2.5 million tokens per minute at the token counts below) suffice. **Engineering implication.** Scale is not the challenge. Correctness of actions under retries, policy fidelity across 240 brand-market combinations and the economics of resolution are.
+**Interpretation.** The load is modest; a single workflow cluster and an LLM gateway quota of about 37 calls/s (about 17 million tokens per minute at the token counts below) suffice. **Engineering implication.** Scale is not the challenge. Correctness of actions under retries, policy fidelity across 240 brand-market combinations and the economics of resolution are.
 :::
 
 ::: example
@@ -1180,7 +1180,7 @@ $$C_\text{contact} = c\,\big[C_a + e\,k\,C_h\big] + (1 - c)\,C_h \qquad C_\text{
 3. Cost per agent resolution: $C_\text{res} = 0.377/0.70 = \$0.54$.
 4. Human staffing at peak (8-minute handling, 80% occupancy): human-only needs $12{,}500 \text{ contacts/h} \times 8/60 = 1{,}667$ busy agents, 2,084 on shift; with the agent, humans handle $35{,}000 + 65{,}000 \times 0.30 = 54{,}500$ contacts a day, 908 busy, 1,136 on shift.
 
-**Interpretation.** Escalations are three-quarters of a covered contact's cost; each point of escalation rate is worth $0.65 \times 0.01 \times 0.9 \times 4.50 = \$0.026$ per contact, \$2,600 a day, more than switching to a model with half the token price would save. **Engineering implication.** Invest in resolution quality and safe coverage of more intents; optimize tokens last. Count repeat contacts as failures, or the business case is overstated.
+**Interpretation.** Escalations are three-quarters of a covered contact's cost; each point of escalation rate is worth $0.65 \times 0.01 \times 0.9 \times 4.50 = \$0.026$ per contact, \$2,600 a day; a three-point cut saves more than halving the token price would (\$0.088 per covered contact, \$5,700 a day). **Engineering implication.** Invest in resolution quality and safe coverage of more intents; optimize tokens last. Count repeat contacts as failures, or the business case is overstated.
 :::
 
 ### 86.7.5 API design
@@ -1381,10 +1381,10 @@ sequenceDiagram
 | Payment timeout, naive retry | Duplicate refund | Duplicate key attempts; reconciliation | Reverse duplicate | Idempotency key per logical action |
 | Model promises refund that policy denies | Binding commitment, complaint | Output guardrail; QA sampling | Honor or escalate | Confirmations only from tool results |
 | Prompt injection in customer message or order note | Tool misuse | Guardrail flags; policy denies | Handoff; block user | Facts fetched by code; least-privilege tools |
-| Refund abuse adapts to agent | Loss grows | Refund rate per customer and SKU; chargebacks | Tighten rule; require return | Per-customer limits; fraud model (§70) |
+| Refund abuse adapts to agent | Loss grows | Refund rate per customer and SKU; chargebacks | Tighten rule; require return | Per-customer limits; fraud model (Chapter 70) |
 | Policy change not deployed to one market | Wrong refunds | Policy version per decision | Re-deploy; remediate | Policy CI with market tests |
 | Feedback loop: training on accepted drafts | Assist mode learns human rubber-stamping | Edit rate falls while QA scores fall | Re-weight data | QA-reviewed labels only |
-| Drift after a new product line | Unknown intents, more handoffs | Handoff rate by intent | Add intent and help content | Monitor intent distribution (§70) |
+| Drift after a new product line | Unknown intents, more handoffs | Handoff rate by intent | Add intent and help content | Monitor intent distribution (Chapter 70) |
 | Lost workflow signal | Conversation stuck | Age of awaiting states | Reconcile with order system | Timers on every wait |
 
 ### 86.7.12 Scaling strategy
@@ -1422,7 +1422,7 @@ At **10×** (1 million contacts a day), throughput remains modest; the challenge
 
 ### 86.7.16 Production considerations
 
-**Monitoring.** Per intent, brand and market: resolution, repeat contact, handoff and approval rates, wrong-action rate from QA sampling, refund amounts per customer, guardrail triggers, latency and cost per contact (§77.15, §70). **Retraining and prompt cadence.** Intent models retrain monthly on newly labeled contacts; prompts and policies change weekly through the offline replay suite and staged rollout. **Security.** Step-up verification before address or payment changes, least-privilege tools per intent, injection defenses, audit trail per action (§77.13). **Responsible ML.** Customers are told they are talking to an AI and can always reach a human; outcome metrics are checked across markets and languages so that one population is not served worse (§71). **Cost.** Track blended cost per contact and cost per resolution weekly; escalation rate is the lever that matters most.
+**Monitoring.** Per intent, brand and market: resolution, repeat contact, handoff and approval rates, wrong-action rate from QA sampling, refund amounts per customer, guardrail triggers, latency and cost per contact (§77.15; Chapter 70). **Retraining and prompt cadence.** Intent models retrain monthly on newly labeled contacts; prompts and policies change weekly through the offline replay suite and staged rollout. **Security.** Step-up verification before address or payment changes, least-privilege tools per intent, injection defenses, audit trail per action (§77.13). **Responsible ML.** Customers are told they are talking to an AI and can always reach a human; outcome metrics are checked across markets and languages so that one population is not served worse (Chapter 71). **Cost.** Track blended cost per contact and cost per resolution weekly; escalation rate is the lever that matters most.
 
 ## 86.8 AI-Powered Search (answer engine)
 
@@ -1683,7 +1683,7 @@ At **10×** (500 million queries a day), generation needs about 4,000 GPUs even 
 
 ### 86.8.16 Production considerations
 
-**Monitoring.** TTFT by stage, answer coverage and shed rates, verifier rejection rate, sentence support and citation precision on rater samples, source diversity, freshness lag per tier, cache hit ratio, and cost per 1,000 queries (§70, §79.13). **Retraining cadence.** Rerankers and the eligibility model monthly on fresh rater labels; the answer model quarterly by distillation and fine-tuning, gated on side-by-side preference and support metrics. **Security.** Spam and injection defenses in retrieval, abuse monitoring for coordinated attempts to manipulate answers, and red-teaming of high-stakes categories (§78.12). **Responsible ML.** Medical, legal and financial answers carry sources and caveats or are not generated; contested topics present multiple sourced views; publisher attribution is reported (§71). **Cost.** The routed design costs about \$0.37 per 1,000 queries in GPU time plus about 0.07 for reranking; the levers in order are eligibility, caching, prompt length and model size.
+**Monitoring.** TTFT by stage, answer coverage and shed rates, verifier rejection rate, sentence support and citation precision on rater samples, source diversity, freshness lag per tier, cache hit ratio, and cost per 1,000 queries (Chapter 70; §79.13). **Retraining cadence.** Rerankers and the eligibility model monthly on fresh rater labels; the answer model quarterly by distillation and fine-tuning, gated on side-by-side preference and support metrics. **Security.** Spam and injection defenses in retrieval, abuse monitoring for coordinated attempts to manipulate answers, and red-teaming of high-stakes categories (§78.12). **Responsible ML.** Medical, legal and financial answers carry sources and caveats or are not generated; contested topics present multiple sourced views; publisher attribution is reported (Chapter 71). **Cost.** The routed design costs about \$0.37 per 1,000 queries in GPU time plus about 0.07 for reranking; the levers in order are eligibility, caching, prompt length and model size.
 
 ## 86.9 Summary and revision notes
 
@@ -1729,7 +1729,7 @@ At **10×** (500 million queries a day), generation needs about 4,000 GPUs even 
 10. A model can raise acceptance by suggesting shorter, safer completions that save less work; accepted characters per hour and retention must not fall.
 11. A deterministic, versioned policy engine with facts fetched by the orchestrator. Instructions to a model are not controls, and a model's statement can be legally binding.
 12. An idempotency key derived from the logical action, persisted before the first call and reused on retry, plus reconciliation with the provider from the unknown state.
-13. Escalated contacts cost \$4.05 each; one point of escalation costs \$0.026 per contact, more than the whole difference between two models' token prices.
+13. Escalated contacts cost \$4.05 each and are three-quarters of a covered contact's cost, against about 11% for tokens; one point of escalation is worth \$0.026 per contact, so a three-point cut saves more than halving the token price.
 14. So that the results page never waits for or fails with the model; the answer streams on a separate connection and degrades to results only.
 15. A good answer reduces clicks. Use reformulation and follow-up rates, explicit feedback, citation clicks, return visits and side-by-side rater preference.
 </details>

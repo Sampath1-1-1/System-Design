@@ -42,7 +42,7 @@ After this chapter you should be able to:
 
 ## 84.3 How to use these case studies
 
-Work through these cases with the method set out in §52.3: read the problem statement, close the book, produce your own requirements, estimates and architecture, then compare; treat every number as an assumption to challenge; follow the cross-references rather than expecting mechanisms to be re-taught; and rehearse each §84.x.15 pacing plan aloud against a clock. What is different for ML cases is that the problem statement must also fix the *ML formulation* (what is predicted, from what, with which label and which metric), that requirements include quality targets measured offline and guarded online, and that capacity is dominated by model compute rather than by storage or request fan-out. Add one habit specific to this chapter: for every design, draw a **signal trace** that follows one photo, utterance or sentence from the sensor to the decision, and mark at each hop where it is processed (device, edge or cloud), in what form (raw signal, embedding or text) and for how long it is retained. Most of the privacy and latency trade-offs in perception systems are visible on that trace.
+Work through these cases with the method set out in §52.3: read the problem statement, close the book, produce your own requirements, estimates and architecture, then compare; treat every number as an assumption to challenge; follow the cross-references rather than expecting mechanisms to be re-taught; and rehearse each pacing plan (§84.4.15–§84.7.15) aloud against a clock. What is different for ML cases is that the problem statement must also fix the *ML formulation* (what is predicted, from what, with which label and which metric), that requirements include quality targets measured offline and guarded online, and that capacity is dominated by model compute rather than by storage or request fan-out. Add one habit specific to this chapter: for every design, draw a **signal trace** that follows one photo, utterance or sentence from the sensor to the decision, and mark at each hop where it is processed (device, edge or cloud), in what form (raw signal, embedding or text) and for how long it is retained. Most of the privacy and latency trade-offs in perception systems are visible on that trace.
 
 ## 84.4 Face Recognition
 
@@ -694,7 +694,7 @@ A request's image must be fetched, decoded, rotated by its EXIF orientation, res
 
 1. **Reduced-scale decode.** JPEG stores 8×8 DCT blocks, so a decoder can produce a 1/2, 1/4 or 1/8 scale image without computing full resolution, at a fraction of the cost. Pick the largest reduction that still leaves at least the model's input size.
 2. **Cap input size at the edge.** Reject or downscale images above a pixel limit before they reach the decode pool, and bill them accordingly.
-3. **GPU decode.** NVIDIA's nvJPEG library and the DALI data-loading library decode and resize on the GPU, so compressed bytes cross PCIe instead of 150 KB float tensors and the CPU pool shrinks [NVIDIA DALI Docs]. The cost is GPU time and memory taken from the model, and the GPU becomes a single pool for two stages, so measure both stages' throughput together.
+3. **GPU decode.** NVIDIA's nvJPEG library and the DALI data-loading library decode and resize on the GPU, so compressed bytes cross PCIe instead of 602 KB FP32 tensors and the CPU pool shrinks [NVIDIA DALI Docs]. The cost is GPU time and memory taken from the model, and the GPU becomes a single pool for two stages, so measure both stages' throughput together.
 4. **Isolate decoders.** Decoders parse untrusted input; run them in sandboxed processes with memory and time limits so a malformed image cannot crash the GPU server.
 
 **Figure 84.6 — Two preprocessing placements.**
@@ -992,7 +992,7 @@ RecognizeResponse:
 POST /v1/feedback  { utterance_id, action: "edited" | "retried", corrected_text? }   # opt-in only
 ```
 
-`stable_prefix_len` tells the client how many words will not change, so the interface can render them solid and the rest greyed. The feedback endpoint accepts corrections only for users in the improvement program; for everyone else, the client keeps only aggregate counters (retry and edit rates) that contain no text.
+`stable_prefix_len` tells the client how many words will not change, so the interface can render them solid and the rest grayed. The feedback endpoint accepts corrections only for users in the improvement program; for everyone else, the client keeps only aggregate counters (retry and edit rates) that contain no text.
 
 ### 84.6.6 Data model and database schema
 
