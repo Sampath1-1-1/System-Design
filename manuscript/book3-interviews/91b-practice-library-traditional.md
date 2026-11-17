@@ -2118,3 +2118,501 @@ Three members tolerate one failure with lower write latency; five tolerate two a
 - **Senior:** Raft details, leases and sessions, watches, linearizable versus follower reads.
 - **Staff:** fencing as mandatory, herd-free recipes, fan-out arithmetic, and operational rules for membership and majority loss.
 
+### 91.7.9 Q53. Digital wallet with double-entry ledger and reconciliation
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §55.9 (payment system, ledger and reconciliation); §32.5, §32.7, §28.4, §11 (double-entry exercise)
+
+#### Prompt
+
+"Design a digital wallet: 100 million users hold balances, send money to each other and to merchants, and top up or withdraw through banks. Money must never be created or lost."
+
+#### Clarifying questions and assumptions
+
+- *Volume?* 50 million transfers/day, peak 5× average; some merchants receive thousands of payments per second.
+- *Regulation?* Customer funds held in a safeguarded bank account; daily reconciliation against it.
+- *Consistency?* A sender can never go negative; a confirmed transfer is final.
+- *Relation to Q29?* Card acquiring is Q29 and §55.9; here money moves between internal balances, so the ledger *is* the product.
+
+#### Requirements
+
+**Functional.** Balance, transfer (P2P, to merchant), top-up and withdrawal via bank rails, transaction history, refunds, holds for pending operations. **Non-functional.** No negative balances; every transaction balanced; RPO 0; transfer p99 ≤ 300 ms; 99.99% availability; full audit trail; daily reconciliation 100% explained.
+
+#### Estimation
+
+::: example
+**Worked example — Contention, not volume.** Assumptions: 3 ledger lines of 200 B per transfer (two sides plus a fee line); 64 ledger shards by account; a balance update holds a row lock for 2 ms.
+
+1. Transfers: $5 \times 10^7 / 86{,}400 = 579$/s average, 2,894/s peak (§89.5); ledger $5 \times 10^7 \times 3 \times 200 = 30$ GB/day.
+2. With accounts hashed over 64 shards, $1 - 1/64 = 98.4\%$ of transfers cross shards.
+3. One account row with a 2 ms lock admits at most $1 / 0.002 = 500$ updates/s; a merchant receiving 1,000 payments/s cannot be one row. Splitting it into 16 sub-accounts gives each about 62 updates/s.
+
+**Interpretation.** Almost every transfer is distributed and hot merchants exceed a single row's capacity. **Engineering implication.** Design the cross-shard transfer protocol and hot-account handling first; throughput is otherwise small.
+:::
+
+#### API and data model
+
+```text
+POST /v1/transfers  Idempotency-Key  {from_wallet, to_wallet, amount_minor, currency}  -> {transfer_id, state}
+GET  /v1/wallets/{id}/balance ;  GET /v1/wallets/{id}/transactions?cursor=
+account(account_id PK, wallet_id, type, currency, balance_minor, version)   -- balance = checked aggregate
+ledger_entry(entry_id, transfer_id, account_id, amount_minor, currency, posted_at)  -- append-only
+transfer(transfer_id PK, state: PENDING|DEBITED|COMPLETED|REVERSED, idempotency_key UNIQUE)
+outbox(shard, event_id, payload)
+```
+
+#### High-level design
+
+**Figure 91.125 — Wallet: sharded ledger, holds and an outbox-driven transfer saga.**
+
+```mermaid
+flowchart LR
+  U([Wallet apps]) -->|HTTPS + idempotency key| API[Transfer API]
+  API --> TS[Transfer orchestrator]
+  TS -->|debit with hold| SA[(Ledger shard A<br/>sender)]
+  SA -.->|outbox event| BUS[[Transfer events]]
+  BUS -.-> TS
+  TS -->|credit| SB[(Ledger shard B<br/>receiver)]
+  BR{{Bank rails}} <-.->|top-up, payout files| GWB[Bank gateway]
+  GWB --> TS
+  REC[Reconciliation] -.-> SA
+  REC -.-> SB
+  REC -.-> BR
+```
+
+**Reading the diagram.** A transfer request with an idempotency key reaches the orchestrator, which first debits the sender in the sender's ledger shard in one local transaction: it checks the balance, writes balanced entries against the sender and an internal in-transit account, and appends an outbox event (synchronous). The event (dotted, asynchronous) drives the credit in the receiver's shard, again balanced against the in-transit account, and the transfer completes. Bank top-ups and payouts flow through a gateway as files and callbacks. Reconciliation compares internal balances, the ledger and bank statements daily. Storage boundaries: ledger shards. Failure points: a crash between debit and credit (the outbox replays the credit; idempotent by transfer ID), a credit that cannot apply (closed account: a compensating reversal), and bank file mismatches. Scaling: more shards; split hot accounts.
+
+#### Deep dives
+
+1. **Cross-shard transfers without 2PC.** The in-transit account makes each step a balanced local transaction, so the books balance at every instant; the saga only moves money from "in transit" to the receiver or back (§32.7). The invariant "no negative balance" is checked locally at the debit. The alternative is a distributed SQL database with serializable cross-shard transactions (Q45), simpler to reason about at higher latency.
+2. **Hot accounts.** Split a merchant into N sub-accounts chosen at random for credits; the merchant's balance is their sum; debits (payouts) sweep sub-accounts. Fee and float accounts get the same treatment.
+3. **Reconciliation.** Daily: sum of all customer balances plus in-transit equals the safeguarded bank balance plus timing differences; every bank line matches a ledger entry; in-transit older than minutes is an alert. Discrepancies get owners and ageing, as in §55.9.8.
+
+#### Trade-offs and alternatives
+
+Deriving balances from the ledger on every read is always correct and too slow for hot paths; a maintained balance updated in the same transaction as the entries, checked against the ledger nightly, is the usual compromise. Event sourcing the wallet makes history primary; it still needs the same invariants and snapshots.
+
+#### Follow-up questions
+
+1. *"The credit fails after the debit."* Retry idempotently; if the receiver is invalid, post a reversal back to the sender from in-transit.
+2. *"Two transfers race to spend the same balance."* The debit is a conditional update (`balance >= amount`, version check) in one shard; one fails.
+3. *"Multi-currency transfers?"* FX through explicit conversion accounts per currency; each currency balances separately.
+4. *"How do users see pending money?"* Available versus ledger balance; holds reduce available balance.
+5. *"How long is data retained?"* Years, per jurisdiction; partition the ledger by time for archival.
+
+#### What distinguishes levels
+
+- **Mid:** a balances table updated in a transaction.
+- **Senior:** append-only double-entry ledger, idempotent transfers, cross-shard saga with an in-transit account.
+- **Staff:** finds hot-account contention in the arithmetic, keeps books balanced at every step, and makes reconciliation with the safeguarding bank a designed system.
+
+### 91.7.10 Q54. Global edge rate limiting and DDoS protection
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §52.6 (rate limiter case), §22.3–§22.9, §10.11 (DDoS), §21.11, §48.8
+
+#### Prompt
+
+"Design rate limiting and DDoS protection that runs at 300 edge locations worldwide, in front of thousands of customer APIs."
+
+#### Clarifying questions and assumptions
+
+- *Normal traffic?* 10 million legitimate RPS globally at peak.
+- *Threats?* Volumetric floods of 2 Tb/s; application-layer floods of 50 million RPS from 500,000 residential IPs; credential stuffing at lower rates.
+- *Customer limits?* Per API key, per IP, per route; global limits such as "1,000 RPS per key worldwide".
+- *Accuracy?* Abuse limits tolerate brief overshoot; billing quotas must not exceed by more than 1%.
+
+#### Requirements
+
+**Functional.** Rules by key, IP, path and header fingerprint; local and global limits; actions (block, challenge, throttle, log); rule updates within seconds; attack dashboards. **Non-functional.** Added latency under 1 ms at p99; mitigation of volumetric attacks automatic within seconds; no single PoP or central service on the critical path; legitimate traffic error rate under 0.1% during attacks.
+
+#### Estimation
+
+::: example
+**Worked example — Where attacks land and what limits can do.** Assumptions: PoP capacity 400 Gb/s; 30% of the volumetric attack concentrates on 10 PoPs; a PoP admits a local floor of 10 RPS per key before it learns the key's global count, synchronized every 1 s.
+
+1. Volumetric: $2\ \text{Tb/s} / 300 = 6.7$ Gb/s per PoP on average; concentrated, $0.3 \times 2\ \text{Tb/s} / 10 = 60$ Gb/s per PoP: within capacity thanks to anycast spreading.
+2. Application flood: $5 \times 10^7 / 300 = 166{,}667$ RPS per PoP; a per-IP limit of 20 RPS still admits $5 \times 10^5 \times 20 = 10^7$ RPS, as much as all legitimate traffic.
+3. Global limit overshoot: an attacker hitting all 300 PoPs at once gets up to $300 \times 10 = 3{,}000$ RPS for up to 1 s against a 1,000 RPS limit.
+
+**Interpretation.** Anycast absorbs volume; per-IP limits do not stop distributed floods; synchronized global limits overshoot briefly. **Engineering implication.** Layer defenses: stateless packet filtering, behavioral fingerprints and challenges for distributed floods, and different synchronization strength for abuse limits and billing quotas.
+:::
+
+#### API and data model
+
+```text
+PUT /zones/{zone}/rules [{match: {path, key_header, ip, fingerprint}, limit: {rate, burst, scope: local|global}, action}]
+Edge counter: (rule_id, key) -> token bucket or sliding-window counter in PoP memory
+Global aggregation: per (rule_id, key) counts per PoP per second -> regional aggregators -> shares back
+Attack signatures: packet and request fingerprints pushed to all PoPs
+```
+
+#### High-level design
+
+**Figure 91.126 — Layered edge defense with local counters and asynchronous global aggregation.**
+
+```mermaid
+flowchart LR
+  A([Clients and attackers]) -->|anycast| L34[L3 and L4 filtering<br/>stateless, SYN cookies]
+  L34 --> TLS[TLS termination]
+  TLS --> L7[L7 rules engine<br/>fingerprints, challenges]
+  L7 --> RL[Local rate limiter<br/>in-memory buckets]
+  RL --> O{{Customer origin}}
+  RL -.->|per-second counts| AGG[Regional aggregators]
+  AGG -.->|global counts, shares| RL
+  DET[Attack detection] -.->|signatures, rules| L34
+  DET -.-> L7
+```
+
+**Reading the diagram.** Traffic reaches the nearest PoP by anycast. Stateless packet filters drop malformed and known-bad traffic and absorb SYN floods without connection state; TLS terminates next; an application-layer rules engine evaluates fingerprints and serves challenges; the local rate limiter applies token buckets in PoP memory and forwards admitted requests to the origin (all synchronous, in one process where possible). Every second each PoP sends per-key counts to regional aggregators, which return global counts or per-PoP shares (dotted, asynchronous), so no request waits on a remote call. Attack detection pushes signatures to all PoPs. Storage boundaries: in-memory counters only, which may be lost without harm. Failure points: aggregator lag (local limits keep working with stale shares), false positives blocking legitimate users, and rule pushes (canary them). Scaling: PoP capacity and anycast for volume; sharded aggregators for keys.
+
+#### Deep dives
+
+1. **Global limits without a central counter.** Each PoP enforces its share of a global limit, recomputed every second from recent traffic distribution; a new key starts with a small floor. For billing quotas, use a stricter scheme: PoPs lease token blocks from the key's home aggregator and cannot exceed leased tokens (§22.8.3), trading a little latency on lease refill for bounded overshoot.
+2. **Distributed application floods.** Per-IP limits fail against residential botnets; combine request fingerprints (TLS and HTTP characteristics), behavior (paths, timing), reputation and proof-of-work or interactive challenges, and protect expensive endpoints with stricter per-key limits and caching (§10.11).
+3. **Fail-open versus fail-closed.** If the rules engine or aggregators fail, abuse limits fail open (availability), while authentication and billing quotas fail to their last known state; decide per rule type, and document it.
+
+#### Trade-offs and alternatives
+
+A central Redis counter per key (§22.8.2) is exact and adds a cross-region round trip, unacceptable at the edge. Purely local limits are fastest and allow overshoot proportional to PoP count. Origin-side limiting is simpler but lets attack traffic consume the expensive path to the origin.
+
+#### Follow-up questions
+
+1. *"How do you return limits to clients?"* 429 with Retry-After and RateLimit headers (§22.3.4).
+2. *"How do you avoid blocking a whole carrier-grade NAT?"* Limits by key and fingerprint rather than IP alone; challenges instead of blocks.
+3. *"How fast do new rules propagate?"* Versioned push to all PoPs in seconds, canaried first.
+4. *"How do you test mitigation?"* Replayed attack traffic in staging PoPs and scheduled game days.
+5. *"Can the aggregator be attacked?"* It receives only PoP summaries on a private network; it is not internet-facing.
+
+#### What distinguishes levels
+
+- **Mid:** token buckets per key with a shared counter store.
+- **Senior:** layered L3/L4 and L7 defense, local enforcement with asynchronous global sync, overshoot arithmetic.
+- **Staff:** separates abuse limits from billing quotas by accuracy and failure mode, handles distributed floods beyond per-IP limits, and treats rule pushes as an outage risk.
+
+### 91.7.11 Q55. Lakehouse and data warehouse
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §61.8 (table formats, lakehouses), §49.5–§49.6, §29.5, §13.13 (columnar storage)
+
+#### Prompt
+
+"Design the company's analytical data platform: ingest data from hundreds of services, store years of history cheaply, and let thousands of analysts and ML jobs query it."
+
+#### Clarifying questions and assumptions
+
+- *Volume?* 50 TB/day of raw events and database changes; Parquet compresses 5:1; three years of history.
+- *Users?* 5,000 analysts running 200,000 queries a business day (10 hours); ML training jobs; dashboards.
+- *Freshness?* Most tables hourly; a few within minutes.
+- *Governance?* Personal data must be deletable on request; column-level access control.
+
+#### Requirements
+
+**Functional.** Batch and streaming ingestion; tables with ACID commits, schema evolution and time travel; SQL for analysts; Spark or Python access for ML; catalog with lineage and access control; deletion requests. **Non-functional.** Interactive query p50 under 10 s on curated tables; freshness 1 h (5 min for selected tables); storage cost near object-storage prices; deletions applied within 30 days.
+
+#### Estimation
+
+::: example
+**Worked example — Storage is cheap, scanning is not.** Assumptions: average query would scan 100 GB without pruning and 2 GB with partitioning, file statistics and clustering; an assumed \$5 per TB scanned; streaming commits every minute produce 1,000 small files each.
+
+1. Stored: $50 / 5 = 10$ TB/day, $10 \times 365 \times 3 = 10.95$ PB over three years in object storage (§89.6).
+2. Queries: $2 \times 10^5 / 36{,}000\ \text{s} = 5.6$/s average in business hours, about 17/s at 3× peak.
+3. Scanned per day: $2 \times 10^5 \times 100\ \text{GB} = 20$ PB unpruned versus 400 TB pruned; cost \$100,000 versus \$2,000 a day.
+4. Streaming files: $1{,}440 \times 1{,}000 = 1.44$ million small files a day, against about 19,500 files if compacted to 512 MB.
+
+**Interpretation.** The dominant cost and latency lever is bytes scanned, controlled by layout; small files are the dominant operational hazard. **Engineering implication.** Invest in partitioning, clustering, file statistics and continuous compaction before buying more compute.
+:::
+
+#### API and data model
+
+```text
+Catalog: database.table -> current metadata pointer (atomic swap on commit), schema, partition spec, ACLs
+Table format (Iceberg/Delta): snapshots -> manifest lists -> manifests (file paths + column min/max/null counts)
+Zones: raw (as landed) -> cleaned and conformed -> curated marts (the bronze/silver/gold pattern)
+Access: SQL engine (Trino/Spark SQL/warehouse), DataFrame APIs, BI connectors
+```
+
+#### High-level design
+
+**Figure 91.127 — Lakehouse: object storage with a table format, a catalog, and separate compute engines.**
+
+```mermaid
+flowchart LR
+  SVC([Services]) -.->|CDC, events| K[[Kafka]]
+  K -.-> SI[Streaming ingest<br/>Flink or Spark]
+  B([Batch sources]) --> BI[Batch ingest]
+  SI --> OS[(Object storage<br/>Parquet files)]
+  BI --> OS
+  SI --> CAT[(Catalog<br/>metadata pointers, ACLs)]
+  BI --> CAT
+  CMP[Compaction and<br/>maintenance] -.-> OS
+  Q([Analysts, dashboards, ML]) --> ENG[Query engines<br/>elastic clusters]
+  ENG --> CAT
+  ENG --> OS
+```
+
+**Reading the diagram.** Service events and database changes flow asynchronously through Kafka into streaming ingest jobs; batch sources load periodically. Both write Parquet files to object storage, the single storage boundary, and commit by atomically swapping the table's metadata pointer in the catalog, so readers see whole snapshots (§61.8.2). Maintenance jobs compact small files, cluster data and expire old snapshots asynchronously. Analysts, dashboards and ML jobs use separate elastic compute clusters that read metadata from the catalog to prune files, then read only needed columns and row groups. Failure points: concurrent writers conflicting on commit (optimistic retry), small-file growth from streaming, catalog availability, and runaway queries. Scaling: compute clusters scale independently of storage; workloads are isolated per cluster.
+
+#### Deep dives
+
+1. **Table format mechanics.** Commits are optimistic: write files, then compare-and-swap the metadata pointer; conflicts retry. Snapshots give time travel and reproducible ML training sets; schema and partition evolution change metadata, not files (§61.8.3).
+2. **Layout for pruning.** Partition by date; cluster by common filter columns (Z-order or sort); keep file-level min/max statistics so engines skip files. Copy-on-write suits read-heavy tables, merge-on-read suits frequent updates with compaction (§61.8.4).
+3. **Governance and deletion.** Row-level deletes for data-subject requests written as delete files and compacted within the deadline; column masking and access control in the catalog; lineage from ingestion to marts (§61.12).
+
+#### Trade-offs and alternatives
+
+A managed cloud warehouse offers the best interactive performance with the least operation at a higher price per byte and some lock-in; an open lakehouse keeps data in open formats readable by many engines; many companies run both, with the warehouse reading lakehouse tables. Lambda-style separate batch and streaming paths are giving way to one table format both write (§29.10).
+
+#### Follow-up questions
+
+1. *"Two jobs write the same table."* Optimistic concurrency on the metadata pointer; non-overlapping partitions commit without conflict.
+2. *"How do you reproduce last month's training set?"* Read the table at the snapshot ID recorded with the model.
+3. *"How do you control cost?"* Per-team compute clusters with quotas, scan limits and showback (§51.5).
+4. *"Late-arriving data?"* Upserts by key into the affected partitions; downstream jobs reprocess changed partitions.
+5. *"Minute-level freshness?"* Streaming ingest with frequent commits plus aggressive compaction, or a real-time OLAP store for those few tables (§56.7).
+
+#### What distinguishes levels
+
+- **Mid:** a data lake of files with Spark jobs and a warehouse.
+- **Senior:** table formats with atomic commits, partitioning, compaction, separate compute.
+- **Staff:** prices scans versus storage, plans small-file and deletion operations, and isolates workloads with governance built into the catalog.
+
+### 91.7.12 Q56. Bank-grade disaster recovery (RPO 0 across regions)
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §39.8 (RTO, RPO), §39.9 (backups), §44.4.3, §44.6, §44.11, §28.8
+
+#### Prompt
+
+"A bank's core ledger runs in one region. The regulator requires that losing a whole region loses no committed transaction and service resumes within minutes. Design it."
+
+#### Clarifying questions and assumptions
+
+- *Load?* 5,000 transactions/s at peak, 4 KB of redo log per transaction.
+- *Regions?* Three regions within one country: B is 8 ms round trip from A (about 800 km of fiber), C is 20 ms from A.
+- *Targets?* RPO 0 for committed transactions; RTO 5 minutes for a region loss; protection against logical corruption as well as physical loss.
+- *Latency budget?* Commit p99 ≤ 30 ms is acceptable.
+
+#### Requirements
+
+**Functional.** Synchronous replication of every commit to another region; automatic or one-step failover; point-in-time recovery; immutable backups; regular DR tests. **Non-functional.** RPO 0, RTO ≤ 5 min; survive the loss of any one region without manual data reconciliation; survive operator error and ransomware (logical failures) with RPO of minutes; evidence of tested recovery for regulators.
+
+#### Estimation
+
+::: example
+**Worked example — What RPO 0 costs.** Assumptions above; local fsync 1 ms.
+
+1. Redo bandwidth: $5{,}000 \times 4\ \text{KB} = 20$ MB/s $= 160$ Mb/s per replication link (§89.7): trivial.
+2. Fiber: 8 ms RTT at about 5 µs per km one way corresponds to $0.004 / (5 \times 10^{-6}) = 800$ km of fiber.
+3. Majority quorum across A, B, C with the leader in A: commit at the faster of B and C, $1 + 8 \approx 9$ ms; if B is down, $1 + 20 = 21$ ms, still within budget.
+4. In-flight commits by Little's Law: $5{,}000 \times 0.009 = 45$, so group commit keeps throughput independent of latency.
+
+**Interpretation.** Bandwidth is negligible; RPO 0 costs one inter-region round trip per commit and a third region to break ties. **Engineering implication.** Choose regions close enough for synchronous commits but far enough apart for independent failure, and use a three-region quorum so failover needs no human judgment about which copy is current.
+:::
+
+#### API and data model
+
+```text
+Unchanged application API; database cluster: leader + synchronous voters in three regions
+Recovery artifacts: continuous WAL archive (immutable, separate account), daily snapshots with object lock
+Runbook as code: failover, failback, region evacuation; DR test schedule and evidence store
+```
+
+#### High-level design
+
+**Figure 91.128 — RPO 0 with a three-region quorum, plus immutable backups for logical failures.**
+
+```mermaid
+flowchart LR
+  APP([Banking services]) --> GTM[Global traffic manager]
+  GTM --> RA[Region A<br/>leader + app tier]
+  GTM -.->|failover| RB[Region B<br/>voter + warm app tier]
+  RA -->|sync replicate| RB
+  RA -->|sync replicate| RC[Region C<br/>voter, witness-capable]
+  RA -.->|WAL archive| VAULT[(Immutable backup vault)]
+  RB -.-> VAULT
+  ORC[Failover orchestrator] -.-> GTM
+```
+
+**Reading the diagram.** Banking services reach region A, where the database leader and active application tier run. Every commit is replicated synchronously to voters in B and C, and acknowledged once a majority (A plus the faster of B and C) has it durably. Region B runs a warm application tier ready to take traffic; C holds a full voter (or a log-only witness) so that any two regions form a quorum. WAL and snapshots stream asynchronously to an immutable vault in a separate account. On A's loss, B and C still form a majority, elect a leader with every committed transaction, and the orchestrator shifts traffic. Storage boundaries: each region's replica and the vault. Failure points: correlated failure of two regions, a partition isolating A (A loses quorum and stops accepting writes, preventing split brain), and logical corruption replicated everywhere (recovered from the vault). Scaling: write throughput is bounded by the leader; partition the ledger into several quorum groups if needed.
+
+#### Deep dives
+
+1. **Why two regions are not enough.** With synchronous replication to one standby, a link failure forces a choice: stop writing (availability loss) or continue asynchronously (RPO > 0), and on primary loss a human must decide whether the standby is complete. A majority quorum across three regions makes both decisions automatic and safe (§44.4.3, §26.4).
+2. **RPO 0 is not protection from everything.** Synchronous replication copies a bad migration or ransomware encryption instantly. Point-in-time recovery from an immutable, separately administered WAL archive gives an RPO of minutes for logical failures (§39.9.3); restore drills measure the real RTO.
+3. **Proving the RTO.** Failover is automated and rehearsed: quarterly region evacuation in production, DNS and connection-pool behavior verified, dependencies (HSMs, payment networks, identity) failed over too. An RTO that has not been measured is a hope (§44.11.3).
+
+**Table 91.106 — DR options for a core ledger.**
+
+| Option | RPO | RTO | Commit latency cost | Main risk |
+|---|---|---|---|---|
+| Backups only, restore in another region | Hours | Hours to days | None | Restore never tested |
+| Asynchronous standby region | Seconds of lag | Minutes, manual decision | None | Lost tail of transactions |
+| Synchronous standby (two regions) | 0 while link up | Minutes, manual decision | One RTT | Link failure forces stop or RPO > 0 |
+| Three-region majority quorum | 0 | Seconds to minutes, automatic | RTT to nearest other region | Two-region correlated failure |
+| Plus immutable PITR vault | Minutes for logical failures | Hours | None | Must be restored regularly to stay trustworthy |
+
+#### Trade-offs and alternatives
+
+Regions far apart (cross-continent) give stronger independence but 60–150 ms commits, often unacceptable for a core ledger; nearby regions risk sharing a disaster (a regional power grid, a regulatory event). A Spanner-style database (Q45) provides the quorum natively; a traditional database with synchronous standbys needs careful fencing to avoid split brain.
+
+#### Follow-up questions
+
+1. *"Region C is only a witness. What changes?"* It votes and stores the log tail but cannot serve; after A's loss, B leads with C's vote, and B must not lose its disks before a new replica is built.
+2. *"What about in-flight transactions at failure?"* Uncommitted ones abort; clients retry with idempotency keys (§22.15).
+3. *"How do you fail back?"* Rebuild A as a follower, let it catch up, then move leadership in a planned window.
+4. *"Does RPO 0 cover the message queue and caches?"* Every system holding state of record must meet it or be rebuildable from the ledger; list them.
+5. *"How do you satisfy the regulator?"* Documented RPO/RTO, test evidence, independent backups, and post-incident reviews (§39.12).
+
+#### What distinguishes levels
+
+- **Mid:** a standby region with replication and backups.
+- **Senior:** synchronous replication with the latency cost computed, RTO automation, PITR for logical errors.
+- **Staff:** three-region quorum to remove human judgment from failover, separation of physical and logical recovery, and an evidence-producing test program.
+
+## 91.8 Summary and revision notes
+
+::: summary
+- **Hard prompts break the obvious design.** Name the constraint that breaks it in the first ten minutes: unknown outcomes in payments (Q29), determinism and microseconds in matching (Q30), throughput rather than disk in key-value stores (Q31), the :00 burst in schedulers (Q40), the hot channel in live video (Q41).
+- **Estimate to find the regime, then stop.** Several answers turned on one comparison: 42 brokers for disk versus under 5 for network (Q32), 334 cache nodes for throughput versus 75 for memory (Q35), a 3.2 GB index that should be replicated rather than sharded (Q42), exabytes generated versus petabytes stored (Q50).
+- **Ownership removes conflicts.** Home-region ownership (Q39), one shard owner with fencing (Q40, Q48, Q52) and one writer per table during migration (Q33, Q51) avoid coordination instead of resolving it.
+- **Exactly-once is built, not bought.** At-least-once delivery plus idempotent, conditional state transitions at every hop gives effectively-once outcomes (Q29, Q37, Q48, Q53); reconciliation catches the rest.
+- **Quorums and placement set latency.** A 2–2–1 replica layout gave region survival at about 12 ms instead of 65 ms (Q45); a three-region majority gave RPO 0 with automatic failover at one nearby round trip (Q56).
+- **Fan-out is the scaling risk of read-heavy infrastructure.** Multi-get incast (Q35), watch storms (Q52), chat at a million viewers (Q41) and scatter-gather search (Q36) need batching, early termination and herd-free recipes.
+- **Migrations follow one pattern.** Route through an indirection, capture changes first, backfill, verify, switch reads, switch writes, keep a reverse path, clean up last (Q33, Q49, Q51).
+- **Durability nines are counts at scale.** Eleven nines over 100 billion objects is about one loss a year (Q47); repair bandwidth (Q46) and protection from logical corruption (Q56) matter as much as replication.
+- **Staff signals** across this tier: questioning the goal (Q51), separating accuracy classes (Q54), making reconciliation and DR testing first-class systems (Q53, Q56), and stating the scale at which a choice would reverse (Q42).
+:::
+
+**Table 91.107 — Hard and expert questions grouped by the mechanism that decides them.**
+
+| Deciding mechanism | Questions | Owner sections |
+|---|---|---|
+| Idempotency, ledgers, reconciliation | Q29, Q37, Q53 | §22.15, §55.9 |
+| Replicated logs and deterministic state machines | Q30, Q32, Q48, Q52 | §26.3, Ch 31, §32.11 |
+| Quorums, placement and consensus | Q31, Q45, Q56 | §27.8, §28.8, §44.4.3 |
+| Online data movement | Q33, Q49, Q51 | §14.9.5, §34.13, §47.13 |
+| Cache hierarchies and request collapsing | Q34, Q35, Q41 | Ch 20, Ch 21 |
+| Streaming aggregation and sketches | Q36, Q37, Q38, Q50 | §29.8, §17.6, §40.6 |
+| Ownership and conflict avoidance across regions | Q39, Q44, Q54 | Ch 44, §22.8 |
+| Metadata scaling and durable storage | Q46, Q47, Q55 | §15.5–§15.7, §61.8 |
+| Spatial and graph indexes | Q42, Q43 | §17.9, §55.6 |
+| Partitioned timers and ownership | Q40 | §52.9, §26.13 |
+
+## 91.9 Knowledge checkpoint
+
+1. Why must a payment timeout be treated as "unknown" rather than "failed"?
+2. Why does the matching engine replicate the input before matching rather than replicating the output after?
+3. In Q31, what single setting reduced the node count from 150 to 117, and why?
+4. What changed the binding resource of the message-queue cluster in Q32?
+5. In Q33, why must change capture start before backfill?
+6. Why did the largest CDN PoP in Q34 need more servers for requests than for bandwidth?
+7. What problem does a cache lease solve, and how?
+8. Why is merging local top-K lists exact when events are partitioned by item?
+9. Name three data types in Q39 and the conflict strategy for each.
+10. Why is the proximity index in Q42 replicated instead of sharded?
+11. Why does a 2–2–1 replica layout survive a region loss with five voters?
+12. Why does tail sampling require routing by trace ID?
+13. Compute the series availability of five services at 99.95% each.
+14. How does an in-transit account let a wallet transfer cross shards without two-phase commit?
+15. Why does RPO 0 across regions not protect against a bad schema migration?
+
+<details><summary>Answers</summary>
+
+1. The PSP may have charged the card; retrying blindly could double-charge. Query by the attempt's idempotency key first, and never fail over to another PSP while the outcome is unknown.
+2. So that the standby has the same inputs in the same order and, being deterministic, reproduces the same outputs; on failover it continues from the last sequence number without divergence.
+3. Reading from $R = 2$ replicas instead of all three cut replica operations from 9 to 7 million per second; the cluster is throughput-bound, so node count falls proportionally.
+4. Tiered storage: keeping only one day on broker disks cut local disk from 1.21 PB to 0.173 PB, so network and partitions rather than disk set the broker count.
+5. Changes made during the copy must not be missed; starting capture at a recorded position and backfilling from a snapshot at that position lets the applier replay everything after it.
+6. Objects average 100 KB, so 937,500 requests/s needed 19 servers at 50,000 TLS requests/s each, while 750 Gb/s needed only 9.4 at 80 Gb/s.
+7. A stale set after a concurrent write, and stampedes: the cache issues one token per missed key; a delete voids it, so a value read before a write cannot be stored after it, and only the token holder fills the key.
+8. All events of an item are in one partition, so its count there is exact; any global top-K item must be in its own partition's top-K, so the union contains the answer.
+9. Profiles and posts: home-region single writer; likes: per-region counters summed; follows: add/remove set CRDT; usernames: global single writer or consensus (any three).
+10. The whole index is 3.2 GB and changes 23 times a second; it fits in every node's memory, so replication gives capacity and availability without hot shards or cross-shard queries.
+11. Losing the region with two voters leaves 3 of 5, still a majority ($N - n_r = 3 \geq q = 3$).
+12. The keep-or-drop decision needs every span of the trace; spans arrive from many services, so a hash of the trace ID must send them all to the same sampler.
+13. $0.9995^5 = 0.99750$, about 21.9 hours of downtime a year.
+14. The debit moves money from the sender to in-transit in the sender's shard, the credit from in-transit to the receiver in the receiver's shard; each is a balanced local transaction, and the outbox makes the second step reliable and idempotent.
+15. Synchronous replication copies the corruption to every replica immediately; recovery needs point-in-time restore from an independent, immutable backup.
+</details>
+
+## 91.10 Interview questions
+
+These questions are about the meta-skill the library trains: approaching a prompt you have never practiced. Model answers are graded by level as in §88.13.
+
+### Basic
+
+**Q1. You are given a prompt you have never seen. What do you do in the first five minutes?**
+**Answer.** *L4:* ask clarifying questions about features and scale, then list functional and non-functional requirements. *L5:* the same, but aimed at finding the hard part: "Which property must never be violated, and what is the largest number?" Then state assumptions on the board and say which one would change the design most. *L6:* also map the prompt to a known shape (lookup, fan-out, aggregation, inventory, connections, blobs, or infrastructure such as a log or quorum store) and say aloud which parts of that shape do not fit.
+
+**Q2. The interviewer asks for a design "like Dynamo" or "like Kafka". Should you describe the real system?**
+**Answer.** *L4:* describe what you know of it. *L5:* design from requirements, borrowing published mechanisms by name with the reason each fits ("leader epochs because a returning follower must truncate"), and never claim internal details that are not published. *L6:* also state where your requirements diverge from the original's and therefore where your design should too.
+
+### Intermediate
+
+**Q3. Halfway through, your estimate shows the system is ten times smaller than you assumed. What do you do?**
+**Answer.** *L4:* correct the number and continue. *L5:* say what the new number removes ("no sharding, the index fits in memory") and simplify the design on the board; interviewers reward removing boxes. *L6:* also say which number would bring the complexity back and how you would detect it in production, so the simpler design has a stated reversal condition.
+
+**Q4. How do you pick the two or three deep dives in an unfamiliar Hard prompt?**
+**Answer.** *L4:* pick the components you know best. *L5:* pick where the obvious design fails: the invariant (money, ordering, uniqueness), the largest number (a burst, a hot key, a fan-out) and the most likely failure. *L6:* rank them by cost of being wrong, ask the interviewer which they prefer, and connect them ("the fencing token also solves the duplicate-dispatch problem").
+
+### Advanced
+
+**Q5. The interviewer changes a constraint late: "Now it must survive a region loss with no data loss." How do you respond?**
+**Answer.** *L5:* identify what the change touches: synchronous cross-region replication, its latency, and a third region for quorum. Compute one number (the round trip added per commit). *L6:* also identify what it does not touch and what new failure it introduces (logical corruption replicated instantly), and propose the cheapest design that meets it, perhaps for a subset of data only. *L7:* question the scope: which datasets truly need RPO 0, at what cost, and who signs off on that trade.
+
+**Q6. How would you approach a design-review style Expert prompt where the interviewer keeps challenging your choices?**
+**Answer.** *L5:* defend choices with numbers and acknowledge costs. *L6:* treat each challenge as a trade-off with a reversal condition, distinguish one-way from two-way doors, and change the design when the challenge is right. *L7:* steer the review toward the decisions with the largest blast radius (data ownership, consistency model, migration path) and away from easily changed details, and summarize decisions and open risks at the end as you would for stakeholders.
+
+## 91.11 Practical exercises
+
+1. Attempt Q32 and Q35 cold on a 60-minute timer, then redo their estimates with your own hardware numbers (§89.4); note where the binding term changes.
+2. Rewrite the Q33 phase table (Table 91.103) for a MongoDB or DynamoDB migration instead of PostgreSQL; which phases change?
+3. For Q38, implement exact minute-bucket counting and a Count-Min sketch in Python on a synthetic Zipf stream of 10 million events with a fixed seed; measure the sketch's overcount against the $\varepsilon N$ bound.
+4. Take Q45's replica-placement arithmetic and compute commit latency and region survival for 3, 5 and 7 voters across your cloud provider's real regions (use measured RTTs).
+5. Pick three Hard questions and write, for each, the one assumption whose change would alter the design most and how.
+
+## 91.12 Design challenges
+
+1. **Combine Q29 and Q53.** A marketplace with a stored-value wallet and card payments: design the shared ledger and show how a card top-up, a P2P transfer and a payout post.
+2. **Q39 with residency.** Make the social app comply with EU, India and US data-residency rules while keeping a global follow graph; identify which data leaves its home region.
+3. **Q41 at sub-second latency.** Redesign live streaming for interactive auctions with 500 ms glass-to-glass and 200,000 viewers per stream; price the cost per viewer-hour against the HLS design.
+4. **Q50 plus Q54.** Use the tracing pipeline's derived metrics to detect an application-layer flood within 30 s and push a mitigation rule to all PoPs; define the false-positive budget.
+
+## 91.13 References
+
+1. Xu, A. *System Design Interview – An Insider's Guide*. Independently published, 2020.
+2. Xu, A., Lam, S. *System Design Interview – An Insider's Guide: Volume 2*. Byte Code LLC, 2022.
+3. Kleppmann, M. *Designing Data-Intensive Applications*. O'Reilly, 2017.
+4. DeCandia, G., Hastorun, D., Jampani, M., Kakulapati, G., Lakshman, A., Pilchin, A., Sivasubramanian, S., Vosshall, P., Vogels, W. *Dynamo: Amazon's Highly Available Key-value Store*. ACM SOSP, 2007.
+5. Kreps, J., Narkhede, N., Rao, J. *Kafka: a Distributed Messaging System for Log Processing*. NetDB Workshop, 2011.
+6. Fowler, M. *The LMAX Architecture*. martinfowler.com, 2011. https://martinfowler.com/articles/lmax.html
+7. Thompson, M., Farley, D., Barker, M., Gee, P., Stewart, A. *Disruptor: High performance alternative to bounded queues for exchanging data between concurrent threads*. LMAX, 2011.
+8. Nishtala, R., et al. *Scaling Memcache at Facebook*. USENIX NSDI, 2013.
+9. Busch, M., Gade, K., Larson, B., Lok, P., Luckenbill, S., Lin, J. *Earlybird: Real-Time Search at Twitter*. IEEE ICDE, 2012.
+10. Cormode, G., Muthukrishnan, S. "An Improved Data Stream Summary: The Count-Min Sketch and Its Applications." *Journal of Algorithms* 55(1), 2005.
+11. Metwally, A., Agrawal, D., El Abbadi, A. "Efficient Computation of Frequent and Top-k Elements in Data Streams." *ICDT*, 2005.
+12. Nygren, E., Sitaraman, R. K., Sun, J. "The Akamai Network: A Platform for High-Performance Internet Applications." *ACM SIGOPS Operating Systems Review* 44(3), 2010.
+13. Pantos, R., May, W. *HTTP Live Streaming*. RFC 8216, IETF, 2017.
+14. Valve Developer Community. *Source Multiplayer Networking*. https://developer.valvesoftware.com/wiki/Source_Multiplayer_Networking
+15. Corbett, J. C., et al. *Spanner: Google's Globally-Distributed Database*. USENIX OSDI, 2012.
+16. Taft, R., et al. *CockroachDB: The Resilient Geo-Distributed SQL Database*. ACM SIGMOD, 2020.
+17. Ghemawat, S., Gobioff, H., Leung, S.-T. *The Google File System*. ACM SOSP, 2003.
+18. Pan, S., et al. *Facebook's Tectonic Filesystem: Efficiency from Exascale*. USENIX FAST, 2021.
+19. Muralidhar, S., et al. *f4: Facebook's Warm BLOB Storage System*. USENIX OSDI, 2014.
+20. Sigelman, B. H., et al. *Dapper, a Large-Scale Distributed Systems Tracing Infrastructure*. Google Technical Report dapper-2010-1, 2010.
+21. Kaldor, J., et al. *Canopy: An End-to-End Performance Tracing and Analysis System*. ACM SOSP, 2017.
+22. Fowler, M. *StranglerFigApplication*. martinfowler.com, 2004. https://martinfowler.com/bliki/StranglerFigApplication.html
+23. Burrows, M. "The Chubby Lock Service for Loosely-Coupled Distributed Systems." *USENIX OSDI*, 2006.
+24. Hunt, P., Konar, M., Junqueira, F. P., Reed, B. "ZooKeeper: Wait-free Coordination for Internet-scale Systems." *USENIX ATC*, 2010.
+25. Ongaro, D., Ousterhout, J. "In Search of an Understandable Consensus Algorithm." *USENIX ATC*, 2014.
+26. Armbrust, M., Ghodsi, A., Xin, R., Zaharia, M. *Lakehouse: A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics*. CIDR, 2021.
+27. Armbrust, M., Das, T., et al. *Delta Lake: High-Performance ACID Table Storage over Cloud Object Stores*. PVLDB 13(12), 2020.
+28. Verbitski, A., et al. "Amazon Aurora: Design Considerations for High Throughput Cloud-Native Relational Databases." *ACM SIGMOD*, 2017.
+
+## 91.14 Open verification items
+
+- Fowler 2011 (LMAX): confirm the "about 6 million orders per second on a single thread" figure against the article.
+- Corbett et al. 2012: confirm the reported TrueTime uncertainty range of roughly 1–7 ms.
+- Valve Developer Community: confirm the default 100 ms interpolation period and the wording on lag compensation (wiki page, may change).
+- Sigelman et al. 2010: confirm the 1/1,024 sampling figure for early Dapper.
+- Busch et al. 2012: confirm the "searchable within about ten seconds" claim.
+- Geohash cell sizes (precision 5 ≈ 4.9 km, precision 6 ≈ 1.2 × 0.6 km at the equator) are commonly cited approximations; confirm against §17.9.2.
+- All capacity figures (per-node throughputs, \$5 per TB scanned, 50,000 TLS requests/s per edge server, 2 µs per order) are teaching assumptions, not measurements.
+- Integration: merge part A's citations into §91.13 and renumber part B's figures (91.101–91.128) and tables (91.101–91.107).
