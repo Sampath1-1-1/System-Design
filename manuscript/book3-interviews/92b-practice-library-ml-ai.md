@@ -4,7 +4,7 @@ Hard questions change the unit of design. Easy and Medium prompts ask for one mo
 
 Eight of the fourteen questions have a full case study or an owning chapter elsewhere in the book. For those, the solution below is the interview-length answer with the case's numbers, and the cross-reference carries the depth. The other six are full solutions. All designs are *Evidence: Illustrative*: teaching designs with assumed numbers, not descriptions of any company's system.
 
-**Table 92.101 — Hard questions at a glance.**
+**Table 92.7 — Hard questions at a glance.**
 
 | Q | Title | Solution | Deciding deep dive | Owner |
 |---|---|---|---|---|
@@ -58,7 +58,7 @@ Entities (user, item, merchant, card), sources (event streams, warehouse tables)
 
 #### High-level design
 
-**Figure 92.101 — Feature store: one definition, two engines, a tiered online store.**
+**Figure 92.28 — Feature store: one definition, two engines, a tiered online store.**
 
 ```mermaid
 flowchart LR
@@ -148,7 +148,7 @@ The platform's data are job specifications, queue events, node health signals an
 
 #### High-level design
 
-**Figure 92.102 — Training platform control plane.**
+**Figure 92.29 — Training platform control plane.**
 
 ```mermaid
 flowchart LR
@@ -234,7 +234,7 @@ The platform handles artifacts (verified by digest), per-model traffic statistic
 
 #### High-level design
 
-**Figure 92.103 — Multi-tenant serving: tiers, affinity router and controller.**
+**Figure 92.30 — Multi-tenant serving: tiers, affinity router and controller.**
 
 ```mermaid
 flowchart LR
@@ -327,7 +327,7 @@ Non-functional: feed p99 ≤ 150 ms server-side with a 40 ms ranking budget; ses
 
 #### High-level design
 
-**Figure 92.104 — Session-aware personalization: request-time, streaming and batch features.**
+**Figure 92.31 — Session-aware personalization: request-time, streaming and batch features.**
 
 ```mermaid
 flowchart LR
@@ -369,7 +369,7 @@ Budget: retrieval 30 ms, feature fetch 20 ms (hedged), ranking 40 ms, re-ranking
 
 #### Trade-offs and alternatives
 
-**Table 92.102 — Ways to react to a session, by freshness and cost.**
+**Table 92.8 — Ways to react to a session, by freshness and cost.**
 
 | Approach | Freshness | Cost and complexity | Choose when |
 |---|---|---|---|
@@ -438,7 +438,7 @@ Non-functional: retrieval p99 ≤ 20 ms; ANN recall@1,000 ≥ 0.90 against exact
 
 #### High-level design
 
-**Figure 92.105 — Two-tower retrieval with a main IVF-PQ index and a fresh delta index.**
+**Figure 92.32 — Two-tower retrieval with a main IVF-PQ index and a fresh delta index.**
 
 ```mermaid
 flowchart LR
@@ -529,7 +529,7 @@ Chunks with metadata: tenant, source, document ID, ACL principals (users and *un
 
 #### High-level design
 
-**Figure 92.106 — Permission-aware RAG: the index stores principals, the query expands the user.**
+**Figure 92.33 — Permission-aware RAG: the index stores principals, the query expands the user.**
 
 ```mermaid
 flowchart LR
@@ -613,7 +613,7 @@ Conversation history, order and customer facts from tools, policies as code per 
 
 #### High-level design
 
-**Figure 92.107 — Support agent: the model proposes, the policy engine decides.**
+**Figure 92.34 — Support agent: the model proposes, the policy engine decides.**
 
 ```mermaid
 flowchart LR
@@ -697,7 +697,7 @@ Log-mel frames every 10 ms; transcribed audio from vendors and opted-in donation
 
 #### High-level design
 
-**Figure 92.108 — Streaming recognition on device and in the cloud.**
+**Figure 92.35 — Streaming recognition on device and in the cloud.**
 
 ```mermaid
 flowchart LR
@@ -779,7 +779,7 @@ Human reference translations, mined and back-translated parallel data, post-edit
 
 #### High-level design
 
-**Figure 92.109 — Text and live translation with a direction router.**
+**Figure 92.36 — Text and live translation with a direction router.**
 
 ```mermaid
 flowchart LR
@@ -876,7 +876,7 @@ Non-functional: a new failure class goes from first report to a labeled training
 
 #### High-level design
 
-**Figure 92.110 — The perception data engine loop.**
+**Figure 92.37 — The perception data engine loop.**
 
 ```mermaid
 flowchart LR
@@ -970,7 +970,7 @@ Assignment records (unit, experiment, variant, layer, timestamp), exposure event
 
 #### High-level design
 
-**Figure 92.111 — Experimentation platform: deterministic assignment, logged exposure, batch analysis.**
+**Figure 92.38 — Experimentation platform: deterministic assignment, logged exposure, batch analysis.**
 
 ```mermaid
 flowchart LR
@@ -1005,7 +1005,7 @@ Monitor assignment latency, config propagation age, exposure loss by platform, S
 
 #### Trade-offs and alternatives
 
-**Table 92.103 — Choosing the randomization unit.**
+**Table 92.9 — Choosing the randomization unit.**
 
 | Unit | Use when | Cost |
 |---|---|---|
@@ -1063,7 +1063,7 @@ Prediction records (prediction ID, model and version, timestamp, entity, score, 
 
 #### High-level design
 
-**Figure 92.112 — Monitoring platform: log, aggregate, compare, alert.**
+**Figure 92.39 — Monitoring platform: log, aggregate, compare, alert.**
 
 ```mermaid
 flowchart LR
@@ -1151,7 +1151,7 @@ Self-supervised: the next word the user actually typed is the label, available o
 
 #### High-level design
 
-**Figure 92.113 — Federated training with secure aggregation and on-device serving.**
+**Figure 92.40 — Federated training with secure aggregation and on-device serving.**
 
 ```mermaid
 flowchart LR
@@ -1240,7 +1240,7 @@ Non-functional: decisions within 5 s of a decision window closing; each order as
 
 #### High-level design
 
-**Figure 92.114 — Batched matching with learned costs.**
+**Figure 92.41 — Batched matching with learned costs.**
 
 ```mermaid
 flowchart LR
@@ -1297,7 +1297,7 @@ Greedy is simple and immediate but myopic; reinforcement learning of the full po
 
 Expert prompts are platforms or products whose cost is measured in thousands of GPUs, whose quality cannot be read off a single metric, or whose failure modes include safety and abuse. The interviewer expects you to size the system from tokens, FLOPs or GPU-seconds within the first ten minutes, to name the one decision that moves cost or risk by multiples, and to define how quality is measured before you defend an architecture. Seven of the twelve questions have a full case study or an owning chapter; five are full solutions here. As in §92.6, all designs are *Evidence: Illustrative*.
 
-**Table 92.104 — Expert questions at a glance.**
+**Table 92.10 — Expert questions at a glance.**
 
 | Q | Title | Solution | Deciding deep dive | Owner |
 |---|---|---|---|---|
@@ -1349,7 +1349,7 @@ The platform's data are request ledgers (tokens in, cached, out; GPU-seconds; cl
 
 #### High-level design
 
-**Figure 92.115 — Inference platform: gateway, router, disaggregated pools.**
+**Figure 92.42 — Inference platform: gateway, router, disaggregated pools.**
 
 ```mermaid
 flowchart LR
@@ -1437,7 +1437,7 @@ Tokenized, deduplicated, filtered corpus (about 15.6 trillion tokens at roughly 
 
 #### High-level design
 
-**Figure 92.116 — Pre-training cluster: compute, fabric, storage and operations.**
+**Figure 92.43 — Pre-training cluster: compute, fabric, storage and operations.**
 
 ```mermaid
 flowchart LR
@@ -1519,7 +1519,7 @@ Tenant instruction or chat datasets with chat templates and loss masking (§76.7
 
 #### High-level design
 
-**Figure 92.117 — Fine-tuning service: validate, train, evaluate, serve on a shared base.**
+**Figure 92.44 — Fine-tuning service: validate, train, evaluate, serve on a shared base.**
 
 ```mermaid
 flowchart LR
@@ -1603,7 +1603,7 @@ Prompt context: prefix and suffix around the cursor, open files, recently edited
 
 #### High-level design
 
-**Figure 92.118 — Coding assistant: client-side debounce, prefix-affine completion, sandboxed agent.**
+**Figure 92.45 — Coding assistant: client-side debounce, prefix-affine completion, sandboxed agent.**
 
 ```mermaid
 flowchart LR
@@ -1694,7 +1694,7 @@ Task inputs, step records (prompt version, model, tool calls and results, tokens
 
 #### High-level design
 
-**Figure 92.119 — Agent platform: durable runtime, policy, tools and observability.**
+**Figure 92.46 — Agent platform: durable runtime, policy, tools and observability.**
 
 ```mermaid
 flowchart LR
@@ -1781,7 +1781,7 @@ Suite items from stratified production samples (redacted), incidents, unanswerab
 
 #### High-level design
 
-**Figure 92.120 — Evaluation platform in the release path.**
+**Figure 92.47 — Evaluation platform in the release path.**
 
 ```mermaid
 flowchart LR
@@ -1866,7 +1866,7 @@ Web or catalog index, passage index, query logs, rater labels for relevance and 
 
 #### High-level design
 
-**Figure 92.121 — Answer engine: results never wait for the answer.**
+**Figure 92.48 — Answer engine: results never wait for the answer.**
 
 ```mermaid
 flowchart LR
@@ -1947,7 +1947,7 @@ Cluster state (free GPUs by node, rack and pod; health), job specs, historical r
 
 #### High-level design
 
-**Figure 92.122 — Scheduler loop for gangs, topology and backfill.**
+**Figure 92.49 — Scheduler loop for gangs, topology and backfill.**
 
 ```mermaid
 flowchart LR
@@ -2031,7 +2031,7 @@ Vectors with IDs, tenant and metadata; write-ahead log; segment metadata. Qualit
 
 #### High-level design
 
-**Figure 92.123 — Vector database with separated ingest, build and query roles.**
+**Figure 92.50 — Vector database with separated ingest, build and query roles.**
 
 ```mermaid
 flowchart LR
@@ -2115,7 +2115,7 @@ Policy taxonomy with examples; labeled datasets per category (including borderli
 
 #### High-level design
 
-**Figure 92.124 — Layered guardrails around the model.**
+**Figure 92.51 — Layered guardrails around the model.**
 
 ```mermaid
 flowchart LR
@@ -2206,7 +2206,7 @@ Prompt logs (with consent), user feedback (saves, downloads, regenerations), hum
 
 #### High-level design
 
-**Figure 92.125 — Asynchronous diffusion service with safety on both sides.**
+**Figure 92.52 — Asynchronous diffusion service with safety on both sides.**
 
 ```mermaid
 flowchart LR
@@ -2241,7 +2241,7 @@ Queue wait and time-to-image per tier, GPU-seconds per image, batch fill, safety
 2. **Batching.** Group by resolution and steps; asynchronous jobs tolerate seconds of batching delay.
 3. **Safety and provenance.** Prompt and image filters, hash matching against known illegal content, refusal for real-person imagery where policy requires it, provenance metadata.
 
-**Table 92.105 — Levers on diffusion serving cost.**
+**Table 92.11 — Levers on diffusion serving cost.**
 
 | Lever | Effect on GPU-seconds | Quality risk | Choose when |
 |---|---|---|---|
@@ -2305,7 +2305,7 @@ Restaurant content features (cuisine, menu embeddings, price, photos, location, 
 
 #### High-level design
 
-**Figure 92.126 — Exploration layer for new restaurants.**
+**Figure 92.53 — Exploration layer for new restaurants.**
 
 ```mermaid
 flowchart LR
@@ -2376,7 +2376,7 @@ Epsilon-greedy is simple but wastes exploration on clear losers; UCB is determin
 - **Level signals repeat across all 26 questions**: mid-level answers name components; senior answers add the correct mechanisms; staff answers quantify the deciding trade-off, design the measurement, and plan the operation of the system over time.
 :::
 
-**Table 92.106 — Numbers from this half of the library worth remembering.**
+**Table 92.12 — Numbers from this half of the library worth remembering.**
 
 | Number | Meaning | Question |
 |---|---|---|
