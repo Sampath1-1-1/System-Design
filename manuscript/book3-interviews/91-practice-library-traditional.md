@@ -2030,3 +2030,400 @@ flowchart LR
 - **Senior:** chunked parallel transcoding, adaptive bitrate mechanics, egress arithmetic.
 - **Staff:** treats codec and rendition choice as an economic policy, and plans origin protection and multi-CDN delivery.
 
+### 91.5.12 Q24. Metrics monitoring system
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §56.6 (full case study); §12.8 (time-series databases), §40.5 (metrics), §89.18.7 (drill)
+
+#### Prompt
+
+"Design a metrics monitoring and alerting system, like Prometheus or Datadog, for a company running 100,000 containers."
+
+#### Clarifying questions and assumptions
+
+- Pull or push? Pull (scrape) inside the cluster, push for short-lived jobs. Query language? PromQL-like aggregation over labels.
+- Scale (§56.6.4)? 50 million active series scraped every 15 s; 15 days at full resolution, 13 months downsampled to 5 minutes.
+
+#### Requirements
+
+- **FR:** ingest samples; query by label with aggregation; dashboards; alert rules evaluated continuously with notification routing.
+- **NFR:** data queryable within 30 s; alert evaluation every 30–60 s; dashboard queries p95 < 2 s over 24 h; monitoring must stay up when what it monitors is down.
+
+#### Estimation
+
+::: example
+**Worked example — Samples, bytes and memory (§56.6.4; §89.6).**
+
+1. Samples: $5 \times 10^7 / 15 = 3.33 \times 10^6$/s.
+2. Storage at 1.37 bytes/sample (Gorilla-style compression, §12.8.2): 395 GB/day; 5.9 TB for 15 days; 7.8 TB for 13 months at 5-minute resolution.
+3. Ingester memory at about 4 KB per active series, replication factor 3: 600 GB across the fleet.
+
+**Interpretation.** Bytes are small thanks to compression; active series (cardinality) drive memory and cost. **Implication.** Control label cardinality as a first-class limit.
+:::
+
+#### API and data model
+
+- Scrape endpoint `/metrics` on each target; remote-write `POST /api/v1/push`; query `GET /api/v1/query_range?query=&start=&end=&step=`.
+- Series identity = metric name + sorted label set; an inverted index from label pairs to series IDs; compressed chunks per series per 2-hour block.
+
+#### High-level design
+
+**Figure 91.25 — Metrics: scrape, ingest, compact, query, alert.**
+
+```mermaid
+flowchart LR
+  T([Targets]) -->|scrape every 15 s| AG[Collectors]
+  AG -->|remote write| ING[Ingesters<br/>RF 3, in-memory heads]
+  ING -.->|"2 h blocks"| OBJ[(Object storage)]
+  CMP[Compactor and<br/>downsampler] -.-> OBJ
+  Q[Query frontend] --> ING
+  Q --> SG[Store gateways] --> OBJ
+  RULE[Rule evaluator] --> Q
+  RULE -.->|firing alerts| AM[Alert manager] --> PG{{Paging}}
+```
+
+**Reading the diagram.** Collectors scrape targets and remote-write samples to ingesters partitioned by series hash with replication factor 3, which keep recent data in memory and flush immutable 2-hour blocks to object storage asynchronously. A compactor merges and downsamples blocks. Queries fan out to ingesters for recent data and to store gateways for older blocks. A rule evaluator runs alert queries on a schedule and sends firing alerts to an alert manager that deduplicates, groups and pages. Failure points: a cardinality explosion (per-tenant series limits), an ingester loss (replicas), and the monitoring system sharing failure domains with production (run it separately, with an external heartbeat check). Scaling: ingesters by active series; queries by caching and splitting time ranges.
+
+#### Deep dives
+
+1. **Cardinality:** a label like `user_id` multiplies series; enforce limits at ingest and reject with a clear error.
+2. **Compression and blocks:** delta-of-delta timestamps and XOR values give about 1.37 bytes per sample; immutable blocks make object storage the cheap long-term tier.
+3. **Alerting reliability:** evaluate alerts close to ingesters, deduplicate across replicas, and alert on the absence of data ("dead man's switch").
+
+#### Trade-offs and alternatives
+
+- Pull versus push: pull detects dead targets and controls load; push suits short-lived jobs and crossing networks.
+- Self-run versus SaaS: SaaS cost scales with series; self-run costs a team.
+
+#### Follow-up questions
+
+1. *"A deploy adds a high-cardinality label."* Per-tenant limits reject it; dashboards show the top offenders.
+2. *"Query over a year is slow."* Use downsampled data and cache results per step-aligned range.
+3. *"Ingester crashes before flushing."* A write-ahead log plus replicas recovers the head.
+4. *"Who monitors the monitoring?"* An independent, minimal external check.
+
+#### What distinguishes levels
+
+- **Mid:** time-series database, collectors, dashboards, alerts.
+- **Senior:** estimates samples and memory, explains compression and cardinality limits.
+- **Staff:** designs failure-domain separation and alert reliability, and treats cardinality as a cost-governance problem.
+
+### 91.5.13 Q25. Distributed logging pipeline
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §56.6 (full case study); Chapter 31 (Kafka), §89.11 (queues and streams)
+
+#### Prompt
+
+"Design a centralized logging system that collects logs from all our services, lets engineers search them, and keeps some for a year for audit."
+
+#### Clarifying questions and assumptions
+
+- Scale (§56.6.4)? 100,000 containers × 20 lines/s × 400 bytes; incident peak 3× average. Retention: 7 days hot and searchable, 30 days warm, audit streams (10%) one year.
+- Search style? Filter by service, time and fields, plus substring search over the hot window.
+
+#### Requirements
+
+- **FR:** collect from every host; parse and enrich; search and tail; retention tiers; access control for sensitive logs.
+- **NFR:** searchable within 30 s; no loss during a 6-hour storage outage; incident peaks absorbed; cost per GB controlled.
+
+#### Estimation
+
+::: example
+**Worked example — Volume, tiers and buffer (§56.6.4; §89.6, §89.11).**
+
+1. Ingest: $10^5 \times 20 \times 400 = 800$ MB/s average, 69.12 TB/day raw; 2.4 GB/s at incident peak.
+2. At 10:1 compression: hot 7 days × 2 copies = 96.8 TB of SSD; warm 159 TB; audit archive 232 TB.
+3. A full-text inverted index over the hot window would need about 484 TB of SSD, five times the columnar hot tier.
+4. Kafka buffer for 24 h at 4:1 producer compression and replication factor 3: 51.8 TB; with consumers at 2× ingest, a 6-hour outage drains in 6 h.
+
+**Interpretation.** Indexing choice dominates cost. **Implication.** Store logs in compressed columnar or chunked form with label indexes, and full-text index only what needs it.
+:::
+
+#### API and data model
+
+- Agents ship batches over gRPC or HTTP with backpressure; query `GET /v1/logs?query={service="checkout"} |= "timeout"&start=&end=`.
+- Log record: timestamp, service, host, level, trace ID, message, structured fields; chunks keyed by `(tenant, stream labels, time range)`.
+
+#### High-level design
+
+**Figure 91.26 — Logging: agents, durable buffer, tiered storage.**
+
+```mermaid
+flowchart LR
+  H([Host agents]) -->|batched, compressed| KF[[Kafka buffer<br/>24 h retention]]
+  KF -.-> ING[Ingesters:<br/>parse, enrich, chunk]
+  ING --> HOT[(Hot tier SSD<br/>7 days)]
+  ING -.->|"flush chunks"| WARM[(Object storage<br/>warm and archive)]
+  E([Engineer]) -->|query| QF[Query service]
+  QF --> HOT
+  QF --> WARM
+```
+
+**Reading the diagram.** Agents on every host batch, compress and send logs to a Kafka buffer that holds 24 hours, decoupling producers from storage. Ingesters consume asynchronously, parse and enrich (adding service and trace IDs), and write compressed chunks with label indexes to the hot tier, flushing older chunks to object storage. Queries read the hot tier for recent data and scan warm chunks in parallel for older ranges. Failure points: storage outages (Kafka absorbs up to its retention), agent buffers filling on a disconnected host (local disk spool, then drop by priority), and runaway log volume from one service (per-tenant quotas). Scaling: Kafka partitions and ingesters with volume; query workers for scans.
+
+#### Deep dives
+
+1. **Durable buffering** sized from outage duration and drain rate (§89.11).
+2. **Index labels, not content:** label indexes plus brute-force scan of compressed chunks is far cheaper than full-text indexing.
+3. **Sampling and quotas:** drop or sample debug logs under pressure; never drop audit streams.
+
+#### Trade-offs and alternatives
+
+- Full-text index (Elasticsearch-style) gives fast arbitrary search at about 5× storage cost; use it for a small, high-value subset.
+- Logs versus traces and metrics: high-volume repetitive events are cheaper as metrics.
+
+#### Follow-up questions
+
+1. *"PII in logs?"* Redact at the agent or ingester; restrict access by stream; audit queries.
+2. *"Search 30 days for one trace ID?"* Bloom filters per chunk on trace IDs skip most chunks.
+3. *"A service logs 100× normal."* Per-tenant rate limits with alerts to the owner.
+4. *"Exactly-once?"* At-least-once with chunk-level deduplication by `(source, offset)`.
+
+#### What distinguishes levels
+
+- **Mid:** agents, a queue and Elasticsearch.
+- **Senior:** tiers sized with compression and replication, buffer sized for outages, cost of full-text indexing.
+- **Staff:** treats logging as a cost-governed platform with quotas, sampling policy, PII controls and tenant isolation.
+
+### 91.5.14 Q26. Email service
+
+**Difficulty:** Medium · **Time:** 60 min · **Related:** §52.7 (notification system, email channel), Chapter 15 (object storage), Chapter 16 (search), §54.8 (sync journals)
+
+#### Prompt
+
+"Design a web-mail service like Gmail: users send and receive email with the rest of the internet, read it on web and mobile, organize it with labels and search it."
+
+#### Clarifying questions and assumptions
+
+- Internet interoperability: mail arrives and leaves over SMTP (RFC 5321); authentication of senders through SPF, DKIM and DMARC. IMAP access as an extension.
+- Scale? 100 million mailboxes, 40 million DAU; each mailbox receives 40 accepted messages per day (spam rejected at the door is extra traffic); average message 50 KB including attachments, 10 KB of text; users send 5 messages per day; peak-to-average ratio 3 (business hours).
+- Storage quota? 15 GB per user; messages kept until deleted.
+
+#### Requirements
+
+- **FR:** receive from the internet with spam and malware filtering; send with retries and bounces; mailbox views (inbox, labels, threads); search; multi-device sync with push.
+- **NFR:** never lose an accepted message (once SMTP replies 250, the message is durable); inbox list p99 < 300 ms; search p95 < 1 s; inbound delivered to the mailbox within 10 s; outbound reputation protected.
+
+#### Estimation
+
+::: example
+**Worked example — Messages, bytes and indexes (§89.5; §89.6).**
+
+1. Inbound: $10^8 \times 40 = 4 \times 10^9$ messages/day; 46,300/s average; 139,000/s at peak.
+2. Storage: $4 \times 10^9 \times 50$ KB $= 200$ TB/day; 73 PB/year logical; 102 PB/year raw with erasure coding at 1.4×.
+3. Metadata at 1 KB per message: 4 TB/day. Search index at 30% of 10 KB of text: 12 TB/day.
+4. Mailbox reads: $4 \times 10^7 \times 50 = 2 \times 10^9$/day; 69,400/s at peak.
+5. Outbound: $4 \times 10^7 \times 5 = 2 \times 10^8$/day, 2,315/s average.
+
+**Interpretation.** Inbound volume and storage dominate; outbound is small but carries reputation risk. **Implication.** Separate bodies (object storage) from per-user metadata (partitioned by mailbox), and design inbound acceptance around durability.
+:::
+
+#### API and data model
+
+- Client: `GET /v1/mailbox/threads?label=INBOX&cursor=`; `GET /v1/messages/{id}`; `POST /v1/messages/send` with idempotency key; `POST /v1/messages/{id}/labels`; `GET /v1/search?q=`; `GET /v1/changes?since=history_id`.
+- `messages(user_id, message_id, thread_id, history_id, labels, headers_summary, body_ref, size)` partitioned by `user_id`; `threads(user_id, thread_id, last_ts, snippet)`; bodies and attachments in object storage keyed by content hash; a per-user inverted index; a per-user change log ordered by `history_id`.
+
+#### High-level design
+
+**Figure 91.27 — Web mail: inbound MTA, mailbox store, outbound queue.**
+
+```mermaid
+flowchart LR
+  EXT{{Internet mail servers}} -->|SMTP| MX[Inbound MTAs]
+  MX --> FIL[Spam and malware<br/>filtering]
+  FIL --> DLV[Delivery service]
+  DLV --> MB[(Mailbox metadata<br/>by user)]
+  DLV --> BL[(Bodies and attachments)]
+  DLV -.-> IX[Indexer] --> SI[(Per-user search index)]
+  DLV -.->|change| PUSH[Push and sync]
+  U([Web and mobile]) -->|API| API[Mail API] --> MB
+  API --> BL
+  API --> SI
+  API -->|send| OQ[[Outbound queue]]
+  OQ -.-> OMTA[Outbound MTAs<br/>DKIM signing] -->|SMTP| EXT
+```
+
+**Reading the diagram.** Internet servers connect over SMTP to inbound MTAs, which check SPF, DKIM and DMARC and pass messages through spam and malware filters. The delivery service writes the body to object storage and the metadata row to the recipient's mailbox partition, and only then lets the MTA answer `250` to the sender. Indexing and change notification follow asynchronously (dotted). Clients use the mail API; sends go into a durable outbound queue whose MTAs sign with DKIM and deliver to the recipient domains, retrying temporary failures. Failure points: the mailbox store during inbound (the MTA answers a temporary `4xx`, so the sender retries; no message lost), outbound reputation (per-domain throttling and bounce handling), and the indexer lag (search briefly stale). Scaling: MTAs and filters by connection rate; mailboxes by user partition; blobs by object storage.
+
+#### Deep dives
+
+1. **Durability at the SMTP boundary.** SMTP is store-and-forward: once you reply `250`, the message is your responsibility. Write the body and metadata durably (replicated) before replying; if any write fails, reply with a temporary failure and let the sender retry. For a message to many local recipients, store the body once and write a metadata row per recipient.
+2. **Mailbox model and sync.** Labels rather than folders make a message appear in several views without copies; threads group by headers and subject. Every change increments the mailbox's `history_id`, and clients sync with "changes since history_id" (the journal pattern of §54.8), with push notifications to wake mobile devices.
+3. **Outbound deliverability.** Sending is queued, not synchronous. MTAs sign with DKIM, publish SPF and DMARC records, throttle per destination domain, retry temporary failures with backoff for several days as SMTP expects, process bounces into suppression lists, and isolate bulk or suspicious senders on separate IP pools so one abuser cannot damage everyone's reputation.
+
+#### Trade-offs and alternatives
+
+- **Per-user partitioning versus per-message partitioning.** Per-user keeps a mailbox's list, labels and search local and cheap; it makes very large mailboxes hot, which per-user sub-partitioning by time solves.
+- **Attachment deduplication by hash.** Saves storage for widely forwarded attachments; requires reference counting for deletion and care about cross-user existence leaks.
+- **Per-user search indexes versus one global index.** Per-user indexes are small, private by construction and easy to delete; a global index is cheaper to build but needs ACL filtering on every query.
+
+#### Follow-up questions
+
+1. *"A user receives a message while offline on mobile."* Delivery writes it and records a change; a push wakes the app, which syncs from its last `history_id`.
+2. *"How do you handle a recipient's server that is down?"* Keep the message in the outbound queue, retry with backoff, warn the sender after a delay, bounce when the retry window ends.
+3. *"How do you filter spam at 139,000 messages per second?"* Reject cheaply first (connection reputation, authentication results), then content classifiers; user "report spam" actions feed retraining.
+4. *"Delete an account?"* Mark the mailbox deleted, remove index and metadata, then garbage-collect blobs whose reference counts reach zero.
+5. *"Quota enforcement?"* Track bytes per mailbox on delivery; above quota, return a permanent failure to senders with a clear reason.
+
+#### What distinguishes levels
+
+- **Mid:** web API, a database of messages and an SMTP server.
+- **Senior:** separates bodies from metadata, partitions by user, ties durability to the SMTP `250`, and designs sync and search.
+- **Staff:** treats deliverability and abuse as system requirements (authentication, IP pools, suppression), and plans storage economics and data-deletion obligations at petabyte scale.
+
+### 91.5.15 Q27. Calendar and scheduling
+
+**Difficulty:** Medium · **Time:** 60 min · **Related:** §52.9 (job scheduler), §52.7 (notifications), §55.8 (holds and contention)
+
+#### Prompt
+
+"Design a calendar service like Google Calendar: users create events, invite others, see each other's availability, book meeting rooms and get reminders."
+
+#### Clarifying questions and assumptions
+
+- Recurring events? Yes, with exceptions ("every Tuesday except next week, and move the one after to Wednesday"). Time zones? Users and attendees in different zones, across daylight-saving changes.
+- Interoperability? Invitations by email (iCalendar, RFC 5545) and device sync as extensions.
+- Scale? 200 million users, 50 million DAU; 150 million event creates and edits per day; 4 attendees per event on average; 30 calendar views per DAU per day; 250 million reminders per day.
+
+#### Requirements
+
+- **FR:** create, edit and delete events, including recurring ones with exceptions; invite and RSVP; free/busy lookup and "find a time"; room booking without double booking; reminders; sharing calendars.
+- **NFR:** calendar view p99 < 300 ms; reminders fire within 30 s of their time; no lost edits; a room never double-booked; correct local times across DST changes.
+
+#### Estimation
+
+::: example
+**Worked example — Small writes, spiky reminders (§89.5; §89.6; §89.11).**
+
+1. Writes: $1.5 \times 10^8 / 86{,}400 = 1{,}736$/s average; peak $1.5 \times 10^8 \times 0.10 / 3{,}600 \times 2 = 8{,}333$/s; attendee rows at 4 per event, 33,333/s.
+2. Views: $50 \times 10^6 \times 30 = 1.5 \times 10^9$/day; peak 83,333/s.
+3. Storage per year: events $5.5 \times 10^{10}$ × 1 KB = 54.75 TB; attendee rows at 100 B each, 21.9 TB.
+4. Reminders: 250 million/day averages 2,900/s, but meetings start on the hour: if 3% of a day's reminders fall in one minute (10 minutes before 09:00 in the busiest time zone), that minute needs $7.5 \times 10^6 / 60 = 125{,}000$/s.
+
+**Interpretation.** Storage and average writes are modest; reminders are 43 times more concentrated at the top of the hour than on average. **Implication.** Precompute reminder buckets ahead of time and spread delivery within the allowed 30 s.
+:::
+
+#### API and data model
+
+- `POST /v1/calendars/{id}/events {start, end, tz, rrule?, attendees, room?}`; `PATCH /v1/events/{id}?instance=2026-11-17T10:00` (edit one occurrence) or `?scope=following`; `GET /v1/calendars/{id}/events?from=&to=` (expanded instances); `POST /v1/freebusy {users, from, to}`; `POST /v1/events/{id}/rsvp`.
+- `events(event_id, calendar_id, organizer, start_local, end_local, tzid, rrule, version)`; `exceptions(event_id, original_start, override_fields | canceled)`; `attendees(event_id, user_id, rsvp)`; `user_events(user_id, event_id)` index for each attendee; `reminders(fire_minute, user_id, event_id, instance)` bucketed by minute; rooms modeled as calendars with a booking constraint.
+
+#### High-level design
+
+**Figure 91.28 — Calendar: event store, expansion, free/busy and reminders.**
+
+```mermaid
+flowchart LR
+  U([User]) -->|create, edit| ES[Event service]
+  ES --> EDB[(Events, exceptions,<br/>attendees by calendar)]
+  ES -.-> K[[Change log]]
+  K -.-> FB[Free/busy builder] --> FBC[(Busy intervals<br/>per user, 90 days)]
+  K -.-> RP[Reminder planner] --> RB[(Reminder buckets<br/>by minute)]
+  RB -.-> RD[Reminder dispatcher] --> NOT[Notification service]
+  K -.-> INV[Invitation sender]
+  U -->|view range| VS[View service] --> EDB
+  U -->|find a time| FT[Scheduling service] --> FBC
+```
+
+**Reading the diagram.** Edits go synchronously to the event service, which stores events, recurrence rules, exceptions and attendee rows partitioned by calendar (cylinder) and appends to a change log. From the log, asynchronous builders (dotted) maintain per-user busy intervals for the next 90 days, plan reminders into per-minute buckets, and send invitations. Views expand recurring events for the requested range at read time; "find a time" intersects busy intervals. A dispatcher reads each minute's bucket and hands reminders to the notification service (Q9). Failure points: builder lag (free/busy briefly stale; booking still checks the source of truth), the reminder dispatcher at the top of the hour (pre-loaded buckets and horizontal workers), and DST rule changes (recompute affected instances). Scaling: events by calendar ID; reminder buckets by minute and user hash.
+
+#### Deep dives
+
+1. **Recurrence and exceptions.** Store a recurring series once as a rule (RRULE, RFC 5545) plus exceptions keyed by original start time; expand instances only for the requested window. Materializing every instance forever is impossible for "every weekday, no end". Edits are "this instance" (an exception), "this and following" (split the series into two rules) or "all" (edit the rule and keep exceptions that still match).
+2. **Time zones.** Store recurring events in local wall time with an IANA time-zone ID, not in UTC: a 09:00 weekly meeting in New York must stay at 09:00 local after the DST change, which moves it by an hour in UTC. Single events can be stored as instants. When governments change DST rules, the time-zone database update changes future instances, so expansion must happen with the current database.
+3. **Rooms without double booking, and reminders at :00.** Booking a room is an inventory problem like Q7: a conditional insert into the room's calendar that fails if an overlapping confirmed booking exists, run inside the room's partition (for recurring bookings, check the expanded instances within a horizon). Reminders are planned ahead into minute buckets and dispatched by many workers, each owning a hash range of users, with jitter inside the 30-second budget so the 125,000/s minute stays manageable.
+
+#### Trade-offs and alternatives
+
+- **Expand at read versus materialize instances.** Reading expands cheaply for one user's week; materializing a 90-day horizon speeds free/busy across many users. Do both: read-time expansion for views, a materialized busy-interval cache for scheduling.
+- **Per-attendee copies versus one event with attendee rows.** One event plus attendee rows keeps edits consistent; per-attendee copies (common for cross-organization invitations by email) allow private notes and different reminders but must be reconciled by `UID` and sequence number.
+- **Reminder planning horizon.** Planning a day ahead keeps buckets small; any edit must update the plan, so planning is triggered by the change log.
+
+#### Follow-up questions
+
+1. *"An organizer moves a recurring meeting from Tuesdays to Wednesdays starting next month."* Split the series at that date: end the old rule, create a new one, and move future exceptions.
+2. *"Find a 30-minute slot for 10 people next week."* Fetch each person's busy intervals, merge into one sorted list, and scan for gaps within working hours in each person's time zone.
+3. *"Two people book the last room at once."* The conditional insert succeeds for one; the other sees a conflict and alternatives.
+4. *"A user edits an event offline on a phone."* The client sends the edit with the event's version; a conflicting server version produces a merge per field or asks the user.
+5. *"Invite someone at another company?"* Send an iCalendar invitation by email; their replies update RSVP by event `UID`.
+
+#### What distinguishes levels
+
+- **Mid:** events and attendees tables, a view API and a cron job for reminders.
+- **Senior:** recurrence as rules plus exceptions, local time with time-zone IDs, conditional room booking, and reminder buckets sized for the top-of-hour spike.
+- **Staff:** separates the source of truth from derived views (free/busy, reminder plans) with lag budgets, handles time-zone database changes, and designs cross-organization invitations as eventually consistent copies.
+
+### 91.5.16 Q28. Collaborative document editing
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §54.7 (full case study, including operational transformation); §27.14 and §45.6 (CRDTs)
+
+#### Prompt
+
+"Design Google Docs: several people edit the same document at the same time and see each other's changes and cursors in real time."
+
+#### Clarifying questions and assumptions
+
+- Rich text, comments and version history in scope; offline editing for short periods; up to about 100 simultaneous editors per document.
+- Scale (§54.7.4)? 5 million documents open for editing at peak, 20% with someone typing; clients batch keystrokes into at most 2 operation batches per second per active document.
+
+#### Requirements
+
+- **FR:** concurrent editing with convergence; presence and cursors; comments; version history and restore; access control from the file service.
+- **NFR:** own keystrokes applied locally (0 ms); others' edits visible within 500 ms at p95; no acknowledged edit lost; all replicas converge.
+
+#### Estimation
+
+::: example
+**Worked example — Many tiny independent streams (§54.7.4).**
+
+1. Active documents: $5 \times 10^6 \times 0.2 = 10^6$.
+2. Operation batches: $10^6 \times 2 = 2 \times 10^6$ commits/s, each fanned out to the document's other editors.
+3. At 5,000 active documents per session server, about 200 servers carry typing load, plus headroom.
+
+**Interpretation.** Aggregate load is large but each document's rate is tiny and independent. **Implication.** Partition by document and serialize each document's operations on one owner.
+:::
+
+#### API and data model
+
+- WebSocket per open document: client sends `ops {base_revision, ops[]}`; server returns `ack {revision}` and broadcasts transformed ops; `presence {cursor}`.
+- `doc_ops(doc_id, revision, ops, author, ts)` append-only; periodic `snapshots(doc_id, revision, content)`; metadata and ACLs in the file service.
+
+#### High-level design
+
+**Figure 91.29 — Collaborative editing: one session owner per document.**
+
+```mermaid
+flowchart LR
+  A([Editor A]) <-->|WebSocket| SS[Session server<br/>owns doc 42]
+  B([Editor B]) <-->|WebSocket| SS
+  SS -->|"append ops, revision n"| OL[(Operation log)]
+  SS -.->|periodic| SN[(Snapshots)]
+  SS -->|check access| ACL[File and ACL service]
+  RTR[Document router] -.->|"doc id to owner"| SS
+```
+
+**Reading the diagram.** All editors of a document connect to the session server that currently owns it, found through a router (a lease-based assignment). The owner transforms each incoming batch against operations committed since its base revision, appends it to the operation log at the next revision (cylinder), acknowledges the sender and broadcasts to the others. Snapshots are written periodically so loading a document does not replay its whole history. Access is checked against the file service. Failure points: the session server (another takes the lease, loads the snapshot plus later ops, and clients resend unacknowledged batches), and an editor offline for long (larger transforms or a CRDT merge). Scaling: documents spread across session servers by consistent hashing; a very popular document becomes read-mostly with viewers fed from a fan-out tier.
+
+#### Deep dives
+
+1. **Operational transformation with a central server:** the server's total order per document makes OT simple; clients transform their pending ops against what the server sends (§54.7.8).
+2. **CRDT alternative:** CRDTs converge without a central sequencer, which suits offline and peer-to-peer editing, at the cost of metadata per character (§45.6).
+3. **Durability and history:** acknowledge only after the op is in the log; history is the log, compacted into snapshots.
+
+#### Trade-offs and alternatives
+
+- OT with a server versus CRDT: OT is compact and proven with a central owner; CRDTs win when offline or decentralized editing matters.
+- One owner per document limits a document to one server's capacity, ample for 100 editors.
+
+#### Follow-up questions
+
+1. *"Two users type at the same position."* The server orders them; transformation shifts the later one; both converge.
+2. *"Session server crashes mid-edit."* New owner loads snapshot plus log; clients resend unacknowledged ops with their base revision.
+3. *"Restore a version from last week?"* Replay to that revision or load the nearest snapshot, then commit the restore as a new operation.
+4. *"10,000 viewers on one document?"* Separate viewers from editors and fan out committed ops through a broadcast tier.
+
+#### What distinguishes levels
+
+- **Mid:** WebSockets and saving the document repeatedly.
+- **Senior:** single owner per document, OT or CRDT explained, revision-based acknowledgment and recovery.
+- **Staff:** compares OT and CRDT by product needs (offline, decentralization), plans ownership leases and failover, and separates viewer fan-out from the editing path.
+

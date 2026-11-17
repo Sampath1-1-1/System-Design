@@ -51,7 +51,7 @@ idempotency(key PK, request_hash, response, expires_at)
 
 #### High-level design
 
-**Figure 91.101 — Payment system: synchronous money path and asynchronous bookkeeping.**
+**Figure 91.30 — Payment system: synchronous money path and asynchronous bookkeeping.**
 
 ```mermaid
 flowchart LR
@@ -144,7 +144,7 @@ Journal: (partition, seq) -> input message, append-only
 
 #### High-level design
 
-**Figure 91.102 — Matching engine: sequence, replicate, then match deterministically.**
+**Figure 91.31 — Matching engine: sequence, replicate, then match deterministically.**
 
 ```mermaid
 flowchart LR
@@ -164,10 +164,10 @@ flowchart LR
 #### Deep dives
 
 1. **Determinism through a sequenced log.** The engine is a replicated state machine (§26.3.2): same inputs in the same order give the same trades. Time comes from the sequencer's stamp, never from the engine's clock; random numbers and hash-map iteration order are banned in matching code. Recovery is "load snapshot, replay journal from its sequence number"; a failover standby is already caught up.
-2. **The latency budget.** Kernel-bypass networking, pinned cores, preallocated object pools and lock-free ring buffers between stages. Table 91.101 allocates the 100 µs budget; replication to the standby is the largest single term, which is why the standby sits in the same data center and the cross-site disaster-recovery copy is asynchronous.
+2. **The latency budget.** Kernel-bypass networking, pinned cores, preallocated object pools and lock-free ring buffers between stages. Table 91.5 allocates the 100 µs budget; replication to the standby is the largest single term, which is why the standby sits in the same data center and the cross-site disaster-recovery copy is asynchronous.
 3. **Order-book data structure.** Price levels as arrays indexed by tick offset (or a balanced tree for wide ranges), each a FIFO list; an index from order ID to node gives O(1) cancel, which matters because cancels often outnumber new orders.
 
-**Table 91.101 — An illustrative p99 latency budget for one order (assumptions to measure).**
+**Table 91.5 — An illustrative p99 latency budget for one order (assumptions to measure).**
 
 | Stage | Budget | Why |
 |---|---|---|
@@ -242,7 +242,7 @@ Storage: LSM tree per node (memtable, SSTables, Bloom filters); version vector p
 
 #### High-level design
 
-**Figure 91.103 — Dynamo-style store: any node coordinates, quorums decide.**
+**Figure 91.32 — Dynamo-style store: any node coordinates, quorums decide.**
 
 ```mermaid
 flowchart LR
@@ -326,7 +326,7 @@ Metadata (controller quorum): topics, partition -> leader, ISR, leader epoch, qu
 
 #### High-level design
 
-**Figure 91.104 — Partitioned, replicated log with a metadata quorum and tiered storage.**
+**Figure 91.33 — Partitioned, replicated log with a metadata quorum and tiered storage.**
 
 ```mermaid
 flowchart LR
@@ -349,7 +349,7 @@ flowchart LR
 
 #### Trade-offs and alternatives
 
-**Table 91.102 — Log versus queue for a company-wide messaging service.**
+**Table 91.6 — Log versus queue for a company-wide messaging service.**
 
 | Aspect | Partitioned log (Kafka-style) | Broker queue (RabbitMQ/SQS-style) |
 |---|---|---|
@@ -418,7 +418,7 @@ Global tables (plans, feature flags): replicated to every shard, written in one 
 
 #### High-level design
 
-**Figure 91.105 — Online resharding: change capture, backfill, verify, switch.**
+**Figure 91.34 — Online resharding: change capture, backfill, verify, switch.**
 
 ```mermaid
 flowchart LR
@@ -443,7 +443,7 @@ flowchart LR
 2. **Cutover without loss.** Per logical shard: stop writes for that range (the router returns retryable errors or queues them for a few seconds), wait until the applier passes the last source position, flip the map with a version number, fence the source range (revoke writes), and resume. A reverse stream from target to source keeps rollback possible for a window (§14.9.5).
 3. **Application changes first.** Before any data moves, every query must carry `account_id` and go through the routing layer; queries that cannot are found by logging, not by reading code. Auto-increment IDs must become globally unique (§17.10) before two shards can insert.
 
-**Table 91.103 — Migration phases and their rollback.**
+**Table 91.7 — Migration phases and their rollback.**
 
 | Phase | Done when | Rollback |
 |---|---|---|
@@ -515,7 +515,7 @@ Config distribution: versioned config blobs pushed to every PoP; edge reads loca
 
 #### High-level design
 
-**Figure 91.106 — CDN: anycast edge, shield tier, origin, and the control plane.**
+**Figure 91.35 — CDN: anycast edge, shield tier, origin, and the control plane.**
 
 ```mermaid
 flowchart LR
@@ -599,7 +599,7 @@ Invalidation stream: database commit log -> invalidation daemons -> delete(k) in
 
 #### High-level design
 
-**Figure 91.107 — Large cache tier: routed pools, leases, and invalidation from the commit log.**
+**Figure 91.36 — Large cache tier: routed pools, leases, and invalidation from the commit log.**
 
 ```mermaid
 flowchart LR
@@ -687,7 +687,7 @@ Deleted set: bitmap per segment, applied at query time
 
 #### High-level design
 
-**Figure 91.108 — Real-time search: indexers fed from the post log, time-sliced segments, a broker.**
+**Figure 91.37 — Real-time search: indexers fed from the post log, time-sliced segments, a broker.**
 
 ```mermaid
 flowchart LR
@@ -774,7 +774,7 @@ agg_minute(ad_id, minute, country, device, clicks)   -- OLAP store, partitioned 
 
 #### High-level design
 
-**Figure 91.109 — Click aggregation: log, event-time stream job, OLAP store, batch reconciliation.**
+**Figure 91.38 — Click aggregation: log, event-time stream job, OLAP store, batch reconciliation.**
 
 ```mermaid
 flowchart LR
@@ -858,7 +858,7 @@ Chart store: (window, country, computed_at) -> top-100 list
 
 #### High-level design
 
-**Figure 91.110 — Top-K: partition by item, count locally, merge small lists.**
+**Figure 91.39 — Top-K: partition by item, count locally, merge small lists.**
 
 ```mermaid
 flowchart LR
@@ -944,7 +944,7 @@ follow(edge_id, follower, followee, version)  -- add/remove set semantics
 
 #### High-level design
 
-**Figure 91.111 — Active-active with home-region ownership and asynchronous replication.**
+**Figure 91.40 — Active-active with home-region ownership and asynchronous replication.**
 
 ```mermaid
 flowchart LR
@@ -968,7 +968,7 @@ flowchart LR
 2. **Read-your-writes across regions.** Clients carry a token holding the latest write position or timestamp; a region that has not replicated that far waits briefly or forwards the read (§25.6.2). Sticky routing keeps most users in one region anyway.
 3. **Evacuation.** Losing a region shifts its users to the others: each needs 50% headroom, DNS and anycast changes take effect in seconds to minutes (§44.5.2), and home-region ownership for the dead region's users must move, accepting that the last ≤ 5 s of their unreplicated writes may be lost or reconciled later. Practice evacuations regularly (§44.11.3).
 
-**Table 91.104 — Conflict strategy per data type.**
+**Table 91.8 — Conflict strategy per data type.**
 
 | Data | Strategy | Why |
 |---|---|---|
@@ -1032,7 +1032,7 @@ partition_watermark(partition, fired_through)   -- replayed after failover
 
 #### High-level design
 
-**Figure 91.112 — Partitioned schedulers with leases, timing wheels and a dispatch queue.**
+**Figure 91.41 — Partitioned schedulers with leases, timing wheels and a dispatch queue.**
 
 ```mermaid
 flowchart LR
@@ -1115,7 +1115,7 @@ Chat: WebSocket per viewer; messages partitioned by channel_id
 
 #### High-level design
 
-**Figure 91.113 — Live pipeline: ingest, transcode, package, CDN fan-out, and chat.**
+**Figure 91.42 — Live pipeline: ingest, transcode, package, CDN fan-out, and chat.**
 
 ```mermaid
 flowchart LR
@@ -1200,7 +1200,7 @@ geo_index(cell_id, business_id)     -- in memory: geohash precision 6 or S2 leve
 
 #### High-level design
 
-**Figure 91.114 — Proximity search: replicated in-memory geo index, database for details.**
+**Figure 91.43 — Proximity search: replicated in-memory geo index, database for details.**
 
 ```mermaid
 flowchart LR
@@ -1282,7 +1282,7 @@ Road graph: nodes, directed edges with static and live weights; CH shortcuts; pa
 
 #### High-level design
 
-**Figure 91.115 — Maps: offline build, tile CDN, routing cluster, traffic pipeline.**
+**Figure 91.44 — Maps: offline build, tile CDN, routing cluster, traffic pipeline.**
 
 ```mermaid
 flowchart LR
@@ -1366,7 +1366,7 @@ match(match_id, region, server_id, players[], state, started_at); result(match_i
 
 #### High-level design
 
-**Figure 91.116 — Game backend: matchmaking, fleet allocation, authoritative match servers.**
+**Figure 91.45 — Game backend: matchmaking, fleet allocation, authoritative match servers.**
 
 ```mermaid
 flowchart LR
@@ -1461,7 +1461,7 @@ Directory: range -> replicas, leaseholder (itself stored in system ranges)
 
 #### High-level design
 
-**Figure 91.117 — Globally consistent database: ranges as consensus groups, 2PC across groups, clock service.**
+**Figure 91.46 — Globally consistent database: ranges as consensus groups, 2PC across groups, clock service.**
 
 ```mermaid
 flowchart LR
@@ -1550,7 +1550,7 @@ Storage nodes: fragments on disks, checksummed per 64 KB
 
 #### High-level design
 
-**Figure 91.118 — Layered metadata over a sharded store, data on storage nodes.**
+**Figure 91.47 — Layered metadata over a sharded store, data on storage nodes.**
 
 ```mermaid
 flowchart LR
@@ -1639,7 +1639,7 @@ placement: data_id -> [fragment locations across zones], checksums
 
 #### High-level design
 
-**Figure 91.119 — Object store: front ends, a strongly consistent index, erasure-coded data.**
+**Figure 91.48 — Object store: front ends, a strongly consistent index, erasure-coded data.**
 
 ```mermaid
 flowchart LR
@@ -1724,7 +1724,7 @@ timer(fire_at, shard, workflow_id, timer_id); task_queue(name) -> pending tasks
 
 #### High-level design
 
-**Figure 91.120 — Durable execution: history shards, task queues, timers and replaying workers.**
+**Figure 91.49 — Durable execution: history shards, task queues, timers and replaying workers.**
 
 ```mermaid
 flowchart LR
@@ -1750,7 +1750,7 @@ flowchart LR
 
 #### Trade-offs and alternatives
 
-**Table 91.105 — Ways to run a long business process.**
+**Table 91.9 — Ways to run a long business process.**
 
 | Approach | State lives in | Strength | Weakness |
 |---|---|---|---|
@@ -1816,7 +1816,7 @@ Usage: meter_event(tenant_id, metric, quantity, ts) -> billing
 
 #### High-level design
 
-**Figure 91.121 — Cell-based multi-tenant platform with a global control plane.**
+**Figure 91.50 — Cell-based multi-tenant platform with a global control plane.**
 
 ```mermaid
 flowchart LR
@@ -1901,7 +1901,7 @@ GET /traces/{trace_id}; POST /traces/search {service, attrs, duration>, time ran
 
 #### High-level design
 
-**Figure 91.122 — Tracing pipeline: agents, trace-ID-routed tail samplers, metrics before sampling.**
+**Figure 91.51 — Tracing pipeline: agents, trace-ID-routed tail samplers, metrics before sampling.**
 
 ```mermaid
 flowchart LR
@@ -1989,7 +1989,7 @@ Anticorruption layer in the monolith: interface -> old implementation | client o
 
 #### High-level design
 
-**Figure 91.123 — Strangler fig: edge routing, extracted services, data synchronized by events.**
+**Figure 91.52 — Strangler fig: edge routing, extracted services, data synchronized by events.**
 
 ```mermaid
 flowchart LR
@@ -2073,7 +2073,7 @@ Store: MVCC map key -> (value, create_rev, mod_rev, version, lease); global revi
 
 #### High-level design
 
-**Figure 91.124 — Coordination service: Raft-replicated state machine with follower reads and watches.**
+**Figure 91.53 — Coordination service: Raft-replicated state machine with follower reads and watches.**
 
 ```mermaid
 flowchart LR
@@ -2162,7 +2162,7 @@ outbox(shard, event_id, payload)
 
 #### High-level design
 
-**Figure 91.125 — Wallet: sharded ledger, holds and an outbox-driven transfer saga.**
+**Figure 91.54 — Wallet: sharded ledger, holds and an outbox-driven transfer saga.**
 
 ```mermaid
 flowchart LR
@@ -2247,7 +2247,7 @@ Attack signatures: packet and request fingerprints pushed to all PoPs
 
 #### High-level design
 
-**Figure 91.126 — Layered edge defense with local counters and asynchronous global aggregation.**
+**Figure 91.55 — Layered edge defense with local counters and asynchronous global aggregation.**
 
 ```mermaid
 flowchart LR
@@ -2331,7 +2331,7 @@ Access: SQL engine (Trino/Spark SQL/warehouse), DataFrame APIs, BI connectors
 
 #### High-level design
 
-**Figure 91.127 — Lakehouse: object storage with a table format, a catalog, and separate compute engines.**
+**Figure 91.56 — Lakehouse: object storage with a table format, a catalog, and separate compute engines.**
 
 ```mermaid
 flowchart LR
@@ -2416,7 +2416,7 @@ Runbook as code: failover, failback, region evacuation; DR test schedule and evi
 
 #### High-level design
 
-**Figure 91.128 — RPO 0 with a three-region quorum, plus immutable backups for logical failures.**
+**Figure 91.57 — RPO 0 with a three-region quorum, plus immutable backups for logical failures.**
 
 ```mermaid
 flowchart LR
@@ -2438,7 +2438,7 @@ flowchart LR
 2. **RPO 0 is not protection from everything.** Synchronous replication copies a bad migration or ransomware encryption instantly. Point-in-time recovery from an immutable, separately administered WAL archive gives an RPO of minutes for logical failures (§39.9.3); restore drills measure the real RTO.
 3. **Proving the RTO.** Failover is automated and rehearsed: quarterly region evacuation in production, DNS and connection-pool behavior verified, dependencies (HSMs, payment networks, identity) failed over too. An RTO that has not been measured is a hope (§44.11.3).
 
-**Table 91.106 — DR options for a core ledger.**
+**Table 91.10 — DR options for a core ledger.**
 
 | Option | RPO | RTO | Commit latency cost | Main risk |
 |---|---|---|---|---|
@@ -2480,7 +2480,7 @@ Regions far apart (cross-continent) give stronger independence but 60–150 ms c
 - **Staff signals** across this tier: questioning the goal (Q51), separating accuracy classes (Q54), making reconciliation and DR testing first-class systems (Q53, Q56), and stating the scale at which a choice would reverse (Q42).
 :::
 
-**Table 91.107 — Hard and expert questions grouped by the mechanism that decides them.**
+**Table 91.11 — Hard and expert questions grouped by the mechanism that decides them.**
 
 | Deciding mechanism | Questions | Owner sections |
 |---|---|---|
@@ -2563,7 +2563,7 @@ These questions are about the meta-skill the library trains: approaching a promp
 ## 91.11 Practical exercises
 
 1. Attempt Q32 and Q35 cold on a 60-minute timer, then redo their estimates with your own hardware numbers (§89.4); note where the binding term changes.
-2. Rewrite the Q33 phase table (Table 91.103) for a MongoDB or DynamoDB migration instead of PostgreSQL; which phases change?
+2. Rewrite the Q33 phase table (Table 91.7) for a MongoDB or DynamoDB migration instead of PostgreSQL; which phases change?
 3. For Q38, implement exact minute-bucket counting and a Count-Min sketch in Python on a synthetic Zipf stream of 10 million events with a fixed seed; measure the sketch's overcount against the $\varepsilon N$ bound.
 4. Take Q45's replica-placement arithmetic and compute commit latency and region survival for 3, 5 and 7 voters across your cloud provider's real regions (use measured RTTs).
 5. Pick three Hard questions and write, for each, the one assumption whose change would alter the design most and how.
@@ -2615,4 +2615,4 @@ These questions are about the meta-skill the library trains: approaching a promp
 - Busch et al. 2012: confirm the "searchable within about ten seconds" claim.
 - Geohash cell sizes (precision 5 ≈ 4.9 km, precision 6 ≈ 1.2 × 0.6 km at the equator) are commonly cited approximations; confirm against §17.9.2.
 - All capacity figures (per-node throughputs, \$5 per TB scanned, 50,000 TLS requests/s per edge server, 2 µs per order) are teaching assumptions, not measurements.
-- Integration: merge part A's citations into §91.13 and renumber part B's figures (91.101–91.128) and tables (91.101–91.107).
+- Integration: merge part A's citations into §91.13 and renumber part B's figures (91.30–91.57) and tables (91.5–91.11).
