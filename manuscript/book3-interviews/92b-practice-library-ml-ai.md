@@ -1994,3 +1994,367 @@ Slurm excels at batch HPC; Kubernetes with gang plugins unifies training and ser
 - **Mid:** queue and GPU requests.
 - **Senior:** gangs, quotas, preemption.
 - **Staff:** quantifies fragmentation and reservation cost, uses runtime prediction for backfill, and evaluates policy changes by trace replay.
+
+### 92.7.9 Q49. Billion-scale vector database
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** Ch 74 (architecture §74.13, compression §74.9, DiskANN §74.10.2, filtering §74.11, updates §74.12, capacity §74.14), Q31
+
+#### Prompt
+
+"Design a managed vector database that stores 10 billion 768-dimension vectors for many customers, with metadata filters, continuous upserts and deletes, and 10 ms search."
+
+#### Clarifying questions and assumptions
+
+Recall target? Write rate? Tenancy (many small tenants or a few huge ones)? Assume 10 billion vectors, 50,000 upserts/s, recall@10 ≥ 0.95, 256 GB nodes at 70% usable, three replicas. Unlike Q31, this is a database: durability, freshness, deletes and isolation matter as much as search speed.
+
+#### Requirements
+
+Functional: upsert and delete by ID with metadata; filtered top-$k$ search; per-tenant collections; backups; index rebuilds without downtime. Non-functional: p99 ≤ 10 ms for unfiltered search; writes visible within 1 s; deletes never returned after acknowledgment; tenant isolation; 99.95% availability.
+
+#### Estimation
+
+::: example
+**Worked example — Compression decides the cluster (memory form of §74.14 and §89.13).**
+
+1. FP32 vectors alone: $10^{10} \times 3{,}072 = 30.7$ TB.
+2. INT8 plus an HNSW graph ($768 + 260 + 8$ bytes): 10.4 TB, **58 shards**, 174 nodes with three replicas.
+3. IVF-PQ with 96-byte codes: 1.04 TB, **6 shards**, 18 nodes, with full vectors on SSD for re-ranking.
+4. DiskANN-style: 32-byte PQ codes in RAM (0.32 TB) and graph plus vectors on SSD (about 10.3 TB).
+5. Writes: 50,000/s is 4.3 billion upserts a day, so segments seal and indexes rebuild continuously.
+
+**Interpretation.** The compression choice changes node count tenfold; the write rate makes index maintenance a permanent background workload. **Engineering implication.** Offer tiers (in-memory HNSW for small hot collections, PQ or SSD-resident graphs for large ones), and separate ingest, index-build and query roles.
+:::
+
+#### Data, labels and features
+
+Vectors with IDs, tenant and metadata; write-ahead log; segment metadata. Quality "labels" are exact-search results on sampled queries, used to measure recall per collection.
+
+#### High-level design
+
+**Figure 92.123 — Vector database with separated ingest, build and query roles.**
+
+```mermaid
+flowchart LR
+  CL([Client]) -->|upsert, delete| PX[Proxy and router]
+  PX -.-> WAL[[Write-ahead log]]
+  WAL -.-> GROW[Growing segments<br/>brute force or small HNSW]
+  GROW -.->|seal| OBJ[(Object storage:<br/>segments, indexes)]
+  OBJ -.-> IB[Index builders<br/>and compaction]
+  IB -.-> OBJ
+  OBJ -.->|load| QN[Query nodes]
+  CL -->|search with filter| PX
+  PX --> QN
+  PX --> GROW
+  META[(Metadata store:<br/>schema, segment map)] --- PX
+```
+
+**Reading the diagram.** Writes go to a log and growing segments, which are searchable immediately; sealed segments are indexed by separate builders and loaded by query nodes. Searches fan out to the relevant sealed and growing segments and merge top-$k$ lists; deletes are tombstones applied at query time and removed by compaction (§74.12). Failure points: query nodes lagging segment maps (versioned maps), tombstone build-up degrading recall and latency, builders falling behind writes. Scaling: shard by tenant or hash; replicas for throughput.
+
+#### Model and evaluation
+
+Choose index type per collection by size, recall and filter selectivity; measure recall on sampled queries against exact search, latency at the target recall, and filtered recall separately.
+
+#### Serving and monitoring
+
+Recall estimates per collection, p99 by filter selectivity, write-to-visible lag, tombstone ratio, build backlog, memory per node, per-tenant usage.
+
+#### Deep dives
+
+1. **Freshness with immutable indexes.** Growing segments plus background builds.
+2. **Deletes.** Tombstones, then compaction; never return deleted IDs.
+3. **Filtered search.** Pre-filter for selective filters, filtered graph traversal otherwise (§74.11) [Patel et al. 2024].
+
+#### Trade-offs and alternatives
+
+A vector extension in an existing database suffices below about $10^7$ vectors (§74.15); a library inside the service is simplest but lacks durability and isolation.
+
+#### Follow-up questions
+
+1. *A filter matches 0.1% of vectors.* Pre-filter and brute-force the matches; graph search would return too few.
+2. *How do you rebuild with a new embedding model?* A new collection built in parallel, then an alias swap.
+3. *One tenant is huge.* Dedicated shards for it; small tenants share.
+
+#### What distinguishes levels
+
+- **Mid:** an HNSW index behind an API.
+- **Senior:** shards, replicas, filters, compression.
+- **Staff:** sizes tiers by compression, designs freshness and deletes around immutable segments, and isolates tenants by placement.
+
+### 92.7.10 Q50. Guardrails and safety system for an LLM product
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §77.11 (guardrails), §77.13 (security and sandboxing), §78.12 (safety evaluation, red teaming), §78.13 (prompt injection), Ch 71 (responsible ML)
+
+#### Prompt
+
+"Our consumer chat assistant handles 1,000 requests a second. Design the guardrails: what it must refuse, what it must not leak, and how we know the controls work."
+
+#### Clarifying questions and assumptions
+
+- Harm categories and policy (who writes it)? Tools and retrieval (injection surface)? Age of users? Jurisdictions?
+- Assume 1,000 requests/s on average (86.4 million a day), 0.1% of requests in prohibited categories, a policy with tiered actions (allow, safe-complete, refuse, block and review), and tool use through retrieval and a web browser.
+
+#### Requirements
+
+Functional: input screening; output screening, streaming-aware; injection defenses for retrieved and tool content; PII and secret redaction; graduated actions; user reporting; audit; red-team and regression suites. Non-functional: added TTFT ≤ 100 ms p95; recall on the prohibited set ≥ 95% on the evaluation suite; benign refusal rate ≤ 0.5% of traffic; policy changes deployable within an hour; every decision logged with policy version.
+
+#### Estimation
+
+::: example
+**Worked example — Base rates decide what a classifier's numbers mean.** Uses threshold metrics (§57.10.1) and the cascade cost formula of §60.11.
+
+1. Single classifier with 95% recall and 1% false-positive rate at a 0.1% base rate: true positives $0.001 \times 0.95 = 0.00095$; false positives $0.999 \times 0.01 = 0.00999$; **precision 8.7%**, and **863,000 benign requests flagged a day**.
+2. Cascade: a cheap classifier (recall 99%, FPR 5%) flags 5.1% of traffic; an LLM judge on the flagged traffic (recall 96%, FPR 10%) confirms. Overall recall $0.99 \times 0.96 = 95.0\%$; FPR $0.05 \times 0.10 = 0.5\%$; precision 16%; benign flagged 432,000 a day; the expensive stage runs on 5.1% of traffic.
+3. Even so, 84% of flags are benign: a hard refusal on every flag would sit exactly at the 0.5% benign-refusal ceiling, with no margin, and refuse 432,000 legitimate requests a day.
+
+**Interpretation.** At low base rates, even a good detector is wrong most of the times it fires. **Engineering implication.** Cascade cheap and expensive checks, and match the action to confidence and severity: safe completion or clarification for the uncertain middle, hard blocks for high-confidence severe categories, human review for repeated abuse.
+:::
+
+#### Data, labels and features
+
+Policy taxonomy with examples; labeled datasets per category (including borderline benign cases); red-team prompts and jailbreak corpora; production samples reviewed by humans; injection test documents. Labels need high agreement; measure κ per category (§63.6).
+
+#### High-level design
+
+**Figure 92.124 — Layered guardrails around the model.**
+
+```mermaid
+flowchart LR
+  U([User]) --> IN[Input checks:<br/>classifier cascade, PII]
+  IN -->|allowed| LLM[Assistant model<br/>with safety tuning]
+  IN -->|severe| BLK([Refusal or block])
+  RET{{Retrieved and<br/>tool content}} -->|marked untrusted| LLM
+  LLM -->|tool request| CAP{Capability check<br/>outside the model}
+  LLM -->|token stream| OUT[Streaming output<br/>checks per chunk]
+  OUT -->|pass| U
+  OUT -->|violation| SAFE[Stop, replace with<br/>safe completion]
+  SAFE --> U
+  IN -.-> AUD[(Decision log with<br/>policy version)]
+  OUT -.-> AUD
+  AUD -.-> RT[Review queue,<br/>red-team suites]
+```
+
+**Reading the diagram.** Input checks run a cascade (fast classifier, then a judge on flagged traffic) in parallel with the start of prefill so they add little TTFT; severe inputs are refused. Retrieved and tool content enters the prompt marked as untrusted, and any tool action is checked by a capability layer outside the model (§78.13.2). Output is checked in chunks as it streams; a violation stops the stream and substitutes a safe completion. Every decision is logged with the policy version for review and audits. Failure points: classifier outage (fail closed for severe categories, open with logging for low-risk ones), jailbreaks that evade classifiers (the model's own safety tuning and output checks are further layers), and over-refusal. Scaling: classifiers on small GPU pools; the judge stage only on flagged traffic.
+
+#### Model and evaluation
+
+- **Baseline:** keyword lists and a hosted moderation endpoint.
+- **Production:** small fine-tuned classifiers per category family, an LLM-based safeguard model for the flagged traffic [Inan et al. 2023], safety-tuned assistant model, deterministic capability checks.
+- **Offline:** per-category recall and benign refusal rate with intervals on held-out and red-team suites; jailbreak success rate; injection suite pass rate (§78.12).
+- **Online:** user reports, appeal outcomes, sampled human review, refusal rate by category and language.
+
+#### Serving and monitoring
+
+Flag and refusal rates by category, language and policy version; added latency per layer; judge stage load; appeals overturned; new jailbreak patterns from reports; a dashboard that reviewers use to tune thresholds.
+
+#### Deep dives
+
+1. **Base rates and graduated actions.** Precision is low at low prevalence; actions must be graduated.
+2. **Streaming output checks.** Check every N tokens with a buffer, so a violation is caught before most of it is shown.
+3. **Injection.** Untrusted content cannot grant capabilities; tools check permissions, not instructions in text [Greshake et al. 2023].
+
+#### Trade-offs and alternatives
+
+A single strong judge on every request is accurate but expensive and slow; relying only on model safety tuning is cheap but brittle under jailbreaks; strict blocking minimizes harm at the cost of over-refusal.
+
+#### Follow-up questions
+
+1. *Users complain of over-refusal.* Measure benign refusal by slice; move borderline categories to safe completion; retrain on borderline benign examples.
+2. *A new jailbreak spreads.* Add to the red-team suite, patch classifiers and prompts, verify on the suite, deploy a policy update within the hour.
+3. *Can output checks stream?* Yes, with chunked checks and a short display buffer.
+4. *How do you avoid fairness issues?* Slice refusal rates by language and dialect; classifiers often over-flag some dialects.
+
+#### What distinguishes levels
+
+- **Mid:** a moderation API on input and output.
+- **Senior:** layered controls, injection defenses, red-team suites.
+- **Staff:** reasons from base rates to cascades and graduated actions, quantifies benign harm, and makes policy versions, appeals and regression suites part of the system.
+
+### 92.7.11 Q51. Image-generation (diffusion) service at scale
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §66.6 (dynamic batching), §73.6 (batching), §80.13 (inference at very large scale), §79.9 (quotas), Ch 67 (optimization)
+
+#### Prompt
+
+"Design a text-to-image service generating 20 million images a day at 1024 × 1024, with results in a few seconds, safely."
+
+#### Clarifying questions and assumptions
+
+- Model: a latent diffusion model (text encoder, denoiser, VAE decoder) [Rombach et al. 2022]; 30 sampling steps with classifier-free guidance by default.
+- Assume measured cost of 1.2 GPU-seconds per image on an H100-class GPU at the batch sizes used, and 0.2 GPU-seconds for a step-distilled 4-step variant.
+- Peak-to-average 2.5; tiers: fast (distilled) and quality (full).
+
+#### Requirements
+
+Functional: asynchronous generation API with progress; variants, resolution and style options; per-user quotas; safety filters on prompts and images; provenance metadata; storage and delivery of results. Non-functional: fast tier p95 ≤ 3 s, quality tier p95 ≤ 10 s; 99.9% job completion; zero tolerance for prohibited content categories with layered checks; cost per image tracked.
+
+#### Estimation
+
+::: example
+**Worked example — GPU-seconds per image decide the fleet.** Fleet size uses the busy-GPU form of §89.10 and §89.16; cost uses §89.17.
+
+1. Average $2 \times 10^7 / 86{,}400 = 231$ images/s; peak 579/s.
+2. All quality tier at 1.2 GPU-s: 694 busy GPUs; at $\rho = 0.7$, **993 GPUs**; provisioning an average of 70% of the peak fleet over the day, $993 \times 24 \times 0.7 \times \$2.50 = \$41{,}706$ a day, **\$0.0021 per image**.
+3. With 70% of traffic on the distilled tier: $g = 0.7 \times 0.2 + 0.3 \times 1.2 = 0.5$ GPU-s; 289 busy, 414 GPUs, \$17,388 a day, **\$0.00087 per image**.
+4. Storage: 20 million images × 1.5 MB $= 30$ TB a day, about 11 PB a year if all are kept.
+
+**Interpretation.** Steps per image are the cost driver; distillation cuts the fleet by more than half, and retention policy matters as much as compute for total cost. **Engineering implication.** Default to a distilled tier, reserve the full sampler for the quality tier, and expire unsaved images.
+:::
+
+#### Data, labels and features
+
+Prompt logs (with consent), user feedback (saves, downloads, regenerations), human preference ratings for evaluation, safety-labeled prompt and image sets, provenance metadata standards.
+
+#### High-level design
+
+**Figure 92.125 — Asynchronous diffusion service with safety on both sides.**
+
+```mermaid
+flowchart LR
+  U([Client]) -->|submit prompt| API[Job API:<br/>quota, prompt filter]
+  API --> JQ[[Job queues<br/>by tier and size]]
+  JQ --> WK[GPU workers: batch by<br/>resolution and steps]
+  WK --> IMF[Image safety<br/>classifiers]
+  IMF -->|pass| PROV[Watermark and<br/>provenance metadata]
+  IMF -->|fail| REJ([Rejected, logged])
+  PROV --> OS[(Object storage<br/>with TTL)]
+  OS --> CDN[CDN]
+  CDN -->|image URL| U
+  WK -.->|progress| API
+```
+
+**Reading the diagram.** The API checks quota and screens the prompt, then enqueues a job by tier and resolution; workers batch compatible jobs (same resolution and step count) and run text encoding, denoising and decoding. Generated images pass safety classifiers before storage; provenance metadata and watermarks are added; results are delivered via a CDN, and clients poll or receive progress. Failure points: queue build-up at peak (shed or degrade quality-tier requests to the fast tier), worker failure (requeue by job ID, idempotent outputs), classifier miss (layered checks and review). Scaling: workers by queue depth; separate pools per tier.
+
+#### Model and evaluation
+
+- **Baseline:** full 30-step sampler for everything.
+- **Production:** quality tier with classifier-free guidance [Ho and Salimans 2022]; fast tier distilled to a few steps [Salimans and Ho 2022]; compiled, lower-precision kernels.
+- **Offline:** FID and text–image alignment scores, human side-by-side preference against the current model, safety suite pass rates.
+- **Online:** save and download rates, regeneration rate, reports; A/B by user.
+
+#### Serving and monitoring
+
+Queue wait and time-to-image per tier, GPU-seconds per image, batch fill, safety rejection rates by category, user reports, cost per image.
+
+#### Deep dives
+
+1. **Cost per image.** Steps × guidance passes × resolution; distillation and guidance-free variants cut it.
+2. **Batching.** Group by resolution and steps; asynchronous jobs tolerate seconds of batching delay.
+3. **Safety and provenance.** Prompt and image filters, hash matching against known illegal content, refusal for real-person imagery where policy requires it, provenance metadata.
+
+**Table 92.105 — Levers on diffusion serving cost.**
+
+| Lever | Effect on GPU-seconds | Quality risk | Choose when |
+|---|---|---|---|
+| Fewer sampling steps (better solvers) | Proportional to steps | Moderate below about 20 steps | Default improvement |
+| Step distillation | 5–10× fewer steps | Some loss in detail and diversity | Fast tier |
+| Guidance distillation | Removes the unconditional pass | Small | Any tier with guidance |
+| Lower precision and compilation | Faster per step | Small; re-check outputs | Always, with evaluation |
+| Lower default resolution, upscale on demand | Fewer latent pixels | Upscaler artifacts | Previews |
+| Result caching | Avoids repeated prompts | None | Popular templates |
+
+#### Trade-offs and alternatives
+
+Synchronous APIs are simpler for clients but hold connections for seconds and fail badly under load; autoregressive image models offer different trade-offs in quality and latency.
+
+#### Follow-up questions
+
+1. *Peak traffic doubles for a launch.* Shift quality requests to the fast tier, raise queue limits, add spot capacity for non-urgent jobs.
+2. *Why is guidance expensive?* It runs the denoiser on conditional and unconditional inputs.
+3. *How do you stop prohibited content?* Prompt and image classifiers, hash matching, human review of reports, and account enforcement.
+
+#### What distinguishes levels
+
+- **Mid:** a GPU service that runs the model.
+- **Senior:** asynchronous jobs, batching, safety filters.
+- **Staff:** sizes the fleet from GPU-seconds per image, uses tiers and distillation as the cost lever, and treats safety and provenance as part of the pipeline.
+
+### 92.7.12 Q52. Cold-start marketplace recommendations with bandits
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §68.11 (bandits), §68.12 (feedback loops, IPS), §68.15 (cold start; Beta–Bernoulli posterior), §68.16 (QuickBite recommendations)
+
+#### Prompt
+
+"New restaurants join QuickBite every day and get almost no orders because the recommender has no data about them. Design a system that gives them a fair chance without hurting customers."
+
+#### Clarifying questions and assumptions
+
+- QuickBite: 50,000 restaurants, 4,000 zones, recommendations at 2,500 requests/s at peak (Ch 68); assume an average of a third of peak and 10 restaurant slots per response.
+- New restaurants: assume 2% monthly churn replaced, about 33 new restaurants a day.
+- Reward: an order within the session after an impression (order rate per impression around 3%).
+
+#### Requirements
+
+Functional: score new restaurants with priors from content; explore with a bounded budget; learn quickly from impressions and orders; log propensities; graduate restaurants into the main ranker. Non-functional: exploration costs ≤ 1% of orders platform-wide; every new restaurant receives a minimum exposure in its zone within its first week; decisions within the 120 ms recommendation budget.
+
+#### Estimation
+
+::: example
+**Worked example — How much exploration does a new restaurant need?** Posterior uses the Beta–Bernoulli formula of §68.15; sample size the per-arm formula of §57.14.2.
+
+1. Prior from similar restaurants (cuisine, price, zone): mean 3% with the weight of 100 impressions, Beta(3, 97).
+2. After 2,000 impressions and 80 orders: Beta(83, 1,997), mean 3.95%, standard deviation 0.43 points: clearly above the prior.
+3. Distinguishing 3% from 4% at 95% confidence and 80% power needs about $2\,(1.96 + 0.84)^2 \times 0.035 \times 0.965 / 0.01^2 = 5{,}300$ impressions.
+4. Supply of impressions: $833 \times 10 \times 86{,}400 = 720$ million a day, 180,000 per zone; one new restaurant needs about 2.9% of its zone's daily impressions to reach 5,300.
+
+**Interpretation.** Exploration per restaurant is small relative to a zone's traffic, and the prior from content features already narrows the search. **Engineering implication.** Allocate a small exploration budget per zone with Thompson sampling, and spend it where the posterior is most uncertain.
+:::
+
+#### Data, labels and features
+
+Restaurant content features (cuisine, menu embeddings, price, photos, location, hours), zone context, impressions with positions and propensities, orders and ratings. Labels are delayed by the session and biased by position, so use position-bias corrections (§68.12.2).
+
+#### High-level design
+
+**Figure 92.126 — Exploration layer for new restaurants.**
+
+```mermaid
+flowchart LR
+  REQ([Recommendation request]) --> MAIN[Main ranker:<br/>established restaurants]
+  REQ --> CAND[New-restaurant<br/>candidates in zone]
+  PRI[(Content-based<br/>priors)] --> TS[Thompson sampler<br/>Beta posteriors]
+  CAND --> TS
+  TS --> BL[Slot blender:<br/>budget per zone]
+  MAIN --> BL
+  BL -->|list with propensities| REQ
+  BL -.-> LOG[[Impression log]]
+  ORD[[Orders]] -.-> UPD[Posterior updater]
+  LOG -.-> UPD
+  UPD -.-> TS
+  UPD -.->|graduate after<br/>enough data| MAIN
+```
+
+**Reading the diagram.** The main ranker scores established restaurants; new restaurants in the zone get a Thompson sample from their Beta posterior, initialized from content-based priors. A blender inserts at most the zone's exploration budget into the list, at chosen positions, and records each item's propensity. Impressions and orders update posteriors asynchronously within minutes; restaurants graduate to the main ranker once their data suffice. Failure points: stale posteriors (monitor update lag), exploration budget exhaustion in dense zones, and position bias inflating or hiding effects. Scaling: per-zone state is tiny; computation is a draw per candidate.
+
+#### Model and evaluation
+
+- **Baseline:** "New" badge and a fixed boost for 14 days.
+- **Production:** Thompson sampling with content priors; a contextual bandit (for example, LinUCB or a Bayesian last layer) when context matters [Li et al. 2010; Chapelle and Li 2011].
+- **Offline:** replay with logged propensities and inverse propensity scoring to estimate a new policy's value (§68.12.2) [Li et al. 2011].
+- **Online:** A/B by zone or switchback (restaurants are shared supply): primary metrics orders per session and new-restaurant 30-day survival; guardrails order conversion and ratings.
+
+#### Serving and monitoring
+
+Exploration share of impressions and orders per zone, regret proxy (orders lost versus the main ranker on exploration slots), time to graduation, new-restaurant exposure distribution (fairness), posterior update lag.
+
+#### Deep dives
+
+1. **Priors matter more than the bandit.** Good content priors halve the exploration needed; a hierarchical prior by cuisine and zone shares strength.
+2. **Logged propensities.** Without them, later evaluation is biased toward whatever the policy showed.
+3. **Marketplace fairness.** Minimum exposure guarantees for new supply; cap to protect customers from consistently poor restaurants (fast posterior decline stops exploration).
+
+#### Trade-offs and alternatives
+
+Epsilon-greedy is simple but wastes exploration on clear losers; UCB is deterministic and easier to debug; fixed boosts are predictable for restaurants but ignore evidence.
+
+#### Follow-up questions
+
+1. *A restaurant games the system with fake orders.* Fraud signals on orders, and rewards from verified orders only.
+2. *Order rates change by hour.* Contextual bandit with time features, or discounting old observations.
+3. *How do you know exploration pays?* Long-term holdout of zones without exploration; compare supply survival and orders.
+4. *When does a restaurant leave the bandit?* When its posterior width falls below a threshold or after a fixed impression count.
+
+#### What distinguishes levels
+
+- **Mid:** boosts new items.
+- **Senior:** Thompson sampling with priors and an exploration budget.
+- **Staff:** quantifies impressions needed against zone supply, logs propensities for unbiased evaluation, and frames exploration as a marketplace fairness and survival question.

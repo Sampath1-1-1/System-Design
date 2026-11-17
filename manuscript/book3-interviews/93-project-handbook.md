@@ -2,19 +2,19 @@
 
 > **Level:** 1–5 · **Track:** Shared · **Estimated reading time:** 8 h (building the projects: 10–100 h each)
 
-Reading about a write-ahead log and writing one are different experiences. When you write it, you discover that a torn record at the end of the file is a normal event, that `fsync` costs milliseconds, and that "the follower is a little behind" means something very specific when the primary dies. This chapter turns the book into twenty build projects, arranged in four levels, so that you can have those discoveries on your own laptop rather than in production or in an interview.
+Reading about a write-ahead log and writing one are different experiences. When you write it, you discover that a torn record at the end of the file is a normal event, that `fsync` costs milliseconds, and that "the replica is a little behind" means something very specific when the primary dies. This chapter turns the book into twenty build projects in four levels, so that you make those discoveries on your own laptop rather than in production or in an interview.
 
-Each project is a scaled-down version of a system that the book designs at full size. The URL shortener of §52.4 handles 280,000 redirects per second across a fleet; your version handles a few thousand per second on one machine. The mechanisms are the same: a code generator that never collides, a cache in front of a store, an asynchronous click path. What you lose in scale you gain in visibility. You can kill any process, delay any message and read every byte on disk, and you can measure what happens.
+Each project is a scaled-down version of a system that the book designs at full size. The URL shortener of §52.4 handles 280,000 redirects per second; yours handles a few thousand on one machine, with the same mechanisms. What you lose in scale you gain in visibility: you can kill any process, delay any message, read every byte on disk and measure what happens.
 
-**How to use the projects.** Pick a level that matches what you already know, read the project's prerequisites, and skim the owning chapter sections before you start. Then work through the milestones in order. Each milestone ends with a **done when** statement: a check you can run, not a feeling. Do not move on until it passes. Keep two files next to your code from the first day: a one-page design document (requirements, the architecture figure redrawn in your own words, the decisions you made and why), and a results log in which every measurement is recorded with the hardware, Python version, command line and date. The results log is what turns a toy into evidence. When an interviewer asks "how do you know?", you will have an answer (§93.7 shows how to talk about a project in an interview).
+**How to use the projects.** Pick a level that matches what you know, read the project's prerequisites and skim the owning sections, then work through the milestones in order. Each milestone ends with a **done when** statement: a check you can run, not a feeling. Keep two files next to your code from the first day: a one-page design document (requirements, the architecture redrawn in your own words, your decisions and why), and a results log that records every measurement with hardware, Python version, command line and date. The results log turns a toy into evidence; when an interviewer asks "how do you know?", you will have an answer (§93.7).
 
-The starter code in each project is deliberately small: a runnable core of 60–120 lines that demonstrates the central mechanism and prints its result. It is not a solution. The milestones ask you to replace almost all of it. Every starter was run with Python 3.13 on Linux, and its printed output is quoted below it. Where a starter uses randomness, it fixes the seed, so you should see exactly the same output.
+Each starter is a runnable core of 60–120 lines that demonstrates the central mechanism; it is not a solution, and the milestones replace almost all of it. Every starter was run with Python 3.13 on Linux and its output is quoted below it; seeds are fixed, so you should see the same output.
 
 ::: note
 **Tooling assumptions for every project in this chapter.**
 
 - **Language.** Python 3.11 or later, standard library first (`http.server`, `asyncio`, `socket`, `sqlite3`, `threading`, `heapq`, `hashlib`, `unittest`). Where a third-party package makes a milestone much easier (an HTTP client for load tests, a WebSocket library, a Prometheus client), the milestone says so and the package is optional. You may port any project to Go, Java or Rust once the Python version works; the measurements then change, and that comparison is itself instructive (§23.9).
-- **Containers.** Docker is optional. It is useful for running a real Redis, PostgreSQL or Kafka next to your own implementation for comparison, and for running several copies of a node with separate network namespaces (§42.3). Nothing in Part A requires it.
+- **Containers.** Docker is optional. It is useful for running a real Redis, PostgreSQL or Kafka next to your own implementation for comparison, and for running several copies of a node with separate network namespaces (§42.3). Nothing in the Beginner or Intermediate projects requires it.
 - **Local only.** No cloud account, no paid service and no real e-mail, SMS or push provider. External systems are replaced by fakes you write, which is also the only way to inject their failures on demand.
 - **Hardware.** One laptop or workstation with 4 or more cores and 8 GB of memory. Targets are stated for that machine. Loopback networking flatters latency (a round trip is tens of microseconds instead of the ~0.5 ms of a datacenter network, §4.17), so when a target concerns distribution rather than raw speed, the project asks you to add artificial delay.
 :::
@@ -40,9 +40,9 @@ The starter code in each project is deliberately small: a runnable core of 60–
 | 93.3.1–93.3.5 | Job scheduler, event-driven microservices, real-time analytics, recommendation engine, distributed ML inference | Advanced | See §93.3 | §52.9, Ch 32, §56.7, Ch 68, Ch 66 |
 | 93.4.1–93.4.5 | Distributed training, multi-tenant feature store, production RAG, LLM inference platform, multi-agent orchestration | Expert | See §93.4 | Ch 65, Ch 62, Ch 75, Ch 73, Ch 77 |
 
-Beginner projects take roughly 10–20 hours each and Intermediate projects 20–40 hours. They build on each other: the rate limiter reuses the cache's TTL logic, the notification service sits on top of the message queue, and the chat server reuses the REST service's operational scaffolding. If you only have time for four projects in Part A, build the REST API service, the Redis-style cache, the message queue and the distributed key-value store; together they exercise almost every Book I chapter that interviews probe.
+Beginner projects take roughly 10–20 hours each and Intermediate projects 20–40 hours. They build on each other: the rate limiter reuses the cache's TTL logic, the notification service sits on top of the message queue, and the chat server reuses the REST service's operational scaffolding. If you have time for only four of the first ten projects, build the REST API service, the Redis-style cache, the message queue and the distributed key-value store; together they exercise almost every Book I chapter that interviews probe.
 
-## 93.1 Beginner
+## 93.1 Beginner projects
 
 The five Beginner projects are single-process or single-machine systems. Each one isolates one idea that every larger design depends on: a well-behaved API, a collision-free identifier, a cache with expiry and eviction, admission control, and traffic distribution under failure. None needs consensus or replication, which keeps your attention on getting the mechanism right and measuring it.
 
@@ -55,7 +55,6 @@ Build a small task-tracking API (`/tasks`) that behaves like a production servic
 After this project you should be able to:
 
 - Design resource URIs, methods and status codes that follow HTTP semantics, and explain which methods are safe and idempotent (§8.6.3).
-- Implement cursor pagination that stays correct while rows are being inserted, and explain why offset pagination does not (§8.6.5).
 - Make `POST` retry-safe with an idempotency key, including the concurrent-duplicate case (§22.15).
 - Persist data in SQLite with transactions and survive `kill -9` without losing an acknowledged write.
 - Instrument a service with request IDs, structured logs, a latency histogram and health endpoints, and shut it down gracefully.
@@ -117,7 +116,7 @@ flowchart LR
   PROM{{Prometheus, optional}} -->|scrape /metrics| SRV
 ```
 
-**Reading the diagram.** Clients (your load generator and ad-hoc `curl` calls) send synchronous HTTP/1.1 requests to a single API process. Inside it, every request first passes through middleware that assigns a request ID, rejects oversized bodies, starts a deadline timer and records a latency observation; the router then dispatches to a handler. Handlers never touch SQL directly: they call a repository, which keeps storage concerns in one place and lets you swap SQLite for PostgreSQL later. The idempotency store lives in the same SQLite file and, crucially, is written in the **same transaction** as the task it protects, so a crash can never leave a task without its idempotency record or vice versa. The storage boundary is the SQLite file in write-ahead-log mode (§13.5); everything above it is stateless and could be replicated behind a load balancer. The dotted arrow to the log file is asynchronous from the request's point of view: logging must never fail a request. Prometheus, if you run it in Docker, pulls metrics (§40.8.1). Failure points to study: the database (locked, slow or full disk), the process (killed mid-request) and the client (retrying after a timeout). Scaling: run several API processes behind the load balancer of §93.1.5; the single SQLite writer then becomes the bottleneck, which is the motivation for a client–server database.
+**Reading the diagram.** Clients (your load generator and ad-hoc `curl` calls) send synchronous HTTP/1.1 requests to a single API process. Inside it, every request first passes through middleware that assigns a request ID, rejects oversized bodies, starts a deadline timer and records a latency observation; the router then dispatches to a handler. Handlers reach SQL only through a repository, so SQLite can later be swapped for PostgreSQL. The idempotency store lives in the same SQLite file and, crucially, is written in the **same transaction** as the task it protects, so a crash can never leave a task without its idempotency record or vice versa. The storage boundary is the SQLite file in write-ahead-log mode (§13.5); everything above it is stateless and could be replicated behind a load balancer. The dotted arrow to the log file is asynchronous from the request's point of view: logging must never fail a request. Failure points to study: the database (locked, slow or full disk), the process (killed mid-request) and the client (retrying after a timeout). Scaling: run several API processes behind the load balancer of §93.1.5; the single SQLite writer then becomes the bottleneck, which is the motivation for a client–server database.
 
 #### Milestones
 
@@ -243,7 +242,6 @@ What to notice:
 - The idempotency store does not yet fingerprint the body, so a client that reuses `k1` for a different task silently gets the old response. The specification requires `422` in that case (§22.15.3).
 - The list endpoint fetches one row more than `limit`. If the extra row exists there is a next page; if not, `next_cursor` is `null`. Without this peek the last page would return a cursor that leads to an empty page.
 - The cursor is the last ID seen, so a task inserted while the client is paging appears exactly once or not at all, never twice. Offset pagination (`?page=3`) would shift every later row by one and produce duplicates (§8.6.5).
-- `id = len(TASKS) + 1` is a bug waiting for `DELETE`: after a deletion it reissues an existing ID. SQLite's `INTEGER PRIMARY KEY` fixes this in Milestone 2.
 
 #### Test plan and load-test targets
 
@@ -272,7 +270,6 @@ Record, for each step of offered load, the achieved throughput, p50, p99, the 5x
 2. **Slow database.** Wrap every repository call in a configurable delay and set it to 300 ms. Observe the deadline firing, the concurrency limiter shedding load, and `/readyz` staying healthy. Decide whether a slow database should make the service "not ready", and write down your reasoning (§42.7.3).
 3. **Locked database.** Open the SQLite file from a second process and hold a write transaction for 10 s. Your service should return `503` with `Retry-After`, not hang and not return `500`.
 4. **Retry storm.** Make the client retry on timeout with no backoff while the database is slow. Measure how offered load multiplies, then add exponential backoff with full jitter (§22.12.2) and measure again.
-5. **Malicious input.** Send a 10 MB body, a body that claims `Content-Length: 1000000` but sends 10 bytes, deeply nested JSON and a title containing SQL metacharacters. None should crash the process or leak a stack trace.
 
 #### Extensions
 
@@ -280,7 +277,6 @@ Record, for each step of offered load, the achieved throughput, p50, p99, the 5x
 - Replace SQLite with PostgreSQL in Docker, add a connection pool, and repeat the capacity report; explain the change in the knee (§14.13.1).
 - Add `ETag`-based conditional `GET` (`If-None-Match` → `304`) and measure bandwidth saved.
 - Run three instances behind the load balancer of §93.1.5 and confirm that idempotency still holds when a retry lands on a different instance.
-- Add OpenTelemetry tracing and follow one slow request from middleware to SQL (§40.6–40.7).
 
 #### Self-assessment rubric
 
@@ -306,7 +302,6 @@ After this project you should be able to:
 - Implement cache-aside with LRU eviction and measure hit ratio as a function of cache size on a skewed trace (§20.3, §20.7.1).
 - Separate a latency-critical read path from an asynchronous analytics path, and bound the analytics backlog.
 - Choose between `301` and `302` redirects and explain what each does to caching and to analytics.
-- Defend the design in an interview with your own measured numbers.
 
 #### Prerequisites
 
@@ -486,7 +481,6 @@ For load, generate a 1 million-request trace from Zipf ($s = 1.0$) over 100,000 
 2. **Allocator outage.** Make the allocator unavailable. Creates continue until each process's block is exhausted; at 50 creates per second and 10,000 codes per block, that is $10{,}000 / 50 = 200$ s of runway per process. Verify the number, then decide what the API should return when the block runs out.
 3. **Crash between lease and use.** Kill a process right after it leases a block. Its unused counters are lost forever. Compute how many codes per year a crash a day would waste and whether it matters against $62^7$.
 4. **Aggregator crash during commit.** Kill the aggregator between reading events and committing. After restart, counts must be exact. Then deliberately break it by committing the offset *before* the counts, and observe lost clicks; commit counts before the offset without a transaction, and observe double counting (§30.8.1).
-5. **Hot link.** Replay a trace in which one link receives 50% of all traffic. Confirm it stays cached, and measure whether the single lock around your LRU structure becomes a bottleneck with many threads (§20.15).
 
 #### Extensions
 
@@ -494,7 +488,6 @@ For load, generate a 1 million-request trace from Zipf ($s = 1.0$) over 100,000 
 - Replace LRU with a W-TinyLFU admission filter and compare hit ratios on the same trace (§20.9.3).
 - Record approximate unique visitors per link with HyperLogLog (§17.5) and compare its error with exact counting.
 - Add a negative cache or a Bloom filter for unknown codes and measure store reads under a scan of random codes (§17.4).
-- Re-check stored destinations against an updated blocklist in a background job and disable matches, as §52.4.11 describes.
 
 #### Self-assessment rubric
 
@@ -520,7 +513,6 @@ After this project you should be able to:
 - Implement TTL with both lazy expiry (check on access) and active expiry (periodic sampling), and quantify how much memory each leaves to expired keys.
 - Implement sampled approximate LRU eviction and compare it with exact LRU on a skewed trace (§20.9.4).
 - Implement an append-only file (AOF) with a configurable `fsync` policy and state its data-loss window (§20.6.3).
-- Parse and produce a binary-safe framed protocol, and handle partial reads and pipelined requests.
 
 #### Prerequisites
 
@@ -575,7 +567,7 @@ flowchart LR
   AOF -.->|replay on startup| EX
 ```
 
-**Reading the diagram.** Clients connect over TCP and speak RESP; each request is synchronous from the client's point of view, but a client may pipeline many requests on one connection. Inside the process there is exactly one thread. The event loop multiplexes all connections; for each connection it keeps a byte buffer, because TCP delivers a stream, not messages, so the parser must handle a command split across two reads and several commands in one read. The executor runs each command to completion against two dictionaries: the keyspace (key → value) and the expires dictionary (key → absolute expiry time), which holds only keys that have a TTL. Because there is one thread, no command needs a lock, and every command is atomic; the price is that one slow command (a `KEYS *` over a million keys) stalls every client. A timer callback performs active expiry; the evictor runs inside a write when memory is over the limit. Persistence is drawn dotted because it is asynchronous with respect to the reply under `everysec`: the command is appended to an in-memory buffer, written to the file, and `fsync`ed once a second. The storage boundary is process memory, plus the AOF on disk if enabled. Failure points: the process (all data is lost without AOF), the disk (AOF writes stall the loop under `always`), and slow commands. Scaling: one node is bounded by one core; scaling out means partitioning keys across nodes with consistent hashing (§20.14), which is where the distributed key-value store of §93.2.2 begins.
+**Reading the diagram.** Clients speak RESP over TCP; each request is synchronous, but a client may pipeline many on one connection. Inside the process there is one thread. The event loop multiplexes all connections and keeps a byte buffer per connection, because TCP delivers a stream, not messages: a command may be split across reads, or several may arrive in one. The executor runs each command to completion against two dictionaries: the keyspace (key → value) and the expires dictionary (key → absolute expiry time), which holds only keys that have a TTL. Because there is one thread, no command needs a lock, and every command is atomic; the price is that one slow command (a `KEYS *` over a million keys) stalls every client. A timer performs active expiry; the evictor runs inside a write when memory is over the limit. Persistence is dotted because under `everysec` it is asynchronous with respect to the reply: commands are appended to the file and `fsync`ed once a second. The storage boundary is process memory, plus the AOF on disk if enabled. Failure points: the process (all data is lost without AOF), the disk (AOF writes stall the loop under `always`), and slow commands. Scaling: one node is bounded by one core; scaling out means partitioning keys across nodes with consistent hashing (§20.14), which is where the distributed key-value store of §93.2.2 begins.
 
 #### Milestones
 
@@ -736,14 +728,12 @@ For load, use `redis-benchmark` from the official Redis image in Docker, restric
 2. **Crash with AOF.** Under each `fsync` policy, run a client that `INCR`s a counter and records each acknowledged value, kill the server with SIGKILL, restart it, and compare the recovered counter with the last acknowledged value. The gap is your measured loss window.
 3. **Torn AOF tail.** Truncate the AOF in the middle of the last command. Startup must replay everything before it and discard the fragment with a warning, not refuse to start (§13.12).
 4. **Memory pressure.** Set `maxmemory` to 50 MB and write 200 MB of values under `noeviction` (writes must fail cleanly with an error reply) and under `allkeys-lru` (memory stays bounded). Check that no client connection is dropped.
-5. **Client misbehavior.** Open 5,000 idle connections, send a request with a declared length of 1 GB, and disconnect in the middle of a pipelined batch. The server must stay up; add a per-connection buffer limit and a maximum bulk length.
 
 #### Extensions
 
 - Add `allkeys-lfu` with a logarithmic counter and decay, as §20.9.4 describes, and compare it with LRU on a trace whose popular keys change halfway through.
 - Add point-in-time snapshots (RDB-style): on Linux, `os.fork()` and let the child write the dictionary while the parent continues; measure the copy-on-write memory growth while writes continue (§6.6.5).
 - Add primary–replica replication by streaming the AOF to a second process; this is a small preview of §93.2.3.
-- Add keyspace notifications (publish an event when a key expires) and use them to build a delayed-job queue.
 - Shard keys across three of your servers with client-side consistent hashing (§20.14) and measure how many keys move when you add a fourth.
 
 #### Self-assessment rubric
@@ -948,15 +938,13 @@ Load tests run in two configurations. Single process: an open-loop generator wit
 1. **Store outage.** Stop the Redis container during a three-instance load test. Measure time to fallback, the error rate during the switch, and over-admission while the fallback is active. Repeat with fail-closed on a sensitive route (login) and fail-open on a read route, and justify each choice (§52.6.11).
 2. **Store latency.** Add 30 ms of delay to Redis with `tc netem` in Docker, or with a delaying proxy written in `asyncio`. Show that the timeout and circuit breaker keep API p99 bounded.
 3. **Clock skew.** Change the script to use each caller's clock and skew one instance by +2 s. Observe refills computed from mismatched times; then restore server-side `TIME` and confirm the effect disappears (§24.9).
-4. **Hot key.** Send 90% of all traffic with one API key. Measure whether the single Redis key becomes a bottleneck, and consider local pre-aggregation for that key (§20.15).
-5. **Retry amplification.** Make the clients ignore `Retry-After` and retry immediately. Measure the multiplication of offered load and the limiter's own cost, then add jittered backoff (§22.12.2).
+4. **Retry amplification.** Make the clients ignore `Retry-After` and retry immediately. Measure the multiplication of offered load and the limiter's own cost, then add jittered backoff (§22.12.2).
 
 #### Extensions
 
 - Implement GCRA, the leaky bucket stored as a single timestamp per key, and compare its memory per key with the token bucket (§22.5.2).
 - Add hierarchical limits (per user within per organization) and decide what `remaining` means when two limits apply.
 - Add priority-based load shedding that rejects low-priority traffic first when the protected service's latency rises, and contrast it with per-client limits (§22.9.2).
-- Place the limiter in a gateway process in front of the API instead of inside it, and compare latency and operational trade-offs (§22.3.2).
 
 #### Self-assessment rubric
 
@@ -983,7 +971,6 @@ After this project you should be able to:
 - Show why error-based health checks miss gray failures, and fix it with a latency-aware policy (§19.4.3–19.4.4).
 - Bound retry amplification with a retry budget, and demonstrate a retry storm without one (§22.12.3–22.12.4).
 - Drain connections during a rolling deployment with zero failed requests (§19.8.4, §42.7.4).
-- Validate the simulator against a real `asyncio` reverse proxy.
 
 #### Prerequisites
 
@@ -1002,7 +989,6 @@ After this project you should be able to:
 3. Health checking: passive (eject after $k$ consecutive errors or when a backend's latency exceeds the fleet median by a factor), active (probe every $p$ seconds, mark down after $f$ failures, up after $s$ successes), and a maximum ejection percentage so that a fleet-wide problem does not eject everything.
 4. Client behavior: timeouts, one retry to a different backend, and a retry budget (retries ≤ 10% of requests over a sliding 10 s window).
 5. Output: per-second time series of throughput, error rate, p50 and p99 latency, retries and per-backend share, written to CSV for plotting.
-6. A real reverse proxy (`asyncio`, HTTP/1.1) in front of four copies of the §93.1.1 service, using the same policy and health-check code.
 
 **Non-functional requirements.**
 
@@ -1037,7 +1023,7 @@ flowchart LR
   LB --> MET[("Metrics CSV<br/>per-second series")]
 ```
 
-**Reading the diagram.** Everything happens in simulated time, driven by one event queue, a heap ordered by timestamp. The arrival generator inserts request arrivals; the scenario script inserts state changes such as "backend 2 becomes slow at $t$ = 40 s". The main loop pops the earliest event and handles it. For an arrival, the balancer chooses a backend using its policy and its health state, and the dispatch is treated as synchronous from the client's view (solid arrows). The backend computes a service time from its distribution and current state and schedules a completion event back into the queue (dotted, because it arrives later in simulated time; only two of these are drawn). Completion events update in-flight counts, EWMA latency and the passive health checker's error streaks. The active health checker is just another event source that probes backends periodically (drawn for one backend). There is no real network or storage; the only output is the metrics CSV. The failure points are the scenario's: crashes, slowness and drains, plus the balancer's own decisions (ejecting too eagerly can overload the survivors). Scaling the simulator means more events per second of wall time; scaling the simulated system means more backends or several balancers, each with its own partial view, which is a good extension.
+**Reading the diagram.** Everything happens in simulated time, driven by one event queue, a heap ordered by timestamp. The arrival generator inserts request arrivals; the scenario script inserts state changes such as "backend 2 becomes slow at $t$ = 40 s". The main loop pops the earliest event. For an arrival, the balancer chooses a backend using its policy and its health state, and the dispatch is treated as synchronous from the client's view (solid arrows). The backend computes a service time from its distribution and current state and schedules a completion event back into the queue (dotted, because it arrives later in simulated time; only two of these are drawn). Completion events update in-flight counts, EWMA latency and the passive health checker's error streaks. The active health checker is just another event source that probes backends periodically (drawn for one backend). There is no real network or storage; the only output is the metrics CSV. The failure points are the scenario's: crashes, slowness and drains, plus the balancer's own decisions (ejecting too eagerly can overload the survivors). Scaling the simulated system means more backends, or several balancers each with its own partial view.
 
 #### Milestones
 
@@ -1145,7 +1131,6 @@ What to notice:
 - Ejection does nothing for the slow backend, because it returns successes. Round robin keeps sending it a quarter of the traffic (after ejection, a third of the first attempts), so 11.2% of all requests take more than 100 ms and p99 is 274 ms. Error-based health checks are blind to gray failures.
 - Power of two choices on in-flight count helps a lot (1.7% slow) but not completely. At 200 RPS the healthy backends often have zero or one request in flight, so a slow backend with one or two in flight does not look very different; about 5% of requests in the last 20 s still reach it.
 - Adding EWMA latency to the score nearly eliminates slow requests (0.1%) and brings p99 down to 48 ms. The EWMA is updated only when a request completes, which is realistic: the balancer learns that a backend is slow only after waiting for it.
-- The code tracks consecutive errors per backend and never ejects everyone (`live or ...`). Real systems cap ejection at a percentage of the fleet, which Milestone 2 adds.
 
 ::: example
 **Worked example — How many requests hit a dead backend?**
@@ -1171,13 +1156,11 @@ Then run every scenario in Table 93.10 for five seeds and report the mean and ra
 2. **Correlated failure.** Crash two of four backends at once. The survivors now run at double load; if that exceeds their capacity, latency explodes and passive latency-based ejection may eject a third backend, making things worse. Show the cascade, then show how the maximum ejection percentage stops it.
 3. **Retry storm and metastability.** In the full-outage scenario, set client retries to three with no budget and no backoff. Show that after the outage ends the fleet stays overloaded because retries keep the queues full, a metastable failure; then show that the retry budget breaks the loop (§22.12.3).
 4. **Health-check lies.** Make a backend's `/healthz` return `200` while real requests fail (a dependency is down). Active checks alone keep it in rotation; passive checks catch it. Then decide what a health check should test (§19.5.2).
-5. **Balancer failure.** Run two balancers that share no state, each seeing half the clients. Compare their ejection decisions and their per-backend load estimates, and discuss what a client-side balancer in every client would see (§19.10).
 
 #### Extensions
 
 - Add consistent hashing with bounded loads (§19.4.7) for a cache-like workload, and measure the trade-off between hit ratio (affinity) and balance.
 - Model a multi-zone fleet with zone-aware routing, and simulate the loss of one zone (§19.9).
-- Implement Maglev-style lookup tables and measure disruption when a backend is removed (§19.4.8).
 - Feed the simulator with the latency distribution you measured from the §93.1.1 service instead of an exponential distribution, and compare predictions with the real proxy.
 
 #### Self-assessment rubric
@@ -1192,7 +1175,7 @@ Then run every scenario in Table 93.10 for five seeds and report the mean and ra
 | Retries and overload | Retries implemented | Budget, outage and recovery measured; metastable storm demonstrated | You can explain metastability and three defenses against it |
 | Real system | Simulator only | Real proxy, same scenarios, results compared | You can say where the simulator was wrong and why |
 
-## 93.2 Intermediate
+## 93.2 Intermediate projects
 
 The Intermediate projects are distributed: several processes (or simulated nodes) that must cooperate while any of them may crash and any message may be delayed or lost. The main new skill is reasoning about state that lives in more than one place. Each project gives you a fault-injection harness from the start, because a distributed system that has only been run without failures has not really been tested. Run the nodes as separate processes on one machine, communicating over TCP or HTTP on different ports; Docker Compose is a convenient alternative that also lets you cut network links between containers.
 
@@ -1208,7 +1191,6 @@ After this project you should be able to:
 - Explain and demonstrate at-most-once and at-least-once delivery by moving one line of code (the commit) (§30.8, §31.8.2).
 - Partition a topic by key, preserve per-key order, and explain why order across partitions is not preserved (§31.5.3, §30.9).
 - Implement consumer groups with heartbeats, partition assignment and rebalancing, and measure the pause a rebalance causes (§31.7.2, §31.12).
-- Measure the throughput gained by batching and the latency it costs, and size consumers to drain a backlog (§30.4.3, §31.13).
 
 #### Prerequisites
 
@@ -1264,7 +1246,7 @@ flowchart LR
   GC --> OFF
 ```
 
-**Reading the diagram.** Producers send produce requests synchronously to the broker and wait for an acknowledgment that carries the record's partition and offset. The request handler hashes the key to pick a partition, so all messages with key `order-17` land in the same partition and keep their relative order. Each partition is an append-only log stored as segment files with a sparse index from offset to byte position; this is the storage boundary, and the only state that must survive a crash besides the committed offsets. Consumers pull: each one fetches from its current offset in the partitions assigned to it, with long polling so that an idle consumer does not spin. Consumers in the same group split the partitions between them, so a partition is read by exactly one member at a time; a second group (not drawn) would read the same partitions independently with its own offsets. Heartbeats and commits (dotted) go to the group coordinator, which reassigns partitions when a heartbeat stops arriving and stores committed offsets durably. Failure points: the broker process (everything stops; acknowledged data must survive), the disk, a consumer that dies before committing (its messages are redelivered) and a consumer that is only slow (it may lose its partitions while still processing, creating duplicates). Scaling: more partitions for more consumer parallelism (§31.5.2), and several brokers with replicated partitions, which is §93.2.3's subject applied to a log.
+**Reading the diagram.** Producers send produce requests synchronously to the broker and wait for an acknowledgment that carries the record's partition and offset. The request handler hashes the key to pick a partition, so all messages with key `order-17` land in the same partition and keep their relative order. Each partition is an append-only log of segment files with a sparse offset index; together with the committed offsets, this is the storage boundary. Consumers pull: each one fetches from its current offset in the partitions assigned to it, with long polling so that an idle consumer does not spin. Members of one group split the partitions, so each partition has one reader per group; another group would read the same data with its own offsets. Heartbeats and commits (dotted) go to the group coordinator, which reassigns partitions when a heartbeat stops arriving and stores committed offsets durably. Failure points: the broker process (everything stops; acknowledged data must survive), the disk, a consumer that dies before committing (its messages are redelivered) and a consumer that is only slow (it may lose its partitions while still processing, creating duplicates). Scaling: more partitions for more consumer parallelism (§31.5.2), and several brokers with replicated partitions, which is §93.2.3's subject applied to a log.
 
 #### Milestones
 
@@ -1408,10 +1390,9 @@ Load tests run producers at increasing rates with batch sizes 1, 10, 100 and 1,0
 #### Failure-injection exercises
 
 1. **Crash during a batch.** Kill the broker while it writes a batch of 100 records. Decide, and test, whether a batch is all-or-nothing after recovery or may be partially present, and what producers see in each case.
-2. **Disk full.** Point the log at a small `tmpfs` or loop-mounted file system and fill it. Produce must fail with a clear error; existing data must stay readable; nothing may be acknowledged without being written.
-3. **Zombie consumer.** Pause a consumer with SIGSTOP for longer than the session timeout, let its partitions move, then resume it with SIGCONT. It will try to commit; your generation check must refuse it. Count duplicates processed during the overlap.
-4. **Poison message.** Produce a message that makes the consumer throw. Without a dead-letter path, the partition stalls forever behind it (head-of-line blocking); with one, it moves on after five attempts (§30.11).
-5. **Slow consumer and retention.** Set retention to 5 minutes and stop a consumer for 10. On restart its committed offset no longer exists. Implement and justify the reset policy (earliest or latest) and record how many messages were lost.
+2. **Zombie consumer.** Pause a consumer with SIGSTOP for longer than the session timeout, let its partitions move, then resume it with SIGCONT. It will try to commit; your generation check must refuse it. Count duplicates processed during the overlap.
+3. **Poison message.** Produce a message that makes the consumer throw. Without a dead-letter path, the partition stalls forever behind it (head-of-line blocking); with one, it moves on after five attempts (§30.11).
+4. **Slow consumer and retention.** Set retention to 5 minutes and stop a consumer for 10. On restart its committed offset no longer exists. Implement and justify the reset policy (earliest or latest) and record how many messages were lost.
 
 #### Extensions
 
@@ -1419,7 +1400,6 @@ Load tests run producers at increasing rates with batch sizes 1, 10, 100 and 1,0
 - Add log compaction for keyed topics: keep only the latest value per key in closed segments (§31.10.2).
 - Add idempotent producers: a producer ID and sequence number per partition, with the broker rejecting duplicates after a producer retry (§31.6.3).
 - Implement a share-group (queue) mode where consumers acknowledge individual messages instead of committing offsets, and compare it with the visibility-timeout queue of §30.11.2 (§31.7.4).
-- Benchmark against Kafka or RabbitMQ in Docker with the same workload, and explain the gap.
 
 #### Self-assessment rubric
 
@@ -1445,7 +1425,6 @@ After this project you should be able to:
 - Implement quorum reads and writes with configurable $N$, $R$ and $W$, and demonstrate both what $R + W > N$ guarantees and what it does not (§27.8).
 - Implement read repair, hinted handoff and Merkle-tree anti-entropy, and measure how quickly replicas converge after a failure (§27.9, §27.13, §17.8).
 - Detect concurrent writes with version vectors and return siblings, and compare with last-writer-wins (§27.14).
-- Run a Jepsen-style test that records a history of operations under faults and checks it (§25.11).
 
 #### Prerequisites
 
@@ -1499,7 +1478,7 @@ flowchart LR
   N1 -.->|heartbeats| N2
 ```
 
-**Reading the diagram.** The client sends a request to any node, which becomes the coordinator for that request. The coordinator computes the key's preference list on the hash ring: the first three distinct nodes clockwise from the key's hash (here B, E and A itself). It sends the write to all three in parallel over HTTP and replies to the client as soon as $W$ of them acknowledge; the remaining replica's acknowledgment arrives later. Reads work the same way with $R$ responses, and if the responses disagree, the coordinator returns the newest and writes it back to the stale replicas (read repair). If a replica is down, the coordinator writes to the next node on the ring (C) with a hint (dotted), and C forwards the write when the owner recovers. In the background, replicas compare Merkle trees of shared key ranges and exchange only differences, and nodes exchange heartbeats (both dotted, asynchronous). Each node's storage boundary is its local store; there is no shared storage. Failure points: any node (tolerated up to $N - W$ for writes and $N - R$ for reads), the coordinator crashing after a partial write (the write may be present on fewer than $W$ nodes and still surface later), lost hints, and network partitions that make each side believe the other is down. Scaling: add nodes; each joins the ring at its virtual-node positions and takes over about $1/n$ of the keys.
+**Reading the diagram.** The client sends a request to any node, which becomes the coordinator for that request. The coordinator computes the key's preference list on the hash ring: the first three distinct nodes clockwise from the key's hash (here B, E and A itself). It sends the write to all three in parallel over HTTP and replies after $W$ acknowledgments. Reads work the same way with $R$ responses, and if the responses disagree, the coordinator returns the newest and writes it back to the stale replicas (read repair). If a replica is down, the coordinator writes to the next node on the ring (C) with a hint (dotted), and C forwards the write when the owner recovers. In the background, replicas compare Merkle trees and exchange only differences, and nodes exchange heartbeats (both dotted). Each node's storage boundary is its local store; there is no shared storage. Failure points: any node (tolerated up to $N - W$ for writes and $N - R$ for reads), the coordinator crashing after a partial write (the write may be present on fewer than $W$ nodes and still surface later), lost hints, and network partitions that make each side believe the other is down. Scaling: add nodes; each joins the ring at its virtual-node positions and takes over about $1/n$ of the keys.
 
 #### Milestones
 
@@ -1644,14 +1623,12 @@ The consistency harness is the centerpiece of the test plan. Run 10 clients for 
 2. **Network partition.** Put a forwarding proxy between nodes and drop traffic between {A, B} and {C, D, E}. With strict quorums, which keys can each side write? With sloppy quorums, both sides accept writes for every key; heal the partition and observe siblings or last-writer-wins losses (§25.8).
 3. **Lost hints.** Kill the node holding hints before it delivers them. Show that anti-entropy eventually repairs the owner, and measure how long it takes.
 4. **Clock skew with last-writer-wins.** Switch to wall-clock timestamps and skew one coordinator's clock by −5 s. Writes coordinated by it lose to older writes from other coordinators. Count the silently lost updates (§27.14.1).
-5. **Hot key.** Send 50% of traffic to one key. Its three replicas saturate while the other nodes idle. Measure it, then add a coordinator-side cache with a short TTL and discuss the consistency cost.
 
 #### Extensions
 
 - Add multi-datacenter replication with per-datacenter quorums (local quorum in each of two "datacenters" on different ports with added delay).
 - Replace last-writer-wins for a shopping-cart value with a CRDT (an observed-remove set) and show that concurrent adds and removes merge without loss (§27.14.3).
 - Use gossip (SWIM-style) for membership instead of a static list (§27.10.3).
-- Measure tail latency with hedged reads: send the read to a third replica if the first two have not answered within the p95 (§23.7).
 - Compare your store with a single-leader design built on the Raft simulator of §26.7.7 for the same workload: what do you gain and lose?
 
 #### Self-assessment rubric
@@ -1678,7 +1655,6 @@ After this project you should be able to:
 - Compare asynchronous, semi-synchronous and synchronous acknowledgment by latency and by acknowledged writes lost at failover (§14.4.1).
 - Reproduce the replication-lag anomalies (stale reads, non-monotonic reads) and fix them with session guarantees (§14.4.3–14.4.4, §25.6).
 - Run a failover: detect the dead primary, pick the most up-to-date replica, redirect clients, and fence the old primary with an epoch (§27.11, §26.13).
-- Explain why automatic failover without consensus risks split brain, and what Raft adds (§26.12, §26.7).
 
 #### Prerequisites
 
@@ -1880,7 +1856,6 @@ After this project you should be able to:
 - Isolate priorities so that critical traffic meets its latency target during a large campaign (§52.7.3).
 - Retry transient provider failures with exponential backoff and jitter, and route permanent failures to a dead-letter queue (§22.12, §30.10–30.11).
 - Respect per-provider rate limits with the limiter of §93.1.4, and per-user preferences and quiet hours.
-- Track each notification's state from accepted to delivered, failed or suppressed, with a recorded reason.
 
 #### Prerequisites
 
@@ -2059,7 +2034,7 @@ Unit tests cover idempotent acceptance (same key and body → same ID; same key,
 - Add digesting: group several low-priority notifications to the same user within 15 minutes into one message.
 - Add per-tenant fairness so that one calling service's campaign cannot delay another's transactional mail (§47).
 - Add delivery-status webhooks back to calling services with signed payloads and retries (§10.4.6).
-- Add a send-time optimization model (§92 Q21 frames it as an ML problem) behind a simple interface.
+- Add a send-time optimization model (Ch 92, Q21 frames it as an ML problem) behind a simple interface.
 
 #### Self-assessment rubric
 
@@ -2072,4 +2047,228 @@ Unit tests cover idempotent acceptance (same key and body → same ID; same key,
 | Reliability | Retries | Backoff with jitter, circuit breaker, dead letters, reconciliation | You can explain where duplicates come from and how each is prevented |
 | Preferences | Opt-outs checked once | Send-time checks, quiet hours, frequency caps; opt-out freshness met | You can discuss the consistency requirement of preferences |
 | Observability | Logs | State history per notification; lag and dead-letter metrics | You can debug a "user never got the code" report from your data |
+
+### 93.2.5 Real-time chat
+
+#### Goal and learning outcomes
+
+Build a chat service with one-to-one and group conversations, live delivery over persistent connections, per-message states (sent, delivered, read) and gap-free history sync when a device reconnects. Chapter 9 teaches the real-time techniques and §53.4 designs a chat system for hundreds of millions of users. Your version runs two or three gateway processes on one machine, which is enough to meet every core problem: who orders messages, how a message finds a user connected to another gateway, what happens to messages sent while a user is offline, and how a client knows it has missed nothing.
+
+After this project you should be able to:
+
+- Serve thousands of persistent connections from an `asyncio` gateway and measure memory per connection (§9.9.1–9.9.2).
+- Assign a total order per conversation on the server and use it for deduplication, gap detection and sync (§53.4).
+- Route messages between gateways through a registry and a publish/subscribe backplane (§9.9.3).
+- Implement presence with heartbeats, and survive a reconnect storm with jittered backoff (§9.9.5–9.9.6).
+- Upgrade the transport to WebSockets and explain the handshake, framing and heartbeat (§9.6).
+
+#### Prerequisites
+
+- Polling, long polling, Server-Sent Events and WebSockets — §9.3–9.6; connection management at scale — §9.9; mobile push for offline users — §9.8.
+- The chat case study — §53.4, especially its ordering and sync requirements.
+- Delivery guarantees and idempotent receivers — §30.8, §32.10.
+- The message queue (§93.2.1) as the backplane, or Redis publish/subscribe in Docker.
+
+#### Specification
+
+**Functional requirements.**
+
+1. Clients connect, authenticate with a token, and send `hello` with the last sequence number they hold for each conversation; the server replays everything after it.
+2. `send(conversation, text, client_msg_id)`: the server assigns the next sequence number in that conversation, stores the message durably, acknowledges with the sequence number, and delivers it to every online member device. Retries with the same `client_msg_id` return the original sequence number.
+3. Delivered and read receipts flow back to the sender; unread counts per conversation are maintained.
+4. Several gateway processes: a registry maps users to gateways, and a backplane carries messages between gateways.
+5. Presence: online, or last seen; heartbeats every 30 s; offline after 2 missed heartbeats. Typing indicators are sent but never stored.
+6. Offline members get a (fake) push notification instead of live delivery.
+7. Milestone 5 moves the transport to WebSockets (the `websockets` package, or your own RFC 6455 handshake and framing).
+
+**Non-functional requirements.**
+
+**Table 93.20 — Real-time chat: targets (two gateways, one store, one machine).**
+
+| Property | Target | How you verify it |
+|---|---|---|
+| End-to-end latency | p99 ≤ 100 ms from send to recipient delivery across gateways, at 500 messages/s | Timestamps in messages |
+| Connections | 10,000 concurrent idle connections per gateway; memory per connection measured | Connection test with a load client |
+| Ordering | Every device sees each conversation in the same order with no gaps, over 1 million messages | Per-device sequence check |
+| No loss | 0 acknowledged messages missing after gateway or store restarts | Sender log versus history |
+| Sync | 1,000 missed messages synced in ≤ 2 s after reconnect | Reconnect test |
+| Reconnect storm | After a gateway restart, 10,000 clients reconnect within 60 s without overloading the survivor | Jittered reconnect test |
+
+#### Architecture
+
+**Figure 93.10 — Real-time chat: gateways, registry, backplane and message store.**
+
+```mermaid
+flowchart LR
+  A([Alice device]) <-->|WebSocket| G1[Gateway 1]
+  B([Bob device]) <-->|WebSocket| G2[Gateway 2]
+  G1 -->|send: assign seq, store| MS["Message service"]
+  MS --> ST[(Message store<br/>by conversation, seq)]
+  MS -->|look up members| REG[(Registry: user to gateway)]
+  MS -.->|publish to gateway 2| BP[[Backplane pub/sub]]
+  BP -.-> G2
+  MS -.->|offline member| PUSH{{Fake push provider}}
+  G1 -.->|heartbeats| PRES[(Presence)]
+```
+
+**Reading the diagram.** Each device holds one long-lived, bidirectional connection to a gateway (WebSocket in the final version). When Alice sends a message, gateway 1 passes it synchronously to the message service, which assigns the next sequence number for the conversation, stores the message in the message store keyed by (conversation, sequence) and returns the acknowledgment through gateway 1. The service then looks up the other members in the registry: for members on another gateway, it publishes the message to that gateway's channel on the backplane (dotted, asynchronous); gateway 2 pushes it down Bob's connection. Members with no live connection get a push notification and will sync on reconnect. Gateways also record heartbeats in the presence store. Storage boundaries are the message store (durable, the source of truth), the registry and presence (soft state, rebuilt from connections) and the backplane (transient). Failure points: a gateway crash drops all its connections at once (reconnect storm); a backplane message can be lost, which the sequence numbers expose as a gap that the client repairs by syncing; and the message service is the ordering point per conversation, so it must be partitioned by conversation, not replicated without coordination. Scaling: more gateways for connections, message service partitioned by conversation ID, and fan-out work proportional to group size (§53.4).
+
+#### Milestones
+
+1. **Single gateway with durable history.** Extend the starter with authentication, SQLite storage keyed by (conversation, seq), receipts and unread counts. *Done when:* the ordering and no-loss checks pass across server restarts, with a client simulator of 100 users.
+2. **Multiple gateways.** Run two gateways, a registry and a backplane (your §93.2.1 broker or Redis pub/sub). *Done when:* cross-gateway latency meets the target, and dropping 1% of backplane messages produces gaps that clients detect and repair by syncing, with zero missing messages at the end.
+3. **Presence and offline delivery.** Add heartbeats, last-seen, typing indicators and fake push for offline members. *Done when:* presence changes within 60 s of a client vanishing without closing its connection, and offline members receive one push per conversation burst, not one per message.
+4. **Scale and storms.** Use a load client to open 10,000 connections per gateway and measure memory; kill a gateway and have its clients reconnect with exponential backoff and full jitter. *Done when:* the connection and reconnect-storm targets hold, and your results log shows the reconnect rate per second with and without jitter.
+5. **WebSockets.** Replace newline-delimited JSON with WebSockets, including ping/pong heartbeats and close frames (§9.6.2–9.6.5); optionally add a browser client. *Done when:* every earlier test passes over WebSockets, and you can explain each field of the handshake.
+
+#### Starter code
+
+The starter runs a server and two clients in one `asyncio` process over TCP with newline-delimited JSON. It assigns sequence numbers per conversation, fans out to online members, deduplicates a retried send, and syncs a client that reconnects with its last seen sequence number.
+
+```python
+"""Real-time chat core: an asyncio server with persistent connections, per-conversation
+sequence numbers, fan-out to online members, deduplication of client retries, and
+gap-free sync on reconnect. Newline-delimited JSON over TCP (starter)."""
+import asyncio, json
+
+MEMBERS = {"c1": {"alice", "bob"}}
+history = {"c1": []}                       # conversation -> list of messages (seq = index + 1)
+online, seen_ids = {}, {}                  # user -> writer; client_msg_id -> seq
+
+async def handle(reader, writer):
+    hello = json.loads(await reader.readline())
+    user = hello["user"]
+    online[user] = writer
+    for conv, last in hello["last_seq"].items():          # sync: everything after last seen
+        for m in history[conv][last:]:
+            writer.write((json.dumps({"op": "msg", **m}) + "\n").encode())
+    while line := await reader.readline():
+        req = json.loads(line)
+        conv = req["conv"]
+        if req["client_msg_id"] in seen_ids:               # retry: ack again, store nothing
+            seq = seen_ids[req["client_msg_id"]]
+        else:
+            seq = len(history[conv]) + 1                   # the server orders the conversation
+            m = {"conv": conv, "seq": seq, "from": user, "text": req["text"]}
+            history[conv].append(m)
+            seen_ids[req["client_msg_id"]] = seq
+            for member in MEMBERS[conv] - {user}:          # fan out to online members
+                if member in online:
+                    online[member].write((json.dumps({"op": "msg", **m}) + "\n").encode())
+        writer.write((json.dumps({"op": "ack", "client_msg_id": req["client_msg_id"],
+                                  "seq": seq}) + "\n").encode())
+    del online[user]
+
+class Client:
+    def __init__(self, user):
+        self.user, self.last_seq = user, {"c1": 0}
+
+    async def connect(self, port):
+        self.reader, self.writer = await asyncio.open_connection("127.0.0.1", port)
+        self.writer.write((json.dumps({"user": self.user, "last_seq": self.last_seq}) + "\n").encode())
+        self.task = asyncio.create_task(self.listen())
+
+    async def listen(self):
+        while line := await self.reader.readline():
+            ev = json.loads(line)
+            if ev["op"] == "msg" and ev["seq"] > self.last_seq[ev["conv"]]:
+                self.last_seq[ev["conv"]] = ev["seq"]
+                print(f"  {self.user} <- #{ev['seq']} {ev['from']}: {ev['text']}")
+            elif ev["op"] == "ack":
+                print(f"  {self.user} ack {ev['client_msg_id']} -> seq {ev['seq']}")
+
+    async def send(self, text, msg_id):
+        self.writer.write((json.dumps({"conv": "c1", "text": text, "client_msg_id": msg_id}) + "\n").encode())
+        await asyncio.sleep(0.05)
+
+    async def close(self):
+        self.writer.close(); await asyncio.sleep(0.05)
+
+async def main():
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    alice, bob = Client("alice"), Client("bob")
+    await alice.connect(port); await bob.connect(port); await asyncio.sleep(0.05)
+    await alice.send("lunch?", "a-1")
+    await bob.send("sure, 12:30", "b-1")
+    print("bob goes offline")
+    await bob.close()
+    await alice.send("see you there", "a-2")
+    await alice.send("see you there", "a-2")             # retry after a lost ack
+    print("bob reconnects with last_seq", bob.last_seq)
+    await bob.connect(port); await asyncio.sleep(0.05)
+    print("history length:", len(history["c1"]))
+    await alice.close(); await bob.close()
+    server.close()
+
+asyncio.run(main())
+```
+
+Output:
+
+```text
+  bob <- #1 alice: lunch?
+  alice ack a-1 -> seq 1
+  alice <- #2 bob: sure, 12:30
+  bob ack b-1 -> seq 2
+bob goes offline
+  alice ack a-2 -> seq 3
+  alice ack a-2 -> seq 3
+bob reconnects with last_seq {'c1': 1}
+  bob <- #2 bob: sure, 12:30
+  bob <- #3 alice: see you there
+history length: 3
+```
+
+What to notice:
+
+- The server, not the client, assigns `seq`, so both devices agree on the conversation's order even if two members send at the same instant. Client timestamps would disagree across devices with skewed clocks (§24.9).
+- Alice's retry of `a-2` was acknowledged with the same `seq` 3 and stored once. A client that retries after a lost acknowledgment must reuse the same `client_msg_id`; generating a new one creates a duplicate message that the server cannot recognize.
+- Bob reconnected with `last_seq` 1 and received everything after it in order: one indexed range read per conversation, which is the sync requirement of §53.4. A client that sees `seq` jump from 3 to 5 knows that it missed 4 and asks for it.
+- Bob also received his own message `#2` again, because his cursor advances only on incoming messages, not on acknowledgments. That is harmless (he discards anything at or below his cursor), but it wastes bandwidth; advance the cursor on acknowledgment when no gap precedes it.
+- Assigning `seq` as `len(history) + 1` works only because one process owns the conversation. With several gateways, the message service partition that owns the conversation must assign it, or two gateways will hand out the same number.
+
+::: example
+**Worked example — Fan-out load from group chats.**
+
+*Assumptions.* 2,000 active groups of 50 members each; each group sends 1 message every 10 s on average; 60% of members are online.
+
+1. Messages sent: $2{,}000 / 10 = 200$ per second.
+2. Deliveries attempted: $200 \times 49 = 9{,}800$ per second (every member except the sender).
+3. Live deliveries: $9{,}800 \times 0.6 = 5{,}880$ per second over connections; the remaining $3{,}920$ per second are offline, collapsed into far fewer push notifications by batching per conversation.
+4. With members spread evenly over two gateways, about half of the live deliveries, $2{,}940$ per second, cross the backplane.
+
+*Interpretation.* A modest 200 messages per second becomes almost 10,000 delivery operations per second: fan-out, not message intake, sizes the gateways and the backplane. *Engineering implication.* Load-test with realistic group sizes, and publish one backplane message per destination gateway rather than one per recipient.
+:::
+
+#### Test plan and load-test targets
+
+Unit tests cover sequence assignment, deduplication, sync ranges (empty, partial, beyond the end), receipts and unread-count arithmetic. A client simulator runs hundreds of users with scripted conversations, random disconnects and retries; every device checks that each conversation it holds has contiguous sequence numbers and identical content to the store. Load tests open 10,000 connections per gateway (raise the process's file-descriptor limit with `ulimit -n`) and send 500 messages per second across 1,000 conversations with a mix of one-to-one and 50-member groups.
+
+#### Failure-injection exercises
+
+1. **Gateway crash.** Kill a gateway with 5,000 connected clients. Measure how long until all are reconnected, with and without jitter, and verify that no acknowledged message is lost.
+2. **Backplane loss.** Drop 1% of backplane messages. Clients must detect gaps and sync; count gap repairs.
+3. **Half-open connections.** Make clients disappear without closing their sockets (suspend the process). Only heartbeats reveal this; measure detection time and its effect on presence.
+4. **Slow consumer.** A client that reads slowly makes the gateway's send buffer grow. Bound it, and disconnect the client when the bound is reached so that one slow phone cannot exhaust gateway memory (§9.6.7).
+5. **Store slowdown.** Delay the message store by 200 ms. Senders' acknowledgments slow down; decide whether to deliver to recipients before the store confirms (faster, but a message could appear and then vanish) and defend the choice.
+
+#### Extensions
+
+- End-to-end encryption with per-device keys, so that the server stores only ciphertext (§53.5 discusses the design).
+- Message search over each user's history with an inverted index (§16).
+- Attachments through presigned upload URLs to a local object store such as MinIO in Docker (§15).
+- Rolling deploys with graceful connection draining (§9.9.7).
+
+#### Self-assessment rubric
+
+**Table 93.21 — Real-time chat: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Ordering and sync | Messages delivered live | Per-conversation `seq`, dedup, gap detection and sync; checks pass over 1 million messages | You can explain why the order is per conversation and who assigns it |
+| Multi-gateway routing | One gateway | Registry and backplane; cross-gateway latency target met | You can explain the routing path and what happens when the backplane loses a message |
+| Connections | A few clients | 10,000 connections, memory measured, storms survived with jitter | You can size a gateway fleet from your memory-per-connection figure |
+| Presence and offline | Online flag | Heartbeats, last seen, push batching | You can explain why presence is approximate by design |
+| Transport | Line-delimited JSON | WebSockets with heartbeats and close handling | You can compare WebSockets, SSE and long polling for this product (§9.10) |
 
