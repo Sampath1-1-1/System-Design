@@ -2260,3 +2260,279 @@ Personalized prices could raise revenue but undermine trust and invite regulatio
 - **Senior:** control loop with caps and smoothing, quotes, fallback.
 - **Staff:** explains why surge exists, handles confounded elasticity, and designs switchbacks.
 
+### 92.5.14 Q24. Credit scoring
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §82.5 (full case study); §71.7–§71.8 (explanations and reason codes), §71.13 (regulation)
+
+#### Prompt
+
+"Design the credit decision system for an online lender that approves or declines card and loan applications and sets credit limits."
+
+#### Clarifying questions and assumptions
+
+As in §82.5: 10 million applications and 200 million prequalification calls a year; default = 90 days past due or charged off within 12 months; 40% approval; declined applicants must receive specific reasons; models need independent validation. (Regulatory statements are engineering prompts, not legal advice.)
+
+#### Requirements
+
+- **FR:** prequalification on a soft inquiry; application decision with limit and price; adverse-action reasons; monthly account reviews; full reproducibility.
+- **NFR:** prequalification p99 ≤ 1.5 s including the bureau call (model and reasons ≤ 100 ms); decisions reproducible for at least 25 months; PD calibrated within ±10% per risk band; score PSI < 0.10 month over month.
+
+#### Estimation
+
+::: example
+**Worked example — Governance, not throughput (§82.5.4).**
+
+1. Peak load: about 63 prequalification requests/s and 6.3 applications/s.
+2. Labels: 4 million approvals a year, 160,000 defaults, each known 12 months after the decision.
+3. Economics for one applicant: $PD = 0.04$, $LGD = 0.85$, $EAD = \$3{,}000$, revenue \$300: expected loss \$102, expected profit \$186, break-even $PD^\ast = 300 / (300 + 2{,}550) = 10.5\%$.
+
+**Interpretation.** Requests are trivial; the scarce resources are labels, bureau data and validators. **Implication.** Design for correctness, explainability and reproducibility.
+:::
+
+#### Data, labels and features
+
+Bureau attributes and application data snapshotted at decision time; labels only for approved applicants (**reject inference** problem); protected attributes excluded from features but needed, often via proxies, to measure disparities.
+
+#### Model and evaluation
+
+Baseline: a points-based logistic scorecard. Production: a monotonic gradient-boosted model with documented directions, calibrated PD, and reason codes from attributions (§71.8.1); a separate credit policy turns PD into approve, limit and price. Offline: out-of-time AUC, calibration per band, stability, adverse impact ratios; independent validation before use. Online: champion–challenger on a capped share of applications with early delinquency proxies, plus a small exploration cell approving some marginal declines to measure their true default rate.
+
+#### High-level design
+
+**Figure 92.25 — Credit decision with policy separated from the model.**
+
+```mermaid
+flowchart LR
+  A([Applicant]) -->|apply| DS[Decision service]
+  DS --> BUR{{Credit bureau}}
+  DS --> SNAP[(Input snapshot)]
+  SNAP --> SC[PD model and<br/>reason codes]
+  SC --> POL[Credit policy<br/>cut-offs, limits]
+  POL --> A
+  POL -.-> LOG[(Decision log)]
+  LOG -.->|12 months later| LAB[Performance labels]
+  LAB -.-> MV[Model development<br/>and validation]
+  MV -.-> SC
+```
+
+**Reading the diagram.** The decision service pulls the bureau report, stores an immutable snapshot of all inputs, scores PD with reasons, and applies a versioned policy owned by credit officers. Decisions are logged; performance labels arrive a year later and feed development and independent validation before any new model is deployed. *Failure points:* bureau outage routes to manual review; any change to inputs or model without versioning breaks reproducibility. *Scaling:* trivial; the constraint is the model governance cycle.
+
+#### Serving and monitoring
+
+Score PSI and approval rate monthly, early delinquency by vintage, calibration per band, adverse impact ratios, reason-code stability.
+
+#### Deep dives
+
+1. **Explainable model choice** (monotonic GBDT, reason codes).
+2. **Reject inference** and the cost of an exploration cell.
+3. **Fairness with proxies** and less discriminatory alternatives.
+
+#### Trade-offs and alternatives
+
+A deep model may gain AUC but fails explainability and validation; the scorecard remains the challenger to beat.
+
+#### Follow-up questions
+
+1. *"Why not the most accurate model?"* Reasons must be stated and defended.
+2. *"Evaluate a challenger before 12 months?"* Early delinquency proxies with capped exposure.
+3. *"Drop protected attributes and done?"* No; proxies remain, so measure disparities.
+4. *"Who owns the cut-off?"* Credit policy, versioned separately from the model.
+
+#### What distinguishes levels
+
+- **Mid:** a default classifier with AUC.
+- **Senior:** point-in-time snapshots, calibration, reason codes, policy separation.
+- **Staff:** treats explainability, fairness and validation as design constraints and plans evaluation around a 12-month label.
+
+### 92.5.15 Q25. Metrics anomaly detection
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §56.6 (logging and monitoring platform), §70.5 (statistical tests), §70.6.4 (multiple testing and alert fatigue), §89.18.7
+
+#### Prompt
+
+"Our monitoring platform stores millions of metric time series. Design a system that detects anomalies automatically and alerts the right team without flooding them."
+
+#### Clarifying questions and assumptions
+
+- Scale? 5 million series at one-minute resolution: business metrics (orders per city), service metrics (latency, errors) and infrastructure metrics.
+- Who acts? On-call engineers and analysts; today they use static thresholds that miss slow drifts and fire at every daily peak.
+- Latency? Detection within 5 minutes for service metrics; hourly is fine for business metrics.
+- Labels? Few: past incidents and on-call feedback on alerts.
+
+#### Requirements
+
+- **FR:** score every new point; alert on sustained anomalies for series marked alertable; group related anomalies into one incident; feedback buttons ("useful", "noise"); a seasonality-aware dashboard band for every series.
+- **NFR:** at most a few false pages per team per week; detection delay ≤ 5 minutes for service metrics; scoring keeps up with ingestion and never delays it.
+- **Quality:** recall of past incidents in a replay, and the share of alerts marked useful.
+
+#### Estimation
+
+::: example
+**Worked example — Alert fatigue is a multiple-testing problem (§70.6.4, §89.11).** Assumptions: per-point scoring at 5 µs; a weekly seasonal profile at 10-minute resolution (1,008 values of 4 bytes) per series; tests treated as independent.
+
+1. Ingest: $5 \times 10^6 / 60 = 83{,}333$ points/s; scoring 0.4 busy vCPU.
+2. State: $5 \times 10^6 \times 1{,}008 \times 4 = 20.2$ GB, in memory across a few nodes.
+3. False alerts a day $= 5 \times 10^6 \times 1{,}440 \times \alpha$ for a per-point false-positive rate $\alpha$ (Table 92.6).
+
+**Table 92.6 — False alerts per day under different alerting rules.**
+
+| Rule | Per-point false-alarm rate | False alerts/day |
+|---|---|---|
+| Single point, $\alpha = 10^{-4}$ ($z \approx 3.7$) | $10^{-4}$ | 720,000 |
+| Single point, $\alpha = 10^{-6}$ ($z \approx 4.75$) | $10^{-6}$ | 7,200 |
+| Three consecutive points at $10^{-3}$ each | $10^{-9}$ | 7.2 |
+| Only 50,000 alertable series, single point at $10^{-4}$ | $10^{-4}$ | 7,200 |
+
+**Interpretation.** A threshold that looks strict for one series floods everyone when applied to millions. **Implication.** Combine persistence rules, a short alertable list tied to service-level objectives, and grouping; real residuals are autocorrelated, so the independence assumption understates false alerts and the rules must be tuned on replayed data.
+:::
+
+#### Data, labels and features
+
+- **Labels** are scarce: incident timelines (positive windows), alert feedback, and synthetic anomalies injected into historical series (spikes, level shifts, slow drifts) for recall measurement.
+- **Per-series inputs:** the value, seasonal expectation (hour of week), recent trend, holiday calendar, deployment events (a change often explains a shift), and the series' metadata (service, owner, unit).
+
+#### Model and evaluation
+
+Baseline: static thresholds per series. Model: a robust seasonal baseline per series (seasonal median and median absolute deviation, or a forecast with prediction intervals), a residual score, and a persistence rule; for multivariate groups (one service's latency, errors and traffic) an isolation forest or a forecast of the group helps. Offline: replay a quarter of history with injected anomalies and past incidents; measure recall, detection delay and alerts per team per week. Online: shadow mode for a team for two weeks, then enable; track alert usefulness feedback.
+
+#### High-level design
+
+**Figure 92.26 — Streaming scoring with grouping and feedback.**
+
+```mermaid
+flowchart LR
+  AG([Metric agents]) -->|push| ING[Ingestion]
+  ING --> TSDB[(Time-series store)]
+  ING -.-> STR[[Point stream]]
+  STR -.-> SCR[Streaming scorer<br/>seasonal baseline]
+  BASE[(Per-series profiles)] --> SCR
+  SCR --> PER{Persistent and<br/>alertable?}
+  PER -->|yes| GRP[Grouping by service<br/>and deploy events]
+  GRP --> ALR{{Paging and tickets}}
+  ALR -.->|useful or noise| FB[(Feedback)]
+  TSDB --> FIT[Nightly profile fit] --> BASE
+```
+
+**Reading the diagram.** Agents push points to ingestion, which writes the time-series store synchronously and publishes to a stream; the streaming scorer compares each point with its profile (an in-memory storage boundary) asynchronously, so scoring can never slow ingestion. Persistent anomalies on alertable series are grouped by service topology and recent deployments into one incident and sent to paging. Feedback and nightly profile fitting close the loop. *Failure points:* scorer lag delays alerts, so it alerts on its own lag; a profile fitted over an incident learns the anomaly as normal, so incident windows are excluded from fitting. *Scaling:* the scorer partitions by series ID.
+
+#### Serving and monitoring
+
+Monitor the system itself: scorer lag, alerts per team per week, useful-rate per detector, and incident recall in quarterly replays. Refit profiles nightly; re-tune thresholds per team from feedback.
+
+#### Deep dives
+
+1. **Multiple testing** (Table 92.6) and alert budgets per team.
+2. **Seasonality and holidays.** Weekly profiles, holiday calendars and exclusion of known events.
+3. **Grouping and root cause.** One deployment that breaks 300 series should be one page that names the deployment.
+
+#### Trade-offs and alternatives
+
+- Deep forecasting models per series are accurate but costly to train and explain for 5 million series; robust statistics plus a few learned models for top business metrics are enough.
+- Fully unsupervised alerting on every series sounds attractive and floods on-call; alertability is a human decision tied to objectives.
+
+#### Follow-up questions
+
+1. *"How do you catch slow drifts?"* Compare longer windows (day over day, week over week) in addition to point residuals.
+2. *"A metric is naturally spiky."* Wider robust bands and stronger persistence; or mark it not alertable.
+3. *"How do you evaluate without labels?"* Injected anomalies and replayed incidents.
+4. *"Should anomalies auto-remediate?"* Only for well-understood actions (roll back a canary), with human approval elsewhere.
+
+#### What distinguishes levels
+
+- **Mid:** z-scores on residuals from a moving average.
+- **Senior:** seasonality, persistence and the multiple-testing estimate, offline replay evaluation.
+- **Staff:** treats alert budgets and grouping as the product, ties alertability to objectives, and measures the detector by on-call outcomes.
+
+### 92.5.16 Q26. Document OCR and extraction pipeline
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §63.14.4 (LLM-assisted labeling with review), §66.13 (batch inference), §75.5 (document parsing)
+
+#### Prompt
+
+"Our accounts-payable product receives invoices and receipts as PDFs and phone photos. Design a pipeline that extracts vendor, date, totals, tax and line items, with people reviewing only what the machine is unsure about."
+
+#### Clarifying questions and assumptions
+
+- Volume? 2 million documents a day, 1.5 pages each; month-end and business hours give a peak four times the average.
+- Latency? Results within 5 minutes; batch uploads may take an hour.
+- Accuracy? Extracted fields that drive payments (amount, bank details) must be 99.5% correct after review.
+- Data? Financial and personal data; customers' documents must not train other customers' models without consent.
+
+#### Requirements
+
+- **FR:** ingest PDFs and images; extract fields and line items with per-field confidence; validate arithmetic and formats; route low-confidence documents to reviewers; corrections become labels.
+- **NFR:** p95 ≤ 5 minutes end to end; per-tenant isolation and encryption; reprocessing of any document with a pinned pipeline version.
+- **Quality:** **straight-through processing rate** (documents needing no human touch) at the field-accuracy target.
+
+#### Estimation
+
+::: example
+**Worked example — Reviewers cost more than GPUs (§89.10, §89.17).** Assumptions: OCR at 20 pages/s per GPU and a layout-aware extraction model at 50 pages/s per GPU, $u = 0.6$, \$2.50 per GPU-hour; alternative: a hosted vision-language model at 1,500 input and 300 output tokens per page at \$0.15 and \$0.60 per million; 60 s of review per document at \$25 per hour, 6.5 productive hours per reviewer-day.
+
+1. Pages: $3 \times 10^6$/day, 34.7/s average, **139/s peak**.
+2. GPUs: OCR $139 / 12 = 11.6$, so 12; extraction $139 / 30 = 4.6$, so 5; plus 2 spare: 19 GPUs, \$1,140 a day, \$0.00057 per document.
+3. Hosted model instead: $(1{,}500 \times 0.15 + 300 \times 0.60)/10^6 = \$0.000405$ per page, \$1,215 a day.
+4. Review: at 25% of documents routed, 8,333 hours a day (1,282 reviewers, \$208,000); at 8%, 2,667 hours (410 reviewers, \$66,700); at 3%, 1,000 hours (154 reviewers, \$25,000).
+
+**Interpretation.** Model choice moves cost by tens of dollars; each point of straight-through processing moves it by thousands. **Implication.** Optimize calibrated field confidence and validation rules, which decide what reaches people.
+:::
+
+#### Data, labels and features
+
+- **Labels:** reviewer corrections at field level (the best labels, generated by the product itself); an initial set from annotators using LLM pre-labels with review (§63.14.4).
+- **Inputs:** native PDF text when present (skip OCR), otherwise OCR tokens with bounding boxes; layout (position, font size, tables); vendor history (a known vendor's template predicts where fields are).
+- **Validation signals:** line items summing to the subtotal, tax rate consistent with jurisdiction, date plausible, vendor in the customer's vendor list.
+
+#### Model and evaluation
+
+Baseline: templates per frequent vendor plus regular expressions. Production: preprocessing (deskew, dewarp, page classification), OCR or native text, a layout-aware extraction model producing fields with calibrated confidences, a vision-language model fallback for unusual layouts, validation rules, and per-field routing. Offline: field-level exact-match accuracy, line-item F1, calibration of field confidence, and straight-through rate at the accuracy target, sliced by document type, language and image quality. Online: A/B by tenant cohort on straight-through rate and post-review error rate (from audits).
+
+#### High-level design
+
+**Figure 92.27 — Extraction with confidence-based review.**
+
+```mermaid
+flowchart LR
+  C([Customer upload]) -->|HTTPS| ING[Ingestion]
+  ING --> OBJ[(Encrypted document store)]
+  ING -.-> Q[[Processing queue]]
+  Q -.-> PRE[Preprocess and<br/>page classify]
+  PRE --> OCR[OCR GPU or<br/>native PDF text]
+  OCR --> EXT[Layout extraction<br/>GPU]
+  EXT --> VAL{Validation and<br/>confidence}
+  VAL -->|pass| RES[(Extracted records)]
+  VAL -->|fail| REV[Review workbench]
+  REV --> RES
+  REV -.->|corrections| LAB[(Labels per tenant)]
+  RES --> ERP{{Customer ERP export}}
+```
+
+**Reading the diagram.** Uploads are stored encrypted and queued; processing is asynchronous. Preprocessing classifies pages, OCR runs only for images and scanned PDFs, the extraction model produces fields with confidences, and validation either accepts the record or sends it to the review workbench. Corrections become labels scoped by tenant consent. *Failure points:* OCR outage grows the queue but loses nothing; a confidently wrong amount that passes validation is the worst error, so payment-driving fields have stricter thresholds and a random audit. *Scaling:* GPU pools autoscale on queue depth; reviewers are the capacity constraint at month-end.
+
+#### Serving and monitoring
+
+Queue age, straight-through rate per tenant and document type, field accuracy from audits, confidence calibration, and reviewer backlog at month-end. Retrain monthly with new corrections; pin pipeline versions per document for reprocessing.
+
+#### Deep dives
+
+1. **Calibrated field confidence** sets the review share (estimation step 4).
+2. **Validation rules as a second model.** Arithmetic and format checks catch extraction errors that the model is confident about.
+3. **Tenant data boundaries.** Global models train only on consented data; per-tenant adapters or vendor templates use each tenant's own corrections.
+
+#### Trade-offs and alternatives
+
+- A vision-language model for everything is simpler and strong on unusual layouts, but harder to calibrate and version; use it for the fallback slice.
+- Templates are perfect for frequent vendors and brittle elsewhere; keep them as features.
+
+#### Follow-up questions
+
+1. *"How do you handle a new vendor?"* The general model; after a few corrections, a learned template.
+2. *"Low-quality phone photos?"* Image-quality scoring at upload, prompting a retake.
+3. *"How do you prove accuracy?"* Random audits of straight-through documents.
+4. *"Month-end surge?"* Queue priority by due date and temporary review staffing.
+
+#### What distinguishes levels
+
+- **Mid:** OCR plus an extraction model.
+- **Senior:** confidence routing sized against reviewer cost, validation rules, field-level evaluation.
+- **Staff:** optimizes straight-through processing as the business metric, protects payment fields with audits, and respects tenant data boundaries.
