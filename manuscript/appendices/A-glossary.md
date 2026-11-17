@@ -32,11 +32,23 @@
 
 **Adam and AdamW** — **Adam** [Kingma and Ba 2015] keeps two running averages per parameter: the **first moment** $m$ (mean gradient, like momentum) and the **second moment** $v$ (mean squared gradient). It divides the first by the square root of the second, so every parameter gets its own effective step size. **AdamW** [Loshchilov and Hutter 2019] applies **weight decay** directly to the weights, decoupled from the adaptive step, instead of adding an L2 term to the gradient, which Adam's per-parameter scaling would otherwise distort. *(§58.5.2)*
 
+**Adaptation** — Changing a pre-trained language model's behavior for a task or domain. **Inference-time adaptation** changes only the input: instructions, examples, retrieved documents. **Training-time adaptation** changes weights: supervised fine-tuning, preference optimization, continued pre-training. The **adaptation ladder** orders these methods by cost, data needed and how deeply they change the model. *(§76.3.1)*
+
 **Adapter** — A wrapper that converts the interface of an existing class into the interface its clients expect, so that classes with incompatible interfaces can work together [Gamma et al. 1994]. *(§37.9)*
 
 **Address space** — The range of memory addresses a process can use. On Linux x86-64 with 4-level page tables, user space spans 2⁴⁷ bytes = 128 TiB of *virtual* addresses; the kernel occupies the upper half and is not accessible from user mode. *(§6.3.2)*
 
 **Aggregate** — A cluster of entities and value objects treated as one unit for data changes, with one **root** entity. Outside objects reference only the root, every change goes through it, and it enforces the aggregate's **invariants**. One transaction modifies one aggregate [Evans 2003; Vernon 2013]. *(§34.4.3)*
+
+**AI agent** — A system in which a language model, the **policy**, repeatedly chooses the next action toward a **goal** given the current **context** (instructions, conversation, prior actions and their results); an **orchestrator** executes the chosen action through a **tool** (a function with a declared interface) and appends the result to the context; the loop ends when the policy declares the goal met, a human takes over, or a budget is exhausted. An agent may also read and write **memory** that outlives one context window. *(§77.3.1)*
+
+**AI observability** — The metrics, logs and traces (§40.3) needed to operate model-backed features: per-request token counts (input, cached, output), latency phases (queueing, TTFT, TPOT, end-to-end, §73.4), cost, model and deployment identity, finish reason, and the causal trace that links the many model and tool calls of one agent task. It adds content observability (prompts and responses) under privacy controls. *(§79.13.1)*
+
+**AI platform** — A shared, internally operated service that gives many applications and teams access to many models (self-hosted and external) through one API, and enforces organization-wide controls on that access: identity, quotas, routing, safety and privacy policy, logging, observability and cost accounting. Its users are **product teams** (online features), **agents** (multi-step programs that call models and tools, Chapter 77) and **batch jobs** (offline generation, tagging, embedding). *(§79.3.1)*
+
+**AI platform control plane and data plane** — The **data plane** carries requests and tokens: clients, model gateway, inference router, serving pools (self-hosted engines on GPU clusters and external providers), caches and the request log stream. The **control plane** decides how the data plane behaves and is off the request path: the model registry and deployment catalog, policy (who may call what, with which data controls), quota and tenant configuration, the billing and usage ledger, and the controllers that place models on GPUs and scale them (§47.10). *(§79.4.1)*
+
+**Allocation harm** — A system withholds an opportunity or resource (credit, a job, an order, a delivery batch) from some people or groups more than others. **Definition — Quality-of-service harm.** A system works less well for some groups, even though nothing is explicitly withheld: higher error rates, slower or less accurate service. **Definition — Representation harm.** A system reinforces stereotypes, demeans, or erases groups, for example through the content it generates, ranks or labels. *(§71.3.1)*
 
 **Allocation versus usage** — **Allocated (reserved) utilization** is the fraction of capacity claimed by requests or reservations; **used utilization** is the fraction actually consumed. The difference, **slack**, is capacity that is paid for, promised to someone, and idle. *(§46.3.2)*
 
@@ -51,6 +63,8 @@
 **Apache Flink** — An open-source distributed engine that executes dataflow programs as a graph of long-running, pipelined operators, treating batch as a bounded special case of streaming. It provides event-time processing with watermarks, large keyed state, and exactly-once state consistency through asynchronous distributed snapshots [Carbone et al. 2015a]. *(§29.9.1)*
 
 **API gateway** — A reverse proxy (§7.12) that is the single entry point for external clients into a set of services. It routes requests and applies **edge concerns** once: TLS termination, authentication, rate limiting, request validation, caching, protocol translation and sometimes aggregation [Richardson 2018]. *(§34.6.1)*
+
+**Approximate nearest neighbor (ANN) search** — A search that returns $k$ vectors that are *probably* among the true $k$ nearest, trading a small, measurable loss of accuracy for large savings in computation and memory traffic. Its accuracy is measured by **recall@k** against exact search. *(§74.6.1)*
 
 **Architectural decision** — A design choice that addresses an architecturally significant requirement — one that affects structure, quality attributes, interfaces or technology in a way that is costly to change later. Examples: choosing a relational database over a key-value store; storing files in object storage; making photo processing asynchronous. *(§1.8.1)*
 
@@ -104,6 +118,8 @@
 
 **Baseline** — The simplest credible predictor for a task, such as a constant (the training median), a hand-written rule or a linear model, against which every more complex model must show a measurable improvement. *(§59.9.1)*
 
+**Batch inference job** — A scheduled distributed job that reads a bounded input dataset, loads the model once per worker, scores rows in large batches, and writes predictions to an output table or key-value store, so that a re-run produces the same result. *(§66.13.1)*
+
 **Batch prediction and online inference** — In **batch prediction** (offline inference) a scheduled job computes predictions for every key that might be requested (each user, each restaurant), stores them, and the request path only looks them up. In **online inference** the model runs inside the request on features available at that moment. **Online inference with streaming features** combines online inference with features maintained by nearline stream processing. *(§60.8.1)*
 
 **Batch processing** — Running a computation over a **bounded** dataset (one whose size is known when the job starts, such as "yesterday's logs") that reads immutable input files, writes new output files, and is judged mainly by **throughput** (bytes or records processed per second) and total completion time rather than by the latency of individual records. *(§29.3.1)*
@@ -112,7 +128,13 @@
 
 **Batch, streaming and on-demand features** — A **batch feature** is computed on a schedule from data at rest (a warehouse or lakehouse table) and loaded into stores. A **streaming feature** is computed continuously from an event stream and updated within seconds of each event. An **on-demand feature** (also called a request-time feature) is computed during the prediction request from inputs that exist only then, optionally combined with stored features. An **in-model transformation** is part of the model artifact itself and runs wherever the model runs. *(§62.4.1)*
 
+**Behavioral test** — A test that checks a model's output on constructed inputs against an expectation about capability rather than against a labeled dataset, for example "a longer distance never produces a shorter ETA." *(§69.4.1)*
+
 **BGP** — A **path-vector** routing protocol in which neighboring routers (peers) exchange, over a TCP session on port 179, announcements of the form "prefix P is reachable via AS path [X, Y, Z]". Each AS chooses among the paths it hears according to its own **policy**, then re-announces its chosen path (with its own ASN prepended) to the peers its policy allows. *(§7.5.2)*
+
+**Bias mitigation** — A change to the data (**pre-processing**), the training objective (**in-processing**) or the decision rule applied to scores (**post-processing**) that reduces a measured disparity, usually at some cost in accuracy or another fairness criterion. *(§71.6.1)*
+
+**Bi-encoder, cross-encoder** — A **bi-encoder** embeds query and chunk *separately* and scores them by vector similarity; chunk vectors are precomputed, so scoring millions of chunks needs only an ANN lookup. A **cross-encoder** feeds the query and one chunk *together* through a transformer and outputs a relevance score; every token of the query attends to every token of the chunk, which is more accurate, but nothing can be precomputed, so it costs one forward pass per query–chunk pair. *(§75.9.1)*
 
 **Bisection bandwidth** — The minimum total link capacity, in one direction, crossing any cut that divides the network's endpoints into two equal halves. **Full bisection bandwidth** means every endpoint in one half can send to the other half at full injection rate simultaneously. *(§49.10.4)*
 
@@ -144,6 +166,8 @@
 
 **Builder** — A separate object that assembles a complex product step by step, validates the combination of choices, and returns a finished (ideally immutable) product from a final `build()` call [Gamma et al. 1994; Bloch 2018]. *(§37.5)*
 
+**Build versus buy for model serving** — The per-model decision between **self-hosting** (running open-weight or custom models on GPUs you rent or own, with your engines and operations) and **buying** inference from API providers (paying per token, possibly with provisioned capacity), and, at the platform level, between building the gateway and control plane and adopting an open-source or managed one (§51.9, §69.15). *(§79.16.1)*
+
 **Bulkhead** — Partitioning a service's limited resources (threads, connections, memory, instances) into isolated pools, one per dependency, tenant or workload class, so that exhaustion of one pool cannot starve the others. *(§22.14)*
 
 **Byzantine fault** — A fault in which a node deviates arbitrarily from its protocol: it may send wrong values, send *different* values to different peers (**equivocation**), replay or delay messages, or collude with other faulty nodes. The name comes from Lamport, Shostak and Pease's allegory of generals, some of them traitors, who must agree on a battle plan by messenger [Lamport et al. 1982]. *(§45.7.1)*
@@ -166,6 +190,8 @@
 
 **Cache penetration** — Requests for keys that do not exist in the database. Because there is nothing to cache, every such request misses and reaches the database. A bug or an attacker iterating random IDs can push the database's full read load through the cache. *(§20.12)*
 
+**Caches on an AI platform** — An **exact response cache** returns a stored response when the normalized request (model version, parameters, full prompt) matches byte for byte. A **semantic cache** returns a stored response when a new prompt's embedding is close to a cached prompt's. A **prefix (KV) cache** reuses the attention keys and values of a shared prompt prefix inside the engine or provider (§73.8), so the model still generates a fresh answer. An **embedding cache** stores vectors for repeated inputs to an embedding model. *(§79.12.1)*
+
 **Cache stampede (thundering herd, dog-piling)** — When a popular entry expires or is evicted, many concurrent requests miss at once and all recompute or reload it, multiplying load on the backend exactly when it is busiest. *(§20.11)*
 
 **Cache tiers** — The **edge** tier is the set of PoPs that accept user connections. A **mid-tier** (also *parent*, *regional* or *upper-tier* cache) is a smaller set of larger caches that edges consult on a miss. An **origin shield** is a mid-tier designated as the single path to a given origin. The **origin** is the customer's own infrastructure that holds the authoritative content. *(§21.4.1)*
@@ -175,6 +201,8 @@
 **CALM theorem** — *Consistency As Logical Monotonicity*: a problem has a consistent, coordination-free distributed implementation if and only if it is **monotonic**, meaning that adding inputs can only add outputs, never retract one [Hellerstein & Alvaro 2020; Ameloot et al. 2013]. *(§45.6.6)*
 
 **Canary release** — A deployment that sends a small, controlled fraction of production traffic to the new version, compares its behavior with the current version, and increases the fraction in steps only while the comparison stays healthy; otherwise traffic is returned to the old version [Sato 2014a]. *(§43.6.1)*
+
+**Capacity estimation** — The practice of deriving, from stated assumptions and a few reference numbers, the order of magnitude of a system's load (requests, bytes, tokens per second) and the resources it needs (nodes, memory, disks, GPUs, network, money). An estimate is judged by whether it reaches the right power of ten and the right *design decision*, not by its third significant digit. *(§89.3.1)*
 
 **Capacity planning** — The recurring process of forecasting demand, translating it into the resources needed to serve it within the service-level objective with stated headroom and redundancy, and acquiring those resources before they are needed, allowing for the lead time to obtain them. *(§18.11.1)*
 
@@ -202,9 +230,13 @@
 
 **Chubby** — Google's lock service, providing coarse-grained advisory locks and small files in a file-system-like namespace, replicated across a five-node **cell** with Paxos, and used chiefly for leader election, naming and storing small amounts of configuration [Burrows 2006]. *(§26.14.1)*
 
+**Chunk** — A contiguous span of a document, typically 100–1,000 tokens, that is embedded, indexed and retrieved as a unit. **Chunk size** $c$ is its length in tokens; **overlap** $o$ is the number of tokens shared with the preceding chunk of the same document. *(§75.6.1)*
+
 **CIDR block** — An address range written as `address/prefix-length`, for example `192.168.10.64/26`. The prefix length $n$ says that the first $n$ bits identify the network; the remaining $32-n$ bits (IPv4) or $128-n$ bits (IPv6) identify hosts. The **subnet mask** is the same information as a dotted number with $n$ one-bits followed by zeros (`/26` = `255.255.255.192`). *(§7.4.2)*
 
 **Circuit breaker** — A client-side proxy for calls to a dependency that tracks recent failures and, when they cross a threshold, **opens**: it fails calls immediately without contacting the dependency for a cool-down period, then lets a few trial calls through (**half-open**) and **closes** again only if they succeed. *(§22.13)*
+
+**Clarifying question** — A question asked before designing whose answer would change the design. A question whose answer would not change anything ("what language is the backend in?") is not clarifying; it only consumes time. *(§87.5.1)*
 
 **Class** — A template that describes the attributes and methods every object of a kind will have. Creating an object from a class is called **instantiation**; the object is an **instance** of the class. *(§35.3.1)*
 
@@ -233,6 +265,8 @@
 **Cohesion and coupling (service level)** — **Cohesion** is the degree to which code inside one service changes together for the same reasons. **Coupling** is the degree to which a change in one service forces a change, redeploy or coordinated release in another. Newman's shorthand: "the code that changes together, stays together" [Newman 2021]. *(§34.3.2)*
 
 **Cold start** — The extra latency an invocation pays when no initialized execution environment is available and the platform must create one: placement, sandbox creation, code loading, runtime start-up and the function's own initialization, all before the handler runs. An invocation served by an existing environment is a **warm start**. *(§48.5.1)*
+
+**Collaborative filtering (CF) and candidate generation** — **Collaborative filtering** predicts a user's interest in an item from the interactions of many users with many items, without needing to know what the items are. **Candidate generation** (retrieval) is the funnel stage that uses CF and other cheap methods to select, from the whole eligible catalog, the few hundred items worth ranking. *(§68.5.1)*
 
 **Columnar storage (column store)** — A layout that stores each column of a table contiguously — all values of `price`, then all values of `country` — instead of storing each row's fields together. Column stores are optimized for analytical queries that read a few columns of many rows [Abadi et al. 2013]. *(§13.13.1)*
 
@@ -306,7 +340,11 @@
 
 **Context switch** — The kernel operation that stops one thread running on a CPU core, saves its CPU state into its PCB, and loads the saved state of another thread so that it resumes where it left off. *(§6.4)*
 
+**Context window** — The **context window** is the maximum number of tokens (prompt plus generated output) a model can attend over in one sequence, set by the positions it was trained or extended to handle (§72.9). Tokens beyond it must be truncated, summarized or retrieved selectively (Chapter 75). *(§72.12)*
+
 **Continuous integration (CI)** — The practice of merging every developer's work into a shared mainline at least daily, with each merge verified by an automated build and test run. **Definition — Continuous delivery (CD).** The practice of keeping the mainline always releasable, so that any commit that passes the automated pipeline *could* be deployed to production by pushing a button [Humble and Farley 2010]. **Definition — Continuous deployment.** Continuous delivery with the button removed: every commit that passes the pipeline is deployed to production automatically. *(§43.3.1)*
+
+**Continuous integration (CI) for ML** — Building and testing every change to code, pipeline definitions and configuration, including data and model tests on samples, before it merges. **Definition — Continuous delivery (CD) for ML.** Automatically packaging and deploying either a new *pipeline* (after CI) or a new *model* (after continuous training), through progressive rollout with automated rollback. **Definition — Continuous training (CT).** Automatically re-running the training pipeline on fresh data when a trigger fires, and producing a validated candidate model [Google Cloud 2020]. *(§69.3.3)*
 
 **Continuous training (CT)** — Automatically retraining and validating a production model with fresh data, either on a schedule or when a trigger fires, through the same pipeline that produced the current model [Google Cloud 2020]. *(§59.13.1)*
 
@@ -325,6 +363,8 @@
 **Cost as a non-functional requirement** — A **cost requirement** is a measurable bound on what a system may spend to deliver its function, stated per unit of business value (for example, "infrastructure cost at most \$0.01 per order at 15 million orders a month") rather than as a total. Like a latency or availability objective, it is set during requirements, checked in design review and monitored in production. *(§51.3.1)*
 
 **Cost-based optimizer** — The component that enumerates equivalent physical plans for a query (access paths, join orders, join algorithms), estimates each plan's cost from **statistics** about the data using a **cost model**, and returns the plan with the lowest estimated cost. *(§11.10.1)*
+
+**Cost per 1,000 predictions** — The fully loaded hourly price of the serving hardware divided by the predictions it serves per hour, times 1,000. It depends on the device's throughput at a batch size that meets the latency objective *and* on the utilization the fleet actually achieves, including idle redundancy. *(§66.7.1)*
 
 **Count-Min sketch** — A $d \times w$ array of counters with one hash function per row that estimates the frequency of any item in a stream. Each update increments one counter per row; each query returns the minimum of the item's $d$ counters. The estimate never underestimates and, with probability at least $1 - \delta$, overestimates by at most $\varepsilon N$, where $N$ is the total of all updates [Cormode & Muthukrishnan 2005]. *(§17.6.1)*
 
@@ -374,13 +414,19 @@
 
 **Dataset documentation** — A structured, versioned description of why a dataset exists, what it contains, how it was collected, labeled and processed, what it should and should not be used for, and who maintains it. **Datasheets for datasets** are a question-based template [Gebru et al. 2021]; **data cards** are modular summaries for many stakeholders, developed at Google [Pushkarna et al. 2022]; **data statements** describe language datasets' language variety, speakers and annotators [Bender and Friedman 2018]. *(§63.13)*
 
+**Dataset shift** — Any difference between the joint distribution of inputs and labels, $P(X, Y)$, that a model was trained on and the one it is applied to [Quiñonero-Candela et al. 2009]. Writing $P(X, Y) = P(X)\,P(Y \mid X) = P(Y)\,P(X \mid Y)$ separates the kinds: - **Covariate shift (data drift):** $P(X)$ changes while $P(Y \mid X)$ stays the same. The inputs move; the rule mapping inputs to outcomes does not. - **Label shift (prior shift):** $P(Y)$ changes while $P(X \mid Y)$ stays the same. The mix of outcomes moves; each outcome still looks the same [Lipton et al. 2018]. - **Concept drift:** $P(Y \mid X)$ changes. The same inputs now lead to different outcomes [Gama et al. 2014]. Two practical terms describe what a monitor observes rather than what caused it. **Feature drift** is a change in the distribution of one feature. **Prediction drift** is a change in the distribution of the model's outputs, $P(\hat{Y})$. *(§70.4.1)*
+
 **Data validation** — Automated checks that a batch of data conforms to expectations about its schema (columns and types), values (ranges, allowed categories, missing rates) and distribution (statistics compared with a reference), run before the data is used for training or serving. **Definition — Expectation.** A declarative, testable statement about data, such as "`distance_km` is never null and lies in [0, 50]." Libraries such as TensorFlow Data Validation (TFDV) infer a schema of expectations from a reference dataset and check new data against it [Breck et al. 2019]. *(§59.7.1)*
+
+**DAU, MAU and stickiness** — **Monthly active users (MAU)** and **daily active users (DAU)** count distinct users active in a month and in a day. Their ratio, DAU/MAU, is the **stickiness**: about 0.1–0.2 for an occasionally used app and above 0.5 for a messaging app used every day. The **peak-to-average ratio (PAR)** is the design peak rate divided by the daily average rate. *(§89.5)*
 
 **Dead-letter queue (DLQ)** — A separate queue or topic to which a broker or consumer moves messages that cannot be processed (delivery limit exceeded, rejected as invalid, expired), preserving them for inspection and later reprocessing instead of losing or endlessly retrying them [Hohpe and Woolf 2003, "Dead Letter Channel"]. *(§30.11.1)*
 
 **Deadline** — An absolute point in time by which a client needs an RPC to complete. gRPC transmits it as a remaining timeout; when it passes, the client stops waiting with `DEADLINE_EXCEEDED` and the server can see that the call was canceled [gRPC Docs: Deadlines]. *(§8.8.4)*
 
 **Deadlock** — A state in which each thread in a set is waiting for a resource held by another thread in the same set, so none can ever proceed. *(§6.11.1)*
+
+**Decoding strategy** — The rule that turns the model's next-token distribution into a chosen token. **Greedy** decoding takes the most probable token. **Temperature** $T$ divides logits by $T$ before the softmax. **Top-$k$** sampling keeps the $k$ most probable tokens [Fan et al. 2018]. **Top-$p$ (nucleus)** sampling keeps the smallest set whose probabilities sum to at least $p$ [Holtzman et al. 2020]. **Beam search** keeps the $W$ highest-probability partial sequences at each step. *(§72.13.1)*
 
 **Decomposition** — Dividing a system into smaller parts (**components**) so that each part has one clear responsibility, a well-defined interface, and as few dependencies on other parts as possible. Each part can then be understood, built, scaled and changed mostly on its own. *(§2.3.2)*
 
@@ -404,6 +450,8 @@
 
 **Design document (design doc)** — A written proposal, produced before significant implementation, that states a problem, its goals and non-goals, a proposed design, the alternatives considered, and cross-cutting concerns (security, privacy, operations, cost), so that others can review it while changes are still cheap. *(§1.10.1)*
 
+**Design framework** — An ordered list of questions a designer answers for any system, each with an expected artifact (a list, a number, a diagram, a decision) and a completion criterion. Used as a **checklist**, it guarantees coverage while letting the designer vary depth and order. Used as a **script**, it is recited step by step regardless of the problem, which is a failure mode. *(§88.3.1)*
+
 **Designing for failure** — Treating component failure as a *normal, expected event* rather than an exception. For every component and dependency, the design states what happens when it is slow, returns errors or disappears, and makes sure the **blast radius** (the set of users and features affected) is as small as possible. *(§2.9.1)*
 
 **Design pattern** — A named description of a recurring design problem, the core of a solution (a set of collaborating classes or functions and their responsibilities), and the trade-offs of applying it. A pattern is a template you adapt, not a library you import [Gamma et al. 1994]. *(§37)*
@@ -420,6 +468,8 @@
 
 **Direct server return (DSR)** — A forwarding mode in which the balancer delivers request packets to the backend but the backend sends responses **directly to the client**, using the VIP as its source address, bypassing the balancer on the return path. *(§19.3.1)*
 
+**Direct-to-chip liquid cooling** — Cold plates mounted on GPUs, CPUs and switch chips carry a coolant (water with additives) that absorbs heat and returns to a **coolant distribution unit (CDU)**, which exchanges heat with the facility water loop through a heat exchanger; the facility loop rejects heat outdoors through dry coolers, cooling towers or chillers. **Immersion cooling** submerges whole servers in a dielectric fluid instead. *(§80.7.2)*
+
 **Disaster recovery, RTO, RPO** — **Disaster recovery (DR)** is the set of plans and mechanisms for restoring service and data after an event that redundancy within the normal deployment cannot absorb: loss of a region, mass data corruption, ransomware, a destructive operator error. The **recovery time objective (RTO)** is the maximum acceptable time from disruption to restored service. The **recovery point objective (RPO)** is the maximum acceptable amount of data loss, measured as time before the disruption whose writes may be lost [AWS 2021]. *(§39.8.1)*
 
 **Distributed denial of service (DDoS)** — An attack that makes a service unavailable by overwhelming some finite resource — network bandwidth, packet-processing capacity, connection-state tables, or application CPU, memory and database capacity — with traffic from many sources at once, typically a **botnet** of compromised devices or abused open servers. *(§10.11)*
@@ -434,6 +484,8 @@
 
 **Document database** — A database that stores self-describing, hierarchical records — **documents**, usually JSON or a binary encoding of it such as BSON — grouped into **collections**, and that can index and query fields inside the documents, including nested fields and array elements. *(§12.5.1)*
 
+**Domain classifier (classifier two-sample test)** — A drift detector that labels reference rows 0 and current rows 1, trains a classifier to tell them apart, and measures its out-of-sample discrimination (usually AUC). If the two windows come from the same distribution, no classifier can beat chance (AUC 0.5) [Lopez-Paz and Oquab 2017; Rabanser et al. 2019]. *(§70.7.2)*
+
 **Domain-driven design (DDD)** — An approach that places a model of the business domain, built jointly by developers and domain experts, at the center of the design, expresses it directly in code, and divides large domains into explicitly bounded models [Evans 2003; Vernon 2013]. *(§34.4)*
 
 **Domain event** — An immutable record of something domain experts care about that happened, named in the past tense (`OrderPlaced`, `CourierAssigned`), carrying the identifiers and facts its consumers need [Evans 2003; Vernon 2013]. *(§34.4.4)*
@@ -441,6 +493,8 @@
 **Domain Name System (DNS)** — A hierarchical, distributed database that maps human-readable **domain names** (such as `www.example.com`) to data, most often IP addresses, and the protocol used to query it [RFC 1034; RFC 1035]. *(§7.6.1)*
 
 **Double-checked locking** — A lazy-initialization idiom that checks whether an object exists without a lock (fast path), and only if it does not, takes a lock, checks again, and creates it. It avoids locking on every access but is only correct if the language's memory model guarantees that a thread seeing the reference also sees the fully constructed object. *(§37.16.5)*
+
+**DP-SGD** — Stochastic gradient descent in which each example's gradient is clipped to a maximum L2 norm and Gaussian noise calibrated to that norm is added to each minibatch's summed gradient, so that the trained model satisfies $(\varepsilon, \delta)$-differential privacy (§50.11) with respect to adding or removing any one training example [Abadi et al. 2016]. *(§71.10.1)*
 
 **DRAM (dynamic random-access memory)** — The technology used for main memory. Each bit is stored as charge in a tiny capacitor that leaks and must be **refreshed** every few tens of milliseconds. DRAM is **volatile**: its contents are lost when power is removed. *(§5.5.1)*
 
@@ -454,6 +508,8 @@
 
 **Durable subscription** — A subscription whose messages the broker retains while the subscriber is disconnected, so the subscriber receives everything published since it subscribed, within the retention period. An **ephemeral** (non-durable) subscription exists only while the subscriber is connected; messages published while it is away are never delivered to it. *(§30.5.2)*
 
+**Dynamic batching** — **Dynamic batching** is a server-side scheduling policy that combines individual inference requests arriving within a short window into one batch for a single model execution. A batch is dispatched when it reaches a **maximum batch size** $B_{\max}$ or when the oldest request has waited a **maximum queue delay** $D_{\max}$, whichever comes first (and, in most servers, as soon as an execution instance is free if the queue is non-empty and delay is zero). **Adaptive batching** adjusts $B_{\max}$ online to keep latency within an objective. *(§66.6.1)*
+
 **Dynamic site acceleration (DSA)** — Routing uncacheable requests through the CDN anyway, so that TCP and TLS terminate near the user and the edge forwards each request to the origin over pre-established, tuned, long-lived connections, sometimes along an overlay path chosen from measurements. *(§21.7.2)*
 
 ## E
@@ -461,6 +517,8 @@
 **Elasticsearch cluster** — A set of nodes that share one cluster state (index definitions, mappings and the location of every shard copy). An **index** is a logical collection of documents divided into **primary shards**; each primary has zero or more **replica shards**; every shard is one Lucene index. *(§16.8.1)*
 
 **Embedding and embedding table** — An **embedding** is a learned dense vector of $d$ real numbers that represents a discrete item (a user, restaurant, dish or word). An **embedding table** is a $V \times d$ matrix, one row per item in a **vocabulary** of size $V$; looking up item $i$ returns row $i$. The table is a parameter of the model and is trained by backpropagation like any weight matrix. *(§58.6.1)*
+
+**Embedding model** — A neural network that maps an input (a sentence, a document chunk, an image, a user's history) to a fixed-length vector of $d$ real numbers, the **embedding**, such that inputs that are similar for the task have vectors with high similarity. A **bi-encoder** (dual encoder) embeds queries and documents independently, so document vectors can be computed once and stored. *(§74.3.1)*
 
 **Encapsulation** — The process by which each layer of the stack prepends its own header (and sometimes appends a trailer) to the data unit handed down by the layer above, treating that data unit as an opaque payload. **Decapsulation** is the reverse at the receiver. *(§7.3.1)*
 
@@ -470,11 +528,15 @@
 
 **Envelope encryption** — Encrypting data with a **data-encryption key (DEK)** generated for that data, then encrypting ("wrapping") the DEK with a KEK held in a KMS, and storing the wrapped DEK alongside the ciphertext [AWS Docs: KMS concepts]. *(§10.9.2)*
 
+**Episodic and semantic memory** — **Episodic memory** stores records of specific past events ("on 3 May the customer reported a missing drink on order Q-0877 and received \$4"). **Semantic memory** stores general facts distilled from many events or sources ("this customer prefers contactless delivery"; "the late-order refund policy grants 50% above 30 minutes"). In agents, both are usually stored outside the model and retrieved into the prompt by relevance. *(§77.7.2)*
+
 **Erasure code and RS(k, m)** — An **erasure code** transforms $k$ data fragments into $k + m$ fragments such that the original data can be rebuilt from some subset of them after the others are lost ("erased"). A **Reed–Solomon** code RS($k$, $m$) is a **maximum distance separable (MDS)** code: *any* $k$ of the $k+m$ fragments suffice, so it tolerates the loss of any $m$ fragments. A code is **systematic** when the first $k$ fragments are the unmodified data, so healthy reads need no decoding. *(§15.6.1)*
 
 **Error budget** — The amount of unreliability an SLO permits over its window: $1 - \text{SLO}$, expressed as a number of bad requests or bad minutes. While budget remains, the team may spend it on risk (releases, experiments, migrations); when it is exhausted, reliability work takes priority [Beyer et al. 2016]. *(§39.7.1)*
 
 **ETL (extract, transform, load)** — Data is transformed in a separate processing system before being loaded into the target store. **Definition — ELT (extract, load, transform).** Raw data is loaded into the target store first and transformed there, usually with SQL, as a sequence of derived tables. *(§61.7.1)*
+
+**Evaluation suite, grader** — An **evaluation suite** is a versioned set of inputs (prompts, conversations, tasks), the expected behavior for each (a reference answer, a rubric or an end-state check), and the **graders** that score outputs: programs, LLM judges or human annotators. An **evaluation run** executes one system version on the suite and records per-item scores, from which metrics and confidence intervals are computed. *(§78.3.1)*
 
 **Event-driven architecture (EDA)** — A style in which components communicate mainly by producing and consuming **events**, immutable records of facts that happened ("OrderPlaced"), through a broker or log, so that producers do not know which consumers exist or when they will run. *(§33.8)*
 
@@ -490,6 +552,8 @@
 
 **Exabyte scale** — A storage system whose capacity is measured in exabytes (1 EB = 10¹⁸ bytes = 1,000 PB = 1 million TB), typically spread over thousands of servers and tens to hundreds of thousands of drives in one or a few datacenters, and serving many tenants at once. *(§49.3.1)*
 
+**Exact (brute-force, flat) k-nearest-neighbor search** — Compute the similarity between the query and every stored vector and return the $k$ best. It always returns the true neighbors (recall 1.0) and needs no index beyond the array of vectors. *(§74.5.1)*
+
 **Execution environment, slot and worker** — An **execution environment** is an isolated sandbox containing one function version's runtime and initialized code. The Firecracker paper calls a ready environment on a host a **slot**: it serves one function, one invocation at a time, but many invocations in sequence. A **worker** is a bare-metal host that runs hundreds or thousands of slots, each in its own microVM [Agache et al. 2020]. *(§48.4.1)*
 
 **Exemplar** — A reference from an aggregated metric sample to an individual event that contributed to it, typically a trace ID attached to one histogram bucket observation, with its value and timestamp [OpenMetrics; Prometheus Docs: Exemplars]. *(§40.11.2)*
@@ -497,6 +561,8 @@
 **Expand–contract (parallel change)** — A pattern for making a backward-incompatible change as a sequence of compatible steps: **expand** the schema or interface to support both old and new forms, **migrate** readers, writers and existing data to the new form, then **contract** by removing the old form once nothing uses it [Sato 2014b]. *(§43.13.2)*
 
 **Expected value** — The probability-weighted average outcome of a random quantity $X$: $E[X] = \sum_i x_i \, P(X = x_i)$. It is the long-run average over many repetitions. *(§4.6.3)*
+
+**Experiment tracking** — Recording, for every training run, its **parameters** (inputs chosen before training: hyperparameters, feature list, seeds), **metrics** (numbers measured during or after training, possibly per step), **artifacts** (files produced: the model, plots, evaluation reports), and **lineage** (the data snapshot, code commit and environment that produced it), in a queryable store shared by the team. *(§69.7.1)*
 
 **Exponent** — In $b^n$, the **base** $b$ is multiplied by itself $n$ times; $n$ is the **exponent** (or power). By convention $b^0 = 1$ and $b^{-n} = 1/b^n$. *(§4.3.1)*
 
@@ -528,9 +594,13 @@
 
 **Feature store** — A data system that manages features as shared, versioned products: it stores feature definitions and metadata in a registry, computes or ingests values, keeps their history in an offline store for building point-in-time-correct training data, keeps their latest values in an online store for low-latency serving, and serves both through one API. *(§62.6.1)*
 
+**Federated learning (FL)** — Training a shared model across many clients (phones, browsers or organizations) that keep their data locally: a server sends the current model, clients compute updates on their own data, and the server aggregates the updates [McMahan et al. 2017]. *(§71.11.1)*
+
 **Feedback loop (ML)** — A situation in which a model's predictions influence the data later used to train or evaluate it. Sculley et al. distinguish **direct feedback loops**, where a model influences its own future training data, from **hidden feedback loops**, where two systems influence each other through the world [Sculley et al. 2015]. *(§59.13.2)*
 
 **Fencing token** — A number, increasing with every grant of a lock or lease, that the holder attaches to every request to the protected resource. The resource remembers the highest token it has accepted and rejects any request carrying a lower one. *(§26.13)*
+
+**Filtered vector search** — A query that asks for the $k$ nearest vectors *among those satisfying a predicate* on metadata, such as "deliverable to this address, open now, vegetarian". The **selectivity** $s$ is the fraction of vectors that pass. *(§74.11.1)*
 
 **FinOps** — **FinOps** (cloud financial operations) is an operational practice in which engineering, finance, product and leadership collaborate to make data-driven spending decisions on variable, usage-based technology costs, so that the organization gets the most business value per unit spent. The FinOps Foundation organizes the practice into a repeating lifecycle of three phases (**inform**, **optimize** and **operate**), a set of personas, and capabilities grouped into domains [FinOps Foundation: Framework; Storment and Fuller 2023]. *(§51.5.1)*
 
@@ -538,9 +608,13 @@
 
 **Fixed window counter** — A limiter that divides time into aligned windows of length $W$ (for example each clock minute), keeps one counter per key per window, and admits a request if the current window's counter is below the limit $L$. The counter resets at each window boundary. *(§22.6.1)*
 
+**FlashAttention and decode attention kernels** — **FlashAttention** computes exact attention by tiling queries, keys and values into blocks that fit in on-chip SRAM and combining blocks with an **online softmax** (running maximum and sum), so the $n \times n$ score matrix never travels to HBM [Dao et al. 2022]. **FlashAttention-2** improves work partitioning across thread blocks and warps [Dao 2024]; **FlashAttention-3** uses Hopper's asynchronous copy and FP8 features [Shah et al. 2024]. **Decode kernels** handle one query token per sequence against a long, paged KV cache; **Flash-Decoding** splits the KV sequence into chunks processed in parallel and merges their partial results [Dao et al. 2023]. *(§73.9.1)*
+
 **Floating-point format** — A binary floating-point number stores a **sign** bit, an **exponent** field (which sets the number's scale, and therefore the format's **range**) and a **mantissa** or significand field (which sets the digits within that scale, and therefore its **precision**). For a format with $e$ exponent bits and $m$ mantissa bits, **machine epsilon**, the gap between 1 and the next representable number, is $2^{-m}$. Spending bits on the exponent buys range; spending them on the mantissa buys precision. *(§64.10.1)*
 
 **FLP impossibility** — In a fully asynchronous message-passing system with reliable links, no *deterministic* protocol can solve **consensus** (all correct processes decide the same value, the value was proposed by some process, and every correct process eventually decides) if even one process may crash-stop [Fischer et al. 1985]. *(§24.13.1)*
+
+**FMR, FNMR, FPIR and FNIR** — For verification, the **false match rate (FMR)** is the fraction of non-mated comparisons whose score passes the threshold, and the **false non-match rate (FNMR)** is the fraction of mated comparisons that fail it. Older literature calls them the **false accept rate (FAR)** and **false reject rate (FRR)**; strictly, FAR and FRR are system-level rates that also include capture failures. For identification, the **false positive identification rate (FPIR)** is the fraction of searches by people *not* in the gallery that return any candidate above threshold, and the **false negative identification rate (FNIR)** is the fraction of searches by enrolled people that fail to return them. *(§84.4.1)*
 
 **Forward secrecy** — A property of a key-exchange protocol whereby compromise of a party's long-term private key does not reveal session keys from past sessions. It is achieved by using fresh **ephemeral** key pairs for every session (the "E" in ECDHE) and deleting them afterward. *(§10.4.4)*
 
@@ -570,7 +644,13 @@
 
 **GitOps** — An operating model in which the desired state of a system is declared in Git, and software agents running inside the target environment continuously pull that state and reconcile the live system to it. The OpenGitOps principles state that the desired state is **declarative**, **versioned and immutable**, **pulled automatically** and **continuously reconciled** [OpenGitOps 2021]. *(§43.10)*
 
+**Global explanation** — A description of how a model behaves over a population: which features matter on average and how predictions change with them. **Definition — Local explanation.** A description of why the model produced *one* prediction: which inputs pushed this score up or down, or what would have had to differ. *(§71.7.1)*
+
 **Global traffic management** — **Global traffic management (GTM)** is the set of mechanisms that choose, for each client or request, which region (or edge site) serves it, using proximity, measured latency, health, capacity and policy. It is global server load balancing (§19.9) extended with residency rules, home-region affinity and evacuation controls. *(§44.5.1)*
+
+**Golden answer, rubric, slice** — A **golden answer** (reference answer) is an expert-written correct response for an item. A **rubric** is a list of explicit, checkable criteria a correct response must meet (and failures it must avoid), used when many responses can be correct. A **slice** is a subset of items sharing a property (topic, language, customer type, difficulty, adversarial or not), on which metrics are reported separately. *(§78.4.1)*
+
+**Goodput components** — Training goodput (§65.16) is the fraction of wall-clock time producing progress that is kept. Its losses are: **scheduling overhead** (waiting for a full gang, rendezvous, initialization); **checkpoint stalls** ($\delta$ per checkpoint); **lost work** (progress since the last checkpoint, discarded at each failure); **restart time** (detection, replacement, reload, warm-up); **stragglers and degraded performance** (steps slower than nominal); and **planned maintenance**. **Effective utilization** is goodput × MFU. *(§80.9.1)*
 
 **Goodput (training)** — The fraction of wall-clock time spent on training progress that is kept, excluding checkpoint stalls, work lost since the last checkpoint, restarts and maintenance. **Elastic training** continues with a different number of workers, within bounds, when workers join or leave. *(§65.16.2)*
 
@@ -578,7 +658,11 @@
 
 **GPU interconnects** — **PCIe** is the general expansion bus between CPU, GPUs, NICs and storage. **NVLink** is NVIDIA's point-to-point GPU-to-GPU link; **NVSwitch** is a switch chip that connects all GPUs in a server (or rack) so every pair communicates at full NVLink bandwidth. **InfiniBand** and **RoCE** carry GPU traffic between servers using RDMA (§49.10); with **GPUDirect RDMA** the NIC reads and writes GPU memory directly, bypassing host memory. *(§64.14.1)*
 
+**GPU memory budget for LLM serving** — The partition of a GPU's memory into **weights** (fixed, set by parameter count and precision), **KV cache** (dynamic, proportional to the tokens held by all running sequences), **activations** (temporary tensors of the step in flight, proportional to tokens processed per step) and **framework overhead** (CUDA context, communication buffers, captured CUDA Graphs, allocator fragmentation). Engines typically profile activations at start-up and give all remaining memory, up to a configured fraction, to the KV cache. *(§73.5.1)*
+
 **GPU memory hierarchy** — From fastest and smallest to slowest and largest: **registers** (private to a thread), **shared memory / L1** (on-chip SRAM private to an SM; shared memory is explicitly managed by the program, L1 is a hardware cache), the **L2 cache** (on-chip SRAM shared by all SMs), and **HBM** (high-bandwidth memory: DRAM dies stacked on the same package as the GPU and connected through thousands of wires, the GPU's main memory). Host memory, reached over PCIe, sits below HBM. *(§64.5.1)*
+
+**GPU node pool and bin-packing** — A **node pool** is a group of identical nodes (same GPU type and count, same interconnect) managed together, usually labeled and tainted so that only workloads asking for that GPU land there (§42.13). **Bin-packing** assigns model replicas, each with a GPU-memory and compute requirement, to the fewest GPUs or partitions that satisfy them. **MIG** (Multi-Instance GPU) splits one data-center GPU into isolated instances, up to seven 1g.10gb slices on an H100 80 GB (§64.15) [NVIDIA MIG User Guide]. *(§79.8.1)*
 
 **GPU utilization metrics** — **nvidia-smi "GPU utilization"** is the percentage of time in the sample period during which at least one kernel was running, regardless of how many SMs it used [NVIDIA nvidia-smi documentation]. **SM activity** is the fraction of time an average SM had at least one warp resident; **SM occupancy** the average resident warps relative to the maximum (§64.4.3); **tensor pipe activity** the fraction of cycles tensor cores were busy; **DRAM activity** the fraction of cycles HBM was transferring (all exposed by NVIDIA's Data Center GPU Manager, DCGM). **Model FLOPs utilization (MFU)** is the throughput of the *model's* required FLOPs divided by the hardware peak; **hardware FLOPs utilization (HFU)** also counts FLOPs the implementation performs beyond the model's needs, such as activation recomputation [Chowdhery et al. 2022]. *(§64.11)*
 
@@ -594,11 +678,17 @@
 
 **Gray failure** — A component failure that is *differentially observable*: some observers (often the system's own failure detector) consider the component healthy, while others (often the applications using it) experience it as failed or badly degraded. *(§24.8.2)*
 
+**Grounded answer, attribution** — An answer is **grounded** (faithful) when every claim in it is supported by the supplied sources or structured facts. **Attribution** links each claim to the specific sources that support it. A grounded system **refuses** or escalates when the sources do not support an answer. *(§75.12)*
+
 **Group of pictures (GOP) and closed GOP** — Encoded video consists of **keyframes** (I-frames), which can be decoded alone, and predicted frames that reference other frames. A GOP is the run of frames from one keyframe to the next. A **closed GOP** references no frame outside itself, so a segment that starts at a closed-GOP keyframe can be encoded, stored and decoded independently of its neighbors. This independence is what makes parallel segment encoding and adaptive streaming possible. *(§54.4.1)*
 
 **gRPC** — An open-source RPC framework, originally developed at Google and released in 2015, that uses Protocol Buffers as its interface definition language and message format and HTTP/2 as its transport [gRPC Docs]. *(§8.8.2)*
 
+**Guardrail** — A check, outside the policy model, that constrains what enters the agent, what the agent may do and what leaves it: input filters, tool-call policy checks, spend and rate limits, allow-lists, and output filters. A guardrail that is deterministic code gives a guarantee; one that is a classifier or LLM judge gives a probability. *(§77.11)*
+
 ## H
+
+**Hallucination, faithfulness, factuality** — A **hallucination** is generated content that is nonsensical or unfaithful to the provided source content. Ji et al. distinguish **intrinsic** hallucinations, which contradict the source, from **extrinsic** hallucinations, which cannot be verified from the source at all [Ji et al. 2023]. **Faithfulness** (groundedness) is consistency with the provided context; **factuality** is consistency with the world. A grounded answer can be factually wrong if the source is wrong, and a factual answer can be ungrounded if it comes from the model's memory rather than the context. *(§78.9.1)*
 
 **Happened-before (→)** — The smallest relation on events such that: (1) if $a$ and $b$ occur in the same process and $a$ comes first, $a \to b$; (2) if $a$ is the sending of a message and $b$ its receipt, $a \to b$; (3) if $a \to b$ and $b \to c$, then $a \to c$. Two distinct events are **concurrent** ($a \parallel b$) if neither $a \to b$ nor $b \to a$. *(§24.10.1)*
 
@@ -615,6 +705,8 @@
 **Hedged request** — A request sent to one replica and, if no response arrives within a **hedge delay** $d$, sent again to a second replica; the client uses whichever response arrives first and cancels or ignores the other [Dean and Barroso 2013]. *(§23.7.1)*
 
 **Hexagonal architecture (ports and adapters)** — A style, described by Alistair Cockburn, in which the application's core logic interacts with the outside world only through **ports**, interfaces defined by and in the language of the core, and each external technology (web framework, database, message broker, test harness) connects through an **adapter** that implements or calls a port [Cockburn 2005]. **Driving (primary) ports** are how the outside asks the application to do something; **driven (secondary) ports** are how the application asks the outside for something. *(§33.10.1)*
+
+**Hierarchical Navigable Small World (HNSW) graph** — An ANN index that links every vector to up to $M$ near neighbors (up to $2M$ on the bottom layer) and arranges the vectors in layers: all of them on layer 0, and exponentially fewer on each higher layer. A search descends greedily from a sparse top layer to the dense bottom one, then runs a best-first search keeping the $ef$ closest candidates [Malkov and Yashunin 2020]. *(§74.7.1)*
 
 **High-level design (HLD)** — A description of a system as a set of major components (services, data stores, queues, caches, external dependencies), their responsibilities, the interfaces and protocols between them, data flows, and deployment topology — at a level of detail where each component is a box whose internals are not yet specified. *(§1.5.1)*
 
@@ -656,13 +748,25 @@
 
 **Incident** — An unplanned event that degrades or threatens a service's SLOs, security or data and requires a coordinated response. **Incident management** is the process of detecting, coordinating, mitigating and learning from incidents. *(§39.12.1)*
 
+**In-context learning (ICL)** — A model performing a task specified by instructions and demonstrations inside its prompt, with no change to its weights [Brown et al. 2020]. The demonstrations are "learned" only for the duration of one forward pass and must be re-sent on every call. *(§76.6.1)*
+
 **Index** — A secondary data structure, kept in sync with a table by the database, that maps values of one or more **key columns** to the locations of the rows holding them, so that rows can be found without scanning the whole table. Most relational indexes are B+ trees (§11.8); others include hash, GiST, GIN and BRIN indexes in PostgreSQL and full-text and spatial indexes in MySQL. *(§11.7.1)*
 
 **In-doubt (blocked) transaction** — A transaction at a participant that has voted yes but has not learned the outcome. It must hold its locks and cannot decide until the coordinator, or another participant that knows the outcome, answers. *(§28.4.3)*
 
+**Inference autoscaling** — Automatically changing the number of model-server replicas (and the nodes or GPUs beneath them) to track load, using a signal proportional to load, a target value for it, and limits on how fast and how far to scale. **Scale to zero** removes all replicas when there is no traffic and starts one on the next request, paying a **cold start**. *(§66.9.1)*
+
+**Inference modes** — **Online (synchronous) inference** computes a prediction inside a client's request and returns it in the response, within a latency budget of milliseconds. **Asynchronous inference** accepts a request, places it on a queue, and delivers the result later by callback, polling or a result store, within seconds to minutes. **Streaming inference** is triggered by events on a log such as Kafka, scores each event (or a micro-batch) as it arrives, and writes results to another stream or store, with no client waiting. **Batch (offline) inference** scores a large, bounded dataset on a schedule and writes the predictions to storage, where online services look them up. *(§66.3.1)*
+
+**Inference parallelism** — **Tensor parallelism (TP)** splits every layer's matrices (and attention heads, hence KV heads) across $t$ GPUs that cooperate on every token, with all-reduces inside each layer (§65.10). **Pipeline parallelism (PP)** places consecutive groups of layers on different GPUs or nodes and passes activations between stages (§65.11). **Expert parallelism (EP)** places the experts of mixture-of-experts layers on different GPUs and routes each token to its experts with all-to-all exchanges (§65.12.2, §72.13). **Data parallelism** for inference is simply independent replicas. *(§73.11.1)*
+
 **Inference pipeline** — The online path that turns a request into a decision: assemble features (from the request and from stores), run the model, post-process the raw output, apply business rules, return the response, and log what was served so it can later be joined with the outcome and used for training and monitoring. *(§60.6.1)*
 
+**Inference router** — The component that turns a model alias into a concrete target in two steps. **Deployment selection** picks a model version, pool or provider and region, using policy and cost (the *what* and *where*). **Endpoint selection** picks one replica inside the chosen pool, using live engine state such as outstanding tokens, queue depth, KV-cache usage and which prompt prefixes each replica holds (the *which*). **Prefix-aware** (or **KV-cache-aware**) routing prefers replicas that already hold a request's prompt prefix in their KV cache; **session affinity** pins a conversation to one replica (§19.6). *(§79.6.1)*
+
 **Infrastructure as code (IaC)** — Managing infrastructure (networks, machines, load balancers, databases, DNS, permissions) through machine-readable definition files kept in version control and applied by tools, instead of through manual console clicks or ad hoc scripts [Morris 2020]. *(§43.8.1)*
+
+**Ingestion pipeline** — The asynchronous process that discovers new or changed source documents, **parses** them into normalized text with structure (headings, lists, tables), attaches **metadata** (source, version, audience, market, ACL, timestamps), removes duplicates, chunks, embeds and writes the result to the indexes, and propagates updates and deletes so the indexes match the sources. *(§75.5.1)*
 
 **Inheritance** — A mechanism by which a class (the **subclass**, **child** or **derived class**) is defined as an extension of another (the **superclass**, **parent** or **base class**). The subclass automatically has the parent's attributes and methods, may add new ones, and may **override** inherited methods by providing its own version with the same name and parameters. *(§35.5.1)*
 
@@ -675,6 +779,10 @@
 **Interface Segregation Principle (ISP)** — Clients should not be forced to depend on methods that they do not use [Martin 2002]. A **fat interface** serves many kinds of client; a **role interface** describes what one kind of client needs from its collaborator [Fowler 2006]. *(§36.6.1)*
 
 **Interleaving** — Mixing different kinds of problems or concepts within one practice session (A B C A C B), instead of finishing all practice on one kind before moving to the next (AAA BBB CCC, called **blocking**). *(§3.4.5)*
+
+**Interview signal** — An observable behavior that an interviewer can write down as evidence for or against a hiring criterion, for example "asked for read/write ratio before choosing a store" or "could not explain why a queue was added". A **signal area** is a group of related signals that the interviewer's feedback form asks about. *(§87.3.1)*
+
+**Inverted file (IVF) index** — An ANN index that clusters the vectors with k-means into $nlist$ cells, each represented by its **centroid** (the **coarse quantizer**), and stores each vector in the **inverted list** of its nearest centroid. A query scores all centroids, then scans only the vectors in the $nprobe$ nearest lists [Jégou et al. 2011]. *(§74.8.1)*
 
 **Inverted index** — A mapping from each distinct **term** (a normalized word or token) to a **postings list**: the sorted list of identifiers of the documents that contain the term, optionally with the term's frequency and positions in each document. The set of all terms is the **dictionary** (or **vocabulary**, or **lexicon**). *(§16.3.1)*
 
@@ -704,7 +812,15 @@
 
 **Key-value store** — A database whose primary interface is `get(key)`, `put(key, value)` and `delete(key)`, where the value is opaque to the database or has a small set of built-in types. The key alone determines where the value lives. *(§12.4.1)*
 
+**Knowledge distillation** — Training a smaller **student** model to match the output distribution of a larger **teacher** model, usually in addition to the true labels. The teacher's probabilities, softened by a **temperature** $T > 1$, are **soft targets** that reveal how the teacher ranks wrong answers [Hinton et al. 2015]. *(§67.8.1)*
+
+**Kolmogorov–Smirnov (KS) test** — A nonparametric two-sample test whose statistic $D$ is the largest vertical gap between the two samples' empirical cumulative distribution functions (CDFs). It needs no binning and is sensitive to any difference in location or shape, most strongly near the middle of the distribution [Massey 1951]. *(§70.5.2)*
+
 **Kubernetes** — An open-source container orchestrator that runs workloads across a cluster of nodes from **declarative** specifications. Users write the *desired state* of API objects to a central API server; independent **controllers** continuously compare it with the *observed state* and act to close the gap [Kubernetes Docs: Components]. *(§42.6.1)*
+
+**KV cache** — The **KV cache** stores, for every sequence being generated, the key and value vectors of every past token in every layer and every KV head, so that each decode step computes K and V only for the new token and reuses the rest. Its size grows linearly with context length and with the number of concurrent sequences. *(§72.11.1)*
+
+**KV-cache quantization** — Storing cached keys and values in fewer bits than the activations that produced them (FP8 or INT8 with per-tensor, per-head or per-token scales; research formats down to 2 bits), dequantizing inside the attention kernel. It complements **weight quantization** (W8A8, W4A16; Chapter 67 owns GPTQ, AWQ, SmoothQuant and FP8 recipes, §67.6). *(§73.13.1)*
 
 ## L
 
@@ -723,6 +839,8 @@
 **Lambda and Kappa architectures** — The **Lambda architecture** runs two parallel paths over the same immutable master dataset: a **batch layer** that periodically recomputes complete, accurate views from all history, and a **speed layer** that processes recent data incrementally with low latency; a **serving layer** merges the two at query time [Marz and Warren 2015]. The **Kappa architecture** uses a single stream-processing path over a replayable log; to change logic or fix a bug, it reprocesses history by replaying the log through a new version of the job [Kreps 2014]. *(§29.10)*
 
 **Lamport clock** — Each process $P_i$ keeps an integer counter $C_i$, initially 0. **Rule 1:** before each event (local, send or receive), $C_i \leftarrow C_i + 1$; a send attaches the new $C_i$ to the message. **Rule 2:** on receiving a message with timestamp $t_m$, set $C_i \leftarrow \max(C_i, t_m)$, then apply rule 1. The event's timestamp is the resulting $C_i$. *(§24.10.2)*
+
+**Language model, token and autoregressive model** — A **token** is an integer identifier for a piece of text (a word, part of a word, a punctuation mark or a byte) drawn from a fixed **vocabulary** of size $V$. A **language model** assigns a probability to any sequence of tokens. An **autoregressive** language model does so by predicting each token from the tokens before it, $P(x_t \mid x_1, \ldots, x_{t-1})$, and generates text by sampling one token, appending it to the input, and repeating. *(§72.3.1)*
 
 **Last-writer-wins (LWW)** — Each write carries a timestamp, and when replicas hold different values for an item, the one with the greatest timestamp is kept and the others are discarded. *(§27.14.1)*
 
@@ -748,6 +866,8 @@
 
 **Leaky bucket** — (a) **As a queue:** requests enter a FIFO buffer of capacity $Q$ that is drained at a constant rate $r$; arrivals that find the buffer full are dropped. Output is perfectly smooth. (b) **As a meter:** a counter (the "water level") increases by one per admitted request and leaks at rate $r$; a request that would overflow capacity is rejected immediately. The meter form makes the same admit/reject decisions as a token bucket with the same rate and capacity. *(§22.5.1)*
 
+**Learning to rank (LTR)** — Training a model whose scores order a set of candidates well. **Pointwise** methods predict a label for each item independently (probability of order, via log loss). **Pairwise** methods learn from pairs within one request, penalizing the model when a less relevant item outscores a more relevant one (RankNet's logistic loss on score differences [Burges et al. 2005]). **Listwise** methods optimize a loss defined on the whole ranked list, typically a smooth surrogate for NDCG (LambdaRank and LambdaMART weight each pair's gradient by the NDCG change of swapping it [Burges 2010]). *(§68.7.1)*
+
 **Lease** — A time-bounded grant of a right (to cache data, to act as leader, to hold a lock) from a grantor to a holder. Within the term the holder may act without consulting the grantor; after the term, the right lapses automatically, even if the holder has crashed or is unreachable [Gray and Cheriton 1989]. *(§26.11.1)*
 
 **Least connections** — Send each new connection or request to the backend with the fewest **active** (in-flight) connections or requests, as counted by the balancer. *Weighted least connections* divides each count by the backend's weight. Envoy calls the request-counting variant **least request**; AWS ALB calls it **least outstanding requests**. *(§19.4.2)*
@@ -759,6 +879,14 @@
 **Liskov Substitution Principle (LSP)** — Subtypes must be substitutable for their base types [Martin 2002]. More precisely, S is a **behavioral subtype** of T if every property you can prove about objects of type T, using T's specification, also holds for objects of type S [Liskov and Wing 1994]. *(§36.5.1)*
 
 **Little's Law** — For any stable system observed over a long period, the average number of items in the system equals the average arrival rate multiplied by the average time each item spends in the system: $L = \lambda W$ [Little 1961]. *(§4.11.1)*
+
+**LLM-as-a-judge** — Using a language model to grade another model's output. **Pointwise** judging scores one response on a scale or against a rubric (pass/fail per criterion). **Pairwise** judging shows two responses to the same input and asks which is better, or whether they tie. **Reference-guided** judging gives the judge a golden answer to compare against. *(§78.7.1)*
+
+**LLM inference engine** — The software that runs an LLM on accelerators for many concurrent requests: it tokenizes prompts, schedules requests into GPU steps, manages the memory holding each request's KV cache, runs the model's forward passes, samples tokens and streams them back. Examples are vLLM, TensorRT-LLM, SGLang, Hugging Face Text Generation Inference (TGI) and llama.cpp (§73.16). An **LLM serving system** wraps one or more engine replicas with a gateway, router, autoscaler and observability. *(§73.3.1)*
+
+**LLM latency and throughput metrics** — **Time to first token (TTFT)** is the time from the client sending a request to receiving the first output token. **Time per output token (TPOT)** is the average time between output tokens after the first: $(\text{end-to-end} - \text{TTFT})/(n_\text{out} - 1)$. **Inter-token latency (ITL)** is the individual gap between two consecutive tokens; its distribution (p99, maximum) exposes stalls that the TPOT average hides. **End-to-end latency** is the time to the last token. **Per-request throughput** is $1/\text{TPOT}$ (tokens/s one user sees); **per-GPU throughput** is the output tokens/s a GPU produces across all requests. **Goodput** is the rate of requests that complete *within* their SLOs [Zhong et al. 2024]. *(§73.4.1)*
+
+**LLM scheduling terms** — **Admission control** decides whether a request may enter the running set (or the service at all). **Preemption** evicts a running sequence when KV memory runs out, either by **swapping** its KV blocks to CPU memory or by **recomputation** (dropping them and re-running prefill over prompt plus generated tokens later). **Chunked prefill** splits a long prompt into fixed-size chunks scheduled across several steps alongside decode tokens [Agrawal et al. 2024]. **SLO-aware scheduling** orders or rejects requests using predicted TTFT and TPOT against their targets. *(§73.14.1)*
 
 **Load balancer** — A component that receives traffic addressed to a single service endpoint, the **virtual IP address (VIP)** or service name, and distributes it across a **pool** of **backends** (also called *upstreams*, *targets* or *real servers*) according to a **balancing algorithm**, while excluding backends that are unhealthy. *(§19.3.1)*
 
@@ -782,6 +910,8 @@
 
 **Long polling** — A technique in which the client sends an HTTP request that the server deliberately does not answer until either new data is available or a server-side timeout *T*<sub>hold</sub> expires; on receiving any response, the client immediately sends the next request. *(§9.4.1)*
 
+**LoRA (low-rank adaptation)** — Freezing a pre-trained weight $W_0 \in \mathbb{R}^{d_\text{out} \times d_\text{in}}$ and learning an additive update $\Delta W = \frac{\alpha}{r} BA$ with $B \in \mathbb{R}^{d_\text{out} \times r}$, $A \in \mathbb{R}^{r \times d_\text{in}}$ and rank $r \ll \min(d_\text{in}, d_\text{out})$, so the layer computes $h = W_0 x + \frac{\alpha}{r} B A x$ [Hu et al. 2022]. $A$ is initialized randomly and $B$ to zero, so training starts exactly at the base model; $\alpha$ is a scaling constant. *(§76.8.1)*
+
 **Loss function** — A function $L(y, \hat{y})$ that scores how bad a prediction is for one example. Training minimizes the average loss over the training set, called **empirical risk**. The loss must reflect what errors cost and must be differentiable for gradient-based training. *(§57.9.1)*
 
 **Low-level design (LLD)** — A description of the internals of one component: its modules, classes or functions, data structures, algorithms, database schemas, API request and response formats, error handling and state transitions — at a level of detail from which an engineer can write code. *(§1.5.1)*
@@ -800,9 +930,19 @@
 
 **Matrix** — A rectangular grid of numbers with $m$ rows and $n$ columns (an $m \times n$ matrix). A set of $n$ embeddings of dimension $d$ is naturally stored as an $n \times d$ matrix, one embedding per row. *(§4.9.3)*
 
+**Matrix factorization (MF)** — A model that approximates the interaction matrix $R$ ($U \times I$) by the product of a user-factor matrix $X$ ($U \times k$) and an item-factor matrix $Y$ ($I \times k$), $R \approx XY^\top$, so that the predicted affinity is the dot product $\hat{r}_{ui} = \mathbf{x}_u^\top \mathbf{y}_i$ of two $k$-dimensional embeddings. Koren, Bell and Volinsky popularized it for recommendation after the Netflix Prize [Koren et al. 2009]. *(§68.5.2)*
+
+**Matryoshka representation learning (MRL)** — A training method in which the loss is applied to several nested prefixes of the embedding (for example its first 64, 128, 256, 512 and 768 dimensions), so that any prefix, renormalized, is itself a usable embedding, with quality degrading gracefully as it shrinks [Kusupati et al. 2022]. *(§74.3.4)*
+
+**Maximum mean discrepancy (MMD)** — A distance between two distributions computed from a **kernel** $k(x, y)$, a similarity function such as the Gaussian (RBF) kernel $\exp(-\lVert x - y \rVert^2 / 2\sigma^2)$. MMD compares the average similarity within each sample with the average similarity across samples; with a characteristic kernel such as the RBF, it is zero only if the distributions are identical [Gretton et al. 2012]. *(§70.7.3)*
+
 **Max-min fairness** — An allocation is max-min fair if no user's share can be increased without decreasing the share of a user who has an equal or smaller share. With one resource, it is computed by **water filling**: raise every unsatisfied user's allocation equally until each is either satisfied or the resource is exhausted. **Weighted fair share** raises allocations in proportion to weights. *(§46.9.1)*
 
+**MCP roles** — A **host** is the LLM application (chat app, IDE, agent runtime); it creates **clients**, enforces security policy and user consent, and aggregates context. Each **client** lives inside the host and holds a stateful, one-to-one session with one **server**. A **server** is a separate program, local or remote, that exposes focused capabilities through three primitives: **tools** (functions the model may invoke), **resources** (context data such as files or records, identified by URI) and **prompts** (reusable message templates selected by the user) [MCP 2025]. *(§77.5.4)*
+
 **Mean and median** — The **mean** (arithmetic average) of $n$ values is their sum divided by $n$. The **median** is the middle value after sorting (the average of the two middle values when $n$ is even); half of the values are at or below it. *(§4.7.1)*
+
+**Membership inference** — Deciding, from a model's outputs, whether a specific record was in its training set. **Definition — Model inversion.** Reconstructing sensitive attributes or representative inputs of a class from a model's outputs and, possibly, some of a person's other attributes. **Definition — Training-data extraction.** Causing a generative model to emit verbatim sequences from its training data. *(§71.9.1)*
 
 **Memory coalescing** — The hardware combines the global-memory accesses of a warp's 32 threads into as few transactions as possible. Memory is transferred in 32-byte **sectors**; if the 32 threads read 32 consecutive 4-byte words (128 bytes), the warp needs 4 sectors. Strided or scattered addresses touch more sectors and waste bandwidth on bytes nobody uses [NVIDIA CUDA C++ Best Practices Guide]. *(§64.6.3)*
 
@@ -832,11 +972,21 @@
 
 **Mixture of experts (MoE) and expert parallelism (EP)** — An MoE layer replaces one MLP with $E$ **expert** MLPs and a **router** that sends each token to its top-$k$ experts [Lepikhin et al. 2021; Fedus et al. 2022]. **Expert parallelism** places experts on different GPUs and moves tokens to them and back with two **all-to-alls**. Each expert accepts at most its **capacity** per batch; overflow tokens are **dropped** (they skip the layer via the residual connection). *(§65.12.2)*
 
+**Mixture-of-experts (MoE) layer** — An MoE layer replaces a transformer block's single MLP with $E$ expert MLPs and a learned **router** that sends each token to its top-$k$ experts and mixes their outputs with the router's softmax weights [Shazeer et al. 2017; Fedus et al. 2022]. **Total parameters** count every expert; **active parameters** count only those a token uses. *(§72.14)*
+
+**ML compiler** — A compiler that takes a model's computation graph, rewrites it at a high level (operator fusion, constant folding, layout changes, algebraic simplification), lowers it through progressively hardware-specific intermediate representations (IRs), and generates or selects kernels for a target device, often searching over tile sizes and schedules (**autotuning**). *(§67.12.1)*
+
 **ML data platform** — The infrastructure that ingests an organization's raw data, stores its full history in queryable tables, transforms it into features and labels on schedules and streams, validates and versions it, records where every dataset came from, enforces access and retention rules, and delivers training sets and serving features to ML systems. *(§61.3.1)*
+
+**ML extension** — Eleven steps added to, or substituted into, the traditional sequence when the prompt's core is a learned model: (M1) problem formulation, (M2) data and labels, (M3) features and feature store, (M4) model choice, baseline first, (M5) training pipeline, (M6) offline evaluation, (M7) serving and latency budget, (M8) online experimentation, (M9) monitoring and drift, (M10) retraining and feedback loops, (M11) responsible ML. They are the lifecycle of Chapter 59 compressed into interview steps. *(§88.6.1)*
 
 **ML functional requirement** — A statement of what decision the system makes, for which entity, from which inputs, with what output format and which fallback, for example "return a delivery-time range in minutes for each of up to 50 restaurants for a customer location". **ML non-functional requirements** bound how well, how fast and at what cost the decision is made: latency, throughput, freshness, prediction quality, cost, explainability and compliance. *(§60.9.1)*
 
 **ML lifecycle** — The repeating sequence of activities that turns a business problem into a deployed model and keeps that model useful: problem framing, data collection, ingestion, validation, feature engineering, training, evaluation, deployment, monitoring and retraining. Each stage consumes the artifacts of earlier stages and produces a versioned artifact of its own. **Definition — Artifact.** Any persistent output of a lifecycle stage that a later stage depends on: a dataset snapshot, a validation report, a feature definition, a trained model file, an evaluation report, a deployment record. *(§59.3.1)*
+
+**ML monitoring** — The continuous measurement of a deployed model's inputs, outputs, performance against eventual labels, and operating cost, compared against a reference and against service-level objectives, with alerts routed to the people who can act on them. *(§70.3.1)*
+
+**MLOps** — The set of practices, roles and tools that automate and govern the building, testing, deployment, monitoring and retraining of ML models in production, by treating data, code and models as versioned artifacts that flow through automated pipelines. Kreuzberger, Kühl and Hirschl, synthesizing literature and practitioner interviews, define it as a paradigm spanning best practices, concepts and an engineering culture that bridges machine learning, software engineering and data engineering [Kreuzberger et al. 2023]. *(§69.3.1)*
 
 **ML system** — A software system in which at least one decision is made by a **model**: a function whose parameters were fitted to historical data by a training algorithm rather than written by a programmer. The system comprises the model plus everything needed to produce, serve, monitor and update it: data collection, feature computation, training, evaluation, deployment, inference, logging and monitoring. *(§60.3.1)*
 
@@ -848,6 +998,26 @@
 
 **Model-centric and data-centric development** — In **model-centric** development the dataset is held fixed and improvement comes from changing the model: architecture, loss function, hyperparameters. In **data-centric** development the model family is held roughly fixed and improvement comes from changing the data: label quality and definitions, coverage of rare cases, new or fresher features, cleaning and validation. A **data-centric architecture** is one whose components, interfaces and budgets are organized around producing, validating and versioning data, with training treated as one step among many. *(§60.4.1)*
 
+**Model cold start and warm-up** — A **cold start** is the time from deciding to start a replica until it serves traffic within its latency objective: node provisioning, container image pull, model download, deserialization and transfer to device memory, runtime initialization, and **warm-up**, the deliberate execution of representative requests so that one-time costs (memory allocation, kernel selection, lazy compilation, cache population) are paid before real traffic arrives. *(§66.10.1)*
+
+**Model gateway** — A reverse proxy specialized for model inference (also called an **LLM gateway** or **AI gateway**). It exposes one API to clients, authenticates them, maps credentials to tenants, enforces quotas and policy, **normalizes** requests and responses across providers and engines, streams tokens, applies timeouts, retries and fallbacks, and emits usage and log events. It differs from a general API gateway (§22.3) in that it understands the payload: it counts tokens, parses streamed events and knows that a request's cost is unknown until it finishes. *(§79.5.1)*
+
+**Model governance** — The policies and controls that determine who may train, approve, deploy and change a model, require documentation and independent review in proportion to risk, and keep an auditable record of every decision. *(§69.11.1)*
+
+**Model optimization** — Any transformation of a trained model, or of how it is executed, that reduces inference latency, memory, cost or energy while keeping prediction quality within an agreed tolerance. **Model compression** (quantization, pruning, distillation, low-rank factorization) changes the model's parameters or architecture; **model compilation** (graph rewriting, operator fusion, kernel selection, memory planning) changes how the same mathematics runs on a particular device. *(§67.3.1)*
+
+**Model package** — A self-describing, immutable bundle containing the trained weights, the preprocessing the model expects, an input/output **signature** (names, types and shapes), the runtime environment (library versions or a container image digest), and metadata linking it to the run that produced it. *(§69.6.1)*
+
+**Model-parallel serving, multi-model serving and multiplexing** — **Model-parallel serving** splits one model's weights across several devices because they do not fit on one: **tensor parallelism** splits each layer's matrices, **pipeline parallelism** places consecutive layers on different devices, and **embedding sharding** places rows of large embedding tables on different hosts. **Multi-model serving** hosts many models in one server process or GPU. **Model multiplexing** routes each request for one of many models to a replica that already has that model loaded, loading it on demand and evicting the least recently used model when memory is full. *(§66.8.1)*
+
+**Model registry** — A versioned catalog of model artifacts in which each **registered model** (for example `eta-gbdt`) has numbered, immutable **versions**, each linked to the run that produced it, its signature, evaluation results and documentation, plus mutable **aliases** or **stages** that name the role a version plays (champion, challenger) and an audit log of every change. *(§69.8.1)*
+
+**Model router, LLM cascade** — A **router** chooses, before generation, which model should answer a request, from features of the request (intent, length, estimated difficulty, customer tier). A **cascade** calls a cheaper model first, scores its answer with a verifier, and escalates to a stronger model only when the score is low. Both apply the cascade idea of §60.13.2 to LLMs, where the price gap between models is one to two orders of magnitude. *(§78.14.1)*
+
+**Model server** — A **model server** is a long-running process that loads one or more trained models into memory and exposes them as a network service. It accepts inference requests over HTTP or gRPC, applies pre- and post-processing, schedules requests (usually through a batching queue) onto a **model runtime** (an execution engine such as ONNX Runtime, TensorRT, LibTorch or XGBoost), and returns predictions. A **model repository** is the storage location and layout from which the server loads models and versions; **health** and **metrics** endpoints let orchestrators and monitoring observe it. *(§66.4.1)*
+
+**Model version, alias and version pinning** — A **model version** is an immutable, numbered artifact in the model registry with its training data, code, metrics and signature. An **alias** (or stage) such as `champion` or `challenger` (the QuickBite names of §69.6.2) is a movable pointer to one version. **Version pinning** means a deployment or client names an exact version (`eta:42`) rather than an alias, so what runs changes only through a reviewed deployment. **Traffic splitting** routes fractions of requests to different versions by weight, by user hash or by request header. *(§66.11.1)*
+
 **Modular monolith** — A monolith whose code is divided into **modules** aligned with business domains, where each module exposes a small **public interface**, hides its internals and data, and may depend only on an explicitly declared, acyclic set of other modules. Boundaries are enforced by tooling, not just convention. *(§33.5.1)*
 
 **Monitoring** — Collecting, aggregating and displaying predefined measurements of a system, and alerting when they cross thresholds, so that operators learn about *known* failure modes. The Google SRE book defines it as "collecting, processing, aggregating, and displaying real-time quantitative data about a system" [Beyer et al. 2016, ch. 6]. *(§40.3.1)*
@@ -858,13 +1028,23 @@
 
 **MPI (Message Passing Interface)** — A standardized library interface, maintained by the MPI Forum since 1994 (MPI-4.1 published in 2023), through which the processes of a parallel program exchange data by explicit messages. Each process is a **rank** (an integer from 0 to $p - 1$) within a **communicator**, a group of processes with its own isolated message context; `MPI_COMM_WORLD` contains all of them [MPI Forum 2023]. *(§49.9.1)*
 
+**Multi-armed bandit and regret** — A **bandit** repeatedly chooses one of $K$ actions (arms), observes a reward only for the chosen arm, and aims to maximize total reward. **Exploitation** chooses the arm that looks best; **exploration** chooses others to learn about them. **Regret** is the reward lost relative to always choosing the best arm. A **contextual bandit** observes features (user, time) before choosing and learns which arm is best in each context [Li et al. 2010]. *(§68.11.1)*
+
 **Multi-core processor** — A single chip containing several complete cores, each with its own pipeline and private caches, sharing the last-level cache and memory. *(§5.3.6)*
 
+**Multi-head, multi-query and grouped-query attention** — **Multi-head attention (MHA)** runs $h$ attention operations in parallel, each with its own query, key and value projections of width $d_h = d/h$, concatenates their outputs and mixes them with an output projection $W_O$ [Vaswani et al. 2017]. **Multi-query attention (MQA)** keeps $h$ query heads but shares a single key head and value head among all of them [Shazeer 2019]. **Grouped-query attention (GQA)** is the middle ground: $h$ query heads share $g$ key–value heads, each serving $h/g$ query heads [Ainslie et al. 2023]. *(§72.7.1)*
+
 **Multilayer perceptron (MLP)** — A network of linear layers with nonlinear activations between them: input layer → one or more **hidden layers** → output layer. Each layer's output is the next layer's input. The **width** is the number of neurons per hidden layer and the **depth** is the number of layers with weights. *(§58.3.2)*
+
+**Multi-model and multi-LoRA serving** — **Multi-model serving** places many models on a shared fleet, loading and evicting them by demand (§66.8). **Multi-LoRA serving** keeps one base model's weights in GPU memory and serves many low-rank adapters (LoRA, §76.9) on top of it, applying each request's adapter during the forward pass so that requests for different adapters share one batch. *(§79.7.1)*
 
 **Multipart upload** — A protocol for uploading one large object as independently uploaded **parts**: the client *initiates* an upload and receives an upload ID, uploads numbered parts (in any order, in parallel, retrying any part), then *completes* the upload with the list of part numbers and their ETags, at which point the store assembles the object atomically. Until completion, or after an *abort*, the object is not visible. *(§15.8.1)*
 
 **Multi-primary replication** — More than one node accepts writes for the same data and replicates to the others (also **multi-leader** or **active–active**). Concurrent uncoordinated changes to the same row create **write conflicts** that must be detected and resolved. *(§14.5.1)*
+
+**Multi-region AI serving** — Running gateways, routers and model capacity in several regions (§44.6) so that each request is served in an allowed region with acceptable latency, and so that a regional outage or capacity shortage shifts traffic to another region, another provider or a fallback model without breaking **data-residency** rules for prompts and logs (§44.9). *(§79.11.1)*
+
+**Multi-stage recommendation funnel** — A pipeline in which progressively more expensive models score progressively fewer items: **candidate generation** (retrieval) selects hundreds to thousands of items from the full catalog; **filtering** removes ineligible items; **ranking**, often split into a light and a heavy ranker, scores each candidate with rich features; **re-ranking** turns scores into a final list under list-level objectives and business rules. *(§68.4.1)*
 
 **Multitenant file system** — One storage cluster shared by several applications (**tenants**) with different workloads, in which each tenant can tune durability, layout and performance for its own data while sharing drives, servers and operations. *(§49.4.2)*
 
@@ -922,6 +1102,8 @@
 
 **OIDC workload identity federation** — A mechanism in which the CI platform issues each job a short-lived, signed OpenID Connect (OIDC) token describing the job (repository, branch, environment), and the cloud provider exchanges that token for temporary credentials according to a trust policy, so that no long-lived cloud key is stored in the pipeline. *(§43.11.1)*
 
+**ONNX and ONNX Runtime** — **ONNX** (Open Neural Network Exchange) is an open file format for ML models: a protocol-buffer graph of **nodes** (operators such as `MatMul`, `Conv`, `Softmax`), **initializers** (weights) and typed inputs and outputs. Operator semantics are versioned by **opset**: a model declares the opset it uses, and a runtime must support it [ONNX docs]. **ONNX Runtime (ORT)** is an inference engine that loads an ONNX graph, rewrites it (constant folding, redundant-node removal, operator fusions) and partitions it across **execution providers (EPs)**, back-ends for specific hardware such as CPU, CUDA, TensorRT, OpenVINO, DirectML and Core ML [ONNX Runtime docs]. *(§67.10.1)*
+
 **Open and closed workload models** — In an **open** model, new requests arrive at a rate that is independent of how fast the system answers: users on the internet do not wait for each other. In a **closed** model, a fixed population of $N$ users (or load-generator threads) each sends a request, waits for the response, optionally pauses for a **think time** $Z$, and only then sends the next. A **partly open** model has sessions that arrive openly but issue several requests each, closed-loop, within the session [Schroeder et al. 2006]. *(§23.5.2)*
 
 **OpenAPI Specification (OAS)** — A vendor-neutral, machine-readable format (YAML or JSON) for describing HTTP APIs: paths, operations, parameters, request and response bodies (as JSON Schema), status codes and security schemes [OpenAPI Specification]. It grew out of Swagger and is maintained by the OpenAPI Initiative; version 3.1 aligned its schemas with JSON Schema, and version 3.2.0 was released in September 2025. *(§8.16)*
@@ -954,9 +1136,13 @@
 
 **Page cache** — The kernel's in-RAM cache of file contents, organized in pages. Reads are served from it when possible; writes normally modify pages in it (marking them **dirty**) and return immediately, with the kernel writing them back to storage later. *(§6.6.6)*
 
+**PagedAttention** — An attention algorithm and memory manager that stores each sequence's KV cache in fixed-size **blocks** (for example, 16 tokens) placed anywhere in GPU memory, with a per-sequence **block table** mapping logical block $j$ to a physical block, as an operating system's page table maps virtual pages to frames (§6.6.2; copy-on-write §6.6.5). The attention kernel follows the block table while reading keys and values. Blocks can be shared by several sequences with reference counts and **copy-on-write** [Kwon et al. 2023]. *(§73.7.1)*
+
 **Parallel file system** — A POSIX file system whose files are striped across many storage servers so that thousands of clients can read and write one file or many files concurrently at aggregate bandwidths of terabytes per second; examples are Lustre and IBM Storage Scale (formerly Spectrum Scale and GPFS). *(§49.11)*
 
 **Parameter server** — An architecture in which **servers** hold key-partitioned parameters and **workers** **pull** what they need, compute gradients, and **push** them back for the servers to apply [Li et al. 2014]. In **asynchronous SGD** pushes apply on arrival, so a gradient may come from parameters several updates old: its **staleness**. *(§65.8.1)*
+
+**Pareto frontier** — Among options scored on several objectives (cost, quality, latency), an option is **dominated** if another is at least as good on every objective and strictly better on one. The non-dominated options form the **Pareto frontier**; choosing among them is a business decision, not a technical one. *(§78.16)*
 
 **Partial failure** — A state in which some components of a system have failed while others continue to work, so that an operation may be applied in some places and not others, and the working components cannot reliably tell which components failed. *(§24.8.1)*
 
@@ -1000,6 +1186,12 @@
 
 **Polymorphism** — The ability of one piece of code to work with values of different types. **Subtype polymorphism** means code written against a type also works with any of its subtypes, and each object responds to a method call with its own implementation. **Dynamic dispatch** is the run-time mechanism that picks which implementation runs, based on the object's actual class rather than the declared type of the variable. *(§35.6.1)*
 
+**Population stability index (PSI)** — A symmetric divergence between two binned distributions, $\sum_i (q_i - p_i)\ln(q_i / p_i)$, originating in credit scoring, where it is used to check whether the population being scored still resembles the population the scorecard was built on [Siddiqi 2006]. It equals $\mathrm{KL}(Q \,\|\, P) + \mathrm{KL}(P \,\|\, Q)$, the Jeffreys divergence (§70.5.4). *(§70.5.1)*
+
+**Positional encodings** — **Absolute** encodings add a position-dependent vector to each token embedding: fixed **sinusoids** of geometrically spaced frequencies [Vaswani et al. 2017] or a **learned** table with one row per position (GPT-2: 1,024 rows) [Radford et al. 2019]. **Rotary position embedding (RoPE)** instead rotates each query and key, pair of dimensions by pair, through an angle proportional to the token's position, so that their dot product depends on the *relative* distance between positions [Su et al. 2024]. **ALiBi** adds a distance-proportional penalty to attention scores [Press et al. 2022]. *(§72.9.1)*
+
+**Post-training quantization (PTQ) and quantization-aware training (QAT)** — **PTQ** quantizes an already-trained model without further training. In **dynamic quantization**, weights are quantized ahead of time and each activation's range is computed at run time, per call; in **static quantization**, activation ranges are fixed in advance by calibration (§67.4.3). **QAT** inserts **fake quantization** (quantize-then-dequantize) into the forward pass during training or fine-tuning so the weights learn to tolerate rounding; gradients pass through the non-differentiable rounding with the **straight-through estimator (STE)**, which treats rounding as the identity in the backward pass [Bengio et al. 2013; Jacob et al. 2018]. *(§67.5.1)*
+
 **Power of two choices (P2C)** — For each request, pick **two** backends uniformly at random and send the request to the less loaded of the two (by in-flight count, EWMA latency or another load signal). *(§19.4.4)*
 
 **Practical Byzantine Fault Tolerance (PBFT)** — A state-machine replication protocol for $n = 3f + 1$ replicas that tolerates $f$ Byzantine replicas and any number of faulty clients, is safe under asynchrony and live under partial synchrony, and orders requests with three phases (pre-prepare, prepare, commit) led by a **primary** that is replaced through a **view change** when it misbehaves [Castro & Liskov 1999; Castro & Liskov 2002]. *(§45.9.1)*
@@ -1007,6 +1199,14 @@
 **Prediction-quality SLO** — A service-level objective on the correctness of predictions, measured as an indicator over a window once labels arrive (for example "≥ 80% of orders delivered within ±5 minutes of the checkout ETA, over 7 days"), together with proxy indicators available before labels arrive (prediction distribution, feature null rates, fallback rate). *(§60.12.1)*
 
 **Preemption** — Evicting running lower-priority work so that a pending higher-priority task can be placed. The evicted tasks are **victims**; the pending task is the **preemptor**. *(§46.8.1)*
+
+**Preference alignment** — Training a model to produce responses people prefer, from comparisons ("response A is better than B for this prompt") rather than from single correct targets. **RLHF** (reinforcement learning from human feedback) fits a **reward model** to the comparisons and then optimizes the policy (the LLM) against it with reinforcement learning [Christiano et al. 2017; Ouyang et al. 2022]. **DPO** (direct preference optimization) optimizes the policy on the comparisons directly [Rafailov et al. 2023]. *(§76.10.1)*
+
+**Prefill and decode** — **Prefill** processes all $s$ prompt tokens in one forward pass, writes their keys and values into the KV cache, and produces the first output token. **Decode** then generates one token per sequence per forward pass, reading all weights and the whole KV cache each step. Prefill time sets **time to first token (TTFT)**; a decode step sets **time per output token (TPOT)**, also called inter-token latency. *(§72.10.1)*
+
+**Prefill–decode disaggregation** — Running prefill and decode on different GPU pools: **prefill instances** process prompts and produce the KV cache, which is transferred to **decode instances** that generate the remaining tokens. Each pool gets its own parallelism, batch policy and scale [Zhong et al. 2024; Patel et al. 2024]. *(§73.12.1)*
+
+**Prefix caching** — Keeping the KV blocks of completed or running sequences after use and, when a new request's prompt begins with the same tokens, reusing those blocks instead of recomputing them. Matching is exact and token-by-token from the start of the prompt, because each token's keys and values depend on every token before it. **Automatic prefix caching** identifies full blocks by a hash of their tokens and of everything before them [vLLM Docs]; **RadixAttention** in SGLang organizes cached prefixes in a radix tree with least-recently-used eviction and schedules requests to maximize reuse [Zheng et al. 2024]. *(§73.8.1)*
 
 **Presumed abort (PA)** — A 2PC variant in which a coordinator that has no information about a transaction answers inquiries with "abort". Aborts therefore need no forced coordinator record, no forced participant record and no acknowledgments. *(§28.4.5)*
 
@@ -1028,13 +1228,25 @@
 
 **Producer–consumer** — Producers put work items into a shared **bounded** buffer and consumers take them out, decoupling the rate at which work is created from the rate at which it is processed; when the buffer is full, producers block or are rejected, which is **backpressure** (§22.10). *(§37.16.1)*
 
+**Product quantization (PQ)** — A lossy compression of vectors that splits each $d$-dimensional vector into $m$ subvectors of $d/m$ dimensions, learns a separate codebook of $k^*$ centroids (typically 256) for each subspace with k-means, and stores each vector as the $m$ IDs of its nearest sub-centroids: $m$ bytes when $k^* = 256$ [Jégou et al. 2011]. *(§74.9.1)*
+
 **Profiler** — A tool that attributes a resource (CPU time, wall-clock time, allocated bytes, lock wait time) to the code locations that consumed it. A **sampling profiler** interrupts the program at a fixed frequency and records the current call stack; a function's share of samples estimates its share of time. An **instrumenting** (deterministic, tracing) profiler inserts hooks at every function entry and exit and records exact call counts and durations. *(§23.4.1)*
 
 **Prometheus** — An open-source monitoring system and time-series database, started at SoundCloud in 2012 and a graduated CNCF project since 2018, that scrapes metrics over HTTP, stores them locally, evaluates recording and alerting rules, and is queried with PromQL [Prometheus Docs: Overview]. *(§40.8)*
 
+**Prompt and response data protection** — The controls that govern personal and confidential data in model traffic: **redaction** or **pseudonymization** before data leaves a trust boundary (§50.10), **retention** limits for prompts, responses and derived artifacts (logs, caches, evaluation sets), **encryption** in transit and at rest, **access control** on who may read content, **provider data controls** such as zero-data-retention modes, and an **audit** trail of every access and every flow. *(§79.14.1)*
+
+**Prompt injection** — An attack in which text supplied by an untrusted party is interpreted by an LLM as instructions, overriding or subverting the developer's intent. In **direct** injection the attacker is the user typing into the application ("ignore your instructions and..."). In **indirect** injection the attacker plants instructions in content the application later feeds the model: a web page, an email, a retrieved document, a tool result [Greshake et al. 2023]. Prompt injection is first in the OWASP Top 10 for LLM applications [OWASP 2025]. *(§78.13.1)*
+
+**Prompt, system prompt and prompt template** — A **prompt** is the full token sequence sent to the model for one call. The **system prompt** is the part that sets role, rules and output format and is the same for every request of a given application version. A **prompt template** is a versioned artifact with named slots (user message, retrieved chunks, order facts) that code fills at request time; the filled template is then wrapped in the model's **chat template**, the special tokens that mark system, user and assistant turns (§72.4.6). *(§76.4.1)*
+
+**Protected (sensitive) attribute** — A characteristic, such as race, sex, age or disability, on which unequal treatment is legally restricted or ethically unacceptable. Here $G$ denotes group membership, $Y$ the true label, $\hat{Y}$ the decision and $S$ the score. *(§71.4.1)*
+
 **Protocol** — A set of rules two parties agree on for exchanging messages: message formats, the meaning of each field, and the actions each side takes on sending, receiving or timing out. A **protocol stack** is a set of protocols layered so that each uses the service provided by the layer below and offers a service to the layer above. *(§7.3.1)*
 
 **Proxy** — An intermediary that terminates a client's connection and opens its own connection onward, relaying requests and responses. A **forward proxy** acts on behalf of **clients** and is chosen by them (or their network administrator). A **reverse proxy** acts on behalf of **servers** and is chosen by the site operator; clients usually do not know it exists. *(§7.12)*
+
+**Pruning and sparsity** — **Pruning** sets a subset of a model's weights to zero and removes them from storage or computation; **sparsity** is the fraction of zeros. **Unstructured** pruning removes individual weights anywhere; **structured** pruning removes whole units (channels, attention heads, layers), leaving a smaller dense model; **semi-structured N:M sparsity** keeps at most N non-zeros in every group of M consecutive weights, such as **2:4** [Mishra et al. 2021]. **Magnitude pruning** removes the weights with the smallest absolute values [Han et al. 2016]. *(§67.7.1)*
 
 **Pseudonymization and anonymization** — **Pseudonymization** replaces direct identifiers with pseudonyms such that the data can no longer be attributed to a person *without additional information kept separately* (GDPR Article 4(5)); pseudonymized data is still personal data. **Anonymization** makes re-identification not reasonably likely by any means, taking into account the means reasonably likely to be used (GDPR Recital 26); truly anonymous data falls outside GDPR [EU 2016]. *(§50.10.1)*
 
@@ -1048,6 +1260,10 @@
 
 **Qualifying stream** — A play that counts toward royalty and chart calculations under the service's rules, typically a play that lasted at least a minimum duration (for example 30 seconds) and passed fraud checks. The definition is contractual: changing it changes who gets paid. *(§54.6.1)*
 
+**Quantization** — Mapping real values onto a small set of representable levels, here a $b$-bit integer grid. **Uniform affine quantization** maps a real value $x$ to an integer $q = \text{clamp}(\text{round}(x/s) + z,\; q_\text{min},\; q_\text{max})$ with a real **scale** $s$ (the step between adjacent levels) and an integer **zero-point** $z$ (the integer that represents real 0); **dequantization** recovers $\hat{x} = s(q - z)$ [Jacob et al. 2018; Nagel et al. 2021]. **Symmetric** quantization fixes $z = 0$; **asymmetric** quantization lets $z$ shift the grid to fit a lopsided range. *(§67.4.1)*
+
+**Quantization granularity** — The set of values that share one scale (and zero-point). **Per-tensor**: one scale for the whole tensor. **Per-channel** (per-axis): one scale per output channel of a weight, that is, per row of a linear layer's weight matrix or per filter of a convolution. **Per-group** (block-wise): one scale per contiguous group of $g$ values along the input dimension, typically $g = 32$–128; the OCP microscaling formats are per-group with $g = 32$ (§64.10.4) [Nagel et al. 2021]. *(§67.4.2)*
+
 **Queueing system** — A model in which **jobs** (requests, messages, packets) arrive at a **service center**, wait in a **queue** if all **servers** are busy, receive service, and depart. The **arrival rate** $\lambda$ is the average number of jobs arriving per second; the **service rate** $\mu$ is the average number of jobs one server can complete per second when it is never idle, so the average **service time** is $S = 1/\mu$. *(§4.10.1)*
 
 **Quorum** — A set of nodes whose agreement is sufficient for an operation to take effect. A **majority quorum** in a cluster of $N$ voting nodes is any set of more than $N/2$ nodes. The essential **intersection property**: any two majority quorums share at least one node. *(§26.4.1)*
@@ -1057,6 +1273,8 @@
 **Race condition** — A bug in which the result of a program depends on the relative timing or interleaving of concurrent operations on shared state. A **data race** is the specific case where two threads access the same memory location concurrently, at least one access is a write, and nothing orders them. *(§6.9)*
 
 **Raft term** — A logical clock that divides time into consecutive, numbered periods. Each term begins with an election; if a candidate wins, it is the **leader** for the rest of the term, and there is at most one leader per term. Every RPC carries the sender's term; a node that sees a higher term immediately adopts it and becomes a follower; a request with a lower term is rejected. *(§26.7.1)*
+
+**Rail-optimized topology** — A fabric in which NIC $i$ of every server in a group (the GPU of local rank $i$) connects to the same leaf switch or leaf group, called **rail** $i$. Traffic between same-rank GPUs on different servers crosses one leaf; traffic between different ranks first moves over NVLink inside the server to the GPU on the right rail. A **non-blocking** fabric has full bisection bandwidth (§49.10.4); an **oversubscribed** one has less uplink than downlink capacity at some tier. *(§80.5.1)*
 
 **Rate limiting** — Enforcing an upper bound on how many requests (or how much work) a given **client identity** may submit to a resource over time. Requests beyond the bound are rejected (or, less often, delayed). The bound is usually stated as a **rate** (for example 100 requests per minute) plus a **burst** allowance. *(§22.3.1)*
 
@@ -1074,6 +1292,8 @@
 
 **Rebalancing** — Moving partitions, or parts of them, between nodes so that data and load stay even as nodes join, leave or fail and as data grows, while staying available and moving no more data than necessary. *(§14.9.1)*
 
+**Recommender system, explicit and implicit feedback** — A **recommender system** chooses and orders items (restaurants, dishes, videos, products) for a user in a context, without an explicit query. **Explicit feedback** is a deliberate statement of preference, such as a star rating. **Implicit feedback** is behavior from which preference is inferred: impressions, clicks, menu opens, add-to-cart events, orders, reorders and dwell time. *(§68.3.1)*
+
 **Reconciliation loop (control loop)** — A loop that repeatedly reads an object's desired state (`spec`), observes actual state, computes the difference and takes actions to reduce it, then records what it observed (`status`). It is **level-triggered**: it acts on the current state of the world, not on the sequence of events that produced it. *(§42.6.3)*
 
 **Recurrent neural network (RNN)** — A network that processes a sequence one element at a time, carrying a **hidden state** $\mathbf{h}_t = \phi(W_x \mathbf{x}_t + W_h \mathbf{h}_{t-1} + \mathbf{b})$ from step to step, with the same weights at every step. A **long short-term memory (LSTM)** network adds a separate **cell state** and learned **gates** (input, forget, output) that control what is written, kept and read [Hochreiter and Schmidhuber 1997]. *(§58.8.1)*
@@ -1081,6 +1301,8 @@
 **RED method** — For every **service**, monitor **R**ate (requests per second), **E**rrors (failed requests per second) and **D**uration (the distribution of request latency, as a histogram from which percentiles are read). Tom Wilkie proposed it while at Weaveworks as a service-level complement to USE [Wilkie 2018]. *(§23.3.3)*
 
 **Reduce-side (sort-merge) join and broadcast (map-side) join** — In a **reduce-side join**, both inputs are mapped to `(join key, tagged record)`, shuffled so that all records with the same key meet at one reducer, sorted, and combined there. In a **broadcast join**, the smaller input is copied in full to every map task, loaded into an in-memory hash table, and each record of the larger input is joined locally by lookup, with no shuffle of the larger input. *(§29.4.4)*
+
+**Reference window** — The sample a monitor treats as "normal": the model's training data, a fixed known-good production period, a trailing window (for example the previous 7 days) or a seasonal window (the same hour on the previous four weeks). **Current window:** the recent sample being tested, either **tumbling** (consecutive, non-overlapping hours) or **sliding** (the last 60 minutes, recomputed every 5 minutes). *(§70.6.1)*
 
 **Regional evacuation** — Deliberately moving all traffic, and where necessary data ownership, out of a region that is failing or under maintenance, onto the remaining regions, without waiting for the region to fail completely. *(§44.11.1)*
 
@@ -1126,11 +1348,15 @@
 
 **Requirement** — A statement of what the system must do (a **functional requirement**, e.g. "a customer can cancel an order before the restaurant accepts it") or how well it must do it (a **non-functional requirement**, e.g. "99% of order placements complete within 800 ms"). A requirement is **testable** if you could write an automated check or a measurement that proves it is met. *(§2.5.1)*
 
+**Re-ranking** — The final funnel stage, which turns independently scored items into a page by optimizing properties of the *list*: diversity, freshness, deduplication, fairness of exposure to providers, and hard business and policy rules. *(§68.10)*
+
 **Reservoir sampling** — An algorithm that maintains a uniform random sample of $k$ items from a stream whose length $n$ is not known in advance, using $O(k)$ memory and a single pass: after any number of items, every item seen so far is in the sample with probability $k/n$ [Vitter 1985]. *(§17.12.1)*
 
 **Resilient Distributed Dataset (RDD)** — A read-only, partitioned collection of records that can be created only by deterministic operations (**transformations** such as `map`, `filter`, `join`) on stable storage or on other RDDs. Each RDD records its **lineage**, the graph of transformations that produced it, so a lost partition can be recomputed from its parents instead of being restored from a replica [Zaharia et al. 2012]. *(§29.5.1)*
 
 **REST (Representational State Transfer)** — An architectural style for distributed hypermedia systems, defined by Roy Fielding in his 2000 doctoral dissertation as a set of constraints on how components interact [Fielding 2000]. In everyday usage, a "REST API" is an HTTP API that models its domain as **resources** identified by URIs and manipulated with the standard HTTP methods. *(§8.6.1)*
+
+**Retrieval-augmented generation (RAG)** — An architecture in which, for each request, a **retriever** selects passages from an external corpus and a **generator** (a language model) produces the answer conditioned on the request plus those passages. The corpus is the model's **non-parametric memory**: it can be changed, filtered and cited without retraining. Knowledge stored in the model's weights is **parametric memory**. *(§75.3.1)*
 
 **Rmax and Rpeak** — The **Top500** list, published twice a year since 1993, ranks systems by **Rmax**, the sustained rate in floating-point operations per second (FLOP/s, 64-bit) achieved on the High-Performance Linpack (HPL) benchmark, which solves a dense linear system $Ax = b$ by LU factorization. **Rpeak** is the theoretical peak: devices × FLOPs per cycle × clock rate. The ratio Rmax/Rpeak is the HPL efficiency [Top500; Dongarra et al. 2003]. *(§49.8.3)*
 
@@ -1168,6 +1394,8 @@
 
 **Segment** — A self-contained, immutable mini-index (its own dictionary, postings, stored fields, norms and doc values) covering a subset of documents. A Lucene index is a set of segments plus a **commit point** file (`segments_N`) listing which segments are live; a search runs over every live segment and combines the results. *(§16.6.1)*
 
+**Self-attention, query, key, value and causal mask** — In **self-attention** each position $i$ of a sequence computes three vectors from its hidden state $\mathbf{x}_i$ with learned matrices: a **query** $\mathbf{q}_i = \mathbf{x}_i W_Q$ (what this position is looking for), a **key** $\mathbf{k}_i = \mathbf{x}_i W_K$ (what this position offers to be found by) and a **value** $\mathbf{v}_i = \mathbf{x}_i W_V$ (what it hands over if found). Position $i$'s output is an average of all values, weighted by how well its query matches each key. A **causal mask** restricts position $i$ to keys at positions $j \le i$, so the model cannot look at the tokens it is learning to predict [Vaswani et al. 2017]. *(§72.6.1)*
+
 **Self-supervised learning** — Supervised learning on labels manufactured automatically from the input itself, typically by hiding part of the input and predicting it. No human labeling is needed, so the training set can be as large as the raw data. *(§57.4.3)*
 
 **Semaphore** — An integer counter with two atomic operations introduced by Dijkstra: **wait** (P, or *acquire*) decrements it and blocks if the result would be negative; **signal** (V, or *release*) increments it and wakes a waiter [Dijkstra 1965]. *(§6.10.2)*
@@ -1204,17 +1432,25 @@
 
 **Set-associative cache** — A cache divided into $S$ sets of $W$ slots (**ways**). A line at a given address may be stored in any of the $W$ ways of exactly one set. $W = 1$ is a **direct-mapped** cache; a cache with a single set holding every line is **fully associative**. *(§5.4.4)*
 
+**Shadow deployment, canary, A/B test and interleaving** — In **shadow deployment** (dark launch) the new model receives a copy of production requests and its predictions are logged but never used. A **canary** sends a small fraction of real traffic to the new model and compares guardrail metrics with the old one, rolling back automatically on regression (§43.6). An **A/B test** randomizes users between models long enough to measure a business metric with statistical power (§57.14). **Interleaving**, for rankers, merges the two models' ranked lists into one list shown to the same user and credits each model with the clicks on its items. *(§66.12.1)*
+
 **Shared responsibility model** — The division of security and operational duties between the provider and the customer. In AWS's phrasing, the provider is responsible for security **of** the cloud (facilities, hardware, hypervisor, global network, the managed services' own software), and the customer for security **in** the cloud (data, identities and permissions, OS and application patching on IaaS, network rules, encryption choices) [AWS: Shared Responsibility Model]. The exact line moves with the service model (Figure 41.1). *(§41.4.2)*
 
 **Short polling** — A technique in which the client sends an ordinary HTTP request at a fixed interval *T* to ask whether new data exists; the server answers immediately, either with the new data or with an empty response, and the connection's request ends. *(§9.3.1)*
 
+**Showback and chargeback** — **Showback** reports each team's share of platform cost without moving money; **chargeback** bills it to the team's budget (§51.5). Both need **metering** (who used what, §79.13), **unit rates** (cost per token by model, per GPU-hour, per request) and **allocation rules** for shared and idle cost. *(§79.15.1)*
+
 **Shuffle** — The all-to-all redistribution of intermediate data between two stages, in which every task of the producing stage writes its output partitioned by key and every task of the consuming stage reads its partition from every producer. It costs serialization, local disk writes and reads, and network transfer, and it is a barrier between stages. *(§29.6.2)*
+
+**Silent data corruption (SDC)** — A hardware fault that produces a wrong result without raising any error: no machine-check exception, no ECC report, no crash. In training it shows up, if at all, as a loss spike, NaNs, diverging replicas or a subtly worse model. *(§80.8.3)*
 
 **Silent failure** — A failure in which the system keeps returning well-formed responses with normal latency and no errors, but the responses are wrong. Availability and latency SLIs stay green; only measures of output quality reveal the problem. *(§60.3.2)*
 
 **Silo, pool, bridge and tiered** — In the **silo** model each tenant gets dedicated resources: its own stack, account, database or cluster. In the **pool** model tenants share resources and isolation is enforced logically by tenant-aware code, policies and limits. The **bridge** (hybrid) model mixes the two by layer, for example shared services with a database per tenant. A **tiered** deployment applies different models to different customer tiers, typically pooling small tenants and siloing premium ones. *(§47.4.1)*
 
 **SIMD (single instruction, multiple data)** — CPU instructions that apply the same operation to several data elements packed into one wide **vector register** at once — for example, adding eight pairs of 32-bit floats in a single instruction. *(§5.11.1)*
+
+**Similarity and distance metrics for vectors** — For a query $\mathbf{q}$ and a stored vector $\mathbf{x}$: the **dot product** (inner product) $\mathbf{q} \cdot \mathbf{x}$; **cosine similarity** $\mathbf{q} \cdot \mathbf{x} / (\lVert \mathbf{q} \rVert \lVert \mathbf{x} \rVert)$, which ignores length; and **Euclidean (L2) distance** $\lVert \mathbf{q} - \mathbf{x} \rVert$. Search returns the $k$ vectors with the highest similarity, or equivalently the lowest distance. Searching by largest dot product is called **maximum inner product search (MIPS)**. *(§74.4.1)*
 
 **Simple factory** — A function or static method that takes a description of what is wanted (a string, an enum, a config value) and returns an instance of the matching concrete class, behind a common interface. It is an idiom rather than a GoF pattern, but it is the most common factory in practice. *(§37.3.1)*
 
@@ -1250,6 +1486,8 @@
 
 **Spaced repetition** — Reviewing material at increasing intervals, so that each review happens around the time you would otherwise begin to forget it. The underlying finding, that spacing study sessions apart beats massing them together, is the **spacing effect**. *(§3.4.3)*
 
+**Speculative decoding** — A technique that produces several tokens per forward pass of the large **target** model: a cheap **draft** proposes $\gamma$ tokens, the target scores all of them in one parallel pass, and a modified rejection-sampling rule accepts a prefix of the draft and samples one corrected or bonus token, so that the output distribution is *exactly* the target's [Leviathan et al. 2023; Chen et al. 2023]. The **acceptance rate** $\alpha$ is the expected probability that the target accepts a draft token. *(§73.10.1)*
+
 **Speedup** — The ratio of the time a job takes on one processor (or node) to the time it takes on $N$: $S(N) = T(1)/T(N)$. Perfect, **linear** speedup is $S(N) = N$. *(§4.12.1)*
 
 **SPIFFE ID and SVID** — **SPIFFE** (Secure Production Identity Framework for Everyone) is an open specification for workload identity. A **SPIFFE ID** is a URI of the form `spiffe://<trust-domain>/<path>`, for example `spiffe://quickbite.example/ns/payments/sa/charge-api`. A **SPIFFE Verifiable Identity Document (SVID)** is a short-lived credential carrying that ID: an **X.509-SVID** (a certificate whose URI subject alternative name is the SPIFFE ID, used for mTLS) or a **JWT-SVID** (a signed token, used where TLS cannot be end to end). A **trust bundle** holds the CA certificates that verify a trust domain's SVIDs [SPIFFE Spec]. *(§50.4.3)*
@@ -1268,7 +1506,11 @@
 
 **State machine diagram** — A behavior diagram that shows the **states** one object (or protocol) can be in and the **transitions** between them. A transition is labeled `trigger [guard] / effect`: the **trigger** is the event, the **guard** a Boolean condition that must be true for the transition to fire, and the **effect** an action executed during the transition. A state may declare **entry**, **exit** and **do** behaviors, run on entering, on leaving, and while inside the state [OMG 2017]. *(§38.6.1)*
 
+**Static, dynamic and continuous batching** — **Static batching** groups a fixed set of requests and runs them together until *all* have finished. **Dynamic batching** (§66.6) forms each batch from whatever requests are queued when the server becomes free (or when a timeout expires), but still keeps the batch together until its longest member finishes. **Continuous batching**, also called **iteration-level scheduling** or **in-flight batching**, re-forms the batch at *every* decode step: finished sequences leave and waiting ones join between steps [Yu et al. 2022]. *(§73.6.1)*
+
 **Static site generation (SSG)** — HTML is produced at build time and served as static files, usually from a CDN (Chapter 21). Pages that change per user cannot be fully static. *(§8.4.2)*
+
+**Step cache** — A map from a step's **cache key**, a hash of everything that determines its output (step code version, container image digest, parameters, and the identities of its input artifacts), to the step's recorded outputs. On a hit, the orchestrator reuses the outputs instead of running the step. *(§69.9.3)*
 
 **Storage tier and lifecycle policy** — A **storage tier** (storage class) is a price/performance point for the same data: **hot** (frequent access, highest storage price, no retrieval fee), **warm** or infrequent access (cheaper storage, per-GB retrieval fee, minimum storage duration), **cold** (cheaper again, slower or costlier retrieval) and **archive** (cheapest storage, retrieval in hours). A **lifecycle policy** is a set of rules, usually by prefix, tag or age, that automatically transitions objects between tiers and expires (deletes) them. *(§15.9)*
 
@@ -1284,7 +1526,11 @@
 
 **STRIDE** — A mnemonic for six threat categories, developed at Microsoft in 1999 by Loren Kohnfelder and Praerit Garg and popularized by Shostack [Shostack 2014]: **S**poofing, **T**ampering, **R**epudiation, **I**nformation disclosure, **D**enial of service and **E**levation of privilege. Each category is the violation of one security property. *(§10.3.4)*
 
+**Structured output** — Model output that must conform to a machine-readable contract, usually a **JSON Schema** (field names, types, enumerations, ranges, required fields). **Function calling** (or tool calling) is the special case in which the contract is a function signature: the model emits a function name and a JSON argument object, and the application executes it. **Constrained decoding** (grammar-based sampling) enforces the contract during generation by allowing only tokens that keep the output valid. *(§76.5.1)*
+
 **Superscalar execution** — A core that can issue and complete more than one instruction per cycle by having several execution units working in parallel. *(§5.3.5)*
+
+**Supervised fine-tuning (SFT)** — Continuing training of a pre-trained model with the next-token loss on curated (prompt, desired response) examples, usually multi-turn conversations, so that it produces responses like the examples. **Instruction tuning** is SFT on many tasks phrased as instructions. **Loss masking** excludes prompt tokens from the loss so the model learns to produce responses, not to reproduce prompts. *(§76.7.1)*
 
 **Supervised learning** — Learning from examples $(x_i, y_i)$ where each input $x_i$ comes with its correct output $y_i$, the **label**. The three main tasks are **classification** (predict a category), **regression** (predict a number) and **ranking** (predict an order of items). *(§57.4.1)*
 
@@ -1297,6 +1543,8 @@
 **Synchronous communication** — An interaction in which the sender waits for the receiver to process a request and return a response before it continues; both parties must be running and reachable at the same time. *(§30.3.1)*
 
 **Synchronous data-parallel SGD** — Each of $p$ workers computes the gradient of the loss on its local micro-batch of $b$ examples; an all-reduce sums the $p$ gradients; each worker divides by $p$ and applies the same update. The update equals single-worker SGD on a **global batch** of $B = p \cdot b \cdot k$ examples, where $k$ is the number of **gradient-accumulation** micro-batches per step. *(§65.6.1)*
+
+**Synchronous training cluster** — A cluster whose accelerators run one bulk-synchronous program: every step, every rank computes, then joins collectives (all-reduce, all-gather, reduce-scatter; §65.7) that complete only when all participants arrive. The **scale-up domain** is the group of accelerators joined by a memory-semantic fabric (NVLink and NVSwitch, or TPU inter-chip interconnect); the **scale-out network** (also called the **backend** or **compute fabric**) joins scale-up domains with RDMA. *(§80.3.1)*
 
 **Synthetic data** — Examples that were generated rather than observed. **Augmentation** applies label-preserving transforms to real examples; **simulation** generates them from a model of the world; **generative** synthesis samples from a learned model (GAN, diffusion model, LLM); **privacy-motivated** synthesis aims to preserve a dataset's statistics without exposing real records. *(§63.12.1)*
 
@@ -1320,15 +1568,21 @@
 
 **Tenant and multi-tenancy** — A **tenant** is the unit of ownership, billing and isolation in a shared system: usually a customer organization in a SaaS product, or a team in an internal platform. **Multi-tenancy** means serving many tenants from shared infrastructure and code while keeping each tenant's data, performance and failures separate. **Tenant isolation** is the set of mechanisms that enforce that separation. *(§47.3.1)*
 
+**Tenant isolation on an AI platform** — The guarantee that one tenant's load, failures or data cannot degrade another tenant's latency, availability or confidentiality. **Performance isolation** comes from per-tenant queues, fair scheduling, priority and dedicated capacity; **data isolation** comes from separating prompts, caches, logs and adapters per tenant (§47.5, §47.12). *(§79.10.1)*
+
 **Tenant placement directory** — A small, highly available mapping from tenant ID to location (cell, shard or dedicated cluster), owned by the control plane and cached by every router. It lets the system place, move and isolate individual tenants, which pure hashing cannot. *(§47.6.1)*
 
 **Tensor core and MMA** — A **tensor core** is a unit inside each SM processing block that executes a **matrix multiply–accumulate (MMA)**, $D = A \times B + C$, on small tiles (for example $16 \times 8 \times 16$ per warp-level instruction) in one operation. Its inputs are low-precision (FP16, BF16, TF32, FP8, INT8, FP4 depending on generation) while the accumulator $C$, $D$ is usually FP32: this is **mixed-precision** math [NVIDIA CUDA C++ Programming Guide; Micikevicius et al. 2018]. *(§64.7)*
 
 **Tensor parallelism (TP)** — Splitting each layer's weight matrices across $t$ GPUs, which compute slices of every matrix multiply for the same examples and combine them with collectives. **Megatron-LM** splits MLP and attention blocks so each needs one all-reduce forward and one backward [Shoeybi et al. 2019]. *(§65.10.1)*
 
+**TensorRT engine** — NVIDIA's **TensorRT** compiles a network (usually imported from ONNX) into an **engine**: a serialized plan of fused layers, chosen kernels and memory layout for one GPU model and TensorRT version. Building performs **layer and tensor fusion**, **precision selection** (FP32, FP16, BF16, INT8, FP8 and, on recent versions, INT4 weights, as of 2026), **kernel auto-tuning** (timing candidate implementations, called tactics, on the actual GPU) and memory planning [NVIDIA TensorRT docs]. *(§67.11)*
+
 **Terraform** — A declarative infrastructure-as-code tool from HashiCorp. Configurations are written in the HashiCorp Configuration Language (HCL); **providers** are plugins that translate resources into calls to a platform's API; a **resource** block declares one infrastructure object; **state** records which real object each resource corresponds to [HashiCorp Docs: Terraform]. *(§43.9.1)*
 
 **The four key metrics** — - **Deployment frequency** — how often the organization deploys code to production. - **Change lead time** — the time from a commit being made to that commit running successfully in production. - **Change failure rate** — the percentage of deployments to production that cause a failure needing remediation (a rollback, hotfix, patch or incident). - **Failed deployment recovery time** — how long it takes to restore service after a deployment causes a failure. Earlier reports called this *time to restore service* or mean time to restore (MTTR); the 2023 report narrowed it to deployment-caused failures [DORA 2023]. *(§43.3.3)*
+
+**The fourteen-step sequence** — An ordered checklist for a traditional (non-ML) system design interview: (1) clarify the problem, (2) functional requirements, (3) non-functional requirements, (4) capacity estimation, (5) API design, (6) data model, (7) high-level architecture, (8) component deep dives, (9) data flow, (10) scaling strategy, (11) bottlenecks and hot spots, (12) failure handling and reliability, (13) trade-offs and alternatives, (14) operations. The steps group into the seven phases of §52.3: scope, size, contract, shape, depth, stress and judgment. *(§88.4.1)*
 
 **Thread** — An independent sequence of execution within a process, with its own program counter, registers and stack, sharing the process's address space, heap, globals and open files with the process's other threads. *(§6.3.5)*
 
@@ -1337,6 +1591,8 @@
 **Threat model** — A structured description of a system, the **assets** in it that are worth protecting, the **adversaries** who might attack it and their capabilities, the **threats** (ways a security property could be violated), and the **mitigations** chosen for each threat [Shostack 2014]. *(§10.3.2)*
 
 **Three-phase commit (3PC)** — A commit protocol that inserts a **pre-commit** phase between voting and committing, so that no participant can commit until every operational participant knows that all voted yes. Under a synchronous system model with reliable failure detection and no network partitions, it lets the surviving participants always reach a decision without the failed coordinator [Skeen 1981]. *(§28.5.1)*
+
+**Time budget** — A planned allocation of interview minutes to phases, decided before the interview and checked against a clock during it. The **deep-dive reserve** is the time left for deep dives after every other phase has taken its share. *(§87.4.1)*
 
 **Time-of-day clock and monotonic clock** — A **time-of-day** (wall-clock) clock returns the current date and time, for example as seconds since the Unix epoch (Linux `CLOCK_REALTIME`, Python `time.time()`). It is synchronized with other machines and *can jump* forward or backward when corrected. A **monotonic** clock (Linux `CLOCK_MONOTONIC`, Python `time.monotonic()`) only moves forward at a steady rate from an arbitrary starting point. It is meaningless across machines but correct for measuring durations on one machine. *(§24.9.1)*
 
@@ -1350,7 +1606,15 @@
 
 **TinyLFU** — An **admission policy**: when the cache is full and a new candidate arrives, admit it only if its estimated access frequency exceeds that of the victim the eviction policy would remove. Frequencies are estimated by a small approximate sketch (a Count-Min sketch with 4-bit counters, §17.6) over a sample of recent requests, and **aged** by halving every counter after a fixed number of requests [Einziger, Friedman & Manes 2017]. *(§20.9.3)*
 
+**Token-based rate limits and quotas** — A **tokens-per-minute (TPM)** limit caps the model tokens (input plus output, sometimes weighted) a tenant may consume per minute; a **requests-per-minute (RPM)** limit caps calls regardless of size. A **quota** caps cumulative use over a longer period (tokens or dollars per day or month, §47.8). Because output length is unknown at admission, the gateway admits on an **estimate** and later **reconciles** the tenant's balance with the **actual** tokens the model reports. *(§79.9.1)*
+
 **Token bucket** — A rate limiter that keeps a counter of **tokens**, refilled continuously at **rate** $r$ up to a maximum **capacity** (burst size) $b$. Each request consumes one token (or a cost $c$); a request that finds too few tokens is rejected. The long-run admitted rate is at most $r$, and up to $b$ requests may be admitted at once. *(§22.4.1)*
+
+**Token embedding table, output head and tied embeddings** — The **token embedding table** $E \in \mathbb{R}^{V \times d}$ maps each token ID to a learned vector of width $d$, the model's **hidden size** ($d_\text{model}$). The **output head** (or unembedding, LM head) is a $d \times V$ matrix that turns the final hidden vector into $V$ logits, one per vocabulary entry. **Tied embeddings** reuse $E^\top$ as the output head, so the two share one set of parameters [Press and Wolf 2017]. *(§72.5)*
+
+**Tokenizer** — A **tokenizer** is a deterministic, reversible mapping between text and a sequence of token IDs from a fixed vocabulary. **Subword** tokenizers split rare words into frequent pieces ("refundable" → "refund" + "able") so that any string can be represented with a vocabulary of tens of thousands of entries. *(§72.4.1)*
+
+**Tool (function) calling** — A protocol between an orchestrator and a model in which the orchestrator declares a set of tools, each with a **name**, a natural-language **description** and an **argument schema** (usually JSON Schema), and the model may respond with a structured request to invoke a tool with specific arguments instead of, or before, a text answer. The orchestrator executes the tool and returns the result to the model as a new message. *(§77.5.1)*
 
 **Topic, partition and record** — A **topic** is a named category of records (for example `orders`). A topic is split into **partitions**, each an independent, ordered, replicated log with its own offsets starting at 0. A **record** carries an optional **key**, a **value** (opaque bytes), a **timestamp** and optional **headers**. Kafka guarantees order *within* a partition, not across partitions of a topic. *(§31.5.1)*
 
@@ -1368,6 +1632,8 @@
 
 **Training checkpoint** — A durable snapshot sufficient to resume as if training had not stopped: weights, optimizer state, scheduler and step, random-number-generator states, data-loader position and parallel layout. In a **sharded checkpoint** every rank writes its own shard in parallel, with metadata that lets a different layout reload it (**resharding**). An **asynchronous checkpoint** stages state in host memory and writes it in the background. *(§65.15.1)*
 
+**Training cluster layers** — (1) **Compute nodes**: servers with 4–8 accelerators, CPUs, host memory and local NVMe. (2) **Scale-up domain**: accelerators joined by NVLink and NVSwitch (8 GPUs in an HGX H100 server, 72 in a GB200 NVL72 rack) or by TPU inter-chip interconnect (ICI). (3) **Scale-out backend network**: one RDMA NIC per accelerator into a dedicated InfiniBand or RoCE fabric used only for collectives. (4) **Storage tier**: parallel file system or flash-backed object storage for datasets and checkpoints. (5) **Frontend network**: ordinary datacenter Ethernet for storage access, data loading, logging and logins. (6) **Control plane**: schedulers, health services, telemetry and out-of-band management (BMC) networks. *(§80.4.1)*
+
 **Training compute** — The total floating-point operations to train a model, written $C$. For dense transformers, $C \approx 6ND$, where $N$ is the number of non-embedding parameters and $D$ the number of training tokens [Kaplan et al. 2020]. A **scaling law** is an empirical power law relating a model's loss to $N$, $D$ or $C$. *(§65.4.1)*
 
 **Training memory components** — Accelerator memory during training holds (1) **parameters**, (2) **gradients**, one per parameter, (3) **optimizer state** (§58.5.4) and (4) **activations** saved by the forward pass for the backward pass (§58.4). The first three scale with the parameter count; activations scale with batch size, sequence length or resolution, width and depth. **Mixed-precision training** [Micikevicius et al. 2018] computes in 16-bit floats (FP16 or BF16) while keeping an FP32 **master copy** of the weights for the update, and, for FP16, scales the loss so small gradients do not underflow. *(§58.11.1)*
@@ -1384,6 +1650,8 @@
 
 **Transcoding** — Decoding a video from its uploaded format (the **mezzanine** or source file) and re-encoding it into one or more target formats, each defined by a codec, a resolution, a frame rate and a target bitrate. A set of renditions of one video at increasing bitrates is a **bitrate ladder** (§21.8.1). *(§54.4.1)*
 
+**Transformer block (decoder layer)** — One layer of a decoder-only transformer applies, to every position: a normalization, multi-head causal self-attention, and a **residual connection** that adds the attention output back to its input; then a second normalization, a position-wise **feed-forward network** (MLP) and a second residual. **Layer normalization** rescales each vector to zero mean and unit variance with a learned gain and bias [Ba et al. 2016]; **RMSNorm** divides by the root mean square only, without centering or bias [Zhang and Sennrich 2019]. **Pre-norm** places the normalization before each sublayer, inside the residual branch; **post-norm**, the original arrangement, places it after the residual addition [Xiong et al. 2020]. *(§72.8.1)*
+
 **Transport Layer Security (TLS)** — A protocol that gives two communicating applications **confidentiality** (eavesdroppers cannot read the data), **integrity** (tampering is detected) and **authentication** (at least the server proves its identity, usually with an X.509 certificate). **HTTPS** is HTTP carried over TLS, on TCP port 443 by default. TLS 1.3 is specified in RFC 8446 (2018). *(§7.10.1)*
 
 **Trie (prefix tree)** — A tree in which each edge is labeled with a character and each node represents the string spelled by the path from the root; nodes that end a stored key are marked. Looking up a key or a prefix of length $L$ takes $O(L)$ steps, independent of how many keys are stored [Fredkin 1960]. *(§17.11.1)*
@@ -1399,6 +1667,8 @@
 **Two-phase commit (2PC)** — An atomic commitment protocol in which one node, the **coordinator** (also called the transaction manager), first asks every participant (resource manager) to **prepare**, that is, to make its part of the transaction durable while keeping it invisible and to promise to commit on request; and then, only if every participant voted yes, durably records a **commit** decision and tells all participants to commit. Any no vote or timeout leads to abort [Gray 1978; Bernstein et al. 1987]. *(§28.4.1)*
 
 **Two-phase locking (2PL)** — A protocol in which each transaction acquires locks (shared **S** for reading, exclusive **X** for writing) before accessing data and, once it releases any lock, acquires no new ones: a *growing* phase followed by a *shrinking* phase. **Strict 2PL** holds all X locks until commit or abort. Any schedule produced by 2PL is serializable [Eswaran et al. 1976]. *(§11.15.1)*
+
+**Two-tower (dual-encoder) model** — A retrieval model with two neural networks: a **user (query) tower** that maps user and context features to a vector $\mathbf{u}$, and an **item tower** that maps item features to a vector $\mathbf{v}$ in the same space. Relevance is their similarity, $s(u, i) = \mathbf{u}^\top \mathbf{v}_i$, usually after normalizing both to unit length. The towers interact only through this final dot product. *(§68.6.1)*
 
 ## U
 
@@ -1428,6 +1698,8 @@
 
 **Vector database** — A data store that indexes high-dimensional numeric vectors (**embeddings** produced by machine-learning models) and answers **approximate nearest neighbor (ANN) search** queries: "the *k* stored vectors most similar to this query vector", by cosine similarity, dot product or Euclidean distance. *(§12.10)*
 
+**Verified public information** — A statement about a company's hiring or engineering that the company itself has published in a form you can cite: a careers or interview-preparation page, an official engineering blog post, a published set of leadership principles or values, official product documentation, or a paper its engineers authored. It is verified only for the date you read it. *(§90.3.1)*
+
 **Vertical scaling (scaling up)** — Increasing the capacity of a single node by giving it more or faster CPU cores, memory, storage or network bandwidth, for example by moving a database from an 8-core to a 64-core machine. *(§18.3.1)*
 
 **Virtual memory** — A mechanism in which every address a program uses is a **virtual address** that the hardware's **memory-management unit (MMU)** translates, using tables maintained by the kernel, into a **physical address** in RAM, or into a fault if no valid mapping exists. *(§6.6.1)*
@@ -1451,6 +1723,8 @@
 **WebRTC** — A set of IETF protocols (overview in RFC 8825 [Alvestrand 2021]) and a W3C browser API [W3C WebRTC] for real-time audio, video and arbitrary data directly between peers. Media travels over SRTP, data over SCTP data channels, both secured by DTLS, typically over UDP; peers discover a working network path using ICE with the help of STUN and TURN servers. *(§9.7.1)*
 
 **WebSocket** — A protocol, standardized in RFC 6455 [Fette & Melnikov 2011], that starts as an HTTP/1.1 request, *upgrades* the underlying TCP connection, and thereafter carries a full-duplex sequence of framed messages in both directions with 2–14 bytes of framing overhead per frame. URLs use the schemes `ws://` (plain TCP, default port 80) and `wss://` (over TLS, default port 443). *(§9.6.1)*
+
+**Weight-only quantization (W8A16, W4A16)** — Weights are stored in 8 or 4 bits with per-channel or per-group scales; activations stay in 16-bit floating point. A kernel loads low-bit weights, dequantizes them in registers and multiplies in BF16 or FP16. The notation W$x$A$y$ gives weight and activation bit widths; **W8A8** quantizes both and uses integer or FP8 tensor cores. *(§67.6.1)*
 
 **Wide-column store** — A database whose rows are identified by a key, sorted (globally or within a partition) by that key, and contain a sparse, variable set of columns grouped into **column families**; each row may have millions of columns and each cell may hold several timestamped versions. Bigtable, HBase, Cassandra and ScyllaDB belong to this family. *(§12.6.1)*
 
