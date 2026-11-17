@@ -297,7 +297,7 @@ $$U_{\text{DAU}} = \sigma\, U_{\text{MAU}} \qquad V = U_{\text{DAU}}\, a \qquad 
 :::
 
 ::: mistake
-**Counting registered users as active.** Ten million registered customers may be four million weekly and two million daily actives (QuickBite, §57). Size online paths from DAU and concurrent users; size storage from everyone whose data you keep.
+**Counting registered users as active.** Ten million registered customers may be four million weekly and two million daily actives (QuickBite, §2.11). Size online paths from DAU and concurrent users; size storage from everyone whose data you keep.
 :::
 
 ## 89.6 Storage

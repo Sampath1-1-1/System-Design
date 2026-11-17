@@ -6,7 +6,7 @@ All designs are teaching designs (*Evidence: Illustrative*). Estimates use the f
 
 ### 91.6.1 Q29. Payment system
 
-**Difficulty:** Hard · **Time:** 60 min · **Related:** §55.9 (full case study); §22.15, §32.5, §11 (transactions)
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §55.9 (full case study); §22.15, §32.5, §11.11 (transactions)
 
 #### Prompt
 
@@ -97,7 +97,7 @@ Synchronous capture is simpler; delayed capture (authorize now, capture on shipm
 
 ### 91.6.2 Q30. Stock-exchange matching engine
 
-**Difficulty:** Hard · **Time:** 60 min · **Related:** §27.4 (primary–backup), Ch 31 (logs), §4.11 (Little's Law), §18 (vertical scaling)
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §27.4 (primary–backup), Ch 31 (logs), §4.11 (Little's Law), §18.3 (vertical scaling)
 
 #### Prompt
 
@@ -535,7 +535,7 @@ flowchart LR
 
 1. **Request routing.** Anycast is simple and absorbs DDoS but gives coarse control; DNS steering is precise but limited by resolver location and TTLs. A hybrid uses anycast for the network and DNS or load-feedback to shift load between PoPs (§21.3.3).
 2. **Cache hierarchy and keys.** A bad cache key (including irrelevant query parameters or cookies) fragments the cache and destroys hit ratio; normalize keys and let customers whitelist parameters. Consistent hashing inside the PoP stops each server from caching the same popular objects separately; very hot objects are replicated to all servers.
-3. **Purge and configuration at global scale.** Purge is a fan-out to every PoP: publish to a replicated message bus, apply locally by URL or surrogate tag, acknowledge; 200 PoPs within 5 s is feasible. Configuration pushes are the riskiest operation: canary to a few PoPs, check error rates, then widen (§43.6).
+3. **Purge and configuration at global scale.** Purge is a fan-out to every PoP: publish to a replicated message broker, apply locally by URL or surrogate tag, acknowledge; 200 PoPs within 5 s is feasible. Configuration pushes are the riskiest operation: canary to a few PoPs, check error rates, then widen (§43.6).
 
 #### Trade-offs and alternatives
 
@@ -997,7 +997,7 @@ Active-passive (one write region) is far simpler and adds 100–200 ms to writes
 
 ### 91.6.12 Q40. Distributed cron/job scheduler
 
-**Difficulty:** Hard · **Time:** 60 min · **Related:** §52.9 (full case study); §26.11, §26.13, §46
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §52.9 (full case study); §26.11, §26.13, Ch 46
 
 #### Prompt
 
@@ -1159,7 +1159,7 @@ HLS/DASH over CDN scales to millions at the lowest cost per viewer with 3–5 s 
 
 ### 91.6.14 Q42. Proximity service
 
-**Difficulty:** Hard · **Time:** 45–60 min · **Related:** §17.9 (geospatial indexing, §17.9.6), §55.4–§55.5 (moving objects), §20
+**Difficulty:** Hard · **Time:** 45–60 min · **Related:** §17.9 (geospatial indexing, §17.9.6), §55.4–§55.5 (moving objects), Ch 20
 
 #### Prompt
 
@@ -1325,7 +1325,7 @@ Raster tiles are simpler for clients but hundreds of terabytes per style; vector
 
 ### 91.6.16 Q44. Multiplayer game backend
 
-**Difficulty:** Hard · **Time:** 60 min · **Related:** §9.6, §9.9 (connections), §44.4 (latency physics), §46 (scheduling), §22.3
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §9.6, §9.9 (connections), §44.4 (latency physics), Ch 46 (scheduling), §22.3
 
 #### Prompt
 
@@ -2120,7 +2120,7 @@ Three members tolerate one failure with lower write latency; five tolerate two a
 
 ### 91.7.9 Q53. Digital wallet with double-entry ledger and reconciliation
 
-**Difficulty:** Expert · **Time:** 60 min · **Related:** §55.9 (payment system, ledger and reconciliation); §32.5, §32.7, §28.4, §11 (double-entry exercise)
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §55.9 (payment system, ledger and reconciliation); §32.5, §32.7, §28.4, §11.21 (double-entry exercise)
 
 #### Prompt
 

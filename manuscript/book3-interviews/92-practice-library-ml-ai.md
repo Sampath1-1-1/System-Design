@@ -133,9 +133,9 @@ Table 92.3 lists every question in both parts of the library. "Related" names th
 | 25 | Metrics anomaly detection | Medium | §56.6, §70.5, §70.6.4 |
 | 26 | Document OCR and extraction pipeline | Medium | §63.14.4, §66.13, §75.5 |
 | 27 | Feature store | Hard | §85.4 (full case); Ch 62 |
-| 28 | ML training platform | Hard | §85.5 (full case); Ch 65, Ch 69 |
+| 28 | ML training platform | Hard | §85.5 (full case); §46.10, §65.15 |
 | 29 | Model serving platform | Hard | §85.6 (full case); Ch 66 |
-| 30 | Real-time personalization with streaming features | Hard | §85.7 (full case); §68.13, §62.10 |
+| 30 | Real-time personalization with streaming features | Hard | §68.13, §62.10, §85.7 |
 | 31 | Billion-scale embedding retrieval | Hard | §68.6, §74.13, §81.4 |
 | 32 | Enterprise RAG assistant | Hard | §86.4 (full case); Ch 75 |
 | 33 | LLM customer-support agent | Hard | §86.7 (full case); Ch 77 |
@@ -153,7 +153,7 @@ Table 92.3 lists every question in both parts of the library. "Related" names th
 | 45 | Multi-agent orchestration platform | Expert | §77.8, §77.9, Ch 79 |
 | 46 | LLM evaluation platform | Expert | Ch 78, §78.17 |
 | 47 | AI answer engine | Expert | §86.8 (full case); Ch 75 |
-| 48 | GPU cluster scheduler | Expert | §64.15, §79.8, §80.11 |
+| 48 | GPU cluster scheduler | Expert | Ch 46, §79.8, §80.11 |
 | 49 | Billion-scale vector database | Expert | §74.13, §74.14 |
 | 50 | Guardrails and safety system for an LLM product | Expert | §77.11, §78.12, §78.13 |
 | 51 | Image-generation (diffusion) service at scale | Expert | §66.6, §73.6, §80.13 |
@@ -175,7 +175,7 @@ If your interview is weeks away, work through one tier at a time and finish each
 | Decision policies over time | Exploration, off-policy evaluation, long-term holdouts | Q5, Q21, Q23 |
 
 ::: recommendation
-**A four-week plan for a senior ML loop.** Week 1: Q1, Q5, Q6, Q10 and the ML drills of §89.18.8–§89.18.10. Week 2: Q11, Q15, Q16, Q18, the four most common Medium prompts. Week 3: Q14, Q19, Q21, Q26, re-attempting any week-1 question you scored below senior. Week 4: two Hard questions from part B and two cold Medium questions, then rest. This is general advice, not a published recommendation of any company.
+**A four-week plan for a senior ML loop.** Week 1: Q1, Q5, Q6, Q10 and the ML drills of §89.18.8–§89.18.10. Week 2: Q11, Q15, Q16, Q18, four widely practiced Medium prompts. Week 3: Q14, Q19, Q21, Q26, re-attempting any week-1 question you scored below senior. Week 4: two Hard questions from part B and two cold Medium questions, then rest. This is general advice, not a published recommendation of any company.
 :::
 
 ## 92.4 Easy questions (Q1–Q10)
@@ -552,7 +552,7 @@ Online budget: 5 ms gateway, 10 ms tokenization, 40 ms model for a batch of 16, 
 
 ### 92.4.5 Q5. Churn prediction
 
-**Difficulty:** Easy · **Time:** 45 min · **Related:** §59.4 (problem framing), §62.8 (point-in-time joins), §57.14 (A/B tests); QuickBite assumptions (§57)
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §59.4 (problem framing), §62.8 (point-in-time joins), §57.14 (A/B tests); QuickBite assumptions (§2.11)
 
 #### Prompt
 
@@ -1664,7 +1664,7 @@ As in §81.9: 1 billion daily users, 30 ad opportunities each, PAR 2; 5,000 elig
 **Worked example — Every 0.1% is money (§81.9.4).**
 
 1. Requests: $3 \times 10^{10}$/day; **694,444/s peak**.
-2. Light model on 5,000 ads at 2 µs: 13,889 cores; heavy model on 500 at 20 MFLOPs: **117 GPUs** across three regions.
+2. Light model on 5,000 ads at 2 µs: 13,889 cores at $u = 0.5$; heavy model on 500 at 20 MFLOPs: **117 GPUs** across three regions.
 3. Feature lookups: **347 million/s**.
 4. Revenue at \$5 per 1,000 impressions: \$150 million a day, so a 0.1% improvement is \$150,000 a day.
 

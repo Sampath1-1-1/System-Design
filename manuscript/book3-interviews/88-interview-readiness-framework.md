@@ -196,7 +196,7 @@ flowchart LR
 | 14 Operations | 1 | 1 | 12 |
 | **Total** | **45** | **60** | |
 
-These are minutes of *design* time. Introductions and your own questions come out of the slot; Chapter 87 covers the whole timeline. If a 45-minute slot leaves you 38 design minutes, scale every row by about 0.85 and protect the deep dive. The extra quarter-hour of a 60-minute slot goes mostly to step 8, which is where senior signals are earned.
+These are minutes of *design* time. Introductions and your own questions come out of the slot; §87.4 covers the whole timeline: Table 87.4 leaves about 40 design minutes in a 45-minute slot, so scale every row by about 0.9 and protect the deep dive. The extra quarter-hour of a 60-minute slot goes mostly to step 8, which is where senior signals are earned.
 
 **Figure 88.3 — The 45-minute budget as a timeline.**
 
@@ -366,7 +366,7 @@ $$R_{alert} = R_{change} \times f_w \times \bar{w} \times p$$
 :::
 
 ::: example
-**Worked example — PriceWatch capacity.** Peak formula from §2.11 with $h = 0.10$, $b = 2$ (§52.3 conventions); decimal units. Assumptions: 20 million users have watches, 10 each (200 million watches) on 30 million distinct products; 100 million price changes a day (sellers' automated repricing dominates); $f_w = 0.4$; $p = 0.02$; a watch row is 100 bytes, a user-index row 40 bytes; 40 million watch-list views and 5 million new watches a day.
+**Worked example — PriceWatch capacity.** Peak formula of §89.5 (§2.11) with $h = 0.10$, $b = 2$ (§52.3 conventions); decimal units. Assumptions: 20 million users have watches, 10 each (200 million watches) on 30 million distinct products; 100 million price changes a day (sellers' automated repricing dominates); $f_w = 0.4$; $p = 0.02$; a watch row is 100 bytes, a user-index row 40 bytes; 40 million watch-list views and 5 million new watches a day.
 
 1. Price changes at peak: $10^8 \times 0.10 / 3{,}600 \times 2 = 5{,}556$ events/s (average 1,157/s).
 2. Mean watchers: $\bar{w} = 2 \times 10^8 / 3 \times 10^7 \approx 6.7$.
@@ -617,7 +617,7 @@ The prompt: *"Our marketplace sends deal notifications. Users complain about spa
 3. Model: sends $1.2 \times 10^7$; opens $1.2 \times 10^7 \times 0.075 = 900{,}000$; opt-outs $1.2 \times 10^7 \times 0.0003 = 3{,}600$ a day.
 4. Change: sends −50%, opens −6.25%, opt-outs −70%.
 
-**Interpretation.** Inference is almost free, so serving cost does not drive this design; send volume and channel loss do. The model gives up 6% of opens to keep 8,400 more users a day reachable. **Engineering implication.** Whether that trade is right depends on long-term purchases, which only an online experiment with a holdout can measure (M8). Capacity formulas for inference fleets are in §60.11 and Chapter 89.
+**Interpretation.** Inference is almost free, so serving cost does not drive this design; send volume and channel loss do. The model gives up 6% of opens to keep 8,400 more users a day reachable. **Engineering implication.** Whether that trade is right depends on long-term purchases, which only an online experiment with a holdout can measure (M8). Capacity formulas for inference fleets are in §60.11 and §89.13.
 :::
 
 ### 88.7.3 Serving, experimentation and operation (M7–M11)
@@ -908,7 +908,7 @@ flowchart LR
 | ML prompt | Replace half of steps 5–9 with M1–M7 (Table 88.7) | API, fleet size, fallback |
 | LLM or agent prompt | Add evaluation first, cost per request, guardrails (§88.8) | Failure handling for tools |
 
-A product-style prompt ("design a shopping list app") rewards careful requirements and API shape; an infrastructure-style prompt ("design a distributed rate limiter") assumes the requirements are short and spends the time on correctness under concurrency and failure. Ask which emphasis the interviewer wants if the prompt is ambiguous; Chapter 87 covers how.
+A product-style prompt ("design a shopping list app") rewards careful requirements and API shape; an infrastructure-style prompt ("design a distributed rate limiter") assumes the requirements are short and spends the time on correctness under concurrency and failure. Ask which emphasis the interviewer wants if the prompt is ambiguous; §87.5 covers how.
 
 ## 88.11 Summary and revision notes
 

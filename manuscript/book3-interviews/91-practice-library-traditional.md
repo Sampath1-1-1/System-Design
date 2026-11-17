@@ -68,7 +68,7 @@ Every question uses the same headings, in the order you would cover them in the 
 - **Prompt** — what the interviewer says, in one to three sentences. Read only this before attempting.
 - **Clarifying questions and assumptions** — the questions worth asking, and the answers the model solution assumes. Your interviewer may answer differently; follow their answers, not these.
 - **Requirements** — functional requirements (FRs) and non-functional requirements (NFRs) with numbers.
-- **Estimation** — an `example` callout with the few numbers that decide something. Formulas are those of Chapter 89 and are cited, not re-derived. Unless stated otherwise the defaults of the §89 conventions note apply: busiest-hour share $h = 0.10$ and burst factor $b = 2$ (peak-to-average ratio 4.8), target utilization $u = 0.6$, decimal units (1 KB = 10³ bytes).
+- **Estimation** — an `example` callout with the few numbers that decide something. Formulas are those of Chapter 89 and are cited, not re-derived. Unless stated otherwise the defaults of Chapter 89's opening conventions note apply: busiest-hour share $h = 0.10$ and burst factor $b = 2$ (peak-to-average ratio 4.8), target utilization $u = 0.6$, decimal units (1 KB = 10³ bytes).
 - **API and data model** — the core calls and the main entities with their keys.
 - **High-level design** — one diagram with a "Reading the diagram" paragraph.
 - **Deep dives** — the two or three topics that decide the interview, with the reasoning a strong answer gives.
@@ -143,12 +143,12 @@ Table 91.2 lists every question in both parts of the library. "Related" names th
 | 47 | Object storage service | Expert | §15.4, §15.6 |
 | 48 | Durable workflow engine | Expert | §32.7, §32.11 |
 | 49 | Multi-tenant SaaS platform with tenant isolation | Expert | Ch 47 |
-| 50 | Tracing/observability platform at exabyte scale | Expert | §40.6, §56.6 |
+| 50 | Tracing and observability platform at exabyte scale | Expert | §40.6, §56.6 |
 | 51 | Zero-downtime monolith-to-microservices migration | Expert | §34.13, §43.13 |
-| 52 | Coordination/configuration service (consensus) | Expert | §26.7–§26.9 |
+| 52 | Coordination and configuration service | Expert | §26.7–§26.9 |
 | 53 | Digital wallet with double-entry ledger and reconciliation | Expert | §55.9, §32.5 |
 | 54 | Global edge rate limiting and DDoS protection | Expert | §52.6, §10.11, §21.11 |
-| 55 | Lakehouse/data warehouse | Expert | §49.6, §61.8 |
+| 55 | Lakehouse and data warehouse | Expert | §49.6, §61.8 |
 | 56 | Bank-grade disaster recovery (RPO 0 across regions) | Expert | §39.8, §44.11 |
 
 ### 91.3.5 Choosing what to practice
@@ -167,7 +167,7 @@ If your interview is weeks away, work through one tier at a time and finish each
 | Blob and media pipelines | Direct-to-storage upload, processing state machines, CDN | Q10, Q15, Q22, Q23, Q41, Q47 |
 
 ::: recommendation
-**A four-week plan for a senior loop.** Week 1: Q1, Q3, Q6, Q9 (Easy, one per shape) plus Ch 89 drills. Week 2: Q13, Q14, Q19, Q21 (Medium, the four most common prompts). Week 3: Q16, Q22, Q26, Q28, re-attempting any week-1 question you scored below senior. Week 4: two Hard questions from part B and two cold Medium questions, then rest. This is general advice, not a published recommendation of any company.
+**A four-week plan for a senior loop.** Week 1: Q1, Q3, Q6, Q9 (Easy, one per shape) plus the §89.18 drills. Week 2: Q13, Q14, Q19, Q21 (Medium, four widely practiced prompts). Week 3: Q16, Q22, Q26, Q28, re-attempting any week-1 question you scored below senior. Week 4: two Hard questions from part B and two cold Medium questions, then rest. This is general advice, not a published recommendation of any company.
 :::
 
 ## 91.4 Easy questions (Q1–Q12)

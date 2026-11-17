@@ -1,4 +1,4 @@
-## 92.6 Hard (Q27–Q40)
+## 92.6 Hard questions (Q27–Q40)
 
 Hard questions change the unit of design. Easy and Medium prompts ask for one model behind one product surface; Hard prompts ask for a **platform** that many models share (feature store, training, serving, experimentation, monitoring), a **pipeline** whose data volume or freshness is the problem (streaming personalization, perception data, federated learning), or an **LLM system** whose quality must be measured before it can be designed (RAG, support agent). The ML extension of §88.6 still applies, but in a platform question the "model" of steps M4–M6 is often a statistical procedure or a scheduling policy rather than a predictor, and the deciding deep dive is usually a correctness property: point-in-time joins, score parity, permission fidelity, sample-ratio checks.
 
@@ -1293,7 +1293,7 @@ Greedy is simple and immediate but myopic; reinforcement learning of the full po
 - **Senior:** batched assignment with learned costs, exactly-one assignment with leases.
 - **Staff:** uses Little's Law to show stacking is necessary, decides *when* to dispatch from ready-time quantiles, and evaluates with simulation and switchbacks because of interference.
 
-## 92.7 Expert (Q41–Q52)
+## 92.7 Expert questions (Q41–Q52)
 
 Expert prompts are platforms or products whose cost is measured in thousands of GPUs, whose quality cannot be read off a single metric, or whose failure modes include safety and abuse. The interviewer expects you to size the system from tokens, FLOPs or GPU-seconds within the first ten minutes, to name the one decision that moves cost or risk by multiples, and to define how quality is measured before you defend an architecture. Seven of the twelve questions have a full case study or an owning chapter; five are full solutions here. As in §92.6, all designs are *Evidence: Illustrative*.
 
@@ -1423,7 +1423,7 @@ Functional: run one synchronous job across 16,384 GPUs with tensor, pipeline and
 **Worked example — Compute, time, failures and checkpoints (numbers of §65.4 and Chapter 80).** Use the compute-time-cost form of §89.15.
 
 1. Compute: $6ND = 6 \times 4.05 \times 10^{11} \times 1.56 \times 10^{13} = 3.79 \times 10^{25}$ FLOPs, matching the published figure [Dubey et al. 2024].
-2. Ideal time: $3.79 \times 10^{25} / (16{,}384 \times 4 \times 10^{14}) = 66.9$ days; ideal GPU-hours 26.4 million.
+2. Ideal time, with $C$ rounded to $3.8 \times 10^{25}$ as in §80.14: $3.8 \times 10^{25} / (16{,}384 \times 4 \times 10^{14}) = 67.1$ days; ideal GPU-hours 26.4 million.
 3. At 90% goodput: 29.3 million GPU-hours, **74.6 days, about \$73 million**.
 4. Failures: at one interruption per 50,700 GPU-hours, $29.3 \times 10^6 / 50{,}700 \approx 580$ interruptions over the run (job MTBF 3.1 hours); the Young interval with a 20 s stall is $\sqrt{2 \times 20 \times 11{,}160} = 668$ s.
 5. Checkpoint: $4.05 \times 10^{11} \times 14$ bytes $= 5.67$ TB; averaging 8.5 GB/s, but keeping a synchronous stall under 1% needs about 846 GB/s: size the tier for a burst about 100 times its average.

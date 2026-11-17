@@ -28,7 +28,7 @@ After this chapter you should be able to:
 - Requirements, assumptions and trade-offs — §2.5, §2.7, §2.8 (the core skills every company evaluates).
 - Back-of-the-envelope estimation — §2.11 and Chapter 89 (numbers you will need in every company's design round).
 - Reading papers and engineering blogs — §3.5 (how to extract a design from a paper in an hour).
-- Interview fundamentals and the readiness framework — Chapters 87 and 88 (the evaluation dimensions and the 14-step sequence this chapter assumes).
+- Interview fundamentals and the readiness framework — §87.3 and §88.4 (the evaluation dimensions and the 14-step sequence this chapter assumes).
 - The case studies — Chapters 52–56 and 81–86 (the practice material this chapter maps companies onto).
 
 ## 90.3 How to use company information responsibly
@@ -132,7 +132,7 @@ Some companies now publish rules on AI tools during applications, take-homes and
 | What goes wrong | Why | Detection | Recovery | Prevention |
 |---|---|---|---|---|
 | Prepared for a round that does not exist | Relied on an old report | Recruiter's schedule differs | Re-plan the last week around actual rounds | Ask the recruiter first (rung 1) |
-| Memorized design collapses under a changed requirement | Over-fitted to a "known question" | Cannot justify a component when asked "why" | Restart from requirements aloud | Practice method, not answers (Ch 87–88) |
+| Memorized design collapses under a changed requirement | Over-fitted to a "known question" | Cannot justify a component when asked "why" | Restart from requirements aloud | Practice method, not answers (§88.4) |
 | Claimed knowledge of internal systems | Confused a published paper with today's production | Interviewer asks a follow-up you cannot answer | Say what was published and when, then reason generically | Phrase as "the published design was…" |
 | Ignored a published AI-use policy | Did not read the company's page | Policy reminder from interviewer | Stop, comply, explain | Read policy pages the week before |
 | Spent most prep time on company trivia | Mistook context for skill | Weak mock scores on fundamentals | Rebalance toward transferable practice | Cap company-specific time (§90.21) |
@@ -141,20 +141,20 @@ Some companies now publish rules on AI tools during applications, take-homes and
 
 ### 90.4.1 Common evaluation dimensions
 
-Every company's design interview is, at its core, the same exercise: given an ambiguous problem, can you turn it into a precise one, propose a design that meets it, quantify that design, find where it breaks and explain what you traded away. Chapter 87 develops these skills and Chapter 88 turns them into a 14-step sequence with level-by-level expectations. The dimensions below appear, in some wording, in the hiring materials of many of the companies in this chapter, and they are the substance behind any company-specific vocabulary.
+Every company's design interview is, at its core, the same exercise: given an ambiguous problem, can you turn it into a precise one, propose a design that meets it, quantify that design, find where it breaks and explain what you traded away. Chapter 87 develops these skills and Chapter 88 turns them into a 14-step sequence (§88.4) with level-by-level rubrics (§88.9). The dimensions below appear, in some wording, in the hiring materials of many of the companies in this chapter, and they are the substance behind any company-specific vocabulary.
 
 **Table 90.2 — Evaluation dimensions that generalize (general advice; see Chapters 87–88).**
 
 | Dimension | What a strong answer shows | Where this book teaches it |
 |---|---|---|
-| Problem framing | Clarifying questions; explicit functional and non-functional requirements | §2.5, §1.6–§1.7, Ch 87 |
+| Problem framing | Clarifying questions; explicit functional and non-functional requirements | §2.5, §1.6–§1.7, §87.5 |
 | Quantitative reasoning | Peak RPS, storage, bandwidth, memory, GPU memory, cost with stated assumptions | §2.11, Ch 89 |
 | Architecture | Components with clear responsibilities and data flow | §2.3, case studies Ch 52–56 |
 | Data modeling | Access patterns before schema; partition keys justified | Ch 11–12, §14.7 |
-| Depth on the hard part | Naming the one difficult component and designing it properly | §52.3 tip, Ch 88 |
+| Depth on the hard part | Naming the one difficult component and designing it properly | §87.10, §88.4.9 |
 | Failure and scale | Failure modes, bottlenecks, what changes at 10× and 100× | §2.6, §2.9, Ch 39 |
-| Trade-offs | Alternatives considered and why rejected | §2.8, Ch 87 |
-| Communication | Structured narration, diagrams, time management | §1.11, Ch 87 |
+| Trade-offs | Alternatives considered and why rejected | §2.8, §87.11 |
+| Communication | Structured narration, diagrams, time management | §87.4, §87.12 |
 | Ownership and judgment | Operability, cost, security, product sense | Ch 40, Ch 50, Ch 51 |
 
 ::: concept
@@ -191,7 +191,7 @@ flowchart TB
   V -.->|"behavioral<br/>preparation"| T
 ```
 
-**Reading the diagram.** The upper subgraph is the method applied in every interview, step by step (solid arrows, Chapter 88). The lower subgraph holds two stores of company knowledge, drawn as cylinders because you consult them rather than perform them. Dotted arrows are influences: published engineering work shapes the examples and failures you raise, and published values inform how you discuss trade-offs and past work. The storage boundary between the subgraphs means nothing in the company layer replaces a core step; skipping a step because of a company belief is the failure point. It scales to any number of companies because only the lower subgraph changes.
+**Reading the diagram.** The upper subgraph is the method applied in every interview, step by step (solid arrows, §88.4). The lower subgraph holds two stores of company knowledge, drawn as cylinders because you consult them rather than perform them. Dotted arrows are influences: published engineering work shapes the examples and failures you raise, and published values inform how you discuss trade-offs and past work. The storage boundary between the subgraphs means nothing in the company layer replaces a core step; skipping a step because of a company belief is the failure point. It scales to any number of companies because only the lower subgraph changes.
 
 ### 90.4.3 How the company sections are organized
 
@@ -200,7 +200,7 @@ Each of §90.5–§90.19 has the same four parts:
 1. **Verified public information** — what the company itself has published about hiring, in `industry` callouts labeled *Evidence: Primary* and dated "as of 2026". Where a page could only be confirmed through search-engine excerpts because the site could not be fetched directly, the item is still cited, and the limitation is logged in §90.28.
 2. **Engineering context worth knowing** — the company's published systems and papers that relate to design interviews, with cross-references to the chapter that teaches each idea.
 3. **Preparation focus areas** — general advice we infer from the company's public engineering focus, labeled *Evidence: Illustrative*. These are suggestions for what to practice, not statements about what the company asks.
-4. **Practice mapping** — which problem families in Chapters 91–92 and which case studies in this book give the most relevant practice.
+4. **Practice mapping** — which case studies and which practice questions (by number, Tables 91.2 and 92.3) give the most relevant practice.
 
 ### 90.4.4 Company focus maps at a glance
 
@@ -291,8 +291,8 @@ Google has published more foundational distributed-systems papers than almost an
 ### 90.5.4 Practice mapping
 
 - **Case studies:** YouTube (§54.4), Google Drive (§54.7), Google Maps tiles and routing (§55.6), web-scale search engine (§56.4), web crawler (§52.10), YouTube-style recommendations (§81.4), search ranking (§81.7).
-- **Chapter 91 families:** storage and indexing systems, globally replicated data, schedulers and batch pipelines.
-- **Chapter 92 families:** large-scale recommendation and search ranking; training-infrastructure problems that touch accelerators (Google's published TPU work is summarized in §80.12).
+- **Chapter 91:** storage and indexing (Q17, Q31, Q46), globally replicated data (Q39, Q45), schedulers and batch pipelines (Q40, Q55).
+- **Chapter 92:** recommendation and search ranking (Q12, Q13); accelerator training infrastructure (Q42, Q48; Google's TPU work is summarized in §80.12).
 
 ## 90.6 Amazon
 
@@ -324,8 +324,8 @@ Google has published more foundational distributed-systems papers than almost an
 ### 90.6.4 Practice mapping
 
 - **Case studies:** distributed key-value store (§52.8), rate limiter (§52.6), notification system (§52.7), Amazon-style e-commerce platform (§55.7), payment system (§55.9), product recommendation (§81.8).
-- **Chapter 91 families:** key-value and storage services, rate limiting and traffic management, order and inventory workflows.
-- **Chapter 92 families:** product recommendations and personalized ranking; fraud and abuse detection.
+- **Chapter 91:** key-value and storage services (Q31, Q47), rate limiting and traffic management (Q3, Q54), order and inventory workflows (Q19, Q48).
+- **Chapter 92:** recommendations and personalized ranking (Q12, Q30); fraud detection (Q15).
 
 ## 90.7 Meta
 
@@ -358,8 +358,8 @@ Google has published more foundational distributed-systems papers than almost an
 ### 90.7.4 Practice mapping
 
 - **Case studies:** chat application (§53.4), WhatsApp (§53.5), Instagram (§53.6), Facebook News Feed (§53.7), Instagram-style feed and Explore recommendations (§81.5), personalized advertising (§81.9), content moderation (§82.7).
-- **Chapter 91 families:** feeds and timelines, messaging and presence, distributed caches.
-- **Chapter 92 families:** feed ranking, ads ranking, integrity and moderation pipelines.
+- **Chapter 91:** feeds (Q13), messaging and presence (Q14), distributed caches (Q4, Q35).
+- **Chapter 92:** feed ranking (Q11), ads ranking (Q17), moderation (Q18).
 
 ## 90.8 Microsoft
 
@@ -386,8 +386,8 @@ Google has published more foundational distributed-systems papers than almost an
 ### 90.8.4 Practice mapping
 
 - **Case studies:** chat application (§53.4), Google Drive and Dropbox as file-sync references (§54.7–§54.8), enterprise RAG assistant (§86.4), AI coding assistant (§86.6), LLM inference platform (§86.5).
-- **Chapter 91 families:** collaboration and messaging, file storage and sync, multi-tenant platforms.
-- **Chapter 92 families:** enterprise retrieval and assistants, model-serving platforms.
+- **Chapter 91:** collaboration and messaging (Q14, Q28), file sync (Q22), multi-tenant platforms (Q49).
+- **Chapter 92:** enterprise assistants (Q32, Q44), model-serving platforms (Q29, Q41).
 
 ## 90.9 Apple
 
@@ -417,8 +417,8 @@ Apple publishes little about its engineering interviews. Treat any detailed clai
 ### 90.9.4 Practice mapping
 
 - **Case studies:** notification system (§52.7), Google Drive and Dropbox as sync references (§54.7–§54.8), face recognition (§84.4), image classification (§84.5), speech recognition (§84.6).
-- **Chapter 91 families:** push and notification systems, sync and storage, metadata services.
-- **Chapter 92 families:** on-device and privacy-preserving ML, perception models.
+- **Chapter 91:** notifications (Q9), sync and storage (Q22, Q47), metadata services (Q46, Q52).
+- **Chapter 92:** privacy-preserving on-device ML (Q39), perception models (Q3, Q19, Q34).
 
 ## 90.10 Netflix
 
@@ -445,8 +445,8 @@ Apple publishes little about its engineering interviews. Treat any detailed clai
 ### 90.10.4 Practice mapping
 
 - **Case studies:** YouTube (§54.4), Netflix (§54.5), Spotify (§54.6), Netflix-style homepage recommendations (§81.6).
-- **Chapter 91 families:** video and media delivery, CDNs, resilience under dependency failure.
-- **Chapter 92 families:** personalization, ranking with experimentation.
+- **Chapter 91:** video delivery (Q23, Q41), CDNs (Q34), resilience and recovery (Q56).
+- **Chapter 92:** personalization (Q12, Q20), experimentation (Q37).
 
 ## 90.11 Uber
 
@@ -473,8 +473,8 @@ Apple publishes little about its engineering interviews. Treat any detailed clai
 ### 90.11.4 Practice mapping
 
 - **Case studies:** Uber ride-hailing platform (§55.4), ride matching (§55.5), payment system (§55.9), demand forecasting (§83.4), ETA prediction (§83.5), surge pricing (§83.6), real-time payment fraud (§82.4), feature store (§85.4).
-- **Chapter 91 families:** geospatial and proximity services, real-time dispatch, payments.
-- **Chapter 92 families:** marketplace ML, forecasting, ETA, fraud.
+- **Chapter 91:** proximity and maps (Q42, Q43), dispatch (Q20), payments (Q29).
+- **Chapter 92:** marketplace ML (Q23, Q40), forecasting (Q8), ETA (Q16), fraud (Q15).
 
 ## 90.12 Airbnb
 
@@ -506,8 +506,8 @@ Apple publishes little about its engineering interviews. Treat any detailed clai
 ### 90.12.4 Practice mapping
 
 - **Case studies:** ticket booking (§55.8, as a reservation-consistency analog), payment system (§55.9), search ranking (§81.7), feature store (§85.4), real-time payment fraud (§82.4).
-- **Chapter 91 families:** reservations and inventory, payments, search.
-- **Chapter 92 families:** marketplace ranking, feature platforms.
+- **Chapter 91:** reservations (Q7, Q19), payments (Q29), search (Q18).
+- **Chapter 92:** marketplace ranking (Q13, Q52), feature platforms (Q27).
 
 ## 90.13 LinkedIn
 
@@ -534,8 +534,8 @@ Apple publishes little about its engineering interviews. Treat any detailed clai
 ### 90.13.4 Practice mapping
 
 - **Case studies:** notification system (§52.7), Facebook News Feed as a feed reference (§53.7), recommendation system (§56.5), logging and monitoring platform (§56.6), real-time analytics (§56.7).
-- **Chapter 91 families:** event streaming and pipelines, feeds, search and typeahead.
-- **Chapter 92 families:** people and job recommendations, feed ranking.
+- **Chapter 91:** event streaming (Q25, Q32), feeds (Q13), search and typeahead (Q16, Q36).
+- **Chapter 92:** people recommendations (Q14), feed ranking (Q11).
 
 ## 90.14 Stripe
 
@@ -569,8 +569,8 @@ Stripe's public documentation and engineering blog are unusually relevant to API
 ### 90.14.4 Practice mapping
 
 - **Case studies:** rate limiter (§52.6), notification system for webhook-style delivery (§52.7), payment system (§55.9), real-time payment fraud detection (§82.4).
-- **Chapter 91 families:** API design, payments and ledgers, rate limiting.
-- **Chapter 92 families:** fraud and risk scoring.
+- **Chapter 91:** API design (Q12), payments and ledgers (Q29, Q53), rate limiting (Q3, Q54).
+- **Chapter 92:** fraud and risk scoring (Q15, Q24).
 
 ## 90.15 Databricks
 
@@ -597,8 +597,8 @@ Stripe's public documentation and engineering blog are unusually relevant to API
 ### 90.15.4 Practice mapping
 
 - **Case studies:** real-time analytics platform (§56.7), logging and monitoring platform (§56.6), distributed job scheduler (§52.9), feature store (§85.4), distributed training platform (§85.5).
-- **Chapter 91 families:** data pipelines, analytics engines, storage engines.
-- **Chapter 92 families:** ML platforms, feature and training infrastructure.
+- **Chapter 91:** data pipelines (Q25, Q37), analytics engines (Q55), storage engines (Q31, Q46).
+- **Chapter 92:** feature and training platforms (Q27, Q28, Q29).
 
 ## 90.16 Snowflake
 
@@ -629,8 +629,8 @@ Stripe's public documentation and engineering blog are unusually relevant to API
 ### 90.16.4 Practice mapping
 
 - **Case studies:** real-time analytics platform (§56.7), logging and monitoring platform (§56.6), web-scale search engine for index-serving contrast (§56.4).
-- **Chapter 91 families:** analytics and warehouse design, metadata services, multi-tenant platforms.
-- **Chapter 92 families:** data platforms for ML, feature computation.
+- **Chapter 91:** warehouses (Q55), metadata services (Q52), multi-tenant platforms (Q49).
+- **Chapter 92:** data platforms for ML and feature computation (Q27, Q38).
 
 ## 90.17 OpenAI
 
@@ -657,8 +657,8 @@ Stripe's public documentation and engineering blog are unusually relevant to API
 ### 90.17.4 Practice mapping
 
 - **Case studies:** LLM inference platform (§86.5), AI coding assistant (§86.6), AI-powered search (§86.8), enterprise RAG assistant (§86.4), rate limiter (§52.6).
-- **Chapter 91 families:** API platforms, rate limiting, streaming delivery.
-- **Chapter 92 families:** LLM serving, RAG, agents, training infrastructure.
+- **Chapter 91:** API platforms (Q12), rate limiting (Q3, Q54), streaming delivery (Q14).
+- **Chapter 92:** LLM serving (Q41), RAG (Q32, Q47), agents (Q33, Q45), training infrastructure (Q42).
 
 ## 90.18 Anthropic
 
@@ -698,8 +698,8 @@ Anthropic's hiring pages could be read directly during research, so this section
 ### 90.18.4 Practice mapping
 
 - **Case studies:** LLM inference platform (§86.5), customer-support agent (§86.7), AI coding assistant (§86.6), enterprise RAG assistant (§86.4).
-- **Chapter 91 families:** API platforms, multi-tenant rate limiting, observability.
-- **Chapter 92 families:** LLM serving, agents, evaluation, safety systems.
+- **Chapter 91:** API platforms (Q12), multi-tenant limits (Q49, Q54), observability (Q50).
+- **Chapter 92:** LLM serving (Q41), agents (Q45), evaluation (Q46), safety systems (Q50).
 
 ## 90.19 NVIDIA
 
@@ -727,8 +727,8 @@ Anthropic's hiring pages could be read directly during research, so this section
 ### 90.19.4 Practice mapping
 
 - **Case studies:** distributed model training platform (§85.5), multi-tenant ML serving platform (§85.6), LLM inference platform (§86.5).
-- **Chapter 91 families:** high-performance and HPC-style systems, schedulers.
-- **Chapter 92 families:** training infrastructure, GPU serving, inference optimization.
+- **Chapter 91:** high-performance systems (Q30, Q46), schedulers (Q40).
+- **Chapter 92:** training and GPU scheduling (Q42, Q48), GPU serving (Q41, Q51).
 
 ## 90.20 Comparison table: domain focus and suggested practice topics
 
@@ -797,7 +797,7 @@ $$H = W \times h, \qquad H_k = p_k \times H, \qquad \sum_k p_k = 1, \qquad M = \
 
 | Week | Core method (≈4 h) | Company context (≈2.5 h) | Mocks (≈2.5 h) | Behavioral (≈1 h) |
 |---|---|---|---|---|
-| 1 | Re-run the Chapter 88 sequence on two familiar cases; refresh Chapter 89 estimates | Recruiter questions; read hiring pages; start source log | 2 mocks on general problems | List 6–8 past projects with decisions and results |
+| 1 | Re-run the §88.4 sequence on two familiar cases; refresh the §89.18 drills | Recruiter questions; read hiring pages; start source log | 2 mocks on general problems | List 6–8 past projects with decisions and results |
 | 2 | Weakest dimensions from week 1 mocks (Table 90.2) | Read two primary papers or posts per company; write one-page summaries | 2 mocks on family-shaped problems (§90.20) | Map stories to published values where companies publish them |
 | 3 | Deep dives: storage, consistency, caching, or ML serving as relevant | Work one domain case study per company end to end | 2 mocks with changed requirements mid-way | Rehearse aloud, 2 minutes per story |
 | 4 | Light review; estimation drills | Re-check hiring pages and AI-use policies; update log | 2 full mocks in the real format | Final rehearsal; prepare questions for interviewers |
@@ -837,8 +837,8 @@ gantt
 ::: summary
 - Rank interview information on a ladder: recruiter (for your process) > company hiring pages > company engineering publications > reputable secondary sources > anonymous reports. Prepare from the top rungs and log the date of every item.
 - Hearsay is unreliable because of selection bias, survivorship, team variance, time decay, imperfect recall and confidentiality obligations.
-- What companies evaluate in design interviews generalizes: framing, numbers, architecture, data modeling, depth on the hard part, failure and scale, trade-offs, communication and judgment (Chapters 87–88).
-- Companies differ greatly in what they publish about hiring. Amazon, Anthropic, OpenAI, Uber, LinkedIn, NVIDIA, Meta, Microsoft and Databricks publish preparation or process pages; Netflix, Stripe and Airbnb publish culture or principles pages; Apple and Snowflake publish little.
+- What companies evaluate in design interviews generalizes: framing, numbers, architecture, data modeling, depth on the hard part, failure and scale, trade-offs, communication and judgment (§87.3, §88.9).
+- Companies differ greatly in what they publish about hiring. Google, Amazon, Anthropic, OpenAI, Uber, LinkedIn, NVIDIA, Meta, Microsoft and Databricks publish preparation or process pages; Netflix, Stripe and Airbnb publish culture or principles pages; Apple and Snowflake publish little.
 - A company's published engineering work tells you which constraints it cares about (global consistency, safe retries, money correctness, accelerator memory), not which questions it asks. Cite papers with dates and never present them as today's production.
 - Prepare by problem family (storage and consistency, real-time consumer products, money movement, AI and accelerators) when targeting several companies.
 - Spend about a quarter of preparation time on company context; spend the rest on transferable method and realistic mock interviews.
@@ -894,7 +894,7 @@ All model answers below are *Evidence: Illustrative*: they show reasoning about 
 
 **Q3.** You are designing video delivery for a global streaming service with 10 million concurrent streams at peak and an average bitrate of 5 Mbps. What is the peak egress, and what does it imply?
 
-**Answer.** $10^7 \times 5 \times 10^6$ b/s $= 5 \times 10^{13}$ b/s $= 50$ Tb/s. No single origin or region can serve that, so the design must place caches close to viewers, fill them ahead of demand where popularity is predictable, and steer each client to a nearby cache with headroom. Then quantify the cache hit ratio needed: at 95% offload the origin and mid-tier still serve $0.05 \times 50 = 2.5$ Tb/s. Published examples of the pattern include Netflix Open Connect (§21.10); the design itself is ours.
+**Answer.** By §89.7, $10^7 \times 5 \times 10^6$ b/s $= 5 \times 10^{13}$ b/s $= 50$ Tb/s. No single origin or region can serve that, so the design must place caches close to viewers, fill them ahead of demand where popularity is predictable, and steer each client to a nearby cache with headroom. Then quantify the cache hit ratio needed: at 95% offload the origin and mid-tier still serve $0.05 \times 50 = 2.5$ Tb/s. Published examples of the pattern include Netflix Open Connect (§21.10); the design itself is ours.
 
 **Q4.** For a multi-tenant LLM API, why are request-per-second limits insufficient, and what replaces them?
 
@@ -1027,4 +1027,3 @@ Hiring pages were read in 2026. Items marked † were confirmed through search-e
 - **OpenAI.** Other sections of the interview guide, including any statements about stage length.
 - **NVIDIA.** Confirm the US-locale URL and wording of the how-we-hire page.
 - **References without URLs** (29–33, 42, 50–51, 56–58, 60, 67, 73, 82): add verified URLs; confirm FoundationDB paper affiliations.
-- **Chapters 87, 88, 91, 92** were not yet written; cross-references name chapters and problem families, not section or question numbers, and should be updated.

@@ -47,7 +47,7 @@ A system-design interview tries to predict how you will behave in a real design 
 
 #### How it works internally: the five signal areas
 
-Interview guides and published rubrics group the evidence in slightly different ways, but most map onto five areas (Table 87.1). The names here are this book's. Ch 88 gives level-by-level rubrics built on them.
+Interview guides and published rubrics group the evidence in slightly different ways, but most map onto five areas (Table 87.1). The names here are this book's. Ch 88 (§88.9) gives level-by-level rubrics on six dimensions: these five, with reliability and operations scored separately.
 
 **Table 87.1 — The five signal areas and the evidence for each.**
 
@@ -243,7 +243,7 @@ flowchart TD
 
 ## 87.5 Requirements gathering
 
-### 87.5.1 The clarifying-question catalogue
+### 87.5.1 The clarifying-question catalog
 
 ::: definition
 **Definition — Clarifying question.** A question asked before designing whose answer would change the design. A question whose answer would not change anything ("what language is the backend in?") is not clarifying; it only consumes time.
@@ -365,7 +365,7 @@ Estimate only what will drive a decision: is one database enough, does the worki
 | Quantity | Convention | Error introduced |
 |---|---|---|
 | Seconds per day | $86{,}400 \approx 10^5$ | About −14% on rates (you under-estimate slightly) |
-| Peak factor | Peak ≈ 2–3 × average unless told otherwise | State it; Ch 89 refines it |
+| Peak factor | Peak ≈ 2–5 × average unless told otherwise | State it; Table 89.7 lists the book's values |
 | Sizes | Round to 1, 2 or 5 × a power of ten | Within a factor of 2 |
 | Days per year | ≈ 400 for storage growth | +10%, a safety margin |
 | Units | KB, MB, GB, TB = $10^3$ … $10^{12}$ bytes | Say "decimal units" once |
@@ -463,13 +463,13 @@ erDiagram
 
 **Reading the diagram.** Four entities, each a box with its key attributes. A user uploads many photos; the follow relationship is a separate table with a composite key `(follower_id, followee_id)`, which makes "follow twice" a no-op and supports both directions with one extra index. `FEED_ITEM` is not a fact about the world but a **derived** table: a precomputed copy of "photos my followees posted", keyed by owner and time so that the 3,000-per-second feed query is one range read. The photo row stores only `object_key`; the bytes live in an object store outside this model, which is the main storage boundary. The failure point is the derived table: if fan-out lags, feeds are stale but nothing is lost, because `PHOTO` remains the source of truth. Scaling: `FEED_ITEM` partitions by `owner_id`; `PHOTO` and `FOLLOW` fit one relational primary for years at the §87.6 numbers.
 
-**SQL or NoSQL, in two sentences.** "Users, photos and follows are small, relational and need uniqueness constraints, so I'll start them in a relational database (§11). The feed table is a high-rate, key-plus-range read that I may partition by owner, so a wide-column or key-value store (§12.6, §12.4) or a cache is a good fit there." Name the access pattern that drives each choice; do not argue SQL versus NoSQL in the abstract.
+**SQL or NoSQL, in two sentences.** "Users, photos and follows are small, relational and need uniqueness constraints, so I'll start them in a relational database (Chapter 11). The feed table is a high-rate, key-plus-range read that I may partition by owner, so a wide-column or key-value store (§12.6, §12.4) or a cache is a good fit there." Name the access pattern that drives each choice; do not argue SQL versus NoSQL in the abstract.
 
 ## 87.9 Drawing the high-level design
 
 ### 87.9.1 Conventions
 
-A diagram in an interview is read in real time by someone who did not draw it. Use the same conventions every time, so the interviewer learns your notation once. This book's conventions (style guide §6) work well on a whiteboard too.
+A diagram in an interview is read in real time by someone who did not draw it. Use the same conventions every time, so the interviewer learns your notation once. Table 87.9 summarizes this book's diagram conventions; they work well on a whiteboard too.
 
 **Table 87.9 — Diagram conventions for interviews.**
 
@@ -642,7 +642,7 @@ Most failed design interviews fail in one of six recognizable ways. Each has a c
 
 ## 87.14 How ML system-design interviews differ
 
-ML system-design rounds use the same timeline and signal areas, but replace part of the middle with modeling decisions. Chapter 88 gives the ML extension of the readiness framework (problem formulation through retraining), and Chapter 92 gives practice questions with rubrics. In brief:
+ML system-design rounds use the same timeline and signal areas, but replace part of the middle with modeling decisions. Chapter 88 (§88.6–§88.7) gives the ML extension of the readiness framework (problem formulation through retraining), and Chapter 92 gives practice questions with rubrics. In brief:
 
 **Table 87.12 — Traditional versus ML system-design interviews.**
 
@@ -803,5 +803,5 @@ A practical schedule for someone with six to eight weeks: two mocks per week (on
 - **[Behroozi et al. 2020]** Confirm the exact proceedings title and page numbers, and the precise effect size ("performance reduced by more than half" in secondary reports); the chapter states only "markedly lower".
 - **[Aminian and Xu 2023]** Confirm the publication year (2023 assumed; ISBN 9781736049129).
 - **[Xu 2020]** Publisher listed as "Independently published" to match Ch 1; later printings are credited to Byte Code LLC. Harmonize across the bibliography.
-- The five signal-area names (Table 87.1) are this book's synthesis of public preparation guides, not a quotation of any company's rubric; Ch 90 should cite company-published pages where they exist.
+- The five signal-area names (Table 87.1) are this book's synthesis of public preparation guides, not a quotation of any company's rubric; Ch 90 (§90.5–§90.19) cites the company-published pages that exist.
 - Company interview-preparation pages (e.g., Google and Amazon careers sites) could not be fetched from the authoring session; none are cited here.
