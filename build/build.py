@@ -87,15 +87,16 @@ def render_diagrams(found):
 
 
 def compact_png(png):
-    """Palette-quantized copy of a diagram PNG for the Word file (about 60% smaller, visually identical
-    for flat-colored line art); cached next to the original."""
-    out = png.with_suffix(".docx.png")
+    """Palette-quantized copy of a diagram PNG for the Word file: 1,400 px wide (~215 dpi at 6.5 in)
+    and 16 colors, which keeps flat-colored line art and text crisp while keeping the full book's
+    DOCX under ~45 MB; cached next to the original."""
+    out = png.with_suffix(".docx16.png")
     if not out.exists():
         from PIL import Image
         im = Image.open(png).convert("RGB")
-        if im.width > 1800:
-            im = im.resize((1800, round(im.height * 1800 / im.width)), Image.LANCZOS)
-        im.quantize(colors=64, method=Image.Quantize.MEDIANCUT).save(out, optimize=True)
+        if im.width > 1400:
+            im = im.resize((1400, round(im.height * 1400 / im.width)), Image.LANCZOS)
+        im.quantize(colors=16, method=Image.Quantize.MEDIANCUT).save(out, optimize=True)
     return out
 
 
