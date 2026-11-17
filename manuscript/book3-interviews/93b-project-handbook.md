@@ -1726,3 +1726,234 @@ What to notice:
 | Grounding | Answers with sources | Citations verified; correct refusals | Injection suite passes; you can explain defenses in depth (§78.13.2) |
 | Evaluation | Ad hoc checks | Versioned labeled set and CI gate | Judge calibrated against humans; regressions blocked automatically |
 | Operations | Runs locally | Latency, cost and freshness dashboards | Cost per query by component, with the levers that change it |
+
+### 93.4.4 Scalable LLM inference platform (simulated where GPUs are needed)
+
+**Level:** 5 · **Effort:** about 60–90 hours · **Related:** latency metrics §73.4, GPU memory budget §73.5, batching §73.6, PagedAttention §73.7, prefix caching §73.8, disaggregation §73.12, scheduling and admission §73.14, capacity planning §73.15, gateways and routers §79.5–79.6, token quotas §79.9, tenant isolation §79.10, case study §86.5, practice question Ch 92 Q41
+
+#### Goal and learning outcomes
+
+QuickBite now runs several LLM workloads on self-hosted GPUs: the support chatbot (a Llama-2-7B-shaped model, up to 200 concurrent conversations at peak, §73.3), menu enrichment (100,000 dish updates a day, batch) and the operations agents of §93.4.5 (§79.4). A platform team must serve them all from one GPU pool with per-tenant quotas in tokens, latency SLOs on time to first token (TTFT) and time per output token (TPOT), and a cost per million tokens that finance can see. You will build the **control plane and scheduler for real** (gateway, token quotas, router, admission control, per-replica continuous-batching scheduler with a paged KV cache, autoscaler) and **simulate the GPU** with the step-time model of §73.3, so that every number traces back to a stated assumption. If you have a GPU, swap the simulator for vLLM or another engine behind the same replica interface (§73.16) and compare.
+
+After this project you should be able to:
+
+- **Implement** iteration-level (continuous) batching with a paged KV cache, block allocation, preemption and admission control, and compare it with request-level batching.
+- **Compute** KV-cache capacity and the concurrency it supports from the model shape and GPU memory, and connect it to TTFT and TPOT under load.
+- **Design** a multi-tenant gateway with token-based quotas, priority classes and routing that is aware of queue depth and prefix-cache locality.
+- **Plan** capacity: replicas for a target load and SLO, and cost per million output tokens.
+
+#### Prerequisites
+
+- TTFT, TPOT, inter-token latency and goodput — §73.4.
+- The GPU memory budget and KV-cache sizing formula — §73.5. The starter uses its 54 GB KV pool.
+- Static versus continuous batching — §73.6; paged KV blocks — §73.7; prefix caching — §73.8. Chapter 73 also contains a simpler static-versus-continuous simulator; this project adds the paged allocator, preemption and admission control.
+- Scheduling, preemption and admission control — §73.14; autoscaling from tokens to GPUs — §73.15.
+- Gateways, routers, token quotas and tenant isolation — §79.5, §79.6, §79.9 and §79.10; the company-wide case study — §86.5.
+
+#### Specification
+
+**Functional requirements.**
+
+1. **Gateway:** an OpenAI-style `POST /v1/chat/completions` with streaming (server-sent events); authenticates the tenant, applies quotas in input and output tokens per minute, and assigns a priority class (interactive or batch).
+2. **Router:** chooses a replica by estimated queue delay, preferring replicas that hold the request's prompt prefix in cache (§79.6.2).
+3. **Replica scheduler:** continuous batching with a paged KV cache of fixed-size blocks; admits a request when its prompt's blocks fit; allocates blocks as tokens are generated; preempts (and later recomputes) the newest sequence when blocks run out; optional chunked prefill.
+4. **Admission control:** a bounded queue per replica and class; when the predicted TTFT exceeds the SLO, reject interactive requests with `429` and `Retry-After`, and defer batch requests.
+5. **Accounting:** per request, tokens in and out, TTFT, TPOT, preemptions and replica; per tenant, tokens and cost at a configurable price per GPU-hour.
+6. **Autoscaler:** adds or removes replicas on queue depth and KV utilization, with a model-load delay.
+
+**Non-functional requirements (simulated H100-class replicas).**
+
+- **Interactive SLO:** TTFT p99 below 1 s and TPOT p99 below 50 ms at the offered load the platform accepts.
+- **Overload:** at 2× capacity, accepted interactive requests still meet TTFT p99 below 5 s, and rejections return in under 50 ms.
+- **Fairness:** a batch tenant submitting 10,000 requests at once does not raise interactive TTFT p99 by more than 20%.
+- **Efficiency:** KV-pool utilization above 80% at saturation with continuous batching; output throughput at least 2× static batching at a load static batching cannot sustain.
+- **Gateway overhead:** below 5 ms p99 added latency at 500 requests/s (measured on real HTTP, not simulated).
+
+::: example
+**Worked example — from KV pool to concurrency to the load one replica can carry.** Use §73.5's formula with its 7B assumptions: a 54 GB KV pool at 524,288 bytes per token holds about 103,000 tokens (6,437 blocks of 16). The starter's mixed-tenant workload has a mean prompt of 1,300 tokens and a mean output of 247 tokens.
+
+1. Average context of a sequence midway through generation: $1{,}300 + 247/2 \approx 1{,}423$ tokens.
+2. Sequences that fit: $103{,}000 / 1{,}423 \approx 72$.
+3. Little's Law (§4.11) for concurrency: at 6 requests/s with TPOT about 19 ms, each request spends about $247 \times 0.019 = 4.7$ s decoding, so $6 \times 4.7 \approx 28$ sequences are resident: comfortably below 72.
+4. At 12 requests/s, TPOT rises to about 37 ms because each step reads more KV cache, so residence is $247 \times 0.037 = 9.1$ s and demand is $12 \times 9.1 \approx 110$ sequences: above 72. The KV pool, not compute, becomes the limit; preemptions and queueing follow, which the starter shows.
+
+**Interpretation.** The replica saturates at roughly 7–8 requests/s (about 1,600–1,750 output tokens/s) for this workload, because concurrency is capped by memory and per-step time grows with resident context. **Engineering implication.** Capacity plans for LLM serving start from the KV pool and the context distribution, not from FLOPs; quantizing the KV cache, prefix sharing or a GQA model raises the 72 directly (§73.13, §73.8).
+:::
+
+#### Architecture
+
+**Figure 93.109 — LLM inference platform: gateway, router, continuous-batching replicas and control loop.**
+
+```mermaid
+flowchart LR
+  T1([Chatbot tenant]) -->|HTTPS stream| GW[Gateway<br/>auth, token quotas, priority]
+  T2([Batch enrichment tenant]) -->|HTTPS| GW
+  GW -->|request with class| RT[Router<br/>queue delay, prefix locality]
+  RT -->|enqueue| R1[Replica 1<br/>scheduler, paged KV, model]
+  RT -->|enqueue| R2[Replica 2<br/>scheduler, paged KV, model]
+  R1 -->|token stream| GW
+  R2 -->|token stream| GW
+  REG[(Model and config registry)] -->|weights, engine config| R1
+  REG -->|weights, engine config| R2
+  R1 -.->|queue, KV use, TTFT, TPOT| MS[(Metrics and usage store)]
+  R2 -.->|queue, KV use, TTFT, TPOT| MS
+  GW -.->|tokens per tenant| MS
+  MS -->|signals| AS[Autoscaler]
+  AS -->|add or drain replica| RT
+```
+
+**Reading the diagram.** Tenants call the **gateway**, which authenticates them, debits their token quotas (input tokens on admission, output tokens as they stream) and tags each request with a priority class. The **router** sends the request to the replica with the lowest estimated queue delay, breaking ties toward a replica that recently served the same prompt prefix so its KV blocks can be reused. Each **replica** runs the scheduler loop: every iteration it admits waiting requests whose prompt blocks fit, runs one forward step over all running sequences (prefill for new ones, one decode token for the rest), allocates blocks as sequences grow, and preempts the newest sequence when the pool is exhausted. Tokens stream synchronously back through the gateway to the client. Replicas load weights and engine settings from the **registry**; they and the gateway publish metrics and usage asynchronously (dotted) to the **metrics and usage store**, which drives the **autoscaler** and per-tenant billing. Storage boundaries: the KV cache lives only in replica memory and is lost on failure (streams must be resumable or retried); usage records are durable. Failure points: replica crash mid-stream, KV exhaustion causing preemption storms, a hot prefix concentrating load on one replica and slow model loads delaying scale-up. Scaling: replicas scale horizontally (minutes, because of weight loading); larger models add tensor parallelism inside a replica (§73.11); prefill and decode can be split into separate pools at large scale (§73.12).
+
+#### Milestones
+
+1. **Simulated replica.** Implement the scheduler loop with the §73.3 step-time model, static and continuous modes and the metrics of §73.4. *Done when:* the starter's comparison is reproduced and TTFT and TPOT agree with hand calculations at batch 1.
+2. **Paged KV and preemption.** Block allocator, block tables, preemption by recompute, optional chunked prefill. *Done when:* no sequence ever holds more blocks than the pool, KV utilization above 80% at saturation, and preempted requests complete correctly.
+3. **Gateway and quotas.** Real HTTP gateway with streaming, tenant auth and token quotas (token bucket in tokens, §79.9). *Done when:* a tenant over quota gets `429` with `Retry-After`, and gateway p99 overhead is below 5 ms at 500 requests/s.
+4. **Router and admission control.** Multiple simulated replicas, queue-delay routing, prefix-aware tie-breaking, priority classes, bounded queues. *Done when:* the overload and fairness targets hold with one batch tenant flooding the system.
+5. **Autoscaling and cost.** Scale on queue depth and KV utilization with a 60 s model-load delay; per-tenant cost report. *Done when:* a load step from 2 to 12 requests/s settles within the SLO after scale-up, and the cost report sums to the simulated GPU-hours times price.
+
+#### Starter code
+
+The starter simulates one replica of the 7B model on one H100-class GPU using §73.3's step-time model (7.2 ms of overhead and weight reads per step, plus KV reads per resident token, plus compute per prefill token) and §73.5's 54 GB KV pool, in 16-token blocks. The workload mixes tenants: lognormal prompts (median about 1,100 tokens) and outputs (median about 190 tokens), Poisson arrivals for 120 s.
+
+```python
+import numpy as np
+from collections import deque
+
+# Step-time model of Sec. 73.3 for the 7B model on one H100 (ms): fixed overhead + weight reads,
+# KV reads per context token of every decoding sequence, compute per prefill token.
+A = 2.0 + 14e9 / 2.68e12 * 1e3            # 7.2 ms
+B = 524_288 / 2.68e12 * 1e3               # 0.000196 ms per context token in the batch
+C = 2 * 6.74e9 / 494.5e12 * 1e3           # 0.0273 ms per prefill token
+BLOCK = 16                       # tokens per KV block (paged KV cache)
+KV_TOKENS = int(54e9 / 524_288)  # 54 GB KV pool on an 80 GB GPU for the 7B model (Sec. 73.5)
+TOTAL_BLOCKS = KV_TOKENS // BLOCK
+
+def workload(rps, seconds=120, seed=0):
+    rng = np.random.default_rng(seed)
+    n = int(rps * seconds)
+    t = np.cumsum(rng.exponential(1000 / rps, n))
+    prompt = np.clip(rng.lognormal(7.0, 0.6, n), 50, 8000).astype(int)    # median ~1,100 tokens
+    out = np.clip(rng.lognormal(5.3, 0.7, n), 5, 1500).astype(int)        # median ~200 tokens
+    return [dict(arr=t[i], p=prompt[i], o=out[i]) for i in range(n)]
+
+def serve(reqs, mode, max_seqs=256, static_batch=32, max_queue=None):
+    now, i, waiting, running, done, preempt, free, shed = 0.0, 0, deque(), [], [], 0, TOTAL_BLOCKS, 0
+    while len(done) + shed < len(reqs):
+        while i < len(reqs) and reqs[i]["arr"] <= now:
+            if max_queue is not None and len(waiting) >= max_queue:
+                shed += 1; i += 1; continue                  # admission control: fast 429
+            waiting.append(dict(reqs[i], pre=0, gen=0, blocks=0)); i += 1
+        if len(done) + shed == len(reqs): break
+        if not running and not waiting:
+            now = reqs[i]["arr"]; continue
+        if mode == "static":                                  # new batch only when the old one ends
+            if not running:
+                running = [waiting.popleft() for _ in range(min(static_batch, len(waiting)))]
+        else:                                                 # continuous: admit every iteration
+            while waiting and len(running) < max_seqs:
+                need = -(-(waiting[0]["p"] + 1) // BLOCK)
+                if need > free: break
+                r = waiting.popleft(); r["blocks"] = need; free -= need; running.append(r)
+        prefill = 0
+        for r in running:                                    # prefill work this iteration
+            if r["pre"] < r["p"]:
+                prefill += r["p"] - r["pre"]; r["pre"] = r["p"]
+        decoding = [r for r in running if r["pre"] >= r["p"] and r["gen"] > 0]
+        ctx = sum(r["p"] + r["gen"] for r in (running if mode == "static" else decoding))
+                                                     # static keeps reading finished (padded) slots
+        now += A + B * ctx + C * prefill
+        for r in list(running):
+            if r["pre"] < r["p"] or r["gen"] >= r["o"]: continue
+            r["gen"] += 1
+            if r["gen"] == 1: r["ttft"] = now - r["arr"]
+            if mode != "static" and (r["p"] + r["gen"]) > r["blocks"] * BLOCK:
+                if free == 0:                                # out of KV: preempt newest, recompute later
+                    v = running.pop(); free += v["blocks"]; preempt += 1
+                    v.update(pre=0, gen=0, blocks=0); waiting.appendleft(v)
+                    if v is r: continue
+                r["blocks"] += 1; free -= 1
+            if r["gen"] == r["o"]:
+                r["end"] = now; done.append(r)
+                if mode != "static": running.remove(r); free += r["blocks"]
+        if mode == "static" and all(r["gen"] >= r["o"] for r in running): running = []
+    ttft = np.array([r["ttft"] for r in done])
+    tpot = np.array([(r["end"] - r["arr"] - r["ttft"]) / max(r["o"] - 1, 1) for r in done])
+    toks = sum(r["o"] for r in done) / (max(r["end"] for r in done) / 1000)
+    return (*np.percentile(ttft, [50, 99]), *np.percentile(tpot, [50, 99]), toks, preempt, shed / len(reqs))
+
+print(f"KV budget {KV_TOKENS:,} tokens = {TOTAL_BLOCKS:,} blocks of {BLOCK}")
+print(f"{'load':>5} {'policy':<17}{'TTFT p50':>9}{'TTFT p99':>10}{'TPOT p50':>9}{'TPOT p99':>9}{'out tok/s':>10}{'preempt':>8}{'shed':>6}")
+for rps, modes in ((2, ["static", "continuous"]), (6, ["static", "continuous"]), (12, ["continuous", "continuous+admit"])):
+    reqs = workload(rps)
+    for mode in modes:
+        r = serve(reqs, mode.split("+")[0], max_queue=16 if "admit" in mode else None)
+        print(f"{rps:>3}/s {mode:<17}{r[0]:>7.0f}ms{r[1]:>8.0f}ms{r[2]:>7.1f}ms{r[3]:>7.1f}ms"
+              f"{r[4]:>10.0f}{r[5]:>8}{r[6]:>6.0%}")
+```
+
+Output:
+
+```text
+KV budget 102,996 tokens = 6,437 blocks of 16
+ load policy            TTFT p50  TTFT p99 TPOT p50 TPOT p99 out tok/s preempt  shed
+  2/s static              3847ms   11690ms   10.5ms   16.7ms       424       0    0%
+  2/s continuous            42ms     155ms    9.0ms   11.2ms       430       0    0%
+  6/s static             97800ms  208579ms   15.6ms   19.4ms       519       0    0%
+  6/s continuous            58ms     201ms   19.2ms   31.0ms      1318       0    0%
+ 12/s continuous         38785ms   81306ms   37.2ms   41.7ms      1745     269    0%
+ 12/s continuous+admit    2080ms    4227ms   37.5ms   41.9ms      1693     157   38%
+```
+
+What to notice:
+
+- At only 2 requests/s, static batching already has a TTFT p50 of almost 4 s: a new request waits for the whole previous batch to finish its longest reply. Continuous batching admits it at the next iteration, so TTFT p50 is 42 ms.
+- At 6 requests/s static batching is overloaded (519 tokens/s, queues growing for the whole run) while continuous batching serves the load at 1,318 tokens/s with a TTFT p99 of 201 ms, roughly 2.5× the throughput at the same hardware cost.
+- TPOT grows with load (9.0 → 19.2 → 37.2 ms p50) even with spare compute, because every decode step reads the KV cache of every resident sequence. Users feel this as slower streaming; it is why platforms cap batch size or context per replica to protect TPOT.
+- At 12 requests/s the KV pool is exhausted: 269 preemptions and TTFT p99 of 81 s. A 16-request queue limit sheds 38% of requests and brings TTFT p50 to about 2.1 s, which Little's Law predicts: 16 queued requests ÷ about 7.5 served per second. To meet a 1 s TTFT SLO you would cap the queue near 7 or, better, add replicas.
+- Preemption here restarts the victim from scratch, including tokens already streamed; real engines keep the generated tokens and recompute their KV cache (or swap it to CPU memory). Count how much work preemption wastes in your version.
+
+::: industry
+**vLLM and PagedAttention; Orca's iteration-level scheduling.** Yu et al. introduced iteration-level scheduling, in which the server reschedules the batch after every decoding iteration instead of after every request, in the Orca serving system [Yu et al. 2022]. Kwon et al. introduced PagedAttention, which stores the KV cache in fixed-size blocks addressed through block tables, and built vLLM on it, reporting large throughput gains over earlier systems by reducing KV-cache fragmentation [Kwon et al. 2023]. The starter's block allocator and per-iteration admission loop are simplified versions of these two ideas; §73.6–73.7 explain them in depth.
+*Evidence: Primary* — [Yu et al. 2022], [Kwon et al. 2023]
+:::
+
+#### Test plan and load-test targets
+
+- **Model-check the scheduler:** invariants after every iteration (blocks allocated plus free equals the pool; each running sequence holds $\lceil (\text{prompt} + \text{generated})/16 \rceil$ blocks or one more; no sequence both waiting and running).
+- **Hand-calculation tests:** single request, batch 1: TTFT equals one prefill step; TPOT equals $A + B \times$ context.
+- **Load ladder:** 2, 4, 6, 8, 10 and 12 requests/s per replica; plot TTFT p99, TPOT p99, throughput and KV utilization; mark the knee.
+- **Fairness test:** interactive tenant at 4 requests/s plus a batch tenant dumping 10,000 requests; interactive TTFT p99 within 20% of the solo run.
+- **Gateway test (real HTTP):** 500 requests/s of short streamed responses from a stub replica; p99 overhead below 5 ms; quotas enforced to within 1% of configured tokens per minute.
+
+#### Failure-injection exercises
+
+**Table 93.117 — Scalable LLM inference platform: failure injections.**
+
+| Inject | Expected behavior | How you verify |
+|---|---|---|
+| Replica crashes mid-stream | Gateway retries non-streamed requests; streamed ones get a resumable error | Error class counts; no hung client connections |
+| Sudden 3× load spike | Admission control sheds interactive overflow; batch deferred; autoscaler adds replicas | TTFT p99 bounded; rejection spike then recovery |
+| One tenant sends 32,000-token prompts | Per-request context cap or dedicated pool; others unaffected | Per-tenant TTFT; KV utilization by tenant |
+| KV block leak (bug) | Invariant check fails fast instead of slow degradation | Scheduler invariant alarm |
+| Model load takes 5 minutes instead of 60 s | Scale-up lags; shedding covers; alert on slow readiness | Readiness-time metric |
+| Hot prefix routed to one replica | Load-aware router overrides locality when queues diverge | Queue-depth spread across replicas |
+
+#### Extensions
+
+- Add **prefix caching** with reference-counted shared blocks and measure TTFT for the chatbot's 1,000-token shared system prompt (§73.8).
+- Add **chunked prefill** and measure maximum inter-token latency, not just TPOT p99, with and without it (§73.14).
+- Model **disaggregated prefill and decode** pools and find the load at which they beat a unified pool (§73.12).
+- Replace the simulator with **vLLM on a real GPU** (if available) behind the same replica interface, and calibrate $A$, $B$ and $C$ from measurements.
+
+#### Self-assessment rubric
+
+**Table 93.118 — Scalable LLM inference platform: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Batching | Static batching works | Continuous batching with paged KV and preemption | You explain why TPOT rises with load and how to cap it |
+| Capacity | Runs the simulator | KV sizing and Little's Law match measured concurrency | Replica count and cost per million tokens for a stated SLO |
+| Multi-tenancy | One shared queue | Token quotas, priority classes, fairness test | You defend shedding versus deferring per class with numbers |
+| Robustness | Happy path | Admission control, invariants, failure injections | Resumable streams and autoscaling with load delay |
+| Honesty about simulation | Says "simulated" | States the step-time model and its source | Explains which results would change on real hardware and how you would calibrate |

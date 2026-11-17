@@ -311,7 +311,7 @@ Non-functional: feed p99 ≤ 150 ms server-side with a 40 ms ranking budget; ses
 
 1. Events: $4 \times 10^7 \times 25 = 10^9$ a day; average 11,574/s; **peak 34,722/s**. At 500 bytes each, 17.4 MB/s into the event log, comfortably served by 64 partitions with room for consumer parallelism.
 2. Feed requests: $4 \times 10^7 \times 15 = 6 \times 10^8$ a day; **peak 20,833/s**; at 500 candidates each, **10.4 million scores/s**.
-3. Ranker compute at 20 MFLOPs per candidate: $1.04 \times 10^7 \times 2 \times 10^7 = 2.1 \times 10^{14}$ FLOP/s; at an effective $10^{14}$ FLOP/s per GPU (10% of peak, typical for small ranking batches) about 2.1 busy GPUs, a few per region with headroom and redundancy.
+3. Ranker compute at 20 MFLOPs per candidate (inference-fleet form of §89.13): $1.04 \times 10^7 \times 2 \times 10^7 = 2.1 \times 10^{14}$ FLOP/s; at an effective $10^{14}$ FLOP/s per GPU (10% of peak, typical for small ranking batches) about 2.1 busy GPUs, a few per region with headroom and redundancy.
 4. Concurrent sessions: $4 \times 10^7 \times 3 / 86{,}400 \times 3 = 4{,}167$ starts/s at peak × 600 s = **2.5 million** open sessions; at 4 KB of session state each, 10 GB.
 5. The race: if the gap between a click and the next feed request is exponential with mean 8 s and the streaming pipeline's lag is 5 s, then $1 - e^{-5/8} = 46\%$ of next requests arrive before the click is visible. Even a 1 s lag misses $1 - e^{-1/8} = 12\%$.
 
@@ -417,7 +417,7 @@ Non-functional: retrieval p99 ≤ 20 ms; ANN recall@1,000 ≥ 0.90 against exact
 #### Estimation
 
 ::: example
-**Worked example — Memory says one node, throughput says seven.** Apply the memory-bound and throughput-bound sizing of §74.14 (the vector form of §89.9–§89.10). Assume $N = 2 \times 10^9$, $d = 256$, 64 GB of usable RAM headroom aside, $u = 0.7$ (179 GB usable per 256 GB node), measured CPU per query $t_\text{cpu} = 4$ ms at the recall target, $\rho = 0.5$.
+**Worked example — Memory says one node, throughput says seven.** Apply the memory-bound and throughput-bound sizing of §74.14 (the vector form of §89.9–§89.10; embedding memory §89.13). Assume $N = 2 \times 10^9$, $d = 256$, 64 GB of usable RAM headroom aside, $u = 0.7$ (179 GB usable per 256 GB node), measured CPU per query $t_\text{cpu} = 4$ ms at the recall target, $\rho = 0.5$.
 
 1. FP32 vectors: $2 \times 10^9 \times 1{,}024 = 2.05$ TB. INT8 with an HNSW graph ($256 + 260 + 8$ bytes): 1.05 TB, six shards per replica.
 2. IVF-PQ with 64-byte codes and 8-byte IDs: $2 \times 10^9 \times 72 = 144$ GB: **one node holds a full replica**.
@@ -2100,7 +2100,7 @@ Functional: input screening; output screening, streaming-aware; injection defens
 #### Estimation
 
 ::: example
-**Worked example — Base rates decide what a classifier's numbers mean.** Uses threshold metrics (§57.10.1) and the cascade cost formula of §60.11.
+**Worked example — Base rates decide what a classifier's numbers mean.** Uses threshold metrics (§57.10.1) and the cascade cost formula of §60.13.2.
 
 1. Single classifier with 95% recall and 1% false-positive rate at a 0.1% base rate: true positives $0.001 \times 0.95 = 0.00095$; false positives $0.999 \times 0.01 = 0.00999$; **precision 8.7%**, and **863,000 benign requests flagged a day**.
 2. Cascade: a cheap classifier (recall 99%, FPR 5%) flags 5.1% of traffic; an LLM judge on the flagged traffic (recall 96%, FPR 10%) confirms. Overall recall $0.99 \times 0.96 = 95.0\%$; FPR $0.05 \times 0.10 = 0.5\%$; precision 16%; benign flagged 432,000 a day; the expensive stage runs on 5.1% of traffic.
@@ -2358,3 +2358,176 @@ Epsilon-greedy is simple but wastes exploration on clear losers; UCB is determin
 - **Mid:** boosts new items.
 - **Senior:** Thompson sampling with priors and an exploration budget.
 - **Staff:** quantifies impressions needed against zone supply, logs propensities for unbiased evaluation, and frames exploration as a marketplace fairness and survival question.
+
+## 92.8 Summary and revision notes
+
+::: summary
+- **Start every ML or AI prompt with formulation and quality measurement**, then size it. Easy and Medium questions decide on labels and features; Hard and Expert questions decide on a platform property (correctness, isolation, utilization) or on how quality and safety are measured.
+- **Platforms are evaluated by correctness and economics, not accuracy.** Feature store: availability-time as-of joins and parity SLOs. Training platform: allocation versus utilization, preemption cost. Serving platform: popularity tiers, scale models not servers. Monitoring: alert volume under multiple testing. Experimentation: power, SRM, interference.
+- **Size from the unit that binds.** Concurrent streams for speech (Little's Law), output tokens for translation, GPU-seconds per call by class for LLMs, GPU-seconds per image for diffusion, keys and partitions for feature reads, bytes per vector for vector search, rounds for federated learning.
+- **Compression and caching often change the architecture**, not just the bill: IVF-PQ turns a sharded 2 TB index into a replicated 144 GB one; prefix caching triples coding-assistant capacity; distillation cuts a diffusion fleet by more than half.
+- **Freshness is a race.** A streaming pipeline cannot guarantee the next request sees the last event; carry the freshest signals in the request.
+- **Selection governs data-heavy systems.** Perception data engines and labeling budgets are controlled by triggers, similarity search and auto-labeling with audited human review.
+- **Interference breaks user-level A/B tests** in marketplaces; use switchbacks, cluster randomization and simulation.
+- **LLM systems: cost per request, then cost per outcome.** Escalations dominate support-agent cost; eligibility and routing dominate answer-engine cost; prompt length dominates inference-platform capacity.
+- **Agents need durable state, idempotent tools, budgets and delegated capabilities**; per-step reliability compounds over steps.
+- **Safety systems must reason from base rates**: at low prevalence even good detectors are mostly wrong when they fire, so cascade checks and graduate actions.
+- **Cold start is exploration under a budget**: content priors, Thompson sampling and logged propensities, judged by supply survival as well as orders.
+- **Level signals repeat across all 26 questions**: mid-level answers name components; senior answers add the correct mechanisms; staff answers quantify the deciding trade-off, design the measurement, and plan the operation of the system over time.
+:::
+
+**Table 92.106 — Numbers from this half of the library worth remembering.**
+
+| Number | Meaning | Question |
+|---|---|---|
+| $0.999^{46} = 0.955$ | One ranking read touching 46 partitions meets its deadline only 95.5% of the time | Q27 |
+| 86% vs 52% | Allocated GPU-hours versus measured hardware utilization of GPUs in use | Q28 |
+| \$449.6/h vs \$71.5/h | One deployment per model versus a tiered shared fleet | Q29 |
+| 46% | Next requests that miss the last click with a 5 s streaming lag | Q30 |
+| 144 GB | 2 billion 256-d vectors in IVF-PQ: one node per replica | Q31 |
+| 2.98 million | Users per arm to detect a 1% relative lift on a 5% rate | Q37 |
+| 48,000 | False drift alarms a day from untargeted hourly testing | Q38 |
+| 1.67 | Orders per courier needed at QuickBite's busiest hour | Q40 |
+| 1,244 vs 896 | GPUs for colocated versus disaggregated 70B serving | Q41 |
+| 74.6 days | 405B pre-training at 90% goodput on 16,384 GPUs | Q42 |
+| 8.7% | Precision of a 95%-recall, 1%-FPR safety classifier at 0.1% prevalence | Q50 |
+| \$0.0021 vs \$0.00087 | Cost per image, full sampler versus 70% distilled | Q51 |
+
+## 92.9 Knowledge checkpoint
+
+1. Why must a feature store's as-of join use availability time rather than event time?
+2. A ranking request reads 150 item keys from a store with 48 partitions. Why does batching by view group not solve its tail latency, and what does?
+3. Why can a training platform report 86% allocation while delivering far less useful work?
+4. In a multi-model serving platform, what is the unit that scales to zero, and why not the server?
+5. A streaming session pipeline has a 5 s lag and users act every 8 s on average. What fraction of next requests miss the last event, and what is the fix?
+6. Why does compressing an embedding index sometimes change the design from sharding to replication?
+7. In an enterprise RAG system, why are group IDs stored on chunks instead of expanded user lists?
+8. What dominates final latency in streaming speech recognition, and why?
+9. How does a perception data engine keep labeling cost manageable without labeling uniformly?
+10. What does a sample-ratio mismatch indicate, and what should you do when you see one?
+11. Why do 4.8 million drift tests a day make a fixed $p < 0.01$ threshold useless?
+12. Why is a user-randomized A/B test biased for a courier-matching policy?
+13. Why does disaggregating prefill and decode reduce GPU count even though GPU-seconds per call stay the same?
+14. A safety classifier has 95% recall and a 1% false-positive rate. At 0.1% prevalence, what is its precision, and what follows for system design?
+15. How many impressions does a new restaurant need to distinguish a 3% from a 4% order rate, and why are content priors valuable?
+
+<details><summary>Answers</summary>
+
+1. A value computed later than the label time (for example, a daily batch published at 04:00) was not available in production at that moment; joining on event time leaks it into training and inflates offline metrics.
+2. The 150 keys spread over about 46 partitions, so one read waits for 46 sub-requests and inherits their tail ($0.999^{46} = 0.955$). Replicating the small item view in full lets a ranking read hit one node.
+3. Allocation counts GPUs assigned to jobs; idle notebooks, input stalls, low MFU and failed jobs consume allocated GPU-hours without useful work.
+4. Resident model copies. Loading a model on a warm server takes about a second; provisioning a server takes minutes, so the fleet stays warm and models come and go.
+5. $1 - e^{-5/8} \approx 46\%$. Send the last few item IDs in the request (request-time features) and use the stream for older context.
+6. Memory per replica decides whether a full copy fits on one node; if it does (144 GB for 2 billion PQ-coded vectors), you add replicas for throughput and avoid scatter-gather tail latency.
+7. Membership changes then update only a group mirror; renaming or editing a 50,000-member group does not require rewriting millions of chunks.
+8. End-pointing: the system must wait to decide speech has ended (hundreds of milliseconds), which exceeds model and network time; a learned end-of-query detector shortens it.
+9. On-vehicle and offline triggers, similarity search and uncertainty select a small share of driving; an offline auto-labeler labels it, and humans correct only uncertain frames, with per-class audits.
+10. A broken assignment or logging path (bots, redirects, crashes in one arm). Stop interpreting the results and fix the cause before rerunning.
+11. With no real drift, 1% of tests fail by chance: 48,000 false alarms a day, so every model alerts daily. Use effect sizes, importance weighting and a few outcome-linked pages.
+12. Both arms share couriers: the treatment changes which couriers are free for control orders, so the arms interfere. Randomize by city and time slot (switchbacks).
+13. Each phase runs on its own pool without interfering with the other, so both can run at a higher utilization while meeting TTFT and TPOT SLOs; fewer replicas are needed for the same work.
+14. About 8.7%; most flags are benign. Cascade cheap and expensive checks and graduate actions (safe completion for uncertain cases, hard blocks for high-confidence severe ones).
+15. About 5,300 impressions per arm at 95% confidence and 80% power. Priors from similar restaurants start the posterior near the truth, reducing exploration and protecting customers from poor early recommendations.
+
+</details>
+
+## 92.10 Interview questions
+
+### Basic
+
+**Q1. How do you decide whether a Hard ML prompt is a model question or a platform question?** **Answer.** Ask who the users of the system are. If the users are end customers and one prediction drives the product, it is a model question: spend time on labels, features and the model. If the users are other ML teams (feature store, training, serving, monitoring, evaluation), it is a platform question: the "model" steps become correctness guarantees (point-in-time joins, parity, isolation), multi-tenancy and economics, and you should say so explicitly in the first five minutes.
+
+**Q2. What is the first number to compute for an LLM system?** **Answer.** Tokens per request by class (input, cached input, output) times requests per second. From it follow cost per request (§88.8), GPU-seconds per call (§89.16) and fleet size. Without token shapes, any capacity plan can be wrong by multiples, as Q41 shows for long RAG prompts.
+
+**Q3. How do you handle a prompt the library does not contain?** **Answer.** Map it to the closest pattern: a predictor behind a product (Easy and Medium), a shared ML platform (Q27–Q29, Q37–Q38), a data-heavy pipeline (Q36, Q39), an LLM product (Q32–Q33, Q44, Q47) or an LLM platform (Q41–Q43, Q45–Q46). Then run the traditional steps with the ML extension of §88.6, identify the binding resource, and choose the one or two deep dives where the pattern usually fails.
+
+### Intermediate
+
+**Q4. The interviewer asks you to design a recommendation system "at YouTube scale". How do you keep the answer credible without inventing facts?** **Answer.** State that your numbers are assumptions, cite published designs only for what they published (for example, the candidate-generation and ranking split of [Covington et al. 2016]), and size from first principles: daily users, requests per user, candidates per request, bytes per embedding. Interviewers reward explicit assumptions and arithmetic, not insider claims.
+
+**Q5. How do you evaluate a system whose labels arrive months later (chargebacks, churn)?** **Answer.** Separate what you can know now from what you learn later: input and prediction monitors and proxies now (score distributions, decision rates, early signals), estimated performance from calibrated scores, and true performance on matured cohorts (§70.8). For launches, use shadow mode and proxy guardrails, then a long-running holdout for the delayed outcome.
+
+**Q6. When would you answer "do not use multiple agents"?** **Answer.** When subtasks are sequential, share the same context, or are short. Multiple agents help when work splits into independent, context-heavy subtasks that benefit from parallel fresh contexts; otherwise they multiply tokens, add coordination failures and lengthen debugging (§77.9.1). A single agent with tools inside a durable workflow is the default.
+
+### Advanced
+
+**Q7. You are asked to cut the cost of an LLM feature by half without hurting quality. Walk through your approach.** **Answer.** Measure the cost structure first: tokens by class, cached share, output share, and non-token costs (escalations, reviews, errors). Build or reuse an evaluation suite with intervals so "without hurting quality" is testable. Then apply levers in order of value: eligibility (do not call the model when it adds nothing), prompt length (fewer, better chunks), prefix caching, routing easy requests to a smaller model, shorter outputs, and only then engine work (quantization, speculation, disaggregation). Gate each change on the suite and confirm online. For agents, reducing escalations or error rates may save more than any token change (Q33).
+
+**Q8. How do you show staff-level judgment in a platform question within 45 minutes?** **Answer.** Quantify the deciding trade-off early (for example, partition fan-out, preemption cost or cost per tier), state the correctness property and how it is measured as an SLO, design for the population of tenants rather than one, and plan operations: how changes are tested (trace replay, parity suites), how the platform reports cost and quality per tenant, and what happens at 10×. Leave the last five minutes for failure modes and evolution rather than more components.
+
+**Q9. An interviewer pushes back: "Your offline metric improved but the A/B test is flat. What now?"** **Answer.** Check the test first (SRM, power, duration, novelty); then the offline–online gap: label mismatch with the business metric, distribution shift between logged and new candidates, a downstream stage (ranker, re-ranker, business rules) absorbing the change, or interference between arms. Decide whether to revise the offline metric, retrain the downstream stage on the new distribution, or accept that the change has no business value. Trust the well-run online test over the offline metric.
+
+## 92.11 Practical exercises
+
+1. Reproduce the estimation of Q30 with your own assumptions for a news app (more events, shorter sessions). Find the streaming lag at which fewer than 5% of next requests miss the last event.
+2. For Q31, compute the replica and shard counts for HNSW on INT8, IVF-PQ with 32-byte codes, and DiskANN for 5 billion 512-dimension vectors at 30,000 queries/s. Assume the same per-query CPU times and explain which you choose.
+3. Using the formula of §57.14.2, write a short Python function that returns users per arm for a given baseline rate, relative lift, significance and power; check it against Q37's 2.98 million.
+4. Simulate the drift-alert problem of Q38: draw 2,000 models × 100 features from unchanged distributions for 30 days, test hourly with a two-sample KS test, and count alerts with a fixed threshold versus an effect-size threshold.
+5. Recompute Q41's busy GPUs if the RAG class drops to 4,000 input tokens and the chat class doubles its traffic. Which pool grows, and does disaggregation still pay?
+6. For Q50, plot overall precision and benign blocks per day against prevalence from 0.01% to 1% for the single classifier and the cascade.
+7. Implement Thompson sampling for ten new restaurants with true order rates between 2% and 5% and a Beta(3, 97) prior; measure impressions until each is correctly ranked against the 3% baseline.
+
+## 92.12 Design challenges
+
+1. **A unified ML platform.** Combine Q27–Q29 and Q37–Q38 into one platform design for 500 models: which components share storage, which share control planes, and which metrics prove the platform is worth its cost to model teams?
+2. **Personalization under privacy constraints.** Redesign Q30 so that session features never leave the device, using on-device ranking and federated learning (Q39). What do you lose in freshness, quality and evaluability?
+3. **One GPU fleet for everything.** A company has 8,000 GPUs serving LLM inference (Q41), fine-tuning (Q43), diffusion (Q51) and training (Q28). Design the scheduler policy (Q48) and chargeback so each workload meets its SLO and the fleet stays above 60% busy.
+4. **Safety for agents that act.** Extend Q50 to the agent platform of Q45: which controls move from text classification to capability checks, approvals and sandboxing, and how do you evaluate them before launch?
+5. **Marketplace experimentation.** Combine Q37, Q40 and Q52: design an experimentation layer for a two-sided marketplace that supports switchbacks, cluster randomization and bandit-driven exploration, and explain how results from each are compared.
+
+## 92.13 References
+
+1. Anthropic. *How We Built Our Multi-Agent Research System*. Anthropic Engineering, June 2025. https://www.anthropic.com/engineering/multi-agent-research-system (Cited as Anthropic 2025.)
+2. Bonawitz, K., Ivanov, V., Kreuter, B., et al. *Practical Secure Aggregation for Privacy-Preserving Machine Learning*. ACM CCS, 2017.
+3. Bonawitz, K., Eichner, H., Grieskamp, W., et al. *Towards Federated Learning at Scale: System Design*. MLSys, 2019.
+4. Chapelle, O., Li, L. *An Empirical Evaluation of Thompson Sampling*. NeurIPS, 2011.
+5. Chen, L., Ye, Z., Wu, Y., Zhuo, D., Ceze, L., Krishnamurthy, A. *Punica: Multi-Tenant LoRA Serving*. MLSys, 2024.
+6. Covington, P., Adams, J., Sargin, E. *Deep Neural Networks for YouTube Recommendations*. ACM RecSys, 2016.
+7. Deng, A., Xu, Y., Kohavi, R., Walker, T. *Improving the Sensitivity of Online Controlled Experiments by Utilizing Pre-Experiment Data*. ACM WSDM, 2013.
+8. Dubey, A., et al. (Llama Team, Meta). *The Llama 3 Herd of Models*. arXiv:2407.21783, 2024.
+9. Ghodsi, A., Zaharia, M., Hindman, B., Konwinski, A., Shenker, S., Stoica, I. *Dominant Resource Fairness: Fair Allocation of Multiple Resource Types*. USENIX NSDI, 2011.
+10. Graves, A. *Sequence Transduction with Recurrent Neural Networks*. ICML Workshop on Representation Learning, 2012. arXiv:1211.3711.
+11. Greshake, K., Abdelnabi, S., Mishra, S., Endres, C., Holz, T., Fritz, M. *Not What You've Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection*. ACM AISec Workshop, 2023.
+12. Gu, J., Chowdhury, M., Shin, K. G., Zhu, Y., Jeon, M., Qian, J., Liu, H., Guo, C. *Tiresias: A GPU Cluster Manager for Distributed Deep Learning*. USENIX NSDI, 2019.
+13. Hard, A., Rao, K., Mathews, R., et al. *Federated Learning for Mobile Keyboard Prediction*. arXiv:1811.03604, 2018.
+14. He, X., Pan, J., Jin, O., et al. *Practical Lessons from Predicting Clicks on Ads at Facebook*. ADKDD Workshop, 2014.
+15. He, Y., Sainath, T. N., Prabhavalkar, R., et al. *Streaming End-to-end Speech Recognition for Mobile Devices*. IEEE ICASSP, 2019.
+16. Ho, J., Salimans, T. *Classifier-Free Diffusion Guidance*. arXiv:2207.12598, 2022 (NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications).
+17. Hohnhold, H., O'Brien, D., Tang, D. *Focusing on the Long-term: It's Good for Users and Business*. KDD, 2015.
+18. Huyen, C. *Designing Machine Learning Systems*. O'Reilly, 2022.
+19. Inan, H., Upasani, K., Chi, J., et al. *Llama Guard: LLM-based Input-Output Safeguard for Human-AI Conversations*. arXiv:2312.06674, 2023.
+20. Jeon, M., Venkataraman, S., Phanishayee, A., Qian, J., Xiao, W., Yang, F. *Analysis of Large-Scale Multi-Tenant GPU Clusters for DNN Training Workloads*. USENIX ATC, 2019.
+21. Johnson, J., Douze, M., Jégou, H. *Billion-Scale Similarity Search with GPUs*. IEEE Transactions on Big Data 7(3), 2021. arXiv:1702.08734.
+22. Johnson, M., et al. *Google's Multilingual Neural Machine Translation System: Enabling Zero-Shot Translation*. TACL 5, 2017.
+23. Kaufman, S., Rosset, S., Perlich, C. *Leakage in Data Mining: Formulation, Detection, and Avoidance*. KDD, 2011.
+24. Kohavi, R., Tang, D., Xu, Y. *Trustworthy Online Controlled Experiments: A Practical Guide to A/B Testing*. Cambridge University Press, 2020.
+25. Kuhn, H. W. *The Hungarian Method for the Assignment Problem*. Naval Research Logistics Quarterly 2(1–2), 1955.
+26. Li, L., Chu, W., Langford, J., Schapire, R. E. *A Contextual-Bandit Approach to Personalized News Article Recommendation*. WWW, 2010.
+27. Li, L., Chu, W., Langford, J., Wang, X. *Unbiased Offline Evaluation of Contextual-bandit-based News Article Recommendation Algorithms*. WSDM, 2011.
+28. McMahan, H. B., Moore, E., Ramage, D., Hampson, S., Agüera y Arcas, B. *Communication-Efficient Learning of Deep Networks from Decentralized Data*. AISTATS, 2017.
+29. McMahan, H. B., Ramage, D., Talwar, K., Zhang, L. *Learning Differentially Private Recurrent Language Models*. ICLR, 2018.
+30. Model Context Protocol. *Specification*. https://modelcontextprotocol.io/specification (Cited as MCP 2025.)
+31. Narayanan, D., Santhanam, K., Kazhamiaka, F., Phanishayee, A., Zaharia, M. *Heterogeneity-Aware Cluster Scheduling Policies for Deep Learning Workloads*. USENIX OSDI, 2020.
+32. Paleyes, A., Urma, R.-G., Lawrence, N. D. *Challenges in Deploying Machine Learning: A Survey of Case Studies*. ACM Computing Surveys 55(6), 2022.
+33. Patel, L., Kraft, P., Guestrin, C., Zaharia, M. *ACORN: Performant and Predicate-Agnostic Search Over Vector Embeddings and Structured Data*. SIGMOD, 2024.
+34. Peng, S., Kalliamvakou, E., Cihon, P., Demirer, M. *The Impact of AI on Developer Productivity: Evidence from GitHub Copilot*. arXiv:2302.06590, 2023.
+35. Rombach, R., Blattmann, A., Lorenz, D., Esser, P., Ommer, B. *High-Resolution Image Synthesis with Latent Diffusion Models*. CVPR, 2022.
+36. Salimans, T., Ho, J. *Progressive Distillation for Fast Sampling of Diffusion Models*. ICLR, 2022.
+37. Sculley, D., Holt, G., Golovin, D., et al. *Hidden Technical Debt in Machine Learning Systems*. NeurIPS, 2015.
+38. Sener, O., Savarese, S. *Active Learning for Convolutional Neural Networks: A Core-Set Approach*. ICLR, 2018.
+39. Settles, B. *Active Learning Literature Survey*. Computer Sciences Technical Report 1648, University of Wisconsin–Madison, 2009.
+40. Sheng, Y., Cao, S., Li, D., et al. *S-LoRA: Serving Thousands of Concurrent LoRA Adapters*. MLSys, 2024.
+41. Tang, D., Agarwal, A., O'Brien, D., Meyer, M. *Overlapping Experiment Infrastructure: More, Better, Faster Experimentation*. KDD, 2010.
+42. Xu, Z., Li, Z., Guan, Q., Zhang, D., Li, Q., Nan, J., Liu, C., Bian, W., Ye, J. *Large-Scale Order Dispatch in On-Demand Ride-Hailing Platforms: A Learning and Planning Approach*. KDD, 2018.
+43. Yi, X., Yang, J., Hong, L., Cheng, D. Z., Heldt, L., Kumthekar, A., Zhao, Z., Wei, L., Chi, E. *Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations*. RecSys, 2019.
+44. Zheng, L., et al. *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*. NeurIPS Datasets and Benchmarks Track, 2023.
+45. Zhong, Y., Liu, S., Chen, J., et al. *DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving*. USENIX OSDI, 2024.
+
+## 92.14 Open verification items
+
+- References: entries are reused from earlier chapters' verified lists except Deng et al. 2013 (CUPED), Rombach et al. 2022, Ho and Salimans 2022 and Salimans and Ho 2022, which are new to the book; confirm venues and author lists. The integration lead should merge part A's citations into this list.
+- Q51: 1.2 and 0.2 GPU-seconds per 1024 × 1024 image, 1.5 MB per image, and the 5–10× step reduction from distillation are illustrative assumptions; replace with measurements.
+- Q36: sensor bitrates, the \$3.00 per keyframe labeling price and 1 GPU-second per auto-labeled frame are illustrative.
+- Q30, Q31, Q38, Q39, Q45, Q50, Q52: all traffic, rate, price and error-rate figures are teaching assumptions; the 20 MFLOP-per-candidate ranker and 4 ms ANN query CPU are to be measured.
+- Reused case numbers (§84.6–§84.7, §85.4–§85.7, §86.4–§86.8, Ch 80) inherit those chapters' open items.
+- Section references to §89.13–§89.17 assume Chapter 89's current numbering.
