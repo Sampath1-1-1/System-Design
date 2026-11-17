@@ -8,99 +8,99 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · 🔁 needs revision
 
 | Ch | Title | Lvl | Research | Draft | Diagrams | Review | Final | Words | Figs | Tables | QA flags |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | What Is System Design? | 1 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,697 | 9 | 19 | 0 |
-| 2 | How to Think Like a System Designer | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,230 | 8 | 20 | 0 |
-| 3 | The System Design Learning Method | 1 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,258 | 7 | 12 | 0 |
-| 4 | Quantitative Foundations for System Design | 1-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 20,895 | 9 | 10 | 0 |
-| 5 | Computer Architecture | 1 | ✅ | ✅ | ✅ | ✅ | ⬜ | 17,236 | 10 | 13 | 0 |
-| 6 | Operating Systems | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 16,805 | 12 | 8 | 0 |
-| 7 | Networking Fundamentals | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 23,114 | 13 | 15 | 0 |
-| 8 | Web Application Fundamentals | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,798 | 12 | 21 | 0 |
-| 9 | Real-Time Communication | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 16,868 | 10 | 14 | 0 |
-| 10 | Security Fundamentals for System Designers | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 17,623 | 10 | 13 | 0 |
-| 11 | Relational Databases | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 16,095 | 12 | 13 | 0 |
-| 12 | NoSQL Databases | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,896 | 11 | 15 | 0 |
-| 13 | Storage Engine Internals | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,802 | 11 | 8 | 0 |
-| 14 | Database Scaling: Replication, Partitioning and Sharding | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,793 | 13 | 15 | 0 |
-| 15 | Object, Block and File Storage | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,005 | 10 | 4 | 0 |
-| 16 | Search Systems | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,448 | 13 | 14 | 0 |
-| 17 | Data Structures and Algorithms for Scale | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 17,639 | 16 | 10 | 0 |
-| 18 | Scalability | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 11,882 | 13 | 11 | 0 |
-| 19 | Load Balancing | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,775 | 11 | 7 | 0 |
-| 20 | Caching | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,891 | 16 | 8 | 0 |
-| 21 | Content Delivery Networks | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 11,726 | 10 | 7 | 0 |
-| 22 | API and Traffic Management | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,846 | 15 | 7 | 0 |
-| 23 | Performance Engineering | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,038 | 12 | 8 | 0 |
-| 24 | Distributed Systems Fundamentals | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,954 | 15 | 11 | 0 |
-| 25 | Consistency and Availability | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,891 | 13 | 7 | 0 |
-| 26 | Consensus and Coordination | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,994 | 15 | 5 | 0 |
-| 27 | Replication and Fault Tolerance | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,941 | 13 | 5 | 0 |
-| 28 | Distributed Transactions | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,954 | 15 | 7 | 0 |
-| 29 | Distributed Data Processing | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,977 | 15 | 3 | 0 |
-| 30 | Messaging Fundamentals | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,820 | 13 | 7 | 0 |
-| 31 | Kafka Deep Dive | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,009 | 16 | 8 | 0 |
-| 32 | Event-Driven Architecture Patterns | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,934 | 15 | 13 | 0 |
-| 33 | Architecture Patterns | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,902 | 14 | 8 | 0 |
-| 34 | Microservices | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,397 | 14 | 8 | 0 |
-| 35 | Object-Oriented Design | 1-2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 11,640 | 11 | 13 | 0 |
-| 36 | SOLID Principles | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 11,710 | 17 | 10 | 0 |
-| 37 | Design Patterns | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,753 | 21 | 4 | 0 |
-| 38 | UML and Low-Level Design | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,982 | 23 | 10 | 0 |
-| 39 | Reliability and Resilience | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,885 | 13 | 10 | 0 |
-| 40 | Observability | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,045 | 15 | 10 | 0 |
-| 41 | Cloud Computing | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,742 | 10 | 14 | 0 |
-| 42 | Containers and Kubernetes | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,874 | 15 | 12 | 0 |
-| 43 | Deployment and Infrastructure | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,774 | 13 | 2 | 0 |
-| 44 | Multi-Region and Global Systems | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,874 | 15 | 8 | 0 |
-| 45 | Advanced Consistency and Byzantine Fault Tolerance | 5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,878 | 16 | 12 | 0 |
-| 46 | Distributed Scheduling and Cluster Management | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,938 | 14 | 10 | 0 |
-| 47 | Multi-Tenant Architecture and Isolation | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,875 | 13 | 10 | 0 |
-| 48 | Edge Computing and Serverless at Scale | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,693 | 14 | 8 | 0 |
-| 49 | Large-Scale Data Infrastructure and HPC | 4-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,935 | 13 | 4 | 0 |
-| 50 | Security Architecture and Privacy Engineering | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,926 | 14 | 7 | 0 |
-| 51 | Cost-Aware and Sustainable Architecture | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,898 | 11 | 12 | 0 |
-| 52 | Case Studies I: Foundational Services | 2-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 35,503 | 24 | 33 | 0 |
-| 53 | Case Studies II: Social and Communication | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 25,963 | 20 | 27 | 0 |
-| 54 | Case Studies III: Media and Files | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 25,949 | 21 | 16 | 0 |
-| 55 | Case Studies IV: Location, Commerce and Payments | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 29,712 | 25 | 21 | 0 |
-| 56 | Case Studies V: Data Platforms | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 22,850 | 15 | 26 | 0 |
-| 57 | Machine Learning Fundamentals for System Designers | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,993 | 12 | 9 | 0 |
-| 58 | Deep Learning Essentials for System Designers | 2-3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,984 | 12 | 6 | 0 |
-| 59 | The ML Lifecycle | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,074 | 14 | 15 | 0 |
-| 60 | ML System Architecture | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,008 | 12 | 13 | 0 |
-| 61 | Data Engineering for ML | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,927 | 15 | 9 | 0 |
-| 62 | Feature Engineering and Feature Stores | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,862 | 13 | 11 | 0 |
-| 63 | Data Labeling, Quality and Data-Centric AI | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 12,830 | 13 | 12 | 0 |
-| 64 | GPU Architecture and Performance | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,964 | 14 | 10 | 0 |
-| 65 | Distributed ML Training | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,968 | 17 | 5 | 0 |
-| 66 | Model Serving | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,022 | 13 | 9 | 0 |
-| 67 | ML Model Optimization | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,008 | 14 | 7 | 0 |
-| 68 | Recommendation and Ranking Systems Architecture | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,827 | 14 | 8 | 0 |
-| 69 | MLOps and ML Platforms | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,964 | 15 | 10 | 0 |
-| 70 | ML Monitoring | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,994 | 13 | 9 | 0 |
-| 71 | Responsible ML: Fairness, Privacy and Explainability | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,933 | 14 | 6 | 0 |
-| 72 | LLM Fundamentals | 3 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,942 | 15 | 8 | 0 |
-| 73 | LLM Inference Infrastructure | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,936 | 18 | 9 | 0 |
-| 74 | Embeddings, Vector Search and Vector Databases | 3-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,936 | 14 | 5 | 0 |
-| 75 | RAG Architecture | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,982 | 17 | 7 | 0 |
-| 76 | LLM Adaptation: Prompting, Fine-Tuning and Alignment Pipelines | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,971 | 15 | 7 | 0 |
-| 77 | AI Agents and Agentic Systems | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,924 | 19 | 8 | 0 |
-| 78 | LLM Evaluation and Reliability | 4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,889 | 16 | 8 | 0 |
-| 79 | Production AI Infrastructure | 4-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,995 | 14 | 7 | 0 |
-| 80 | Large-Scale AI Infrastructure | 5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 14,945 | 14 | 9 | 0 |
-| 81 | Case Studies VI: Recommendation, Search and Ads | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 30,837 | 21 | 39 | 0 |
-| 82 | Case Studies VII: Risk and Trust | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,068 | 12 | 19 | 0 |
-| 83 | Case Studies VIII: Marketplace Forecasting and Optimization | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,665 | 13 | 20 | 0 |
-| 84 | Case Studies IX: Perception and Language | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,917 | 15 | 18 | 0 |
-| 85 | Case Studies X: ML Platforms | 4-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 19,685 | 14 | 18 | 0 |
-| 86 | Case Studies XI: LLM and Agent Systems | 4-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 23,272 | 18 | 19 | 0 |
-| 87 | Interview Fundamentals | 2 | ✅ | ✅ | ✅ | ✅ | ⬜ | 9,639 | 11 | 13 | 0 |
-| 88 | The Interview Readiness Framework | 2-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 11,722 | 12 | 15 | 0 |
-| 89 | Capacity Estimation Handbook | 2-4 | ✅ | ✅ | ✅ | ✅ | ⬜ | 15,923 | 14 | 22 | 0 |
-| 90 | Company-Level Interview Preparation | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 13,972 | 7 | 4 | 0 |
-| 91 | Interview Practice Library I: Traditional System Design | 2-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 54,150 | 57 | 11 | 0 |
-| 92 | Interview Practice Library II: ML and AI System Design | 3-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 53,668 | 53 | 12 | 0 |
-| 93 | Project Handbook | 1-5 | ✅ | ✅ | ✅ | ✅ | ⬜ | 47,100 | 20 | 42 | 0 |
+| 1 | What Is System Design? | 1 | ✅ | ✅ | ✅ | ✅ | ✅ | 15,697 | 9 | 19 | 0 |
+| 2 | How to Think Like a System Designer | 1-2 | ✅ | ✅ | ✅ | ✅ | ✅ | 15,230 | 8 | 20 | 0 |
+| 3 | The System Design Learning Method | 1 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,258 | 7 | 12 | 0 |
+| 4 | Quantitative Foundations for System Design | 1-3 | ✅ | ✅ | ✅ | ✅ | ✅ | 20,895 | 9 | 10 | 0 |
+| 5 | Computer Architecture | 1 | ✅ | ✅ | ✅ | ✅ | ✅ | 17,236 | 10 | 13 | 0 |
+| 6 | Operating Systems | 1-2 | ✅ | ✅ | ✅ | ✅ | ✅ | 16,805 | 12 | 8 | 0 |
+| 7 | Networking Fundamentals | 1-2 | ✅ | ✅ | ✅ | ✅ | ✅ | 23,114 | 13 | 15 | 0 |
+| 8 | Web Application Fundamentals | 1-2 | ✅ | ✅ | ✅ | ✅ | ✅ | 19,798 | 12 | 21 | 0 |
+| 9 | Real-Time Communication | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 16,868 | 10 | 14 | 0 |
+| 10 | Security Fundamentals for System Designers | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 17,623 | 10 | 13 | 0 |
+| 11 | Relational Databases | 1-2 | ✅ | ✅ | ✅ | ✅ | ✅ | 16,095 | 12 | 13 | 0 |
+| 12 | NoSQL Databases | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,896 | 11 | 15 | 0 |
+| 13 | Storage Engine Internals | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,802 | 11 | 8 | 0 |
+| 14 | Database Scaling: Replication, Partitioning and Sharding | 2-3 | ✅ | ✅ | ✅ | ✅ | ✅ | 15,793 | 13 | 15 | 0 |
+| 15 | Object, Block and File Storage | 2-3 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,005 | 10 | 4 | 0 |
+| 16 | Search Systems | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 15,448 | 13 | 14 | 0 |
+| 17 | Data Structures and Algorithms for Scale | 2-3 | ✅ | ✅ | ✅ | ✅ | ✅ | 17,639 | 16 | 10 | 0 |
+| 18 | Scalability | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 11,882 | 13 | 11 | 0 |
+| 19 | Load Balancing | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,775 | 11 | 7 | 0 |
+| 20 | Caching | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,891 | 16 | 8 | 0 |
+| 21 | Content Delivery Networks | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 11,726 | 10 | 7 | 0 |
+| 22 | API and Traffic Management | 2-3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,846 | 15 | 7 | 0 |
+| 23 | Performance Engineering | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,038 | 12 | 8 | 0 |
+| 24 | Distributed Systems Fundamentals | 2-3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,954 | 15 | 11 | 0 |
+| 25 | Consistency and Availability | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,891 | 13 | 7 | 0 |
+| 26 | Consensus and Coordination | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,994 | 15 | 5 | 0 |
+| 27 | Replication and Fault Tolerance | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,941 | 13 | 5 | 0 |
+| 28 | Distributed Transactions | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,954 | 15 | 7 | 0 |
+| 29 | Distributed Data Processing | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,977 | 15 | 3 | 0 |
+| 30 | Messaging Fundamentals | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,820 | 13 | 7 | 0 |
+| 31 | Kafka Deep Dive | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,009 | 16 | 8 | 0 |
+| 32 | Event-Driven Architecture Patterns | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,934 | 15 | 13 | 0 |
+| 33 | Architecture Patterns | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,902 | 14 | 8 | 0 |
+| 34 | Microservices | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,397 | 14 | 8 | 0 |
+| 35 | Object-Oriented Design | 1-2 | ✅ | ✅ | ✅ | ✅ | ✅ | 11,640 | 11 | 13 | 0 |
+| 36 | SOLID Principles | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 11,710 | 17 | 10 | 0 |
+| 37 | Design Patterns | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,753 | 21 | 4 | 0 |
+| 38 | UML and Low-Level Design | 2-3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,982 | 23 | 10 | 0 |
+| 39 | Reliability and Resilience | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,885 | 13 | 10 | 0 |
+| 40 | Observability | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,045 | 15 | 10 | 0 |
+| 41 | Cloud Computing | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,742 | 10 | 14 | 0 |
+| 42 | Containers and Kubernetes | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,874 | 15 | 12 | 0 |
+| 43 | Deployment and Infrastructure | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,774 | 13 | 2 | 0 |
+| 44 | Multi-Region and Global Systems | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,874 | 15 | 8 | 0 |
+| 45 | Advanced Consistency and Byzantine Fault Tolerance | 5 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,878 | 16 | 12 | 0 |
+| 46 | Distributed Scheduling and Cluster Management | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,938 | 14 | 10 | 0 |
+| 47 | Multi-Tenant Architecture and Isolation | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,875 | 13 | 10 | 0 |
+| 48 | Edge Computing and Serverless at Scale | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,693 | 14 | 8 | 0 |
+| 49 | Large-Scale Data Infrastructure and HPC | 4-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,935 | 13 | 4 | 0 |
+| 50 | Security Architecture and Privacy Engineering | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,926 | 14 | 7 | 0 |
+| 51 | Cost-Aware and Sustainable Architecture | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,898 | 11 | 12 | 0 |
+| 52 | Case Studies I: Foundational Services | 2-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 35,503 | 24 | 33 | 0 |
+| 53 | Case Studies II: Social and Communication | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 25,963 | 20 | 27 | 0 |
+| 54 | Case Studies III: Media and Files | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 25,949 | 21 | 16 | 0 |
+| 55 | Case Studies IV: Location, Commerce and Payments | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 29,712 | 25 | 21 | 0 |
+| 56 | Case Studies V: Data Platforms | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 22,850 | 15 | 26 | 0 |
+| 57 | Machine Learning Fundamentals for System Designers | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,993 | 12 | 9 | 0 |
+| 58 | Deep Learning Essentials for System Designers | 2-3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,984 | 12 | 6 | 0 |
+| 59 | The ML Lifecycle | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,074 | 14 | 15 | 0 |
+| 60 | ML System Architecture | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,008 | 12 | 13 | 0 |
+| 61 | Data Engineering for ML | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,927 | 15 | 9 | 0 |
+| 62 | Feature Engineering and Feature Stores | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,862 | 13 | 11 | 0 |
+| 63 | Data Labeling, Quality and Data-Centric AI | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 12,830 | 13 | 12 | 0 |
+| 64 | GPU Architecture and Performance | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,964 | 14 | 10 | 0 |
+| 65 | Distributed ML Training | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,968 | 17 | 5 | 0 |
+| 66 | Model Serving | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,022 | 13 | 9 | 0 |
+| 67 | ML Model Optimization | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,008 | 14 | 7 | 0 |
+| 68 | Recommendation and Ranking Systems Architecture | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,827 | 14 | 8 | 0 |
+| 69 | MLOps and ML Platforms | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,964 | 15 | 10 | 0 |
+| 70 | ML Monitoring | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,994 | 13 | 9 | 0 |
+| 71 | Responsible ML: Fairness, Privacy and Explainability | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,933 | 14 | 6 | 0 |
+| 72 | LLM Fundamentals | 3 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,942 | 15 | 8 | 0 |
+| 73 | LLM Inference Infrastructure | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 15,936 | 18 | 9 | 0 |
+| 74 | Embeddings, Vector Search and Vector Databases | 3-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,936 | 14 | 5 | 0 |
+| 75 | RAG Architecture | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,982 | 17 | 7 | 0 |
+| 76 | LLM Adaptation: Prompting, Fine-Tuning and Alignment Pipelines | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,971 | 15 | 7 | 0 |
+| 77 | AI Agents and Agentic Systems | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,924 | 19 | 8 | 0 |
+| 78 | LLM Evaluation and Reliability | 4 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,889 | 16 | 8 | 0 |
+| 79 | Production AI Infrastructure | 4-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,995 | 14 | 7 | 0 |
+| 80 | Large-Scale AI Infrastructure | 5 | ✅ | ✅ | ✅ | ✅ | ✅ | 14,945 | 14 | 9 | 0 |
+| 81 | Case Studies VI: Recommendation, Search and Ads | 3-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 30,837 | 21 | 39 | 0 |
+| 82 | Case Studies VII: Risk and Trust | 3-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 19,068 | 12 | 19 | 0 |
+| 83 | Case Studies VIII: Marketplace Forecasting and Optimization | 3-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 15,665 | 13 | 20 | 0 |
+| 84 | Case Studies IX: Perception and Language | 3-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 19,917 | 15 | 18 | 0 |
+| 85 | Case Studies X: ML Platforms | 4-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 19,685 | 14 | 18 | 0 |
+| 86 | Case Studies XI: LLM and Agent Systems | 4-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 23,272 | 18 | 19 | 0 |
+| 87 | Interview Fundamentals | 2 | ✅ | ✅ | ✅ | ✅ | ✅ | 9,639 | 11 | 13 | 0 |
+| 88 | The Interview Readiness Framework | 2-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 11,722 | 12 | 15 | 0 |
+| 89 | Capacity Estimation Handbook | 2-4 | ✅ | ✅ | ✅ | ✅ | ✅ | 15,923 | 14 | 22 | 0 |
+| 90 | Company-Level Interview Preparation | 3-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 13,972 | 7 | 4 | 0 |
+| 91 | Interview Practice Library I: Traditional System Design | 2-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 54,150 | 57 | 11 | 0 |
+| 92 | Interview Practice Library II: ML and AI System Design | 3-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 53,668 | 53 | 12 | 0 |
+| 93 | Project Handbook | 1-5 | ✅ | ✅ | ✅ | ✅ | ✅ | 47,100 | 20 | 42 | 0 |
 
 ## Appendices
 
