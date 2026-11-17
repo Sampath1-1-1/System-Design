@@ -71,7 +71,7 @@ $$L \;\ge\; k \cdot h + d_{\max}$$
 
 #### Architecture
 
-**Figure 93.101 — Distributed job scheduler with leases and fencing tokens.**
+**Figure 93.11 — Distributed job scheduler with leases and fencing tokens.**
 
 ```mermaid
 flowchart LR
@@ -217,7 +217,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.101 — Distributed job scheduler: failure injections.**
+**Table 93.22 — Distributed job scheduler: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -237,7 +237,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.102 — Distributed job scheduler: self-assessment rubric.**
+**Table 93.23 — Distributed job scheduler: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -277,7 +277,7 @@ After this project you should be able to:
 1. `POST /orders` (Orders service) validates the request, stores the order as `PENDING` and returns `202 Accepted` with an `order_id`; the client polls `GET /orders/{id}` or subscribes to a status stream.
 2. Inventory consumes `OrderPlaced`, reserves stock if available and emits `StockReserved` or `StockRejected`.
 3. Payments consumes `StockReserved`, charges a fake card provider and emits `PaymentSucceeded` or `PaymentFailed`.
-4. Orders moves the order to `CONFIRMED`, `REJECTED` or `CANCELLED`; on `PaymentFailed` it emits `ReleaseStock`, which Inventory applies as a compensation.
+4. Orders moves the order to `CONFIRMED`, `REJECTED` or `CANCELED`; on `PaymentFailed` it emits `ReleaseStock`, which Inventory applies as a compensation.
 5. Every event carries `event_id`, `correlation_id` (the order ID), `causation_id` (the event that caused it), `type`, `schema_version` and `occurred_at`.
 6. A `GET /orders/{id}/timeline` endpoint stitches the events for one order from all three services.
 
@@ -291,7 +291,7 @@ After this project you should be able to:
 
 #### Architecture
 
-**Figure 93.102 — Three services, three databases, one broker: outbox, inbox and saga.**
+**Figure 93.12 — Three services, three databases, one broker: outbox, inbox and saga.**
 
 ```mermaid
 flowchart LR
@@ -377,7 +377,7 @@ def payment(conn, oid, b):
     emit(conn, "PaymentSucceeded", oid, b)
 
 def order_events(conn, oid, b, etype):
-    new = {"PaymentSucceeded": "CONFIRMED", "PaymentFailed": "CANCELLED", "StockRejected": "REJECTED"}[etype]
+    new = {"PaymentSucceeded": "CONFIRMED", "PaymentFailed": "CANCELED", "StockRejected": "REJECTED"}[etype]
     conn.execute("UPDATE orders SET state=? WHERE id=?", (new, oid))
     if etype == "PaymentFailed":                            # saga compensation
         emit(conn, "ReleaseStock", oid, dict(b, release=True))
@@ -418,7 +418,7 @@ Output:
 
 ```text
 messages published: 331 | applied: 304 | duplicates skipped: 27
-order states: {'CANCELLED': 19, 'CONFIRMED': 66, 'REJECTED': 15}
+order states: {'CANCELED': 19, 'CONFIRMED': 66, 'REJECTED': 15}
 units reserved: 95 | units in confirmed orders: 95
 charges: 66 | confirmed orders: 66
 ```
@@ -428,20 +428,20 @@ What to notice:
 - `emit` never publishes; it inserts an outbox row inside the caller's transaction. The event exists if and only if the business change committed, which is the whole point of the outbox (§32.5.2).
 - The relay crashed often enough to publish 27 duplicates (331 published versus 304 applied). Every one was skipped by the inbox check in `handle`, because the inbox insert and the business change commit atomically.
 - `msg_id` is derived from `type:key`, which is unique here because each order produces at most one event of each type. In your version, generate a UUID when the outbox row is written and keep it through retries; never derive it at publish time, or a re-publish gets a new ID and defeats deduplication.
-- The 19 cancelled orders each triggered `ReleaseStock`; the invariant `reserved = confirmed units` (95 = 95) shows every compensation landed exactly once. The 15 rejected orders never reserved stock, so they needed no compensation.
+- The 19 canceled orders each triggered `ReleaseStock`; the invariant `reserved = confirmed units` (95 = 95) shows every compensation landed exactly once. The 15 rejected orders never reserved stock, so they needed no compensation.
 - Ordering is not guaranteed in general: if `PaymentFailed` could arrive at Inventory before `StockReserved` was applied, the release would run first. Partitioning by `order_id` and processing each partition serially (§30.9) is what makes the simple handlers safe.
 
 #### Test plan and load-test targets
 
 - **Contract tests:** each event type has a JSON Schema with `schema_version`; producers validate before writing the outbox, consumers reject unknown major versions to a dead-letter queue (§30.11).
-- **Crash matrix:** for each of the six arrows in Figure 93.102, kill the producing or consuming process at that point 20 times; run the invariant queries after each run.
+- **Crash matrix:** for each of the six arrows in Figure 93.12, kill the producing or consuming process at that point 20 times; run the invariant queries after each run.
 - **Duplicate and reorder tests:** a broker wrapper that redelivers 10% of messages and delays 5% by up to 2 s.
 - **Load test:** open-loop 200 orders/s for 10 minutes. Targets: p99 end-to-end below 2 s, consumer lag below 1,000 events at all times, zero invariant violations.
 - **Back-pressure test:** stop Payments for 2 minutes at 200 orders/s; when it restarts, lag must drain within 5 minutes and no order may be lost or double-charged.
 
 #### Failure-injection exercises
 
-**Table 93.103 — Event-driven microservices: failure injections.**
+**Table 93.24 — Event-driven microservices: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -461,7 +461,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.104 — Event-driven microservices: self-assessment rubric.**
+**Table 93.25 — Event-driven microservices: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -540,7 +540,7 @@ $$N_{\text{open}} \;\approx\; K \cdot \left\lceil \frac{W + D + A}{S} \right\rce
 
 #### Architecture
 
-**Figure 93.103 — Event-time analytics pipeline with watermarks, late-data side output and checkpoints.**
+**Figure 93.13 — Event-time analytics pipeline with watermarks, late-data side output and checkpoints.**
 
 ```mermaid
 flowchart LR
@@ -664,7 +664,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.105 — Real-time analytics pipeline: failure injections.**
+**Table 93.26 — Real-time analytics pipeline: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -684,7 +684,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.106 — Real-time analytics pipeline: self-assessment rubric.**
+**Table 93.27 — Real-time analytics pipeline: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -738,7 +738,7 @@ After this project you should be able to:
 
 #### Architecture
 
-**Figure 93.104 — Two-stage recommendation funnel with offline training and online serving.**
+**Figure 93.14 — Two-stage recommendation funnel with offline training and online serving.**
 
 ```mermaid
 flowchart LR
@@ -854,7 +854,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.107 — Recommendation engine: failure injections.**
+**Table 93.28 — Recommendation engine: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -874,7 +874,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.108 — Recommendation engine: self-assessment rubric.**
+**Table 93.29 — Recommendation engine: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -939,7 +939,7 @@ After this project you should be able to:
 
 #### Architecture
 
-**Figure 93.105 — Inference service: router, per-replica dynamic batchers, registry and control loop.**
+**Figure 93.15 — Inference service: router, per-replica dynamic batchers, registry and control loop.**
 
 ```mermaid
 flowchart LR
@@ -1041,7 +1041,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.109 — Distributed ML inference service: failure injections.**
+**Table 93.30 — Distributed ML inference service: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -1061,7 +1061,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.110 — Distributed ML inference service: self-assessment rubric.**
+**Table 93.31 — Distributed ML inference service: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -1131,7 +1131,7 @@ After this project you should be able to:
 
 #### Architecture
 
-**Figure 93.106 — Training platform: job API, gang scheduler, data-parallel workers and checkpoint store.**
+**Figure 93.16 — Training platform: job API, gang scheduler, data-parallel workers and checkpoint store.**
 
 ```mermaid
 flowchart LR
@@ -1271,7 +1271,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.111 — Distributed training platform: failure injections.**
+**Table 93.32 — Distributed training platform: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -1291,7 +1291,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.112 — Distributed training platform: self-assessment rubric.**
+**Table 93.33 — Distributed training platform: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -1345,7 +1345,7 @@ After this project you should be able to:
 
 #### Architecture
 
-**Figure 93.107 — Multi-tenant feature store: registry, offline and online stores, materialization and serving.**
+**Figure 93.17 — Multi-tenant feature store: registry, offline and online stores, materialization and serving.**
 
 ```mermaid
 flowchart LR
@@ -1484,7 +1484,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.113 — Multi-tenant feature store: failure injections.**
+**Table 93.34 — Multi-tenant feature store: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -1504,7 +1504,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.114 — Multi-tenant feature store: self-assessment rubric.**
+**Table 93.35 — Multi-tenant feature store: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -1560,7 +1560,7 @@ After this project you should be able to:
 
 #### Architecture
 
-**Figure 93.108 — Production RAG: ingestion with ACL propagation, permission-filtered hybrid retrieval and grounded generation.**
+**Figure 93.18 — Production RAG: ingestion with ACL propagation, permission-filtered hybrid retrieval and grounded generation.**
 
 ```mermaid
 flowchart LR
@@ -1697,7 +1697,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.115 — Production RAG system: failure injections.**
+**Table 93.36 — Production RAG system: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -1717,7 +1717,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.116 — Production RAG system: self-assessment rubric.**
+**Table 93.37 — Production RAG system: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -1782,7 +1782,7 @@ After this project you should be able to:
 
 #### Architecture
 
-**Figure 93.109 — LLM inference platform: gateway, router, continuous-batching replicas and control loop.**
+**Figure 93.19 — LLM inference platform: gateway, router, continuous-batching replicas and control loop.**
 
 ```mermaid
 flowchart LR
@@ -1928,7 +1928,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.117 — Scalable LLM inference platform: failure injections.**
+**Table 93.38 — Scalable LLM inference platform: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -1948,7 +1948,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.118 — Scalable LLM inference platform: self-assessment rubric.**
+**Table 93.39 — Scalable LLM inference platform: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -2014,7 +2014,7 @@ After this project you should be able to:
 
 #### Architecture
 
-**Figure 93.110 — Multi-agent orchestration platform: durable workflows, agents, tool gateway and policy.**
+**Figure 93.20 — Multi-agent orchestration platform: durable workflows, agents, tool gateway and policy.**
 
 ```mermaid
 flowchart LR
@@ -2184,7 +2184,7 @@ What to notice:
 
 #### Failure-injection exercises
 
-**Table 93.119 — Multi-agent orchestration platform: failure injections.**
+**Table 93.40 — Multi-agent orchestration platform: failure injections.**
 
 | Inject | Expected behavior | How you verify |
 |---|---|---|
@@ -2204,7 +2204,7 @@ What to notice:
 
 #### Self-assessment rubric
 
-**Table 93.120 — Multi-agent orchestration platform: self-assessment rubric.**
+**Table 93.41 — Multi-agent orchestration platform: self-assessment rubric.**
 
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
@@ -2213,3 +2213,180 @@ What to notice:
 | Budgets and cost | Step cap | Steps, tokens and dollars per task; per-tenant usage | Cost per task and success over $n$ steps with your numbers |
 | Evaluation | Manual checks | Scenario suite with end-state checks in CI | Real-model results with escalations, costs and failure analysis |
 | Explanation | Describes the loop | Explains where trust lives | Argues when *not* to use multiple agents |
+
+## 93.5 Summary and revision notes
+
+::: summary
+- Each advanced and expert project is built around **one mechanism** that interviews probe repeatedly; the starter isolates it in under a hundred lines so you can watch it work and fail before adding infrastructure.
+- **Job scheduler:** leases give takeover, fencing tokens reject stale writes that arrive after newer ones, and only an **idempotent effect** removes duplicates (11 duplicate effects survived fencing in the starter). Size the lease as $L \ge k\,h + d_{\max}$.
+- **Event-driven microservices:** the **outbox** makes "change state and publish" atomic, the **inbox** makes consumers idempotent, and a **saga** with compensation keeps cross-service invariants (95 units reserved = 95 confirmed).
+- **Real-time analytics:** count by event time; the watermark decides completeness; allowed lateness trades state and updates for accuracy (0 s: 14/165 exact windows; 120 s: 165/165). State is $K \lceil (W + D + A)/S \rceil$ aggregates.
+- **Recommendation engine:** a two-tower model with in-batch negatives under-ranks popular items unless you apply the **log-Q correction** (recall@50: 0.128 without, 0.269 with, popularity 0.225). Always report random and popularity baselines.
+- **ML inference service:** dynamic batching multiplies capacity when the fixed cost $t_0$ dominates ($X(32)/X(1) \approx 11$ in the starter); admission control protects latency but not throughput.
+- **Training platform:** synchronous data parallelism with a correct all-reduce keeps replicas identical and matches single-process training to about $10^{-7}$; a checkpoint must include optimizer state and data position for a bit-identical resume. Choose the interval with Young/Daly.
+- **Feature store:** the as-of join is the core; a leaky join looks better offline (2.46 versus 3.17 minutes MAE) and worse on serving-time features (3.26). One definition and one job should write both stores.
+- **RAG:** permissions are filtered **before** ranking; post-filtering is safe only by luck and loses recall (5 of 8 short result lists); evaluation is a release gate, not a dashboard.
+- **LLM inference:** continuous batching with a paged KV cache serves 2.5× the throughput of static batching at the same load; the KV pool, not FLOPs, caps concurrency (about 72 sequences for the starter's workload).
+- **Multi-agent platform:** the model proposes, deterministic code disposes: allowlists, schema validation, policy caps, approval gates, idempotency keys and budgets live outside the model.
+- Present simulated work honestly: name what is real code and what is a cost model, and bring the numbers from your results log.
+:::
+
+**Table 93.42 — Advanced and expert projects at a glance.**
+
+| § | Project | Core mechanism | Starter's key result | Interview prompts it prepares |
+|---|---|---|---|---|
+| 93.3.1 | Distributed job scheduler | Leases, fencing tokens, idempotent effects | 24 stale finishes rejected; 11 duplicates need idempotency | Ch 91 Q40, §52.9 |
+| 93.3.2 | Event-driven microservices | Outbox, inbox, saga compensation | 27 duplicates skipped; invariants hold | Ch 91 Q21, Q29; §55.7, §55.9 |
+| 93.3.3 | Real-time analytics | Event-time windows, watermarks, lateness | 120 s lateness: all 165 windows exact | Ch 91 Q37, Q38; §56.7 |
+| 93.3.4 | Recommendation engine | Two-tower with log-Q, funnel | Recall@50 0.269 versus popularity 0.225 | Ch 92 Q12, Q31; Ch 68 |
+| 93.3.5 | ML inference service | Dynamic batching, admission control | 471/s unbatched versus 3,000/s batched | Ch 92 Q29; §66.16 |
+| 93.4.1 | Training platform | All-reduce, checkpoint/restart, gangs | Bit-identical resume after a crash | Ch 92 Q28, Q42; §85.5 |
+| 93.4.2 | Feature store | Point-in-time join, online/offline parity | Leaky join wins offline, loses online | Ch 92 Q27; §85.4 |
+| 93.4.3 | Production RAG | ACL pre-filtering, hybrid retrieval, eval gate | Pre-filter 8/8; no filter leaks 9 docs | Ch 92 Q32; §86.4 |
+| 93.4.4 | LLM inference platform | Continuous batching, paged KV, admission | 2.5× static throughput at 6 requests/s | Ch 92 Q41; §86.5 |
+| 93.4.5 | Multi-agent platform | Tool gateway, idempotency, budgets | Injected \$500 refund blocked; one refund on retry | Ch 92 Q45; §86.7 |
+
+## 93.6 Knowledge checkpoint
+
+1. Why can a lease alone not prevent two workers acting on the same job?
+2. A fencing token rejected 8 stale writes in the scheduler starter, yet 11 jobs had two effects applied. Explain how both can be true.
+3. Compute the lease for heartbeats every 2 s, four tolerated misses and a 1 s recording delay.
+4. What does the transactional outbox guarantee, and what does it not guarantee?
+5. Why must an event's message ID be fixed when the outbox row is written rather than when it is published?
+6. Predict the number of open aggregates for 4,000 zones, 60 s windows sliding every 10 s, a 5 s watermark delay and 30 s allowed lateness.
+7. Why does a hopping window make lateness more damaging than a tumbling window?
+8. What is the log-Q correction, and why did the uncorrected two-tower model lose to popularity?
+9. With $t_0 = 4$ ms and $t_1 = 0.25$ ms, what is one replica's throughput at batch sizes 1 and 32?
+10. Why did a 2 ms batching window lower p99 latency at 400 RPS in the inference starter?
+11. Name four pieces of state a training checkpoint must contain for a bit-identical resume.
+12. Using Young's formula, what checkpoint interval suits $\delta = 20$ s and a job MTBF of 4 hours?
+13. Why does a leaky feature join improve offline metrics but hurt online ones?
+14. Give two reasons post-filtering by permission is unacceptable in a RAG system.
+15. Why does TPOT rise with load in continuous batching even when compute is not saturated?
+16. In the agent starter, what stopped the injected \$500 refund, and why is that more reliable than a prompt instruction?
+17. How should you describe a project whose GPU behavior is simulated?
+
+<details><summary>Answers</summary>
+
+1. A paused holder does not know its lease has expired; it can wake and act after another worker has been granted the job. The grantor's decision is safe; the holder's action is not.
+2. The sink rejects a write only if a *higher* fence has already written. When the zombie writes first and the new holder second, both fences look legitimate in order, so both effects apply; only an idempotent effect keyed by `job_id` removes that duplicate.
+3. $L \ge 4 \times 2 + 1 = 9$ s.
+4. It guarantees that an event is published if and only if the local transaction committed (at least once, eventually). It does not guarantee exactly-once delivery, ordering across partitions or that consumers are idempotent.
+5. A relay can crash after publishing and publish again; if the ID were generated at publish time, the duplicate would carry a new ID and the inbox could not detect it.
+6. $\lceil (60 + 5 + 30)/10 \rceil = 10$ windows per zone; $4{,}000 \times 10 = 40{,}000$ aggregates per metric.
+7. Each event belongs to $W/S$ windows (six in the starter), so one late event can make several windows wrong.
+8. Subtracting each item's log sampling probability from its logit corrects for popular items appearing as in-batch negatives more often than their true frequency; without it the model learns to push popular items down, although the test orders are dominated by them.
+9. $X(1) = 1/4.25$ ms $= 235$/s; $X(32) = 32/12$ ms $= 2{,}667$/s.
+10. At 85% utilization, single-request service builds queues during bursts; small batches drain bursts faster, and the 2 ms wait is shorter than the queueing it removes.
+11. Model parameters, optimizer state (for example momentum), the step counter and the data position (or RNG state that determines it); also RNG states for dropout and augmentation.
+12. $\tau = \sqrt{2 \times 20 \times 14{,}400} = 759$ s, about 12.6 minutes.
+13. It joins values computed after the prediction time, which contain information about the label; that information does not exist at serving time, so the model relies on a signal it will never see.
+14. It can leak forbidden content if any path skips the filter or the filter is buggy, and it returns short or empty lists (losing the relevant allowed document) when forbidden documents occupy the top slots, especially with ANN indexes that stop at $k$ results.
+15. Every decode step reads the KV cache of every resident sequence; more resident sequences and longer contexts mean more memory traffic per step, so each token takes longer.
+16. A deterministic policy check in the tool gateway (refund capped at the order total) rejected the proposed call. The model's output is treated as a proposal; a prompt can be overridden by injected text, but the code path cannot.
+17. State exactly which parts are real code (scheduler, allocator, gateway), which are modeled (GPU step time, from §73.3), the model's parameters and source, and which conclusions would change on real hardware.
+</details>
+
+## 93.7 Interview questions
+
+These questions are about **presenting your own projects**: the behavioral-technical hybrid that appears in many loops as a "project deep dive" or as the first ten minutes of a design round. Model answers show what a strong response sounds like at each level; the content comes from the projects above. Chapter 87 covers interview communication in general. The advice here is general guidance, not any company's published process.
+
+### Basic
+
+**Q1. "Tell me about a project you built." How do you structure a five-minute answer?**
+
+**Answer.** Use five beats with a number in each: (1) the problem and who it was for ("QuickBite-style scheduled jobs: payouts and late-order checks, at-least-once with no lost jobs"); (2) the requirement that made it hard ("workers crash and pause; I needed takeover within about 11 s and zero duplicate side effects"); (3) the design and the one decision you would defend ("leases from heartbeats, fencing tokens, idempotent effects keyed by job ID"); (4) the evidence ("in the pause test, fencing rejected 24 stale finishes, but 11 jobs still had two effects until I made the effect an upsert"); (5) what you would do next ("partition the store at 10× load"). A weak answer narrates the build chronologically and lists technologies; a strong one is organized around a decision and a measurement.
+
+**Q2. "Is this a production system?" Your project is a local simulation. What do you say?**
+
+**Answer.** Say so plainly and then make the precision a strength: "No; it runs on one laptop. The scheduler, the paged KV allocator and the gateway are real code with tests. GPU time is modeled with the step-time model from the textbook's inference chapter: 7.2 ms per step plus KV reads plus prefill compute, and I calibrated nothing against real hardware. The conclusions that transfer are the relative ones: continuous batching beat static batching by about 2.5× at the same load, and the KV pool capped concurrency near 72 sequences." Overclaiming is the single most damaging mistake in a project discussion, because the follow-up questions will find it.
+
+**Q3. "How did you test it?"**
+
+**Answer.** Name the layers and one surprising result: unit tests for invariants (no two valid leases; online value equals offline as-of value), property or fuzz tests (random crashes, shuffled arrival order), an independent oracle (batch recomputation for the stream pipeline; a permission checker for RAG that does not reuse the retriever's filter), and an open-loop load test with percentiles. Then: "the batch reconciliation found that zero lateness left only 14 of 165 windows exact, which is why I set 120 s." Mid-level candidates describe unit tests; senior candidates describe oracles and fault injection.
+
+### Intermediate
+
+**Q4. "What was the hardest bug?"**
+
+**Answer.** Choose a bug that taught you a system property, and tell it as hypothesis → evidence → fix → prevention. Example: "My training restart diverged from the clean run after resume. I suspected nondeterministic kernels, but parameters matched before the crash and diverged right after, so it was resume state. The checkpoint saved weights but not optimizer momentum. I added optimizer state and the data position, and the resumed run became bit-identical. I then added a CI test that kills the run at ten random steps." The prevention step is what distinguishes senior answers.
+
+**Q5. "Why didn't you just use Kafka (or Airflow, or Feast, or vLLM)?"**
+
+**Answer.** Separate learning goals from production advice: "I built the core to understand the mechanism and its failure modes; in production I would start from the established system." Then show you know where the established system fits and what it costs: "For the event pipeline I used Redpanda as the log, but wrote the windowing myself to understand watermarks. In production I'd use Flink, because its checkpointing of state and offsets together is what gives exactly-once results, and I'd keep my batch reconciliation job as an independent check." An answer that defends the homemade version for production is a red flag; an answer that cannot say what the homemade version taught is a missed opportunity.
+
+**Q6. "What would change at 100× scale?"**
+
+**Answer.** Recompute and find the first thing that breaks rather than listing technologies. "The feature store's online path at 2,000 reads/s of 50 entities is 100,000 key reads per second; at 100× that is 10 million per second, so the single Redis becomes a partitioned cluster, and hot entities (popular restaurants) need replication or request coalescing. The offline as-of join moves from DuckDB to a distributed engine with a sort-merge join by entity and time. The point-in-time logic and the consistency checker do not change, which is the part I'd keep." Staff-level answers also say what would *not* change and which decision is a one-way door.
+
+### Advanced
+
+**Q7. "Your RAG evaluation says recall@5 is 0.87. How confident are you, and how would you know a change made it worse?"**
+
+**Answer.** "On 100 labeled questions, a 95% bootstrap interval around 0.87 is roughly ±0.07, so I cannot distinguish 0.87 from 0.82. For release gating I use paired comparisons on the same questions, which are much more sensitive, and I grow the set from production failures and escalations. Recall is only a proxy; I also gate on groundedness and refusal accuracy, and the permission test is a hard pass/fail independent of quality." Mentioning interval width, paired tests and set growth (§78.4) separates senior from staff-level answers; tying the gate to the security test shows judgment about which metrics are trade-offs and which are constraints.
+
+**Q8. "Walk me through what happens when a worker dies in your training platform, end to end, with timings."**
+
+**Answer.** "Heartbeats every 5 s; after three misses (15 s) the monitor marks the gang failed and tells the scheduler, which stops the remaining ranks (they are blocked in all-reduce anyway). The scheduler requeues the job at its priority; placement on the laptop takes under a second, process start and model build about 5 s, checkpoint restore about 1 s. Lost work is on average half the checkpoint interval. With checkpoints every 50 steps of 30 ms, that is about 0.75 s of compute plus about 22 s of detection and restart. On a real cluster, restart dominates (§65.15.2's example: 600 s), which is why I would invest in faster detection and warm spares before more frequent checkpoints." Strong answers attach a number to each phase and say which term dominates at which scale.
+
+**Q9. "Which project would you pick to discuss for a staff-level ML infrastructure role, and why?"**
+
+**Answer.** Pick the project whose decisions cross team boundaries, and say so: "The multi-tenant feature store, because its hard problems are organizational contracts as much as code: feature ownership, point-in-time guarantees that other teams' training depends on, quotas that protect one team from another, and a consistency checker that makes skew visible to the owners. I can show the leakage experiment, the noisy-tenant test and the cost report, and I can explain when a team should *not* use the platform (§62.14)." Staff-level answers talk about the platform's users, its contracts and its failure modes as experienced by others, not only about its internals.
+
+## 93.8 Practical exercises
+
+1. **Scheduler:** change the starter's sink to an idempotent upsert keyed by `job_id` and confirm that "jobs with >1 applied effect" becomes 0 while the stale-finish count stays 24.
+2. **Events:** set the relay crash rate to 0.5 and the decline rate to 0.5 in the event-driven starter; confirm the invariants still hold and explain the change in the duplicate count.
+3. **Analytics:** add pane-based aggregation (10 s tumbling panes summed into 60 s windows) to the windowing starter and measure peak state for lateness 120 s against the formula.
+4. **Recommendations:** vary the temperature (0.05, 0.1, 0.5) in the two-tower starter with and without log-Q correction and tabulate recall@50.
+5. **Inference:** add a third replica and a deadline of 30 ms to the batching simulator; find the highest load at which no requests are shed.
+6. **Training:** in the data-parallel starter, omit the optimizer state from the checkpoint and report the maximum parameter difference between the crashed and clean runs.
+7. **LLM serving:** add prefix sharing to the LLM simulator (the first 1,000 tokens of every prompt are shared and stored once) and measure the change in preemptions and TTFT at 12 requests/s.
+8. **Agents:** add a `issue_voucher` tool with a daily per-customer cap enforced in the gateway, and write two injection scenarios that try to exceed it.
+
+## 93.9 Design challenges
+
+1. **Combine three projects into QuickBite's ETA platform.** Feed the analytics pipeline's live prep-time aggregates into the feature store as streaming features and serve the ETA model through the inference service. Specify the freshness SLO end to end, the point-in-time guarantee for training data and the fallback when the stream stalls; identify which component's failure is most visible to customers.
+2. **A scheduler for training jobs.** Extend the job scheduler of §93.3.1 into the gang scheduler of §93.4.1: what changes in the job model (gangs, preemption with checkpoint), the lease semantics (one lease per gang or per rank?) and the fencing (what is the protected resource when a stale rank writes a checkpoint?).
+3. **RAG-backed support agent with refunds.** Combine §93.4.3 and §93.4.5: the agent retrieves policy passages and may issue refunds. Design the permission model end to end (the customer's identity must constrain both retrieval and tools), the evaluation suite and the escalation path, and estimate cost per resolved contact with the Book II prices.
+4. **Multi-region LLM platform.** Take §93.4.4 to two regions with data-residency rules for one tenant. Decide how quotas are enforced globally, where prefix caches live, how failover affects TTFT, and which requests may never leave their region (§79.11).
+
+## 93.10 References
+
+1. Gray, C., Cheriton, D. *Leases: An Efficient Fault-Tolerant Mechanism for Distributed File Cache Consistency*. SOSP, 1989.
+2. Kleppmann, M. *How to do distributed locking*. Blog post, 2016. https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
+3. Kleppmann, M. *Designing Data-Intensive Applications*. O'Reilly, 2017.
+4. Verma, A., Pedrosa, L., Korupolu, M., Oppenheimer, D., Tune, E., Wilkes, J. *Large-scale cluster management at Google with Borg*. EuroSys, 2015.
+5. Garcia-Molina, H., Salem, K. *Sagas*. ACM SIGMOD, 1987.
+6. Richardson, C. *Microservices Patterns*. Manning, 2018.
+7. Akidau, T., et al. *The Dataflow Model: A Practical Approach to Balancing Correctness, Latency, and Cost in Massive-Scale, Unbounded, Out-of-Order Data Processing*. PVLDB 8(12), 2015.
+8. Akidau, T., Chernyak, S., Lax, R. *Streaming Systems*. O'Reilly, 2018.
+9. Carbone, P., Katsifodimos, A., Ewen, S., Markl, V., Haridi, S., Tzoumas, K. *Apache Flink: Stream and Batch Processing in a Single Engine*. IEEE Data Engineering Bulletin 38(4), 2015.
+10. Covington, P., Adams, J., Sargin, E. *Deep Neural Networks for YouTube Recommendations*. ACM RecSys, 2016.
+11. Yi, X., Yang, J., Hong, L., Cheng, D. Z., Heldt, L., Kumthekar, A., Zhao, Z., Wei, L., Chi, E. *Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations*. ACM RecSys, 2019.
+12. Crankshaw, D., Wang, X., Zhou, G., Franklin, M. J., Gonzalez, J. E., Stoica, I. *Clipper: A Low-Latency Online Prediction Serving System*. NSDI, 2017.
+13. Dean, J., Barroso, L. A. *The Tail at Scale*. Communications of the ACM 56(2), 2013.
+14. Li, S., et al. *PyTorch Distributed: Experiences on Accelerating Data Parallel Training*. PVLDB 13(12), 2020.
+15. Patarasuk, P., Yuan, X. *Bandwidth Optimal All-reduce Algorithms for Clusters of Workstations*. Journal of Parallel and Distributed Computing 69(2), 2009.
+16. Young, J. W. *A First Order Approximation to the Optimum Checkpoint Interval*. Communications of the ACM 17(9), 1974.
+17. Daly, J. T. *A Higher Order Estimate of the Optimum Checkpoint Interval for Restart Dumps*. Future Generation Computer Systems 22(3), 2006.
+18. Hermann, J., Del Balso, M. *Meet Michelangelo: Uber's Machine Learning Platform*. Uber Engineering Blog, 2017.
+19. Sculley, D., et al. *Hidden Technical Debt in Machine Learning Systems*. NeurIPS, 2015.
+20. Lewis, P., et al. *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. NeurIPS, 2020.
+21. Robertson, S., Zaragoza, H. *The Probabilistic Relevance Framework: BM25 and Beyond*. Foundations and Trends in Information Retrieval 3(4), 2009.
+22. Cormack, G. V., Clarke, C. L. A., Büttcher, S. *Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods*. ACM SIGIR, 2009.
+23. Greshake, K., Abdelnabi, S., Mishra, S., Endres, C., Holz, T., Fritz, M. *Not What You've Signed Up For: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection*. ACM AISec Workshop, 2023.
+24. Yu, G.-I., Jeong, J. S., Kim, G.-W., Kim, S., Chun, B.-G. *Orca: A Distributed Serving System for Transformer-Based Generative Models*. OSDI, 2022.
+25. Kwon, W., et al. *Efficient Memory Management for Large Language Model Serving with PagedAttention*. SOSP, 2023.
+26. Agrawal, A., et al. *Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve*. OSDI, 2024.
+27. Yao, S., et al. *ReAct: Synergizing Reasoning and Acting in Language Models*. ICLR, 2023.
+28. Basiri, A., et al. *Chaos Engineering*. IEEE Software 33(3), 2016.
+
+## 93.11 Open verification items
+
+- [Yi et al. 2019]: confirm the full author list and that the paper's evaluation includes live experiments on YouTube, as summarized in the industry callout.
+- [Hermann and Del Balso 2017]: the Hive/Cassandra/Kafka/Samza description follows §62.13.1's reading of the post; re-check against the post if that section is revised.
+- [Kwon et al. 2023]: the industry callout says "large throughput gains" without a number; if a figure is added, take it from the paper's own evaluation and state the baseline.
+- All starter outputs were produced with Python 3, NumPy 2.5, PyTorch 2.15 (CPU) on Linux; the two-tower and data-parallel results depend on PyTorch version and may differ in the last digits on other versions.
+- The LLM step-time model (7.2 ms + 0.000196 ms per resident token + 0.0273 ms per prefill token) is derived from §73.3's assumptions for an H100-class GPU, not measured; the 2.5× continuous-versus-static ratio and the ~72-sequence concurrency are properties of that model and workload.
+- Interview advice in §93.7 is general guidance, not any company's published process; the ±0.07 bootstrap interval in Q7 assumes independent questions and a binomial approximation.
