@@ -373,3 +373,1042 @@ flowchart LR
 - **Senior:** sizes disk, network and partitions; explains ISR, `acks=all`, idempotent producers and lag.
 - **Staff:** separates storage tiering from compute, offers queue semantics deliberately with its ordering cost, and designs quotas and cluster isolation for hundreds of teams.
 
+### 91.6.5 Q33. Resharding a live SQL database
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §14.7, §14.9.5 (online migration), §43.13, §32.6 (CDC)
+
+#### Prompt
+
+"Your product runs on one large PostgreSQL primary with read replicas. It will run out of disk in about six weeks. Split it into shards without downtime."
+
+#### Clarifying questions and assumptions
+
+- *Data and load?* 8 TB on a 10 TB volume; 20,000 writes/s and 150,000 reads/s at peak; data grows 15% a month.
+- *Access pattern?* Almost every query is scoped by `account_id`; a few admin and analytics queries span accounts.
+- *Downtime budget?* No planned outage; a write pause of a few seconds per shard at cutover is acceptable.
+- *Team constraints?* The application can change, but not all at once; rollback must be possible at every step.
+
+#### Requirements
+
+**Functional.** Partition all account-scoped tables by `account_id`; route queries to the right shard; keep cross-account queries working (possibly slower or offline); support adding shards later without repeating the project. **Non-functional.** Zero data loss, verified by checksums; write pause ≤ 5 s per shard at cutover; p99 latency unchanged during the copy (copy throttled); reversible until the final cleanup.
+
+#### Estimation
+
+::: example
+**Worked example — How urgent is it, and how long does the copy take?** Assumptions above; rows average 1 KB in the change stream; a single throttled copy stream runs at 200 MB/s; the change applier sustains 60 MB/s.
+
+1. Time to 95% disk: $8 \times 1.15^{n} = 9.5$ gives $n = \ln(1.1875)/\ln(1.15) = 1.23$ months: about five weeks, not six.
+2. Single-stream backfill: $8 \times 10^{12} / (2 \times 10^8) = 40{,}000$ s $= 11.1$ h.
+3. Changes accumulated meanwhile: $20{,}000 \times 1\ \text{KB} = 20$ MB/s, so $20\ \text{MB/s} \times 40{,}000\ \text{s} = 800$ GB; catch-up time (§89.11) $= 800\ \text{GB} / (60 - 20)\ \text{MB/s} = 20{,}000$ s $= 5.6$ h.
+4. Sixteen parallel streams from replicas at 100 MB/s each: $8 \times 10^{12} / (1.6 \times 10^9) = 5{,}000$ s; only 100 GB of changes accumulate.
+5. Shard count by §89.9: storage term at the 24-month horizon ($8 \times 1.15^{24} \approx 229$ TB, or far less after archiving) dominates; plan for 1,024 logical shards on 16 physical shards to start.
+
+**Interpretation.** A naive single-stream copy plus catch-up takes most of a day and must be restarted if anything fails. **Engineering implication.** Parallelize backfill by key range from replicas, archive cold data first to buy time, and decouple logical from physical shards so the next split is a move, not a project.
+:::
+
+#### API and data model
+
+```text
+Shard map (in a small consistent store): logical_shard (0..1023) -> physical_shard, state
+  logical_shard = hash(account_id) mod 1024
+Migration state per logical shard: COPYING | CATCHING_UP | VERIFYING | READS_SWITCHED | WRITES_SWITCHED | DONE
+Routing layer: library or proxy (Vitess/Citus-style) resolves account_id -> connection
+Global tables (plans, feature flags): replicated to every shard, written in one place
+```
+
+#### High-level design
+
+**Figure 91.105 — Online resharding: change capture, backfill, verify, switch.**
+
+```mermaid
+flowchart LR
+  APP([Application]) --> RT[Routing layer<br/>shard map]
+  RT -->|until cutover| SRC[(Source primary)]
+  SRC -.->|logical replication, CDC| CAP[[Change stream]]
+  SRC --> REP[(Read replicas)]
+  REP -->|parallel backfill| BF[Backfill workers]
+  BF --> T1[(Shard 1..16)]
+  CAP -.->|apply in order per key| AP[Applier]
+  AP --> T1
+  VER[Verifier<br/>checksums, shadow reads] --> SRC
+  VER --> T1
+  RT -->|after cutover| T1
+```
+
+**Reading the diagram.** The application reaches the database only through the routing layer, which consults the shard map. Change capture starts first, at a recorded log position, from the source primary's logical replication stream (dotted, asynchronous); backfill workers then copy existing rows in parallel from read replicas into the 16 target shards. The applier replays captured changes in commit order per key until the targets trail by seconds. A verifier compares per-range checksums and runs shadow reads against both sides. Reads, then writes, switch per logical shard by changing the shard map; the source remains a storage boundary with a reverse stream for rollback. Failure points: replication-slot growth on the source if the applier stalls, schema changes during the migration, and the brief write freeze. Scaling: logical shards move independently, so later growth repeats only the move step.
+
+#### Deep dives
+
+1. **Choosing the shard key.** `account_id` matches 95% of queries, keeps transactions single-shard and spreads load, but whale accounts can still create hot shards: place them on dedicated physical shards via the directory (§47.6.2). Cross-account queries move to a CDC-fed analytics store instead of scatter-gather on the primaries (§14.12).
+2. **Cutover without loss.** Per logical shard: stop writes for that range (the router returns retryable errors or queues them for a few seconds), wait until the applier passes the last source position, flip the map with a version number, fence the source range (revoke writes), and resume. A reverse stream from target to source keeps rollback possible for a window (§14.9.5).
+3. **Application changes first.** Before any data moves, every query must carry `account_id` and go through the routing layer; queries that cannot are found by logging, not by reading code. Auto-increment IDs must become globally unique (§17.10) before two shards can insert.
+
+**Table 91.103 — Migration phases and their rollback.**
+
+| Phase | Done when | Rollback |
+|---|---|---|
+| Route all queries via shard map | 100% of traffic through router, one physical shard | Remove router |
+| Capture + backfill | Targets trail by < 5 s | Drop targets |
+| Verify | Checksums match; shadow-read diff rate 0 for 48 h | Drop targets |
+| Switch reads | Reads from targets; source still primary | Flip reads back |
+| Switch writes | Writes to targets; reverse stream running | Flip map back, replay reverse stream |
+| Clean up | Rollback window closed | None: one-way door |
+
+#### Trade-offs and alternatives
+
+Vertical scaling or archiving cold rows buys months and should be done first. Application-level dual writes avoid CDC tooling but are hard to make atomic and to verify (§32.5.1). A distributed SQL database (§28.10) removes manual sharding at the cost of a platform migration of similar size. Reverse to a managed sharding layer if the team cannot own a routing layer long-term.
+
+#### Follow-up questions
+
+1. *"What if the applier falls behind?"* The source's replication slot retains WAL and its disk fills: alert on slot lag, throttle backfill, and have a kill switch that drops the slot.
+2. *"How do you handle foreign keys across shards?"* Co-locate related tables by the same key; global reference tables are replicated; cross-shard constraints become application checks.
+3. *"How do you verify 8 TB?"* Per-range checksums computed on both sides at the same log position, plus sampled row comparisons and shadow-read diffs.
+4. *"Schema change mid-migration?"* Freeze DDL or apply it through the migration tool on both sides with expand-and-contract (§43.13.2).
+5. *"How will you add shard 17 next year?"* Move logical shards; the hash function never changes.
+
+#### What distinguishes levels
+
+- **Mid:** picks a shard key and describes copying data and switching over.
+- **Senior:** CDC-first ordering, parallel backfill, verification, per-shard cutover with a short write freeze, and logical shards.
+- **Staff:** does the arithmetic that shows the deadline is tighter than stated, starts with routing and ID changes, plans rollback per phase, and removes cross-shard queries from the primaries entirely.
+
+### 91.6.6 Q34. Global CDN
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** Ch 21, §19.9, §10.11, §89.7
+
+#### Prompt
+
+"Design a content delivery network that thousands of customer websites put in front of their origins. Serve static and video content worldwide with low latency."
+
+#### Clarifying questions and assumptions
+
+- *Scale?* 50 Tb/s peak egress across 200 points of presence (PoPs); average object 100 KB.
+- *Content?* Static web assets, images, video segments; dynamic content passes through with connection reuse.
+- *Customer features?* Custom domains and TLS certificates, cache rules, purge within seconds, logs and analytics.
+- *Security?* DDoS absorption and a web application firewall are part of the product (Q54 goes deeper).
+
+#### Requirements
+
+**Functional.** Route users to a nearby healthy PoP; terminate TLS; serve from cache or fetch from the customer origin; honor HTTP caching semantics (RFC 9111); purge by URL, tag or prefix; per-customer configuration; real-time logs. **Non-functional.** Byte offload ≥ 95%; p50 time to first byte for cache hits under 30 ms in served metros; 99.99% availability per PoP region with automatic failover; global purge p99 under 5 s; configuration changes live within a minute.
+
+#### Estimation
+
+::: example
+**Worked example — Which resource sizes a PoP?** Assumptions above; the largest PoPs carry 3× the average; one edge server serves 80 Gb/s or 50,000 TLS requests/s at target utilization; edge hit ratio 90% and shield hit ratio on misses 50%.
+
+1. Requests: $50 \times 10^{12} / 8 / 10^5 = 62.5$ million/s globally; per average PoP 250 Gb/s and 312,500 requests/s.
+2. Largest PoP: 750 Gb/s and 937,500 requests/s. Servers by bandwidth $750 / 80 = 9.4$; by requests $937{,}500 / 50{,}000 = 18.75$. Requests bind: 19 servers, plus N+2.
+3. Composite offload (§21.5.2): $1 - (1 - 0.9)(1 - 0.5) = 0.95$; origin egress (§89.7) $50 \times 0.05 = 2.5$ Tb/s across all customers. Without the shield tier it would be 5 Tb/s.
+
+**Interpretation.** Small objects make TLS handshakes and request handling, not bandwidth, the binding constraint at big PoPs; the shield tier halves origin load. **Engineering implication.** Optimize per-request CPU (session resumption, HTTP/2 and HTTP/3 connection reuse) and design a two-tier cache hierarchy.
+:::
+
+#### API and data model
+
+```text
+Customer control plane: PUT /zones/{zone}/config {origins, cache_rules, tls_cert_ref, waf_rules}
+                        POST /zones/{zone}/purge {urls | tags | prefix}
+Edge cache key: (zone, scheme, host, normalized path, selected query params, Vary headers)
+Cache entry: object bytes, headers, expiry, surrogate tags; stored in RAM + SSD tiers
+Config distribution: versioned config blobs pushed to every PoP; edge reads local copy
+```
+
+#### High-level design
+
+**Figure 91.106 — CDN: anycast edge, shield tier, origin, and the control plane.**
+
+```mermaid
+flowchart LR
+  U([Users]) -->|anycast or DNS steering| LB[PoP load balancer]
+  LB --> E[Edge cache servers<br/>TLS, RAM + SSD]
+  E -->|miss, consistent hash| SH[Regional shield cache]
+  SH -->|miss| O{{Customer origin}}
+  CP[Control plane<br/>config, certs, purge] -.->|push versions| E
+  CP -.-> SH
+  E -.->|logs| LP[[Log pipeline]]
+  HC[Health and traffic steering] -.-> LB
+```
+
+**Reading the diagram.** Users reach a nearby PoP by anycast or DNS steering (§21.3.3). Inside the PoP, a layer-4 load balancer spreads connections over edge servers, which terminate TLS and serve from RAM and SSD caches. Misses go synchronously to a regional shield chosen by consistent hashing on the cache key, so each object is fetched from the origin once per region (§21.5.3), and shield misses reach the customer origin. The control plane pushes versioned configuration, certificates and purge commands asynchronously (dotted); logs stream out asynchronously. Storage boundaries: edge and shield caches. Failure points: a PoP outage (traffic steering withdraws its anycast route or DNS record), a shield outage (edges fall back to another shield or the origin), a bad configuration push (the largest outage risk, so staged rollouts), and a cold cache after purge. Scaling: more servers per PoP, more PoPs, more shields.
+
+#### Deep dives
+
+1. **Request routing.** Anycast is simple and absorbs DDoS but gives coarse control; DNS steering is precise but limited by resolver location and TTLs. A hybrid uses anycast for the network and DNS or load-feedback to shift load between PoPs (§21.3.3).
+2. **Cache hierarchy and keys.** A bad cache key (including irrelevant query parameters or cookies) fragments the cache and destroys hit ratio; normalize keys and let customers whitelist parameters. Consistent hashing inside the PoP stops each server from caching the same popular objects separately; very hot objects are replicated to all servers.
+3. **Purge and configuration at global scale.** Purge is a fan-out to every PoP: publish to a replicated message bus, apply locally by URL or surrogate tag, acknowledge; 200 PoPs within 5 s is feasible. Configuration pushes are the riskiest operation: canary to a few PoPs, check error rates, then widen (§43.6).
+
+#### Trade-offs and alternatives
+
+Fewer, larger PoPs raise hit ratios (more users per cache) but add latency; many small PoPs cut round trips but fragment caches, which the shield tier offsets. Embedding caches inside ISPs (as Netflix Open Connect does for its own video, §21.10) suits one large tenant with predictable content, not thousands of customers. Pull-through caching suits web content; pre-positioning suits large video libraries.
+
+#### Follow-up questions
+
+1. *"How do you fail over a PoP?"* Health checks withdraw its anycast prefix or DNS answers; neighboring PoPs must have headroom, so plan capacity for losing the largest PoP in each region.
+2. *"How do you serve customers' TLS certificates?"* Keys stay in a central key service or are distributed encrypted; SNI selects the certificate at the edge; some customers require keyless signing at their own servers.
+3. *"Cache stampede on a popular new object?"* Request collapsing at edge and shield: one fetch per object per tier (§20.11).
+4. *"Live video?"* Short segments, blocking playlist requests and collapsing; see Q41.
+5. *"How do you bill?"* From edge logs aggregated per zone, deduplicated by request ID.
+
+#### What distinguishes levels
+
+- **Mid:** edge caches, origin, TTLs and DNS routing.
+- **Senior:** offload arithmetic, the shield tier, cache-key normalization, purge fan-out and request collapsing.
+- **Staff:** identifies the per-request CPU bind at large PoPs, treats configuration pushes as the main outage risk, and plans capacity for PoP loss and DDoS together.
+
+### 91.6.7 Q35. Distributed cache at very large scale
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §20.6, §20.11–§20.15, §89.8, §44.7
+
+#### Prompt
+
+"Design the caching tier for a social network that serves 200 million cache reads per second in front of its databases."
+
+#### Clarifying questions and assumptions
+
+- *What is cached?* Database query results and objects (profiles, posts, counts), look-aside (§20.7.1).
+- *Data size?* 10 billion hot items of about 1 KB.
+- *Consistency?* Stale reads acceptable for seconds; a user must see their own writes.
+- *Regions?* Several regions; one region holds the primary database for writes.
+
+#### Requirements
+
+**Functional.** Get, multi-get, set, delete; invalidation on database writes; regional replication of invalidations. **Non-functional.** p99 under 1 ms for single gets inside a region; 99% hit ratio; the database must survive a cache-node failure and a cache-cluster restart; no stale value persisting more than a few seconds after a write.
+
+#### Estimation
+
+::: example
+**Worked example — Throughput, not memory, sizes the tier.** Assumptions: overhead factor 1.5; a node offers 200 GB of cache memory and 1 million operations/s at saturation ($u = 0.6$); a page multi-gets 100 keys.
+
+1. Memory (§89.8): $10^{10} \times 1{,}000 \times 1.5 = 15$ TB, which is 75 nodes.
+2. Throughput: $2 \times 10^8 / (10^6 \times 0.6) = 334$ nodes. Those nodes hold $334 \times 200\ \text{GB} = 66.8$ TB, 4.45 copies of the working set.
+3. Multi-get fan-out: 100 keys spread uniformly over 334 nodes touch $334\,(1 - (1 - 1/334)^{100}) \approx 87$ nodes per page.
+4. Database load at 99% hit ratio: $2 \times 10^8 \times 0.01 = 2$ million reads/s; at 95%, 10 million/s, five times more.
+5. One key carrying 1% of traffic needs 2 million reads/s, twice one node's saturation capacity.
+
+**Interpretation.** The tier is throughput-bound, so spare memory should buy hit ratio or replication; fan-out and hot keys, not size, break it. **Engineering implication.** Replicate pools, batch multi-gets per node, and plan specifically for hot keys and cold restarts.
+:::
+
+#### API and data model
+
+```text
+get(k), get_multi([k...]), set(k, v, ttl, lease_token), delete(k)
+Client library: consistent hashing over pool members, batching per server, timeouts
+Lease: on miss, server returns a token; set succeeds only with a valid token (delete voids it)
+Invalidation stream: database commit log -> invalidation daemons -> delete(k) in every region
+```
+
+#### High-level design
+
+**Figure 91.107 — Large cache tier: routed pools, leases, and invalidation from the commit log.**
+
+```mermaid
+flowchart LR
+  W([Web servers]) --> L1[In-process L1<br/>hot keys]
+  L1 --> RTR[Cache router<br/>consistent hash]
+  RTR --> P1[(Pool: general)]
+  RTR --> P2[(Pool: replicated hot)]
+  RTR -.->|failed node| GU[(Gutter pool)]
+  W -->|miss with lease| DB[(Databases)]
+  DB -.->|commit log| INV[Invalidation daemons]
+  INV -.->|delete keys| RTR
+  INV -.->|cross-region| RR[Remote region routers]
+```
+
+**Reading the diagram.** Web servers check a small in-process L1 for the hottest keys, then a router (in the client library or a proxy) that hashes each key to a node in the right pool: a large general pool and a smaller pool whose keys are replicated on several nodes for hot items. On a miss, the web server reads the database and sets the value with a lease token (synchronous). Writes go to the database; invalidation daemons tail its commit log and delete affected keys in every region (dotted, asynchronous). When a cache node fails, the router sends its keys to a small gutter pool with short TTLs instead of rehashing them onto healthy nodes. Storage boundaries: cache pools (soft state) and databases (truth). Failure points: node failure, cold restart, hot keys, invalidation lag. Scaling: add nodes to pools; add pools by workload.
+
+#### Deep dives
+
+1. **Stale sets and stampedes: leases.** A reader that misses gets a lease token; a concurrent delete voids it, so a stale value read before the write cannot be set after it. The server hands out at most one token per key per few seconds, so a popular miss triggers one database read, not thousands (§20.11.1).
+2. **Failure and warm-up.** Rehashing a failed node's keys onto survivors shifts its load plus misses onto them; a gutter pool absorbs it instead. A new or restarted cluster is warmed by reading from a warm cluster ("cold cluster warm-up") rather than from the database, because the database cannot absorb the 5× load of a 95% hit ratio.
+3. **Hot keys and fan-out.** Detect hot keys by sampling; replicate them across a pool or serve them from L1 with short TTLs. Reduce multi-get fan-out by co-locating related keys (hash on a prefix such as `user_id`) and by batching per node; cap per-request parallelism to avoid incast.
+
+::: industry
+**Memcache at Facebook.** Nishtala et al. describe look-aside memcached clusters serving billions of requests per second, with leases to prevent stale sets and thundering herds, a gutter pool for failed servers, mcrouter for routing, regional pools, cold-cluster warm-up and invalidations driven by the MySQL commit log across regions.
+*Evidence: Primary* — [Nishtala et al. 2013]
+:::
+
+#### Trade-offs and alternatives
+
+Look-aside keeps the cache simple and the database authoritative; write-through simplifies consistency but couples write latency to the cache (§20.7). Memcached's threads and slabs suit simple values at high throughput; Redis offers data structures and replication at lower per-node throughput (§20.16). Replicating every key everywhere maximizes hit ratio and read capacity but multiplies invalidation traffic.
+
+#### Follow-up questions
+
+1. *"How does a user see their own write?"* Delete on write in the local region, and route that user's reads to the primary region or set a short "recently wrote" marker that bypasses replicas.
+2. *"What if invalidation messages are lost?"* TTLs bound staleness; the commit-log tailer is replayable from a position.
+3. *"How do you add nodes without a miss storm?"* Consistent hashing moves $1/n$ of keys; add nodes slowly, off-peak, and pre-warm.
+4. *"Why not cache everything forever?"* Memory cost and invalidation correctness; TTLs are a safety net.
+5. *"How do you know the tier is healthy?"* Hit ratio per pool, database fallback rate, p99 per node, evictions, hot-key alerts.
+
+#### What distinguishes levels
+
+- **Mid:** consistent hashing, TTLs, look-aside caching.
+- **Senior:** throughput-bound sizing, invalidation from the commit log, stampede control, hot keys.
+- **Staff:** leases versus stale sets, gutter pools versus rehashing, cold-cluster warm-up, fan-out and incast, and cross-region invalidation as one coherent failure plan.
+
+### 91.6.8 Q36. Real-time search over posts
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §16.10, §53.8 (Twitter case, real-time search component), §16.7
+
+#### Prompt
+
+"Users publish short posts. Design search so a post is findable within seconds of publication, ranked mostly by recency, even during breaking news."
+
+#### Clarifying questions and assumptions
+
+- *Corpus window?* The real-time index covers 7 days; older posts go to an archive index with slower freshness.
+- *Volume?* 200 million posts/day, peak 3× average, bursts to 50,000 posts/s; 50,000 queries/s at peak.
+- *Ranking?* Recency plus engagement signals; a "top" mode re-ranks.
+- *Freshness?* Searchable within 10 s at p99.
+
+#### Requirements
+
+**Functional.** Keyword, hashtag and author search; "latest" and "top" modes; deletions removed within seconds; filters (language, media). **Non-functional.** Freshness p99 ≤ 10 s; query p99 ≤ 200 ms; 99.95% availability; graceful degradation under write bursts (stay fresh, possibly with partial results).
+
+#### Estimation
+
+::: example
+**Worked example — Small index, high churn.** Assumptions: 20 indexed terms per post and 4 bytes per compressed posting (§16.3.5); 16 partitions; one partition server answers 2,000 queries/s.
+
+1. Ingest: $2 \times 10^8 / 86{,}400 = 2{,}315$ posts/s average, 6,944/s at peak, bursts to 50,000/s.
+2. Index size: 7 days $= 1.4 \times 10^9$ posts $\times 20 \times 4 = 112$ GB per replica, 7 GB per partition: memory-resident.
+3. Query fan-out: $50{,}000 \times 16 = 800{,}000$ partition queries/s; replicas per partition $50{,}000 / 2{,}000 = 25$, so 400 partition servers.
+
+**Interpretation.** The index fits in memory many times over; the challenges are a write burst of 50,000 posts/s and scatter-gather tail latency. **Engineering implication.** Use in-memory, append-optimized segments partitioned by time, and avoid touching all partitions for "latest" queries.
+:::
+
+#### API and data model
+
+```text
+GET /search?q=&mode=latest|top&cursor=&count=20
+Post event (from the post log): {post_id (time-ordered, §17.10), author_id, text, lang, created_at, deleted}
+Segment: in-memory inverted index for a time slice; postings lists in post_id (time) order
+Deleted set: bitmap per segment, applied at query time
+```
+
+#### High-level design
+
+**Figure 91.108 — Real-time search: indexers fed from the post log, time-sliced segments, a broker.**
+
+```mermaid
+flowchart LR
+  WR[Post service] -->|append| PL[[Post log]]
+  PL -.->|consume| IX[Indexers<br/>tokenize, analyze]
+  IX -.-> AS[(Active segment<br/>in memory)]
+  AS -.->|seal every N posts| SS[(Sealed segments)]
+  U([Users]) -->|query| BR[Search broker]
+  BR -->|scatter| AS
+  BR -->|scatter if needed| SS
+  BR -->|rank, merge| U
+  SS -.->|age out| AR[(Archive index)]
+```
+
+**Reading the diagram.** The post service appends each post to a partitioned log (synchronous for the author). Indexers consume asynchronously (dotted), analyze text and append postings to the active in-memory segment of each partition; when a segment reaches its size it is sealed and optimized, and segments older than 7 days age out to an archive index on disk. A query reaches the broker, which scatters to the partition replicas, newest segments first, gathers the top results, re-ranks and returns. Storage boundaries: in-memory segments per partition replica, rebuilt from the log on failure. Failure points: indexer lag during bursts, a slow replica inflating tail latency, and deletions that must apply immediately. Scaling: replicas for query load, partitions for write load, and time slicing for both.
+
+#### Deep dives
+
+1. **Append-only postings in time order.** Because post IDs are time-ordered, a new posting appends to the end of each list; readers walk lists backward for "latest" and stop after enough hits. Single-writer segments with lock-free readers keep freshness in seconds without the refresh-and-merge cost of a general engine (§16.10.1).
+2. **Early termination and time slicing.** A "latest" query searches the newest segments first and stops when it has 20 good results, so most queries touch a fraction of the index. "Top" queries retrieve a few hundred candidates per partition and re-rank with engagement features.
+3. **Burst handling.** Partition the log by post ID hash so bursts spread evenly; give indexers headroom of 2× peak; if they fall behind, serve partial freshness and show it, rather than slow queries.
+
+::: industry
+**Earlybird.** Busch et al. describe Twitter's real-time search engine: in-memory inverted indexes over time-ordered tweets, partitioned and replicated, with a single writer and lock-free concurrent readers per segment and tweets searchable within about ten seconds.
+*Evidence: Primary* — [Busch et al. 2012]
+:::
+
+#### Trade-offs and alternatives
+
+Elasticsearch with a 1 s refresh interval (§16.10) is easier to operate and adequate at a few thousand posts per second; at 50,000/s bursts the custom in-memory design wins. Term partitioning would reduce fan-out but makes hot terms during breaking news overload one partition; document partitioning spreads them. A separate archive index trades freshness for cost on older posts.
+
+#### Follow-up questions
+
+1. *"How are deletions handled?"* A deleted-post bitmap per segment checked at query time, applied within seconds from the post log; physical removal at seal or merge time.
+2. *"What happens when a partition replica dies?"* Others serve; a new replica rebuilds from the log from the oldest retained segment's offset.
+3. *"How do you handle a trending term with millions of matches?"* Early termination by recency; for "top", precomputed engagement scores and a capped candidate set.
+4. *"Multi-language?"* Language detection at indexing; per-language analyzers; queries analyzed in the detected language plus a fallback (§16.4.7).
+5. *"How do you test freshness?"* Synthetic canary posts searched continuously; freshness p99 is an SLI.
+
+#### What distinguishes levels
+
+- **Mid:** inverted index, sharding and replication with an indexing pipeline.
+- **Senior:** in-memory time-ordered segments, freshness budget, fan-out sizing and deletes.
+- **Staff:** early termination as a capacity lever, document versus term partitioning under bursts, and a clear degradation policy.
+
+### 91.6.9 Q37. Ad-click aggregation
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §56.7 (full case study); §29.8, §31.11, §17.6
+
+#### Prompt
+
+"Advertisers are billed per click. Aggregate ad clicks per ad per minute, show advertisers near-real-time counts and return the top 100 ads of the last few minutes. Counts must be billing-accurate."
+
+#### Clarifying questions and assumptions
+
+- *Volume?* 1 billion clicks/day, peak 5× average; 2 million active ads; 100-byte click events with a unique click ID and event time.
+- *Accuracy?* Billing totals exact after a daily close; live numbers within 0.5%.
+- *Late events?* Clicks arrive up to minutes late from mobile clients; fraud filtering retracts clicks hours later.
+
+#### Requirements
+
+**Functional.** Per-ad counts per minute; top-N ads per window; filters by country and device; daily billing totals; retractions. **Non-functional.** Live freshness ≤ 30 s; final minute values ≤ 2 min after the minute ends; no double counting or loss in billing totals; replay of a day on demand.
+
+#### Estimation
+
+::: example
+**Worked example — Modest rate, strict correctness.**
+
+1. Rates (§89.5): $10^9 / 86{,}400 = 11{,}574$ clicks/s average, 57,870/s at peak; raw data $10^9 \times 100\ \text{B} = 100$ GB/day.
+2. Deduplication state for a 1-hour window at average rate: $11{,}574 \times 3{,}600 = 4.17 \times 10^7$ click IDs × 16 B $\approx 0.67$ GB, partitioned across the job.
+3. Per-minute aggregate rows are at most 2 million (one per active ad), far fewer in practice.
+
+**Interpretation.** One streaming job handles the rate; the design effort goes into event time, deduplication and reconciliation. **Engineering implication.** Choose event-time windows with watermarks and an exactly-once sink, and keep raw events for recomputation.
+:::
+
+#### API and data model
+
+```text
+GET /v1/ads/{ad_id}/clicks?from=&to=&granularity=minute&filter=country:US
+GET /v1/ads/top?window=5m&n=100
+click_event(click_id, ad_id, user_hash, country, device, event_time)
+agg_minute(ad_id, minute, country, device, clicks)   -- OLAP store, partitioned by advertiser
+```
+
+#### High-level design
+
+**Figure 91.109 — Click aggregation: log, event-time stream job, OLAP store, batch reconciliation.**
+
+```mermaid
+flowchart LR
+  AS([Ad servers and SDKs]) -->|click events| K[[Click log]]
+  K -.-> SJ[Stream job<br/>dedup, windows]
+  SJ -->|exactly-once sink| OL[(OLAP store<br/>minute rollups)]
+  SJ -.-> TK[(Top-N cache)]
+  K -.-> LK[(Raw event lake)]
+  LK -.->|daily recompute| BJ[Batch job]
+  BJ --> OL
+  Q([Advertiser dashboards]) --> QS[Query service]
+  QS --> OL
+  QS --> TK
+```
+
+**Reading the diagram.** Clicks are appended to a durable, partitioned log. A stream job consumes asynchronously, deduplicates by click ID, assigns clicks to event-time minute windows using watermarks, and writes rollups to an OLAP store transactionally; it also maintains per-window top-N lists. Raw events land in a lake, from which a daily batch job recomputes billing-grade totals and overwrites the day (the Lambda-style safety net of §29.10). Dashboards query rollups and the top-N cache synchronously. Failure points: consumer crashes (checkpoints and replay), late events beyond the watermark (side output, corrected by the batch job), and hot ads (pre-aggregation). Scaling: partitions of the log and parallelism of the job.
+
+#### Deep dives
+
+1. **Event time and watermarks.** Windows close on event time after an allowed lateness; later events update the minute or go to a correction path (§29.8.3).
+2. **Exactly-once.** Checkpointed state plus a transactional or idempotent sink keyed by (ad, minute) gives effectively-once counts; checkpoint interval bounds freshness (§56.7.4).
+3. **Top-N.** Partition by ad ID so each partition's local top-N is exact, then merge the partition lists (Q38).
+
+#### Trade-offs and alternatives
+
+Aggregating in the stream gives cheap queries; aggregating raw events in the OLAP store at query time gives flexibility at higher cost. A Kappa design replays the log instead of running a batch job, which works if the log retains enough history (§29.10).
+
+#### Follow-up questions
+
+1. *"A click arrives two hours late."* It misses live numbers, goes to the correction path and appears in the daily close.
+2. *"How do you handle fraud retractions?"* Negative events keyed by click ID; billing uses the corrected totals.
+3. *"Hot ad during a campaign launch?"* Pre-aggregate per producer or salt the key, then merge (§29.6.3).
+4. *"How do you prove the numbers?"* Reconcile stream totals with batch totals per day; alert on drift above 0.5%.
+
+#### What distinguishes levels
+
+- **Mid:** stream counting per minute with a database.
+- **Senior:** event time, watermarks, deduplication and an exactly-once sink.
+- **Staff:** reconciliation between stream and batch, retraction semantics, and the freshness cost of exactly-once. Full case: §56.7.
+
+### 91.6.10 Q38. Top-K heavy hitters
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §17.6 (Count-Min, Space-Saving), §17.12, §53.8 (trends)
+
+#### Prompt
+
+"Show the top 100 most-played songs globally over the last minute, hour and day, updated continuously."
+
+#### Clarifying questions and assumptions
+
+- *Volume?* 10 billion play events/day, peak 3× average; 50 million distinct songs played per day.
+- *Exactness?* Approximate is acceptable for the 1-minute and 1-hour lists if errors are bounded; the daily chart is exact.
+- *Dimensions?* Global first; per-country charts as a follow-up.
+- *Freshness?* Lists update within 30 s.
+
+#### Requirements
+
+**Functional.** Top-100 per window (1 min, 1 h, 24 h, sliding); per-country variant; history of charts. **Non-functional.** Freshness ≤ 30 s; read p99 ≤ 50 ms (charts are cached); bounded error for approximate windows; tolerate an aggregator failure without wrong charts.
+
+#### Estimation
+
+::: example
+**Worked example — When are sketches needed?** Assumptions: 16 bytes per exact counter (8-byte song ID, 8-byte count) with 2× hash-table overhead; Count-Min sketch with 4-byte counters.
+
+1. Rates (§89.5): $10^{10} / 86{,}400 = 115{,}741$ events/s average, 347,222/s at peak.
+2. Exact daily counts: $5 \times 10^7 \times 16 \times 2 = 1.6$ GB: fits in memory, partitioned over a few nodes.
+3. One hour holds $N = 10^{10}/24 = 4.17 \times 10^8$ events. A Count-Min sketch (§17.6.1) with error $\varepsilon N$ for $\varepsilon = 10^{-6}$ needs width $e / \varepsilon = 2.72$ million and depth $\lceil \ln(1/0.01) \rceil = 5$: $54$ MB, overestimating any count by at most 417 plays with 99% probability.
+4. Per-country charts (200 countries) multiply keys; most (song, country) pairs are rare, which is where sketches or Space-Saving pay off.
+
+**Interpretation.** At global granularity exact counting is affordable; approximation becomes necessary when keys multiply by dimensions or memory is constrained. **Engineering implication.** Say so in the interview: start exact, and introduce sketches where the arithmetic demands them.
+:::
+
+#### API and data model
+
+```text
+GET /charts/top?window=1m|1h|24h&country=&n=100  -> [(song_id, count, rank)]
+play_event(song_id, user_id, country, event_time)
+Aggregator state per partition: minute buckets {song_id -> count}; 60-bucket ring for 1 h; 24 hour buckets for 1 day
+Chart store: (window, country, computed_at) -> top-100 list
+```
+
+#### High-level design
+
+**Figure 91.110 — Top-K: partition by item, count locally, merge small lists.**
+
+```mermaid
+flowchart LR
+  P([Players]) -->|play events| K[[Play log<br/>keyed by song]]
+  K -.-> A1[Aggregator partition 1<br/>minute buckets]
+  K -.-> A2[Aggregator partition n]
+  A1 -.->|local top-K| MG[Merger]
+  A2 -.->|local top-K| MG
+  MG --> CS[(Chart store)]
+  U([Clients]) --> API[Chart API with cache]
+  API --> CS
+  K -.-> LK[(Raw lake)]
+  LK -.->|exact daily chart| BJ[Batch job]
+  BJ --> CS
+```
+
+**Reading the diagram.** Play events are appended to a log partitioned by song ID, so all plays of one song reach one aggregator partition. Each partition keeps per-minute counts and rolls them into sliding hour and day windows; every few seconds it emits its local top-K (dotted, asynchronous) to a merger, which computes the global top-K and writes it to the chart store. Clients read cached charts synchronously. The raw lake feeds an exact daily batch chart that supersedes the streaming one. Failure points: an aggregator crash (state restored from a checkpoint and log replay), a viral song concentrating load on one partition, and late events. Scaling: more partitions; the merger handles only K × partitions entries.
+
+#### Deep dives
+
+1. **Why partition by item.** If every song's plays land in one partition, that partition's count is exact and the global top-K is contained in the union of local top-Ks: merging is exact. If events are partitioned randomly, a song can be ranked 101st everywhere and first globally, so local lists must carry more candidates or sketches.
+2. **Sliding windows cheaply.** Keep counts in minute buckets; the hour total is the sum of 60 buckets, updated by adding the newest and subtracting the expired one. A heap or sorted structure per partition yields the local top-K.
+3. **Hot items.** A viral song can exceed one partition's capacity: pre-aggregate at producers or in a first stage keyed by (song, random salt), then sum by song in a second stage (§29.6.3). Space-Saving (§17.6.2) keeps a bounded set of candidates when the key space per partition is too large for exact maps.
+
+#### Trade-offs and alternatives
+
+Exact counting with item partitioning is simple and correct at this scale; Count-Min plus a candidate heap uses fixed memory with a bounded overcount; Space-Saving guarantees all items above a frequency threshold appear. A batch-only design (hourly jobs) is simplest but misses the 1-minute freshness requirement.
+
+#### Follow-up questions
+
+1. *"Per country?"* Key by (country, song); exact for large countries, Space-Saving for the long tail.
+2. *"What does Count-Min guarantee?"* Never undercounts; overcounts by at most $\varepsilon N$ with probability $1 - \delta$.
+3. *"How do you stop bots from gaming the chart?"* Deduplicate per user per song per window, apply fraud filters before counting, and use distinct listeners (HyperLogLog, §17.5) as a ranking signal.
+4. *"An aggregator restarts."* Restore checkpointed buckets and replay the log from the checkpoint offset; charts briefly hold the previous value.
+5. *"Trending rather than top?"* Rank by growth against a baseline, not by absolute count (§53.8).
+
+#### What distinguishes levels
+
+- **Mid:** counts in a hash map and sorts; may reach for Redis sorted sets.
+- **Senior:** windowed buckets, partition-by-item exact merge, sketches with stated error bounds.
+- **Staff:** does the arithmetic to decide exact versus approximate, handles hot items with two-stage aggregation, and separates popularity from trending and abuse.
+
+### 91.6.11 Q39. Multi-region active-active social app
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** Ch 44 (§44.6, §44.7, §44.8, §44.11), §27.14, §25.6
+
+#### Prompt
+
+"Our social app runs in one region. Make it serve users from three regions with low latency, and keep working if any one region goes down."
+
+#### Clarifying questions and assumptions
+
+- *Users and regions?* 200 million DAU split across the Americas, Europe and Asia-Pacific.
+- *Writes?* 10 per DAU per day (posts, likes, comments, follows, profile edits), 1 KB each; reads 100× writes.
+- *Consistency?* Users must read their own writes; others may see changes within a second or two.
+- *Residency?* EU users' data must stay in the EU at rest (a common follow-up).
+
+#### Requirements
+
+**Functional.** All reads and writes served from the user's nearest region; replication to other regions; region evacuation. **Non-functional.** p99 write latency ≤ 100 ms (no cross-region round trip on the write path); replication lag p99 ≤ 2 s; RPO ≤ 5 s and RTO ≤ 5 min on region loss; survive loss of one region at full peak load.
+
+#### Estimation
+
+::: example
+**Worked example — Replication is cheap; capacity headroom is not.** Global PAR 2 (Table 89.7).
+
+1. Writes: $2 \times 10^8 \times 10 = 2 \times 10^9$/day, $23{,}148$/s average, $46{,}296$/s peak; reads about 4.6 million/s at peak.
+2. Cross-region replication: each 1 KB write goes to two other regions, $2 \times 2$ TB $= 4$ TB/day, about 46 MB/s average.
+3. Headroom (§89.10): with three regions and one allowed to fail, each needs $Z/(Z-f) = 3/2$, so 50% more capacity than its own peak.
+
+**Interpretation.** Bytes between regions are small; the cost is 50% spare capacity everywhere and the correctness work of concurrent writes. **Engineering implication.** Spend design time on ownership and conflicts, and on regular evacuation drills that prove the headroom exists.
+:::
+
+#### API and data model
+
+```text
+Unchanged client API; a global front door routes to the nearest healthy region
+user(user_id PK, home_region, ...)            -- home region owns profile and settings writes
+post(post_id PK, author_id, ...)              -- written in author's home region
+like_counter(post_id, region, count)          -- per-region counters, summed on read (a G-counter CRDT)
+follow(edge_id, follower, followee, version)  -- add/remove set semantics
+```
+
+#### High-level design
+
+**Figure 91.111 — Active-active with home-region ownership and asynchronous replication.**
+
+```mermaid
+flowchart LR
+  U([Users]) -->|anycast front door| GTM[Global traffic manager]
+  GTM --> RA[Region Americas<br/>full stack]
+  GTM --> RE[Region Europe<br/>full stack]
+  GTM --> RP[Region APAC<br/>full stack]
+  RA <-.->|async replication| RE
+  RE <-.->|async replication| RP
+  RA <-.->|async replication| RP
+  RA --> DA[(Regional DB + cache)]
+  RE --> DE[(Regional DB + cache)]
+  RP --> DP[(Regional DB + cache)]
+```
+
+**Reading the diagram.** A global traffic manager sends each user to the nearest healthy region (synchronous). Every region runs the full stack with its own databases and caches, the storage boundaries. Writes commit locally and replicate asynchronously to the other two regions (dotted), so writes never wait for an ocean crossing. Records owned by a home region (profiles, posts) are written only there; requests landing elsewhere are forwarded, or the user is routed home. Commutative data (counters, sets) accepts writes anywhere and merges. Failure points: replication lag (a user switching regions may not see their writes), conflicting concurrent writes, and region loss with unreplicated writes (the RPO). Scaling: add regions, at the cost of more replication links and higher headroom planning.
+
+#### Deep dives
+
+1. **Avoid conflicts by construction.** Give each mutable record an owner: a user's home region owns their profile, posts and settings, so concurrent cross-region writes to the same record cannot happen (§44.7.3). Only data that is naturally commutative is multi-writer: likes as per-region counters, follows as add/remove sets with CRDT semantics (§27.14.3).
+2. **Read-your-writes across regions.** Clients carry a token holding the latest write position or timestamp; a region that has not replicated that far waits briefly or forwards the read (§25.6.2). Sticky routing keeps most users in one region anyway.
+3. **Evacuation.** Losing a region shifts its users to the others: each needs 50% headroom, DNS and anycast changes take effect in seconds to minutes (§44.5.2), and home-region ownership for the dead region's users must move, accepting that the last ≤ 5 s of their unreplicated writes may be lost or reconciled later. Practice evacuations regularly (§44.11.3).
+
+**Table 91.104 — Conflict strategy per data type.**
+
+| Data | Strategy | Why |
+|---|---|---|
+| Profile, settings, posts | Home-region single writer | Conflicts impossible; edits rare |
+| Likes, view counts | Per-region counters summed (G-counter) | Commutative; high write rate |
+| Follows, group membership | Add/remove set CRDT | Concurrent add and remove resolvable |
+| Usernames, payments | Global single writer or consensus | Uniqueness and invariants need coordination |
+
+#### Trade-offs and alternatives
+
+Active-passive (one write region) is far simpler and adds 100–200 ms to writes from far regions; active-active with a globally consistent database (Q45) removes conflicts but puts cross-region quorums on the write path. Home-region partitioning also satisfies residency rules if EU users' home is the EU and only derived, non-personal data replicates out (§44.9).
+
+#### Follow-up questions
+
+1. *"Two users edit a shared group name at once in two regions."* Group metadata has a home region; route edits there, or use LWW with a hybrid logical clock and accept it for low-value fields.
+2. *"How do you make usernames unique?"* A global uniqueness service with consensus, or reservations owned by one region; it is on the slow path of sign-up only.
+3. *"A region is cut off but still running."* It must stop accepting writes for records it does not own, and owned records are not reassigned until it is fenced (§26.13).
+4. *"How do you detect replication lag?"* Heartbeat rows with timestamps per link; alert on lag in seconds.
+5. *"What about caches?"* Invalidate per region from each region's replication stream (Q35).
+
+#### What distinguishes levels
+
+- **Mid:** replicas in three regions and DNS failover.
+- **Senior:** asynchronous replication, conflict resolution per data type, read-your-writes, 50% headroom.
+- **Staff:** removes most conflicts by ownership, ties RPO to replication lag, designs fencing and evacuation drills, and handles residency with the same mechanism.
+
+### 91.6.12 Q40. Distributed cron/job scheduler
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §52.9 (full case study); §26.11, §26.13, §46
+
+#### Prompt
+
+"Design a cron-as-a-service platform for the whole company: recurring and delayed jobs, fired on time, never silently skipped."
+
+#### Clarifying questions and assumptions
+
+- *Scale?* 10 million recurring schedules and 50 million one-off delayed jobs per day (§52.9.4).
+- *Targets?* HTTP callback, queue message or container task.
+- *Guarantee?* At-least-once with a stable execution ID; jobs must be idempotent.
+
+#### Requirements
+
+**Functional.** Cron expressions with time zones; delays; retries with backoff; concurrency and misfire policies; pause, trigger now, run history. **Non-functional.** Dispatch p99 ≤ 1 s (≤ 10 s at the top of the hour); zero silent skips; duplicates ≤ 1 in 10⁴; failover within 15 s; 99.99% for firing.
+
+#### Estimation
+
+::: example
+**Worked example — The top-of-hour burst.** From §52.9.4: 250 million executions/day (2,892/s average); about 1.03 million firings due at :00, so dispatching them within 10 s requires 103,000 dispatches/s, 36× the average. Spreading ":00" jobs uniformly over the first minute would cut the burst to $1.03 \times 10^6 / 60 \approx 17{,}200$/s.
+
+**Interpretation.** Average load is trivial; the burst decides the design. **Engineering implication.** Pre-load timers into memory, avoid a database write per firing on the critical path, partition the schedule space, and offer (or enforce) jitter.
+:::
+
+#### API and data model
+
+```text
+POST /v1/jobs {cron, tz, target, retry, concurrency_policy, misfire_policy}
+POST /v1/jobs/{id}:trigger | :pause
+job(job_id, partition, cron, tz, next_fire_at, ...); execution(execution_id = job_id + scheduled_time, state, attempt)
+partition_watermark(partition, fired_through)   -- replayed after failover
+```
+
+#### High-level design
+
+**Figure 91.112 — Partitioned schedulers with leases, timing wheels and a dispatch queue.**
+
+```mermaid
+flowchart LR
+  API[Job API] --> JDB[(Jobs DB)]
+  CO[Coordination service<br/>leases, fencing] -.-> S1[Scheduler node<br/>owns partitions]
+  JDB -->|load next hour| S1
+  S1 -->|timing wheel fires| DQ[[Dispatch queue]]
+  DQ --> WK[Workers]
+  WK -->|execution_id| TG{{Job targets}}
+  WK --> HIS[(Run history)]
+  S1 -.->|advance watermark| JDB
+```
+
+**Reading the diagram.** Jobs are stored in a sharded database. Scheduler nodes hold leases on partitions of the job space from a coordination service, with fencing tokens. Each node loads the next hour of firings for its partitions into an in-memory timing wheel; when a timer fires it enqueues a dispatch message carrying the deterministic execution ID (synchronous to the queue), and periodically advances a per-partition watermark rather than writing every firing. Workers execute against targets and record history. Failure points: a node pause causing two owners (fencing rejects the stale one; duplicates share an execution ID), a failover (the new owner replays from the watermark), and the :00 burst. Scaling: more partitions and nodes; cells at 100×.
+
+#### Deep dives
+
+1. **Ownership without double firing.** Leases plus fencing tokens (§26.13); duplicates that slip through are harmless because the execution ID is stable.
+2. **No silent skips.** The watermark records "fired through T"; after failover, everything between the watermark and now is fired or recorded as a misfire per policy.
+3. **Time zones and DST.** Compute next fire time in the job's zone; define behavior for skipped and repeated local hours.
+
+#### Trade-offs and alternatives
+
+A database-polling scheduler is simple to about thousands of jobs per second; the timing-wheel design wins at the burst. A single leader is simpler than partitioned leases but caps throughput and lengthens failover.
+
+#### Follow-up questions
+
+1. *"Exactly-once?"* No; a worker can crash after the side effect. Offer at-least-once with a stable ID.
+2. *"Job runs longer than its interval?"* Concurrency policy: forbid, replace or allow.
+3. *"Why a timing wheel?"* O(1) insert and expiry for millions of timers (§52.9.8).
+4. *"Workflow dependencies?"* A DAG layer above firing, or a workflow engine (Q48).
+
+#### What distinguishes levels
+
+- **Mid:** a scheduler polling a database and pushing to a queue.
+- **Senior:** partitioned ownership with leases, retries and idempotent execution IDs.
+- **Staff:** finds the :00 burst in the arithmetic, uses watermarks instead of per-firing writes, fences correctly and treats DST as a correctness requirement. Full case: §52.9.
+
+### 91.6.13 Q41. Live streaming platform
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §21.8 (video delivery, live latency), §54.4 (YouTube, video on demand), §89.7, §9.6 (chat)
+
+#### Prompt
+
+"Design a live streaming platform: creators broadcast from their computers, viewers watch with a few seconds of delay and chat alongside."
+
+#### Clarifying questions and assumptions
+
+- *Scale?* 100,000 concurrent channels and 10 million concurrent viewers at peak; the most popular channel has 1 million viewers.
+- *Latency?* Glass-to-glass under 5 s for most viewers.
+- *Quality?* Creators send 6 Mb/s 1080p; viewers get adaptive bitrate, averaging 4 Mb/s.
+- *Scope?* Ingest, transcoding, delivery, chat; recordings (VOD) as a follow-up.
+
+#### Requirements
+
+**Functional.** Authenticated ingest per stream key; transcoding into a bitrate ladder; adaptive playback on web and mobile; live chat; stream start and stop notifications; recording. **Non-functional.** Latency ≤ 5 s p50; rebuffering ratio under 0.5%; ingest tolerant of creator network blips; 99.95% playback availability; cost per viewer-hour as a first-class metric.
+
+#### Estimation
+
+::: example
+**Worked example — Egress dominates, skew concentrates it.** Using §89.7; transcoding: one server produces 10 full ladders in real time (assumption); only the 20% of channels with enough viewers get a full ladder, the rest are passed through.
+
+1. Ingest: $10^5 \times 6\ \text{Mb/s} = 600$ Gb/s.
+2. Viewer egress: $10^7 \times 4\ \text{Mb/s} = 40$ Tb/s, the dominant cost.
+3. Transcoding: $20{,}000 / 10 = 2{,}000$ servers; a full ladder for every channel would need 10,000.
+4. The top channel alone: $10^6 \times 4\ \text{Mb/s} = 4$ Tb/s. With 1 s low-latency parts, each viewer fetches about one part and one playlist per second: 2 million requests/s for one stream. With request collapsing at 200 PoPs and 5 renditions, the origin sees $200 \times 5 \times 2 = 2{,}000$ requests/s.
+5. Latency with 1 s parts (§21.8.4): $L \approx 1 + 3 \times 1 + 0.5 = 4.5$ s.
+
+**Interpretation.** Requests and bytes for one popular channel are CDN-scale; transcoding is a selective compute decision. **Engineering implication.** Collapse requests at every cache tier, transcode by popularity, and treat low-latency segments as the main source of request amplification.
+:::
+
+#### API and data model
+
+```text
+Ingest: RTMP or SRT to ingest.example/live/{stream_key}  (WebRTC/WHIP for ultra-low latency)
+GET /live/{channel}/master.m3u8 -> renditions; /live/{channel}/{rendition}/playlist.m3u8 (blocking reload)
+channel(channel_id, owner, stream_key_hash, state, ingest_node, started_at)
+Chat: WebSocket per viewer; messages partitioned by channel_id
+```
+
+#### High-level design
+
+**Figure 91.113 — Live pipeline: ingest, transcode, package, CDN fan-out, and chat.**
+
+```mermaid
+flowchart LR
+  CR([Creator encoder]) -->|RTMP or SRT| IN[Ingest edge]
+  IN --> TC[Transcoder<br/>bitrate ladder]
+  TC --> PK[Packager<br/>LL-HLS parts]
+  PK --> OR[(Origin<br/>segment store)]
+  OR --> SH[CDN shield]
+  SH --> ED[CDN edges]
+  ED -->|HTTPS, collapsed| V([Viewers])
+  V <-->|WebSocket| CH[Chat service]
+  CH --> CQ[[Chat log per channel]]
+  OR -.->|recording| VOD[(VOD storage)]
+```
+
+**Reading the diagram.** The creator's encoder pushes a continuous stream to the nearest ingest edge over RTMP or SRT. The ingest node forwards to a transcoder that produces the ladder (or passes the source through for small channels), and a packager cuts low-latency HLS or CMAF parts and playlists into the origin store, the storage boundary for live segments. Viewers fetch playlists and parts through edges and shields, which collapse concurrent requests for the same part into one upstream fetch. Chat runs on a separate WebSocket fleet with a per-channel log (bidirectional, synchronous to the gateway, fan-out asynchronous). Recording copies segments asynchronously to VOD storage. Failure points: an ingest or transcoder node failure mid-stream (the encoder reconnects; a standby transcoder takes over from the next keyframe), origin overload from uncollapsed requests, and chat fan-out for huge channels. Scaling: CDN capacity for viewers, transcoder pools for channels, chat partitioning per channel.
+
+#### Deep dives
+
+1. **Latency versus stability.** Glass-to-glass latency is dominated by segment duration times buffered segments (§21.8.4). Partial segments and blocking playlist reloads cut it to about 4.5 s; WebRTC delivery reaches sub-second but costs far more per viewer because it does not use HTTP caches. Offer a low-latency mode only where interaction matters.
+2. **Request collapsing and the hot channel.** Every edge and shield must hold concurrent requests for an in-progress part and serve them all from one fetch; without it the 2 million requests/s of the top channel reach the origin. Pre-warm shields when a large channel goes live.
+3. **Chat at 1 million viewers.** Fan-out of every message to every viewer is $O(\text{messages} \times \text{viewers})$; sample or rate-limit the displayed stream for huge channels, batch messages every 100–200 ms into one frame (§9.6), and partition gateways so each holds a share of viewers subscribed to the channel's topic.
+
+#### Trade-offs and alternatives
+
+HLS/DASH over CDN scales to millions at the lowest cost per viewer with 3–5 s latency; WebRTC with selective forwarding units gives sub-second latency for interactive formats at higher cost (§9.7.2). Transcoding everything maximizes quality for small channels but multiplies compute five-fold; source-only for small channels is the usual compromise. Cloud transcoding versus hardware encoders is a cost decision at this volume.
+
+#### Follow-up questions
+
+1. *"The creator's connection drops for 3 seconds."* Ingest keeps the session open briefly; the player rides its buffer; on reconnect the packager continues with a discontinuity marker.
+2. *"How do you start playback fast?"* Begin at the latest independent part with a short buffer and the lowest rendition, then ramp up (§21.8.3).
+3. *"How do you stop stream-key theft?"* Keys are secret, rotatable and bound to an account; ingest checks them and rejects concurrent use.
+4. *"How do you estimate cost per viewer-hour?"* $4\ \text{Mb/s} \times 3{,}600\ \text{s} / 8 = 1.8$ GB per viewer-hour times the CDN price per GB, plus a small transcoding share.
+5. *"Recording and clips?"* Segments already exist; write them to object storage and build a VOD manifest.
+
+#### What distinguishes levels
+
+- **Mid:** ingest, transcode, CDN delivery with HLS.
+- **Senior:** latency formula and low-latency parts, request collapsing, popularity-based transcoding, chat fan-out.
+- **Staff:** quantifies the hot channel end to end, prices cost per viewer-hour, and chooses where WebRTC is worth its cost.
+
+### 91.6.14 Q42. Proximity service
+
+**Difficulty:** Hard · **Time:** 45–60 min · **Related:** §17.9 (geospatial indexing, §17.9.6), §55.4–§55.5 (moving objects), §20
+
+#### Prompt
+
+"Design the backend for 'find restaurants and shops near me': given a location and radius, return nearby businesses ranked by distance and rating."
+
+#### Clarifying questions and assumptions
+
+- *Static or moving objects?* Businesses rarely move; updates are infrequent. (Moving drivers are Q20 and §55.5.)
+- *Scale?* 200 million businesses worldwide; 100 million DAU making 5 searches a day; peak 3× average.
+- *Query shape?* Radius 0.5–20 km, optional category filter, top 20 results, pagination.
+- *Freshness?* New or edited businesses visible within minutes.
+
+#### Requirements
+
+**Functional.** Nearby search by radius and category; business details; owners add and edit businesses; reviews and ratings (summary only). **Non-functional.** p99 search ≤ 200 ms; 99.99% availability for search; edits visible within 10 minutes; low cost per query.
+
+#### Estimation
+
+::: example
+**Worked example — The index is tiny; reads dominate.** Assumptions: 1 KB per business record; 16 bytes per index entry (8-byte cell ID, 8-byte business ID); 1% of businesses edited per day; one search node handles 5,000 queries/s.
+
+1. Searches: $10^8 \times 5 / 86{,}400 = 5{,}787$/s average, 17,361/s peak (§89.5).
+2. Business data: $2 \times 10^8 \times 1\ \text{KB} = 200$ GB; geo index $2 \times 10^8 \times 16 = 3.2$ GB.
+3. Edits: $2 \times 10^6$/day, 23/s.
+4. Search nodes: $17{,}361 / (5{,}000 \times 0.6) = 5.8$, so 6, or 9 with zone headroom (§89.10).
+
+**Interpretation.** The whole index fits in every node's memory; write rate is negligible. **Engineering implication.** Do not shard the index; replicate it in full to stateless search nodes in each region and rebuild it periodically from the database.
+:::
+
+#### API and data model
+
+```text
+GET /v1/search/nearby?lat=&lng=&radius_m=&category=&limit=20&cursor=
+GET /v1/businesses/{id}        POST/PUT /v1/businesses (owner)
+business(business_id PK, name, lat, lng, category, rating, ...)       -- relational, replicated
+geo_index(cell_id, business_id)     -- in memory: geohash precision 6 or S2 level ~13
+```
+
+#### High-level design
+
+**Figure 91.114 — Proximity search: replicated in-memory geo index, database for details.**
+
+```mermaid
+flowchart LR
+  U([Mobile and web clients]) --> LB[Load balancer]
+  LB --> SS[Search service<br/>in-memory geo index]
+  SS -->|ids| BS[Business service]
+  BS --> CA[(Cache)]
+  CA --> DB[(Business DB<br/>primary + replicas)]
+  OW([Business owners]) --> BS
+  DB -.->|CDC| IB[Index builder]
+  IB -.->|snapshots + deltas| SS
+```
+
+**Reading the diagram.** A search request reaches a stateless search node that holds the entire geo index in memory. It computes the cells covering the search circle, gathers candidate IDs, filters by exact distance and category, ranks, and fetches details for the top 20 through the business service and its cache (synchronous). Owners' edits go to the relational database; change data capture feeds an index builder that publishes periodic snapshots and incremental deltas to search nodes (dotted, asynchronous). Storage boundaries: the database (truth), the cache, and each node's in-memory index. Failure points: a stale index on a node (version and freshness checks), dense areas returning thousands of candidates, and cross-cell boundary misses. Scaling: add search replicas per region; the index stays small.
+
+#### Deep dives
+
+1. **Choosing the cell index.** Geohash is easy and works in any ordered store but distorts near the poles and has boundary quirks; S2 and H3 give uniform cells (Table 17.8). Geohash precision 6 cells are about 1.2 km × 0.6 km at the equator, precision 5 about 4.9 km × 4.9 km; choose the precision from the radius and search the covering cell set, always including neighbors so points just across a boundary are found (§17.9.2).
+2. **Density.** Midtown Manhattan has thousands of businesses per cell; rural areas have none for kilometers. Either use an adaptive structure (quadtree, §17.9.3) or start with a small radius and expand until 20 candidates are found, capped at the maximum radius.
+3. **Ranking and pagination.** Rank by a blend of distance, rating and relevance; paginate with a cursor carrying the last score and ID so pages are stable while the index refreshes.
+
+#### Trade-offs and alternatives
+
+A database with a geospatial index (PostGIS, Elasticsearch geo queries) is the simplest correct answer and fine to tens of thousands of queries per second; the in-memory replicated index is cheaper and faster at this scale. Sharding by region is needed only if the index outgrows memory, for example with billions of points of interest or per-user data.
+
+#### Follow-up questions
+
+1. *"Why not shard by geography?"* 3.2 GB fits in RAM; sharding adds hot shards (cities) and cross-shard queries for nothing.
+2. *"How fresh is the index?"* Deltas every minute, full snapshot daily; edits visible within the 10-minute target.
+3. *"How do you search along a route?"* Cover the route's buffer polygon with cells.
+4. *"What if 200 million becomes 20 billion places?"* Index of 320 GB: shard by S2 cell range and route by covering cells.
+5. *"Opening hours filter?"* Store as a structured field and filter after candidate retrieval; precompute "open now" buckets if needed.
+
+#### What distinguishes levels
+
+- **Mid:** geohash or quadtree with a database.
+- **Senior:** computes that the index fits in memory, replicates instead of sharding, handles boundaries and density.
+- **Staff:** justifies the cell system, plans freshness via CDC snapshots, and states the scale at which sharding would become necessary.
+
+### 91.6.15 Q43. Maps and routing
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §55.6 (full case study); §17.9, §21.3, §83.5 (ETA model)
+
+#### Prompt
+
+"Design a maps product: pan and zoom the map, search places, and get driving directions with live traffic."
+
+#### Clarifying questions and assumptions
+
+- *Scale?* 300 million DAU; 100 tile requests, 1.5 routes and 2 searches per user per day (§55.6.4).
+- *Scope?* Tiles, search, routing with traffic; Street View and transit ingestion out.
+- *Latency?* Tiles p99 < 100 ms at the edge; city routes p99 < 500 ms.
+
+#### Requirements
+
+**Functional.** Map display at zoom 0–20 in several styles; place search and geocoding; directions with alternatives; ETA with live traffic; rerouting. **Non-functional.** 99.99% for tiles and routing; traffic speeds ≤ 3 min old; tiles and routing graph from the same map version.
+
+#### Estimation
+
+::: example
+**Worked example — Three subsystems, three scaling levers.** From §55.6.4:
+
+1. Tiles: $3 \times 10^{10}$/day, 694,444/s at peak; 95% CDN hits leave 34,722/s for the origin.
+2. Vector tile pyramid to zoom 14: $(4^{15} - 1)/3 = 3.58 \times 10^8$ tiles, 30% land, 20 KB each: about 2.15 TB per map version.
+3. Routes: 15,625/s at peak; probe ingestion from 20 million navigating users every 10 s: 2 million points/s.
+4. Road graph with contraction-hierarchy shortcuts: about 46 GB per copy, memory-resident.
+
+**Interpretation.** Tiles are a CDN problem, probes a streaming problem, routing an algorithm-plus-memory problem. **Engineering implication.** Design them as separate subsystems sharing one versioned map build.
+:::
+
+#### API and data model
+
+```text
+GET /tiles/{style}/{z}/{x}/{y}.mvt?v={map_version}
+GET /route?from=&to=&mode=drive&depart=now  -> polyline, steps, eta
+POST /probes (batched GPS points)
+Road graph: nodes, directed edges with static and live weights; CH shortcuts; partitions + overlay
+```
+
+#### High-level design
+
+**Figure 91.115 — Maps: offline build, tile CDN, routing cluster, traffic pipeline.**
+
+```mermaid
+flowchart LR
+  SRC[(Map data sources)] --> BLD[Offline map build<br/>versioned]
+  BLD --> TL[(Vector tiles)]
+  BLD --> GR[(Routing graph + CH)]
+  TL --> CDN[CDN]
+  U([Clients]) -->|tiles| CDN
+  U -->|route| RS[Routing service<br/>graph in memory]
+  RS --> GR
+  U -.->|probes| PI[[Probe stream]]
+  PI -.-> TS[Traffic speeds]
+  TS -.->|live weights| RS
+```
+
+**Reading the diagram.** An offline build turns source data into one versioned set of artifacts: vector tiles served through the CDN, and a routing graph with contraction-hierarchy shortcuts loaded into routing servers' memory. Clients fetch tiles from the CDN and request routes synchronously. Navigating clients upload probe points asynchronously; a streaming pipeline computes per-segment speeds that update routing weights. Failure points: version skew between tiles and graph, stale traffic, and a routing node reload. Scaling: CDN for tiles, replicas and regional partitions for routing, stream partitions for probes.
+
+#### Deep dives
+
+1. **Tiles.** Precompute vector tiles to about zoom 14–16, overzoom on the client, version URLs so caches never serve mixed versions.
+2. **Routing.** Dijkstra → A* → contraction hierarchies; CH preprocessing assumes fixed weights, so live traffic needs customizable variants or re-scoring of candidate routes (§55.6.8).
+3. **Traffic.** Map-match probes to segments, aggregate speeds per segment per minute, apply privacy thresholds.
+
+#### Trade-offs and alternatives
+
+Raster tiles are simpler for clients but hundreds of terabytes per style; vector tiles move rendering to clients. Plain A* on a partitioned graph is easier to update than CH but slower for long routes.
+
+#### Follow-up questions
+
+1. *"A road closes."* Live weight override immediately; rebuild tiles and graph in the next version.
+2. *"Cross-continent routes?"* Partitioned graph plus an overlay of boundary nodes.
+3. *"How do you keep tiles and routes consistent?"* Pin one map version per session.
+4. *"ETA accuracy?"* An ML model over route features and live speeds (§83.5).
+
+#### What distinguishes levels
+
+- **Mid:** tile server with a CDN and Dijkstra.
+- **Senior:** tile pyramid arithmetic, vector tiles, A* and CH.
+- **Staff:** reconciles CH with live traffic, versions every artifact, and designs the probe pipeline with privacy. Full case: §55.6.
+
+### 91.6.16 Q44. Multiplayer game backend
+
+**Difficulty:** Hard · **Time:** 60 min · **Related:** §9.6, §9.9 (connections), §44.4 (latency physics), §46 (scheduling), §22.3
+
+#### Prompt
+
+"Design the backend for an online battle-royale game: 100 players per match, fast-paced, worldwide."
+
+#### Clarifying questions and assumptions
+
+- *Scale?* 2 million concurrent players at peak; matches last 20 minutes.
+- *Fairness and cheating?* Authoritative servers: clients send inputs, never state.
+- *Latency?* Round trip under about 80 ms to the match server for most players.
+- *Scope?* Matchmaking, match servers, player profiles and progression; store and voice chat out of scope.
+
+#### Requirements
+
+**Functional.** Login and profile; matchmaking by skill and region; allocate a match server; real-time simulation and state sync; results, rewards and leaderboards; reconnect to a running match. **Non-functional.** Tick rate 30 Hz; p95 player RTT ≤ 80 ms; matchmaking ≤ 60 s p95; a match-server crash affects one match only; launch-day spikes absorbed.
+
+#### Estimation
+
+::: example
+**Worked example — Matches, servers and bandwidth.** Assumptions: 16 matches per 32-core server; delta-compressed snapshots of 500 bytes per player per tick.
+
+1. Concurrent matches: $2 \times 10^6 / 100 = 20{,}000$; servers $20{,}000 / 16 = 1{,}250$ plus headroom (§89.10).
+2. Match starts: $20{,}000 / 1{,}200\ \text{s} = 16.7$/s, so about 1,667 players/s leave matchmaking.
+3. Inputs per match: $100 \times 30 = 3{,}000$ packets/s in.
+4. Downlink per player: $30 \times 500 \times 8 = 120$ kb/s; total egress $2 \times 10^6 \times 120\ \text{kb/s} = 240$ Gb/s, spread across regions.
+
+**Interpretation.** Per-match compute and per-region placement dominate; backend services (profiles, matchmaking) see modest load. **Engineering implication.** Treat match servers as a fleet of stateful, short-lived processes scheduled per region, and keep everything else conventional.
+:::
+
+#### API and data model
+
+```text
+POST /matchmaking/tickets {player_id, mode, party, skill, region_pings}  -> ticket_id
+GET  /matchmaking/tickets/{id} -> {state, server_addr, match_token}
+UDP game protocol: client inputs {seq, tick, buttons, aim}; server snapshots {tick, ack_seq, entity deltas}
+match(match_id, region, server_id, players[], state, started_at); result(match_id, player_id, placement, stats)
+```
+
+#### High-level design
+
+**Figure 91.116 — Game backend: matchmaking, fleet allocation, authoritative match servers.**
+
+```mermaid
+flowchart LR
+  P([Players]) -->|HTTPS| GW[API gateway]
+  GW --> MM[Matchmaker<br/>per region]
+  MM --> AL[Fleet allocator]
+  AL --> GS[Match servers<br/>authoritative, 30 Hz]
+  P <-->|UDP inputs and snapshots| GS
+  GS -.->|results| RQ[[Results queue]]
+  RQ -.-> PR[Profile and progression]
+  PR --> PDB[(Player DB)]
+  GW --> PR
+```
+
+**Reading the diagram.** Players use HTTPS for login, profile and matchmaking through a gateway. A regional matchmaker groups tickets by skill, party and measured ping, then asks the fleet allocator for a ready server in the chosen region; players receive its address and a signed match token. Gameplay is a bidirectional UDP exchange directly with the authoritative match server, which simulates at 30 Hz and sends each player snapshots of nearby entities. When the match ends, results go asynchronously to a queue consumed by progression services and the player database (the durable storage boundary; match state itself is in memory). Failure points: a match server crash (one match lost; players compensated), matchmaker backlog on launch day, and the player database on result bursts. Scaling: more servers per region, autoscaled ahead of demand.
+
+#### Deep dives
+
+1. **Authoritative simulation and lag compensation.** Clients predict their own movement and interpolate others about 100 ms in the past; the server validates inputs, rewinds entity positions by the shooter's latency to resolve hits, and corrects clients that diverge. This makes cheating by state injection impossible and latency feel lower (§9.6).
+2. **Interest management and bandwidth.** Each player receives only entities within relevance range, with delta compression against the last acknowledged snapshot; this is what keeps 120 kb/s per player feasible with 100 players.
+3. **Matchmaking and placement.** Matchmaking trades wait time against skill spread and ping: widen the skill window as wait grows. Place matches in the region minimizing the worst player's RTT; physics bounds this (§44.4.1), so cross-continent parties get a compromise region.
+
+::: industry
+**Source engine networking.** Valve's documentation of Source multiplayer networking describes an authoritative server simulating in fixed ticks, client-side prediction, entity interpolation with a default interpolation period of 100 ms, and lag compensation by rewinding player positions on the server when processing a shot.
+*Evidence: Primary* — [Valve Developer Community: Source Multiplayer Networking]
+:::
+
+#### Trade-offs and alternatives
+
+Peer-to-peer or client-authoritative designs avoid server cost but invite cheating and NAT problems. Higher tick rates (60 Hz) improve responsiveness at roughly double compute and bandwidth. Dedicated servers per match isolate failures; packing many matches per process improves cost but widens blast radius.
+
+#### Follow-up questions
+
+1. *"A player disconnects briefly."* Keep their slot; the match token allows rejoin to the same server within a grace period.
+2. *"How do you scale for launch day?"* Pre-provision a regional buffer of warm servers, queue players with honest wait estimates, and rate-limit login (§22.9).
+3. *"How do you stop speed hacks?"* Server-side validation of movement against physics limits; anomaly detection on results.
+4. *"Where do leaderboards live?"* Sorted sets per season updated from the results queue (Q8).
+5. *"How do you deploy a new server version?"* New matches go to new servers; running matches finish on old ones (drain, §9.9.7).
+
+#### What distinguishes levels
+
+- **Mid:** game servers with WebSockets and a database.
+- **Senior:** authoritative UDP servers, prediction and interpolation, matchmaking trade-offs, fleet sizing.
+- **Staff:** lag compensation and interest management with bandwidth arithmetic, regional placement under physics limits, and launch-day capacity planning.
+
