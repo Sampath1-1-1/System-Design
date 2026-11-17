@@ -1162,3 +1162,871 @@ flowchart LR
 - **Senior:** sizes the fleet zone-safe, verifies tokens locally, and adds timeouts, retry budgets and rate limiting with clear placement.
 - **Staff:** treats configuration change as the main outage risk and designs the control plane around it, uses cells to bound blast radius, and draws the boundary between gateway, BFF and mesh responsibilities.
 
+## 91.5 Medium questions (Q13–Q28)
+
+Medium questions are complete products. Each has two or three subsystems that interact and one clearly harder part: fan-out, ordering, contention, location, synchronization or ranking. Twelve of the sixteen have full case studies in Book I, so most answers below are compact; the four without one (catalog search, food delivery, email and calendar) are complete.
+
+### 91.5.1 Q13. News feed
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §53.7, §53.8 (full case studies); §23.6.1 (fan-out amplification), §89.18.3 (drill)
+
+#### Prompt
+
+"Design the home timeline of a Twitter-like service: users follow others and see recent posts from the people they follow."
+
+#### Clarifying questions and assumptions
+
+- Ranked or chronological? Reverse-chronological first, ranking as an extension. Follow graph? Asymmetric, with accounts of up to 100 million followers.
+- Scale (§53.8.4)? 250 million DAU; 500 million posts/day; 30 timeline loads per DAU per day; delivered fan-out 100 per post after excluding inactive followers and large accounts.
+
+#### Requirements
+
+- **FR:** post; follow/unfollow; home timeline with pagination; "N new posts" indicator.
+- **NFR:** timeline read p99 < 200 ms; a post visible to followers within 5 s normally, minutes during bursts; posting never blocked by fan-out; 99.95% read availability.
+
+#### Estimation
+
+::: example
+**Worked example — Fan-out versus reads (§53.8.4; §89.5, §89.8).**
+
+1. Posts: $5 \times 10^8 / 86{,}400 = 5{,}787$/s average. Timeline inserts: $\times 100 = 578{,}700$/s.
+2. Timeline reads: $2.5 \times 10^8 \times 30 / 86{,}400 \times 3 = 260{,}000$/s at peak.
+3. Cache of 800 post IDs at 16 B for 400 million recently active users: 5.1 TB, 15.4 TB with three replicas.
+4. One post by a 100-million-follower account would be $10^8$ inserts: 100 s even at $10^6$ inserts/s.
+
+**Interpretation.** Push makes reads cheap and writes heavy-tailed. **Implication.** Push for ordinary authors, pull for large accounts, merged at read time.
+:::
+
+#### API and data model
+
+- `POST /v1/posts`; `GET /v1/timeline?cursor=` returning hydrated posts; `POST /v1/follows/{id}`.
+- `posts(post_id, author_id, body, created_at)` partitioned by `post_id`; `follows(follower, followee)` with the reverse index; timeline cache `timeline:{user_id}` → list of post IDs.
+
+#### High-level design
+
+**Figure 91.14 — Hybrid fan-out timeline.**
+
+```mermaid
+flowchart LR
+  A([Author]) -->|post| PS[Post service] --> PDB[(Post store)]
+  PS -.-> L[[Post log]]
+  L -.-> FO[Fan-out workers]
+  FO --> G[(Follow graph)]
+  FO -->|"push IDs, ordinary authors"| TC[(Timeline cache)]
+  R([Reader]) -->|timeline| TS[Timeline service]
+  TS --> TC
+  TS -->|"pull recent posts, large accounts"| UT[(Author timelines)]
+  TS -->|hydrate| PDB
+```
+
+**Reading the diagram.** Posting writes the post synchronously and appends to a log; fan-out workers consume asynchronously (dotted), read follower lists and push post IDs into each active follower's cached timeline. Large accounts are not fanned out: the timeline service merges their recent posts at read time from per-author timelines, then hydrates IDs into posts. Failure points: fan-out backlog during bursts (posts arrive late, posting stays fast), loss of the timeline cache (rebuild from follows and author timelines), and hot author timelines (replicated). Scaling: workers with log partitions; cache by user ID.
+
+#### Deep dives
+
+1. **Where to cut push.** Total push cost is proportional to followers, so a threshold (for example one million followers) plus "skip followers inactive for 30 days" bounds bursts; §53.7.8 shows the knee.
+2. **Burst drain.** A 30-second burst of 150,000 posts/s creates 450 million inserts; at 2 million inserts/s it drains in 225 s. Size fan-out for sustained load plus a drain target.
+3. **The timeline is a rebuildable index**, not a source of truth: losing it costs latency, not data.
+
+#### Trade-offs and alternatives
+
+- Pure pull (§53.7) avoids fan-out writes and suits ranked feeds whose candidate index fits in memory; reverse toward pull when ranking needs all candidates anyway.
+- Storing post IDs, not copies, keeps edits and deletes in one place.
+
+#### Follow-up questions
+
+1. *"A 100-million-follower account posts."* Nothing fans out; followers merge it at read time from a hot, replicated author timeline.
+2. *"Unfollow?"* Filter at read time; lazily remove entries.
+3. *"'N new posts'?"* Poll with `since_id` or push the newest ID over an existing connection.
+4. *"Add ranking?"* Fetch a few hundred candidates, then score in a staged funnel (§53.7.8).
+
+#### What distinguishes levels
+
+- **Mid:** push model with a cache.
+- **Senior:** compares push and pull with numbers and lands on the hybrid with a threshold.
+- **Staff:** sizes burst drain time, treats the timeline as a rebuildable index, and explains why inactive followers and burstiness set the threshold.
+
+### 91.5.2 Q14. Chat/messaging app
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §53.4, §53.5 (full case studies); §9.9 (connection gateways), §89.18.2 (drill)
+
+#### Prompt
+
+"Design a messaging app like WhatsApp or Messenger with one-to-one and group chats, delivery receipts and multiple devices per user."
+
+#### Clarifying questions and assumptions
+
+- Groups? Up to 256 members, average 20. Receipts? Delivered and read. History? Server-stored, synced to new devices. End-to-end encryption? Out of scope for this answer (§53.5 covers it).
+- Scale (§53.4.4)? 100 million DAU × 40 messages/day; 30% group messages; peak-to-average ratio 3; 25% of DAU connected at peak.
+
+#### Requirements
+
+- **FR:** send and receive in real time; offline delivery; per-conversation order; receipts; history sync; presence.
+- **NFR:** delivery p99 < 500 ms when online; no lost or duplicated messages as displayed; 99.99% send availability.
+
+#### Estimation
+
+::: example
+**Worked example — Messages, deliveries and connections (§53.4.4; §89.5, §89.6).**
+
+1. Messages: $4 \times 10^9$/day; peak $138{,}900$/s. Deliveries at 6.4 recipients per message: $888{,}900$/s at peak.
+2. Receipts as per-conversation watermarks: 69,400/s average, 8.5× fewer than per-message receipts.
+3. Text storage: 1.2 TB/day; 1.31 PB/year at replication factor 3, stored once per conversation.
+4. Connections: 25 million at peak; 81 gateways at a 500,000-connection ceiling, zone-safe.
+
+**Interpretation.** Throughput is large but partitionable; storage grows forever. **Implication.** Partition by conversation, store once per conversation, model receipts as watermarks.
+:::
+
+#### API and data model
+
+- Over WebSocket: `send {conv_id, client_msg_id, body}` → `ack {seq}`; server pushes `msg {conv_id, seq, …}`; `sync {conv_id, after_seq}`.
+- `messages(conv_id, seq, sender, body, ts)` clustered by `seq` in a wide-column store; `inbox(user_id, conv_id, last_seq)`; `read_watermark(conv_id, user_id, seq)`.
+
+#### High-level design
+
+**Figure 91.15 — Chat: gateways, per-conversation sequencing and a durable log.**
+
+```mermaid
+flowchart LR
+  U1([Sender device]) <-->|WebSocket| GW1[Gateway]
+  GW1 --> MS[Message service<br/>sequencer per conv]
+  MS --> ST[(Message store<br/>by conversation)]
+  MS --> REG[(Session registry)]
+  MS -->|route to online devices| GW2[Gateway]
+  GW2 <-->|WebSocket| U2([Recipient device])
+  MS -.->|offline| PN{{Push providers}}
+```
+
+**Reading the diagram.** Devices hold WebSocket connections to gateways. The message service assigns the next sequence number for the conversation, writes the message durably (cylinder), acknowledges the sender, and looks up recipients' sessions in a registry to route the message to their gateways. Offline devices get a push notification (dotted) and sync from the store on reconnect. Failure points: a gateway crash (clients reconnect with jitter and sync from their last seq), and the sequencer for a conversation (leased ownership with fencing). Scaling: gateways by connections, store and sequencing by conversation ID.
+
+#### Deep dives
+
+1. **Ordering and idempotency.** `client_msg_id` makes sends idempotent; the per-conversation `seq` defines order and makes delivery idempotent at the client. Display is exactly-once, transport at-least-once.
+2. **Durable path versus live path.** The store is the truth; live pushes are an optimization that may be lost, and sync by `after_seq` repairs it.
+3. **Group fan-out and receipts.** Fan-out per member's devices; receipts as watermarks per member, not per message.
+
+#### Trade-offs and alternatives
+
+- Wide-column store by `(conv_id, seq)` versus relational: the former scales storage-bound growth; relational suits small deployments.
+- Global ordering is unnecessary; per-conversation order is what users perceive.
+
+#### Follow-up questions
+
+1. *"Two people send at once?"* The sequencer decides; clients re-sort pending messages when their `seq` arrives.
+2. *"New device?"* Ranged reads by `seq`, newest first, lazily per conversation.
+3. *"Delete for everyone?"* A `delete(seq)` message in the same log; the store tombstones the body.
+4. *"Presence at scale?"* Heartbeats with coarse TTLs, fanned out only to contacts currently viewing (§9.9.5).
+
+#### What distinguishes levels
+
+- **Mid:** gateways, a message service and a database.
+- **Senior:** per-conversation sequence numbers with idempotent sends, durable versus live paths, watermark receipts.
+- **Staff:** shows storage, not throughput, dominates over time; designs sequencer failure (leases, fencing) and multi-region conversation homing.
+
+### 91.5.3 Q15. Photo-sharing app
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §53.6 (full case study); §15.8 (uploads), Chapter 21 (CDN)
+
+#### Prompt
+
+"Design Instagram: users upload photos, follow others, see a feed of photos and like them."
+
+#### Clarifying questions and assumptions
+
+- Video, stories, direct messages? Photos, feed and likes in scope; stories as an extension; video and messaging out.
+- Scale (§53.6.4)? 500 million DAU; 100 million posts/day at 3 MB originals plus 390 KB of renditions; 20 feed loads per DAU per day, 10 images each; peak-to-average ratio 3; CDN hit ratio 95%.
+
+#### Requirements
+
+- **FR:** upload with caption; feed; like and comment; follow; profile grid.
+- **NFR:** feed p99 < 300 ms excluding images; images from the edge; uploads never lost once acknowledged; 11 nines media durability.
+
+#### Estimation
+
+::: example
+**Worked example — Bytes dominate (§53.6.4; §89.6, §89.7).**
+
+1. Posts: 1,160/s average, 3,470/s peak. Media: 339 TB/day; about 173 PB/year erasure-coded.
+2. Feed requests 347,000/s at peak; image fetches 3.47 million/s at peak.
+3. Image egress: 15 PB/day, 1.39 Tb/s average; origin at 95% hit ratio: about 57,900 fetches/s.
+4. A celebrity post's 2 million likes in 10 minutes: 3,330 likes/s on one counter.
+
+**Interpretation.** Requests are modest for the application tier; bytes and hot counters are not. **Implication.** Keep bytes off application servers, and design counters for the hottest key.
+:::
+
+#### API and data model
+
+- `POST /v1/uploads` → presigned URL; `POST /v1/posts {upload_id, caption}`; `GET /v1/feed?cursor=`; `PUT /v1/posts/{id}/like`.
+- `posts(post_id, user_id, caption, media_keys, created_at)` sharded by user with 64-bit time-ordered IDs (§53.6.8); `likes(post_id, user_id)`; `like_counts(post_id, shard, count)`.
+
+#### High-level design
+
+**Figure 91.16 — Photo sharing: direct upload, asynchronous processing, CDN delivery.**
+
+```mermaid
+flowchart LR
+  U([App]) -->|"presigned PUT"| RAW[(Uploads bucket)]
+  RAW -.->|event| RS[Resize workers] --> MED[(Media store)]
+  U -->|create post| API[Post API] --> MDB[(Metadata shards)]
+  API -.-> FO[Feed fan-out] --> FC[(Feed cache)]
+  U -->|feed| FS[Feed service] --> FC
+  U -->|images| CDN[CDN] --> MED
+```
+
+**Reading the diagram.** Originals go straight from the app to a private uploads bucket; resize workers produce four renditions asynchronously into the media store. The post API writes metadata to user-sharded stores and triggers feed fan-out (hybrid, as in Q13). Feed reads return metadata and rendition URLs; images come from the CDN, whose misses reach the media store. Failure points: processing backlog (posts wait in a pending state), CDN cold caches (origin load multiplies), and hot like counters. Scaling: workers by upload rate, CDN by egress, metadata by user shards.
+
+#### Deep dives
+
+1. **Upload pipeline.** A state machine (uploaded, processed, published) with idempotent workers; nothing references a photo until it is validated.
+2. **Hot counters.** Exact per-user like edges; approximate totals from sharded or coalesced counters (as in Q6).
+3. **IDs and sharding.** Time-ordered 64-bit IDs carrying a logical shard number let posts be placed and moved without a lookup table (§53.6.8).
+
+#### Trade-offs and alternatives
+
+- Eager renditions at upload versus on-demand resizing at the edge: eager costs storage, on-demand costs CPU on cache misses.
+- Push versus pull feeds: as in Q13.
+
+#### Follow-up questions
+
+1. *"Avoid serving an unchecked photo?"* The bucket is private and no post references it until processed.
+2. *"'Liked by your friend X'?"* Intersect the viewer's following set with recent likers in a bounded query.
+3. *"Delete a post?"* Mark deleted, filter at hydration, purge CDN keys asynchronously.
+4. *"Stories that expire in 24 hours?"* TTL filter at read time; physical deletion later.
+
+#### What distinguishes levels
+
+- **Mid:** upload service, object storage, feed and database.
+- **Senior:** bytes off the application tier, idempotent asynchronous processing, exact likes separated from approximate counts.
+- **Staff:** quantifies egress cost and CDN hit ratio, and connects ID design to sharding and rebalancing.
+
+### 91.5.4 Q16. Typeahead/autocomplete
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §16.9 (worked design), §56.4 (search engine), §17.11 (tries)
+
+#### Prompt
+
+"Design the search-box autocomplete for a large search engine: as the user types, show the top ten completions."
+
+#### Clarifying questions and assumptions
+
+- Source of suggestions? Past queries ranked by popularity with recency decay; personalization and trending as extensions. Freshness? Trending queries within minutes; the base corpus daily.
+- Scale (§56.4.4)? 5 billion searches/day, 3 suggestion requests per search after debouncing, peak-to-average ratio 2; 100 million distinct queries in the corpus.
+
+#### Requirements
+
+- **FR:** top-10 completions for a prefix; filtering of offensive or unsafe suggestions; trending suggestions; per-language and per-region corpora.
+- **NFR:** end-to-end under about 100 ms, so the server lookup p99 < 5 ms (Table 16.12); 99.99% availability with graceful empty results.
+
+#### Estimation
+
+::: example
+**Worked example — Load and memory (§16.9.1 formula; §56.4.4).**
+
+1. Suggestion requests: $3 \times 5 \times 10^9 = 1.5 \times 10^{10}$/day; peak $347{,}222$/s.
+2. Precomputed top-10 lists: about $6 \times 10^8$ trie nodes (six per query after prefix sharing, the ratio of §16.9.1) × 10 × 4 B $= 24$ GB, plus strings: it fits in one server's memory.
+3. Nodes: at 50,000 lookups/s per node and $u = 0.6$, $\lceil 347{,}222 / 30{,}000 \rceil = 12$; zone-safe 18.
+
+**Interpretation.** Small data, very high read rate, tight latency. **Implication.** Replicate a precomputed, read-only structure everywhere; do not compute at query time.
+:::
+
+#### API and data model
+
+- `GET /v1/suggest?q=hea&lang=en&region=us` → ten completions; cacheable for short prefixes.
+- Offline: query-log aggregates `(query, region, count_decayed)`; online: an immutable trie or finite-state transducer with top-k per node, versioned per build.
+
+#### High-level design
+
+**Figure 91.17 — Precomputed suggestions with a streaming trending layer.**
+
+```mermaid
+flowchart LR
+  B([Browser]) -->|prefix| EDGE[CDN for 1-2 char prefixes]
+  EDGE --> SS[Suggest servers<br/>in-memory trie]
+  QL[[Query log]] -.-> BATCH[Daily build:<br/>aggregate, filter, top-k]
+  BATCH -.->|"versioned snapshot"| SS
+  QL -.-> TR[Trending job<br/>minute windows]
+  TR -.->|small overlay| SS
+```
+
+**Reading the diagram.** Short prefixes are cached at the CDN; other requests reach suggest servers that look up the prefix node in an in-memory trie and return its stored list (synchronous, microseconds). A daily batch job aggregates the query log, applies safety filters, computes top-k per node and ships a versioned snapshot that servers load and swap atomically (dotted). A streaming job detects trending queries per minute and pushes a small overlay merged at lookup. Failure points: a bad build (keep the previous version and roll back), and an unsafe suggestion (block list applied in both build and overlay). Scaling: identical replicas behind a load balancer; shard by prefix range only if memory outgrows a node.
+
+#### Deep dives
+
+1. **Top-k stored at each node** turns lookup into $O(\text{prefix length})$ regardless of subtree size (§16.9.2).
+2. **Freshness by layering:** a daily base plus a trending overlay avoids rebuilding a 24 GB structure every minute.
+3. **Safety filtering** belongs in the build pipeline and the overlay, with an emergency block list served from configuration.
+
+#### Trade-offs and alternatives
+
+- Trie versus search-engine prefix queries: prefix queries are flexible but slower at p99; precomputation wins at this load.
+- Personalization adds a per-user re-rank of the top 50 candidates, at a few milliseconds.
+
+#### Follow-up questions
+
+1. *"Typos?"* Fuzzy matching on the FST or a spelling-correction candidate generator, within the latency budget.
+2. *"Reduce requests?"* Client debounce of 30–50 ms and client caching of earlier prefixes.
+3. *"A breaking-news query?"* The trending overlay surfaces it within minutes.
+4. *"Multiple languages?"* Separate builds per language and region, chosen by request headers.
+
+#### What distinguishes levels
+
+- **Mid:** a trie with a database of query counts.
+- **Senior:** precomputed top-k per node, latency budget, snapshot builds with atomic swap.
+- **Staff:** layers freshness, treats suggestion safety as a requirement, and sizes the fleet from the request multiplier over search.
+
+### 91.5.5 Q17. Web crawler
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §52.10 (full case study); §17.4 (Bloom filters)
+
+#### Prompt
+
+"Design a web crawler that downloads billions of pages a month for a search engine, politely."
+
+#### Clarifying questions and assumptions
+
+- Content types? HTML only. Politeness? Obey robots.txt (RFC 9309) and a per-host delay. Recrawl? Pages change at different rates.
+- Scale (§52.10.4)? 3 billion pages per 30-day cycle; 100 KB per page (25 KB compressed); 50 links per page; 30 billion known URLs.
+
+#### Requirements
+
+- **FR:** fetch, parse, extract links, deduplicate URLs and content, store pages, schedule recrawls.
+- **NFR:** never exceed a host's allowed rate; complete the cycle; survive node loss without recrawling everything; avoid crawler traps.
+
+#### Estimation
+
+::: example
+**Worked example — Rates and the politeness bound (§52.10.4).**
+
+1. Average rate $3 \times 10^9 / 2{,}592{,}000 = 1{,}157$ pages/s; provision 2,000; bandwidth 1.6 Gb/s.
+2. Storage: 75 TB per cycle compressed. Discovered links: 100,000/s to test against the seen set.
+3. Seen set: a Bloom filter at 1% false positives, 9.6 bits per URL × 30 billion = 36 GB, partitioned.
+4. Politeness: with a 5 s delay per host, at least $2{,}000 \times 5 = 10{,}000$ hosts must have URLs ready at every moment.
+
+**Interpretation.** Bandwidth is easy; the frontier and seen-set lookups are the design. **Implication.** Partition by host and keep per-URL structures in memory.
+:::
+
+#### API and data model
+
+- Internal only: `enqueue(url, priority)`; `fetch_result(url, status, content_hash, links)`.
+- URL store keyed by reversed host; host table `(host, next_allowed_at, delay, robots, ip)`; WARC-style compressed archive files in object storage.
+
+#### High-level design
+
+**Figure 91.18 — Host-partitioned crawler.**
+
+```mermaid
+flowchart LR
+  SEED([Seeds]) --> FR["Frontier per node:<br/>priority and host queues"]
+  FR --> F[Fetchers, async I/O]
+  F -->|HTTP| WEB{{Web hosts}}
+  F --> P[Parser] --> D{"Seen?<br/>Bloom filter"}
+  D -->|new URL| RT[Router by host hash]
+  RT -.-> FR
+  P --> DUP[Content dedupe<br/>hash and SimHash] --> AR[(Page archive)]
+```
+
+**Reading the diagram.** Each node owns the hosts that hash to it, so politeness and robots caching are local. The frontier keeps priority queues and per-host queues with a heap of next-allowed times; fetchers issue asynchronous HTTP requests to external hosts. Parsed links are tested against the Bloom filter, and new URLs are routed (dotted, asynchronous) to the owning node's frontier. Content is deduplicated exactly and approximately before archiving. Failure points: a node crash (its hosts move to other nodes; the frontier is checkpointed), traps (depth and URL-length limits), and slow hosts (adaptive delay). Scaling: add nodes and rebalance host ranges.
+
+#### Deep dives
+
+1. **Frontier design:** front queues for priority, back queues per host, adaptive delay from response time.
+2. **Duplicates:** URL normalization, Bloom filter for seen URLs, exact hash plus SimHash with a 3-bit threshold for near-duplicates.
+3. **Recrawl as budget allocation** by estimated change rate, with conditional GETs.
+
+#### Trade-offs and alternatives
+
+- Host partitioning versus URL partitioning: host partitioning makes politeness local; URL partitioning balances load better but needs global coordination per host.
+- Bloom filter false positives skip a few new URLs; acceptable for a crawler, not for billing.
+
+#### Follow-up questions
+
+1. *"robots.txt returns 500?"* Treat the host as fully disallowed until reachable (RFC 9309).
+2. *"A site with 10 million pages?"* Per-host rate overrides: 0.26 s delay to finish in 30 days, only if the host can take it.
+3. *"Crawler traps?"* Limits on depth, URL length and pages per host; detect repeating path patterns.
+4. *"Same content on many URLs?"* Canonical tags and content hashes collapse them.
+
+#### What distinguishes levels
+
+- **Mid:** queue of URLs, fetchers, a seen set.
+- **Senior:** frontier with politeness and Bloom-filter dedupe, partitioned by host.
+- **Staff:** derives the ready-hosts bound and the large-site problem from numbers, and treats recrawl as a budget problem.
+
+### 91.5.6 Q18. E-commerce catalog search
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** Chapter 16 (search systems), §55.7 (e-commerce platform), §81.7 (search ranking), §89.18.6 (drill)
+
+#### Prompt
+
+"Design product search for a large online store: users type a query, filter by brand, price and rating, and see relevant, in-stock products."
+
+#### Clarifying questions and assumptions
+
+- Catalog? 500 million products, 10 KB of attributes each (§55.7.4), of which about 1.5 KB is searchable text and facet fields.
+- Freshness? Price and stock changes visible in search within a minute; new products within 15 minutes. Changes arrive at about 5,000 per second at peak.
+- Scale? 500 million searches/day, peak-to-average ratio 5 (sales events); a results cache hits 30% of queries.
+- Ranking? Text relevance plus business signals (sales, rating, availability); a learned ranker as an extension (§81.7).
+
+#### Requirements
+
+- **FR:** keyword search with typo tolerance and synonyms; facets with counts (brand, price ranges, rating); sort by relevance, price or newest; filters for in-stock and delivery location; pagination.
+- **NFR:** p99 < 300 ms server-side; 99.95% availability with degraded results preferred to errors; out-of-stock items never ranked at the top; index freshness as above.
+
+#### Estimation
+
+::: example
+**Worked example — Index size and serving fleet (§89.5; §89.10; shard arithmetic as in §56.4.4).**
+
+1. Searches: $5 \times 10^8 / 86{,}400 = 5{,}787$/s average; peak $\times 5 = 28{,}935$/s; after a 30% results cache, 20,255/s reach the index.
+2. Searchable source: $5 \times 10^8 \times 1.5$ KB $= 750$ GB; with inverted index, doc values for facets and overhead, about 1 TB. At 50 GB per shard, 20 shards.
+3. CPU: if one shard spends 2 ms per query and every query visits all 20 shards, $20{,}255 \times 20 \times 0.002 / 0.5 = 1{,}620$ cores at 50% utilization.
+4. One full copy on 20 nodes of 64 cores serves $20 \times 64 \times 0.5 / (20 \times 0.002) = 16{,}000$ queries/s, so 2 copies carry the peak; 3 copies across three zones survive a zone loss: 60 nodes.
+5. Updates: 5,000/s is 432 million field changes a day, nearly the whole catalog: most of them price and stock.
+
+**Interpretation.** The index fits a modest cluster; the update rate on two fields is the unusual part. **Implication.** Treat price and stock as fast-changing fields with their own update path, and keep the text index for slowly changing content.
+:::
+
+#### API and data model
+
+- `GET /v1/search?q=running+shoes&filters=brand:acme,price:50-100&sort=relevance&page_token=` → products, facet counts, spelling suggestion.
+- Index document: `{product_id, title, brand, category_path, attributes, description_terms, price, in_stock_regions, rating, sales_30d, updated_at}`, partitioned by `product_id` hash.
+- Source of truth stays in the catalog, pricing and inventory services; the index is a derived view fed by their change streams.
+
+#### High-level design
+
+**Figure 91.19 — Catalog search: derived index, query understanding and staged ranking.**
+
+```mermaid
+flowchart LR
+  U([Shopper]) -->|query| QS[Search API]
+  QS --> QU[Query understanding:<br/>spelling, synonyms, category]
+  QS --> RC[(Results cache)]
+  QS -->|scatter| SH[(Index shards x 20<br/>3 replicas)]
+  SH -->|top 500 per query| RR[Re-ranker]
+  RR -->|"live price, stock"| PS[(Price and stock store)]
+  CAT[Catalog, pricing,<br/>inventory services] -.->|CDC events| K[[Change log]]
+  K -.-> IX[Indexers] --> SH
+  K -.-> PS
+```
+
+**Reading the diagram.** A query passes through query understanding (spelling correction, synonym expansion, predicted category), then a results cache, then a scatter to all 20 shards, each returning its best candidates by text relevance and filters. A re-ranker merges the candidates, joins live price and stock from a fast key-value store, applies business signals and returns a page with facet counts. Changes flow asynchronously (dotted) from the owning services through a change log into indexers, which write to shards with a near-real-time refresh of about 1 s (§16.10), and into the price-and-stock store directly. Failure points: indexer lag (results slightly stale, alert on lag), a slow shard (per-shard timeout, return partial results), and the price store (fall back to indexed values). Scaling: replicas for query rate, shards for index size.
+
+#### Deep dives
+
+1. **Fast fields versus slow fields.** Re-indexing a whole document for every price change is wasteful at 5,000 changes per second. Keep price and stock as doc-value fields updated in place (or partial updates) for filtering, and verify the final page against the live store in the re-ranker, so a just-sold-out item drops before display. Text and attributes are re-indexed only when they change.
+2. **Query understanding.** Most of the relevance gain in e-commerce comes before retrieval: spelling correction, synonyms ("sneakers" = "trainers"), unit normalization, and predicting the category so that "apple" ranks phones over fruit. These are dictionaries and small models built offline from query logs and clicks.
+3. **Facets at scale.** Facet counts are aggregations over every matching document, the most expensive part of a broad query. Compute them on doc values per shard and merge; for very broad queries, approximate counts from a sample, and cache facets for popular queries.
+
+#### Trade-offs and alternatives
+
+- **Document-partitioned versus category-partitioned shards.** Category partitioning lets a category-filtered query hit fewer shards, but unfiltered queries still scatter and hot categories skew load. Start with hash partitioning; route by category only if most queries are category-filtered.
+- **BM25 plus rules versus learning to rank.** Rules are transparent and quick to ship; a learned ranker on clicks and purchases (§81.7) wins once you have logging and an experiment platform.
+- **Managed search engine versus self-run.** Elasticsearch or OpenSearch (§16.8) handles shards, replicas and refresh; self-run at very large scale only with a team to operate it.
+
+#### Follow-up questions
+
+1. *"An item sells out during a flash sale."* The re-ranker checks live stock for the page it returns; the index catches up within a second.
+2. *"Zero results?"* Relax the query step by step: spelling correction, dropping the least important term, broader category; log zero-result queries as a product signal.
+3. *"Sponsored products?"* A separate ad auction fills reserved slots, blended after organic ranking with clear labeling.
+4. *"Personalization?"* Re-rank the top few hundred with user features in the re-ranker, under a few milliseconds.
+5. *"Reindex the whole catalog with a new analyzer?"* Build a new index in parallel from a snapshot plus the change log, compare quality offline, then switch an alias.
+
+#### What distinguishes levels
+
+- **Mid:** an Elasticsearch index fed from the catalog database, with filters.
+- **Senior:** sizes shards and replicas, separates fast-changing fields, and adds query understanding and facets with their costs.
+- **Staff:** treats the index as a derived, rebuildable view with lag SLOs, plans the ranking evolution with experiments, and handles flash-sale consistency between search and inventory explicitly.
+
+### 91.5.7 Q19. Ticket booking (seat reservation)
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §55.8 (full case study); §26.11 (leases)
+
+#### Prompt
+
+"Design Ticketmaster: users pick specific seats for concerts and pay. Popular shows sell out in minutes with millions of people trying at once."
+
+#### Clarifying questions and assumptions
+
+- Seat selection? Reserved seating, chosen on a map, held while paying. Payment window? 6 minutes.
+- Scale (§55.8.4)? Normal days are small: 3.8 orders/s on average. A stadium on-sale: 50,000 seats, 2.5 tickets per order, 2 million people in the queue, 80% of admitted buyers complete.
+
+#### Requirements
+
+- **FR:** browse events and seat maps; hold seats; pay and confirm; release holds on timeout; virtual waiting room for on-sales.
+- **NFR:** never sell a seat twice; holds expire reliably; the purchase flow stays responsive during on-sales; fairness (first come, first served through the queue); bots limited.
+
+#### Estimation
+
+::: example
+**Worked example — The on-sale arithmetic (§55.8.4).**
+
+1. Sell-out position: $q^* = 50{,}000 / (2.5 \times 0.8) = 25{,}000$: 98.75% of a 2-million queue cannot get tickets.
+2. Admission rate for 30,000 concurrent buyers spending 360 s each (Little's Law): $30{,}000 / 360 = 83.3$ buyers/s; position 25,000 is admitted after 300 s.
+3. Waiting-room polling: 2 million clients every 30 s is 66,667 requests/s, far more than the purchase flow.
+
+**Interpretation.** The purchase path is small; the queue and the information you give it are large. **Implication.** Protect inventory with a waiting room that admits at the rate the flow can serve, and tell people early when tickets are gone.
+:::
+
+#### API and data model
+
+- `POST /v1/events/{id}/holds {seat_ids}` → `{hold_id, expires_at}` or `409`; `POST /v1/holds/{id}/purchase {payment_token}` with idempotency key; waiting-room `GET /v1/queue/{token}` → position and admission token.
+- `seats(event_id, seat_id, status: AVAILABLE|HELD|SOLD, hold_id, hold_expires_at, version)` partitioned by event; `orders(order_id, hold_id, user_id, status)`.
+
+#### High-level design
+
+**Figure 91.20 — On-sale: waiting room in front of an inventory service.**
+
+```mermaid
+flowchart LR
+  U([Fans]) -->|join| WR[Waiting room<br/>edge-served]
+  WR -->|"admission token, 83/s"| BK[Booking service]
+  BK -->|"conditional hold"| INV[(Seat inventory<br/>by event)]
+  BK -->|authorize| PAY{{Payment provider}}
+  EXP[Hold expirer] -.->|release expired| INV
+  INV -.->|availability updates| MAP[Seat-map cache]
+  U -->|seat map| MAP
+```
+
+**Reading the diagram.** During an on-sale, fans join a waiting room served largely from the edge, which issues signed admission tokens at the rate the booking flow can absorb. Admitted buyers read a cached seat map and request holds; the booking service makes a conditional update on the event's inventory partition (cylinder) and later authorizes payment with the external provider. An expirer releases holds asynchronously at their deadline, and availability changes refresh the seat-map cache. Failure points: the payment provider (holds outlive a short outage only up to their TTL), the inventory partition for one hot event (sized by admission rate, not by fans), and bots (tokens bound to verified sessions). Scaling: the waiting room at the edge; inventory by event.
+
+#### Deep dives
+
+1. **No double sale:** `UPDATE seats SET status='HELD', hold_id=? WHERE event_id=? AND seat_id IN (…) AND status='AVAILABLE'`, all or nothing in one partition; purchase flips `HELD` to `SOLD` only if the hold is still valid.
+2. **Holds with TTL:** the expiry is data, checked on every read, with a background release; a late payment against an expired hold is refunded.
+3. **Admission control:** admit at $L_{\max} / W$ and stop admitting once projected holds exceed remaining seats.
+
+#### Trade-offs and alternatives
+
+- Pessimistic row locks versus conditional updates: conditional updates avoid holding locks across user think time.
+- Best-available assignment instead of seat maps reduces contention on the same popular seats.
+
+#### Follow-up questions
+
+1. *"Two users click the same seat."* One conditional update wins; the other gets `409` and a refreshed map.
+2. *"Payment succeeds after the hold expired."* Detect at confirmation and refund, or extend holds briefly while a payment is in flight.
+3. *"How do you stop bots?"* Verified accounts, per-account limits, challenges at queue entry, and tokens bound to sessions.
+4. *"Tell users early that it is sold out?"* Publish $q^*$ estimates to the queue page as inventory drains.
+
+#### What distinguishes levels
+
+- **Mid:** seats table with locking and a payment step.
+- **Senior:** conditional holds with TTL, idempotent purchase, waiting room.
+- **Staff:** derives admission rate and sell-out position from Little's Law and designs the queue experience and bot policy around them.
+
+### 91.5.8 Q20. Ride-hailing dispatch
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §55.4, §55.5 (full case studies); §17.9 (geospatial indexing), §89.18.5 (drill)
+
+#### Prompt
+
+"Design the core of Uber: riders request a ride, and the system finds a nearby driver, who accepts; both see each other's location until pickup."
+
+#### Clarifying questions and assumptions
+
+- Scope? Matching and location; pricing and payments as neighbors. Matching quality? Minimize pickup ETA, not distance.
+- Scale (§55.4.4)? 30 million trips/day, peak 3× average; 2 million drivers online at peak sending a location every 4 s; 5 million riders with the app open, refreshing nearby cars every 5 s.
+
+#### Requirements
+
+- **FR:** driver location updates; nearby cars; request, match, offer, accept; trip state machine; live tracking.
+- **NFR:** match within 10 s at p95; location reads p99 < 100 ms; no driver assigned to two trips; per-city failure isolation.
+
+#### Estimation
+
+::: example
+**Worked example — Locations outnumber trips (§55.4.4; §89.5).**
+
+1. Trips: 347/s average, about 1,000 requests/s at peak.
+2. Location updates: $2 \times 10^6 / 4 = 500{,}000$/s, 0.8 Gb/s; nearby-car reads 1,000,000/s.
+3. Supply index: 2 million drivers × 200 B = 400 MB of state.
+4. Location writes per trip request at peak: about 480.
+
+**Interpretation.** The location stream, not trips, is the load; the state is tiny. **Implication.** Keep live locations in memory, partitioned by city and geospatial cell, and never write each update to a database synchronously.
+:::
+
+#### API and data model
+
+- Driver: `PUT /v1/drivers/me/location` over a persistent connection; rider: `POST /v1/trips {pickup, dropoff}`; `POST /v1/offers/{id}/accept`.
+- In memory: `cell_id → set(driver_id, position, status, ts)` with H3 cells (§17.9.5); durable: `trips(trip_id, rider, driver, state, …)` with a forward-only state machine; location history appended to a log.
+
+#### High-level design
+
+**Figure 91.21 — Dispatch: in-memory supply index per city.**
+
+```mermaid
+flowchart LR
+  D([Driver app]) <-->|WebSocket| GW[Gateways]
+  GW -->|location| LOC[Location service]
+  LOC --> IDX[(Supply index<br/>by city and cell)]
+  LOC -.-> LOG[[Location log]]
+  R([Rider app]) -->|request| TR[Trip service] --> TDB[(Trips)]
+  TR --> M[Matcher per city]
+  M --> IDX
+  M -->|ETA| ETA[ETA service]
+  M -->|offer| GW
+```
+
+**Reading the diagram.** Drivers stream locations over persistent connections; the location service updates an in-memory index keyed by city and cell and appends to a log asynchronously (dotted) for history and analytics. A trip request creates a durable trip record and asks the city's matcher, which searches k-rings of cells for idle drivers, ranks them by ETA and sends an offer through the driver's gateway. Failure points: a matcher or index node (rebuilt from the location stream within seconds), lost offers (timeouts, then the next candidate), and double assignment (prevented by a conditional state change on the driver). Scaling: partition by city; add index nodes for dense cities.
+
+#### Deep dives
+
+1. **Candidate search:** expand k-rings until enough idle drivers are found ($k = 1$ downtown, $k = 7$ in a suburb, §55.5.4), then rank by road ETA, not straight-line distance.
+2. **Offer and accept:** expected offers $1 / 0.7 = 1.43$; a conditional driver-state transition prevents assigning one driver twice.
+3. **Batch matching:** collecting requests for a second or two and solving an assignment problem lowers total pickup time over greedy matching.
+
+#### Trade-offs and alternatives
+
+- Greedy versus batched matching: batching adds seconds of delay for better global ETAs.
+- Geohash versus H3: hexagons give uniform neighbor distances.
+
+#### Follow-up questions
+
+1. *"Driver's phone loses connectivity mid-offer?"* Offer times out; the trip moves to the next candidate.
+2. *"A city's matcher crashes?"* Another instance takes the partition and rebuilds state from the stream.
+3. *"Surge pricing?"* A neighbor service computes multipliers from supply and demand per cell (§83.6).
+4. *"Reduce location traffic?"* Adaptive update intervals: faster while on a trip, slower while idle and parked.
+
+#### What distinguishes levels
+
+- **Mid:** location table, nearby query, assignment.
+- **Senior:** in-memory geospatial index, ETA-based ranking, conditional assignment, numbers for location load.
+- **Staff:** per-city cells for isolation, batch matching trade-offs, and offer-timeout tail math.
+
+### 91.5.9 Q21. Food delivery
+
+**Difficulty:** Medium · **Time:** 60 min · **Related:** §2.11 and §18.11.5 (QuickBite estimates and capacity plan), §55.5 (matching), §32.7.2 (order saga), §60.6 (ETA inference)
+
+#### Prompt
+
+"Design a food-delivery app like DoorDash or Uber Eats: customers browse nearby restaurants, order and pay, restaurants prepare the food, and couriers deliver it while the customer tracks the order live."
+
+#### Clarifying questions and assumptions
+
+- One country, many cities; three parties with their own apps: customer, restaurant (tablet), courier (phone).
+- Scale, reusing the book's running example QuickBite (§2.11): 2 million DAU, 500,000 orders/day; busiest-hour share 0.20 (dinner) and burst factor 2; 50,000 restaurants; 50,000 registered couriers, 20,000 active at peak, sending a location every 4 s.
+- Payment? Card authorized at checkout, captured at delivery, through an external provider. ETA predictions come from an ML service (Book II); here it is a dependency.
+
+#### Requirements
+
+- **FR:** browse restaurants deliverable to an address, with menus and ETAs; cart and checkout; restaurant accepts and marks ready; courier dispatch, pickup and drop-off; live tracking; cancellations and refunds.
+- **NFR:** checkout p99 < 1 s and 99.95% available; no order lost or charged twice; restaurant notified within 5 s; courier assigned so that arrival matches food-ready time; tracking updates every 5 s.
+
+#### Estimation
+
+::: example
+**Worked example — QuickBite's numbers (§2.11; peak formula §89.5, Little's Law §4.11).**
+
+1. Orders: 500,000/day, 5.8/s average; dinner peak $500{,}000 \times 0.20 / 3{,}600 \times 2 = 55.6$, design 60 orders/s.
+2. Browse reads: 60 million/day; design peak 7,000 RPS; menus total 5 GB and fit in memory.
+3. Courier locations: $20{,}000 / 4 = 5{,}000$ writes/s at peak, 83 times the order rate.
+4. Orders in the delivery leg at once: $27.8$ orders/s × 900 s ≈ 25,000; if half the customers watch with 5-second refresh, 2,500 tracking reads/s.
+5. Order storage: 1 GB/day, about 5.5 TB over five years with indexes and a standby: one relational cluster.
+
+**Interpretation.** Orders are few but valuable and multi-party; locations are many but disposable. **Implication.** A transactional order service with a strict state machine, and a separate, in-memory location path, exactly the split of Table 2.18.
+:::
+
+#### API and data model
+
+- Customer: `GET /v1/restaurants?address_id=` (with ETAs), `GET /v1/restaurants/{id}/menu`, `POST /v1/orders` with `Idempotency-Key` → `{order_id, status}`, `GET /v1/orders/{id}/track` (or a push channel).
+- Restaurant: `POST /v1/orders/{id}/accept {prep_minutes}`, `POST /v1/orders/{id}/ready`. Courier: `PUT /v1/couriers/me/location`, `POST /v1/jobs/{id}/accept`, `POST /v1/jobs/{id}/picked_up`, `…/delivered`.
+- `orders(order_id, customer_id, restaurant_id, items, total, status, payment_auth_id, created_at)`; `order_events(order_id, seq, type, ts)` as the audit trail; `jobs(job_id, order_id, courier_id, status)`; live courier positions in memory by delivery zone.
+
+#### High-level design
+
+**Figure 91.22 — Food delivery: order saga, dispatch and location paths.**
+
+```mermaid
+flowchart LR
+  C([Customer app]) -->|browse| CAT[Catalog and search] --> MC[(Menu cache)]
+  C -->|checkout| ORD[Order service]
+  ORD --> ODB[(Orders and events)]
+  ORD -->|authorize| PAY{{Payment provider}}
+  ORD -.->|order events| K[[Event log]]
+  K -.-> RN[Restaurant notifier] -->|push| R([Restaurant tablet])
+  K -.-> DSP[Dispatch per zone]
+  DSP --> LOCS[(Courier locations<br/>in memory)]
+  DSP -->|ETA| ETA[ETA service]
+  DSP -->|job offer| CR([Courier app])
+  CR -->|"location every 4 s"| LOC[Location service] --> LOCS
+  C -->|track| TRK[Tracking] --> LOCS
+```
+
+**Reading the diagram.** Browsing reads menus from an in-memory cache. Checkout is a synchronous call to the order service, which writes the order and its first event in one transaction (cylinder), authorizes the card with the external provider and returns. Everything after that is event-driven (dotted): the restaurant notifier pushes the order to the tablet, and dispatch for the order's zone chooses a courier using live positions held in memory and predicted ETAs, then offers the job. Couriers stream locations to the location service; tracking reads the same in-memory store. Failure points: the payment provider (bounded retries with the idempotency key), the tablet being offline (escalate by phone call after a timeout), courier no-shows (re-dispatch), and dispatch for one zone (stateless, restarted from the event log). Scaling: browsing by cache replicas; locations by zone; orders by one cluster until about 5× growth, then partition by city.
+
+#### Deep dives
+
+1. **The order as a saga with a state machine.** States move forward only: `PLACED → AUTHORIZED → ACCEPTED → READY → PICKED_UP → DELIVERED`, with `CANCELED` and `REFUNDED` branches. Each step is a local transaction plus an event, published through a transactional outbox (§32.5) so no event is lost or invented. Compensations undo earlier steps: a restaurant rejection voids the authorization; a cancellation after pickup triggers a partial refund by policy. Every external call carries an idempotency key, so retries cannot charge twice (§32.7.2).
+2. **Dispatch timing.** Assigning the nearest courier at checkout makes couriers wait at restaurants; assigning at "ready" makes food wait. Dispatch aims for courier arrival ≈ food-ready time: it schedules the assignment for when $t_{\text{ready}} - t_{\text{travel}}$ approaches, using the restaurant's prep estimate and the courier's predicted travel ETA. Within a zone, batching requests for 30–60 s and solving an assignment problem, including stacking two orders from the same restaurant, reduces courier time per order (the matching techniques of §55.5).
+3. **Location path separation.** 5,000 writes/s of positions go to an in-memory store keyed by zone, with a TTL, and to a log for history; they never touch the order database. Tracking reads that store, and pushes to watching customers only on change.
+
+#### Trade-offs and alternatives
+
+- **Orchestrated versus choreographed saga.** An orchestrator (the order service, or a workflow engine, §32.11) makes the flow visible and testable; choreography through events decouples teams but makes "where is this order stuck?" harder. Prefer orchestration for the money path.
+- **Monolith first.** At 60 orders/s, a modular monolith with one database is defensible (§2.8); split out location and dispatch first because their load profile differs by 83×.
+- **Auth-then-capture versus charge at checkout.** Auth-and-capture handles substitutions and cancellations cleanly; immediate charge simplifies but makes refunds common.
+
+#### Follow-up questions
+
+1. *"The restaurant tablet is offline."* Retry push, then an automated phone call; if not accepted within a few minutes, cancel and void the authorization.
+2. *"How do you show an ETA before ordering?"* Batch-precompute zone-to-restaurant ETAs for browsing and call the ETA model for the final quote at checkout (§60.6).
+3. *"A courier accepts two jobs at once due to a race."* Job assignment is a conditional update on the courier's state; the second fails and is re-dispatched.
+4. *"Lunch peak doubles next year."* Orders still fit one cluster (about 120/s); the location fleet and dispatch scale by zone; plan city partitioning at about 5×.
+5. *"How do you handle surge demand?"* Delivery fees and radius shrink dynamically per zone; courier incentives raise supply (a pricing service, as in §83.6).
+
+#### What distinguishes levels
+
+- **Mid:** a clean three-party flow with services for orders, restaurants and couriers.
+- **Senior:** derives the location-versus-order asymmetry, designs the order state machine with idempotent payment and outbox events, and times dispatch to food readiness.
+- **Staff:** argues the monolith-first boundary from the numbers, chooses orchestration for the money path, and plans failure handling for each party's device being offline.
+
+### 91.5.10 Q22. File sync (Dropbox-like)
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §54.8 (full case study); §54.7 (Google Drive), §15.8.3 (content-defined chunking)
+
+#### Prompt
+
+"Design Dropbox: users keep a folder in sync across their devices; changes on one device appear on the others."
+
+#### Clarifying questions and assumptions
+
+- Files up to tens of GB; offline edits allowed; sharing folders between users as an extension.
+- Scale (§54.8.4)? 50 million DAU with 2 devices each; 20 changes per DAU per day; 1 MB of new data per change after deduplication; each change notifies 3 other devices; peak 3× average.
+
+#### Requirements
+
+- **FR:** upload changed files in blocks; download changes; per-namespace change journal; conflict handling; version history.
+- **NFR:** a change visible on other online devices within 10 s; no silent data loss; resumable transfers; 11 nines durability.
+
+#### Estimation
+
+::: example
+**Worked example — Commits, bytes and connections (§54.8.4).**
+
+1. Commits: $10^9$/day, 11,600/s average, 34,700/s at peak.
+2. New data: 1 PB/day, about 93 Gb/s of average upload.
+3. Notifications: 104,000 wake-ups/s at peak; $10^8$ idle connections, 400 notification servers at 250,000 each.
+4. Block index for 1 EB in 2 MB blocks: $5 \times 10^{11}$ entries × 64 B = 32 TB.
+
+**Interpretation.** Metadata commits are moderate; bytes and idle connections are huge. **Implication.** Split metadata from block storage, deduplicate by content hash, and use cheap long-lived notification connections.
+:::
+
+#### API and data model
+
+- `POST /v1/blocks/check {hashes}` → missing hashes; `PUT /v1/blocks/{hash}`; `POST /v1/commit {namespace, path, block_list, base_journal_id}` → new journal ID or conflict; `GET /v1/list_changes?cursor=`; long-poll `GET /v1/notify?cursor=`.
+- `journal(namespace_id, journal_id, path, block_list, …)` in a sharded relational store; block store keyed by SHA-256.
+
+#### High-level design
+
+**Figure 91.23 — File sync: metadata journal, content-addressed blocks, notifications.**
+
+```mermaid
+flowchart LR
+  D1([Device A]) -->|"missing blocks"| BS[(Block store<br/>by SHA-256)]
+  D1 -->|commit| MS[Metadata service] --> J[(Namespace journals)]
+  MS -.->|change| NS[Notification servers]
+  NS -.->|"long poll wake-up"| D2([Device B])
+  D2 -->|list changes| MS
+  D2 -->|fetch blocks| BS
+```
+
+**Reading the diagram.** A device splits a changed file into blocks, asks which hashes are missing, uploads only those to the content-addressed block store, then commits the new block list to the namespace journal through the metadata service. The commit triggers an asynchronous wake-up (dotted) on other devices' long-poll connections; they list changes since their cursor and fetch missing blocks. Failure points: a commit referencing blocks not yet stored (rejected; the client retries), concurrent edits (conflicted copies), and notification loss (the next poll catches up by cursor). Scaling: blocks in object storage, journals sharded by namespace, notification servers by connections.
+
+#### Deep dives
+
+1. **Block-level dedup and delta sync:** only changed blocks travel; content hashes make uploads idempotent.
+2. **The journal as the sync protocol:** ordered per namespace, read by cursor; clients reconcile from it after any outage.
+3. **Conflicts:** a commit against a stale `base_journal_id` produces a "conflicted copy" rather than a silent overwrite.
+
+#### Trade-offs and alternatives
+
+- Fixed-size versus content-defined chunking: content-defined chunks survive insertions in the middle of a file (§15.8.3).
+- Long polling versus WebSockets for notifications: long polling is simpler for idle, rarely woken connections.
+
+#### Follow-up questions
+
+1. *"A 10 GB file changes by one byte."* One block re-uploads (or a few with content-defined chunking).
+2. *"Device offline for a month."* It lists changes from its cursor; if the journal was compacted, it falls back to a full listing.
+3. *"Deleting data shared by deduplication?"* Reference counts or mark-and-sweep garbage collection over blocks.
+4. *"Shared folders?"* A namespace per shared folder mounted into each user's tree.
+
+#### What distinguishes levels
+
+- **Mid:** upload files to storage and record metadata.
+- **Senior:** block hashing, dedup, journal with cursors, conflict copies.
+- **Staff:** sizes the block index and connection fleet, designs garbage collection and journal compaction, and explains the consistency contract per namespace.
+
+### 91.5.11 Q23. Video upload and streaming
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §54.4 (full case study); §21.8 (segments and adaptive bitrate), §89.18.4 (drill)
+
+#### Prompt
+
+"Design YouTube: creators upload videos, and viewers around the world stream them on any device."
+
+#### Clarifying questions and assumptions
+
+- Live streaming out of scope (part B, Q41). Recommendations and comments out of scope.
+- Scale (§54.4.4)? 500 hours of video uploaded per minute at 10 Mb/s source bitrate; 1 billion watch-hours per day at 2.5 Mb/s average delivered; peak 2× average.
+
+#### Requirements
+
+- **FR:** resumable upload; transcoding into an adaptive bitrate ladder; playback with adaptive switching; video metadata and view counts.
+- **NFR:** playback start p95 < 2 s; rebuffering below 1% of watch time; video available within minutes of upload for short videos; no upload lost once acknowledged.
+
+#### Estimation
+
+::: example
+**Worked example — Ingest, compute and egress (§54.4.4; §89.7).**
+
+1. Upload: $500 \times 3{,}600 / 60 = 30{,}000$ video-seconds per second; ingest 300 Gb/s average; originals 3.24 PB/day.
+2. Transcoding an H.264 ladder at 4 core-seconds per video-second: 120,000 cores busy continuously.
+3. Egress: $10^9 \times 3{,}600 \times 2.5 \times 10^6 / 86{,}400 \approx 104$ Tb/s average, 208 Tb/s at peak.
+4. Views: 115,700/s average; metadata cache for 80% of views about 530 GB.
+
+**Interpretation.** Delivery bytes dwarf everything; transcoding compute is the second cost. **Implication.** CDN-first delivery, and encoding policy (which renditions and codecs for which videos) as a cost lever.
+:::
+
+#### API and data model
+
+- `POST /v1/uploads` → resumable session; `GET /v1/videos/{id}/manifest` → HLS or DASH manifest URL on the CDN.
+- `videos(video_id, owner, state, renditions, duration, …)`; segments stored in object storage under `video_id/rendition/segment_n`.
+
+#### High-level design
+
+**Figure 91.24 — Upload, transcode, package and deliver.**
+
+```mermaid
+flowchart LR
+  CR([Creator]) -->|resumable upload| UP[Upload service] --> ORIG[(Originals)]
+  UP -.-> Q[[Transcode jobs]]
+  Q -.-> TC[Transcoder fleet<br/>per segment]
+  TC --> SEG[(Segments and<br/>manifests)]
+  TC --> MD[(Video metadata)]
+  V([Viewer]) -->|manifest, segments| CDN[CDN edges]
+  CDN -.->|miss| SEG
+```
+
+**Reading the diagram.** Creators upload resumably to an upload service that stores originals and enqueues transcode work asynchronously. The transcoder fleet splits each video into chunks encoded in parallel into every rendition, writes segments and manifests, and marks the video ready in metadata. Viewers fetch manifests and segments from CDN edges; misses go to the segment store. Failure points: transcoder failures (chunk-level retries), popular new videos hitting a cold CDN (origin shield), and metadata hot spots (cache). Scaling: transcoders by upload rate, CDN by egress.
+
+#### Deep dives
+
+1. **Parallel, chunked transcoding** makes latency proportional to chunk length, not video length.
+2. **Adaptive bitrate:** segments of 2–6 s at several bitrates; the player switches by measured throughput and buffer (§21.8.3).
+3. **Encoding policy:** expensive codecs only for videos predicted to be popular; that trades compute against egress.
+
+#### Trade-offs and alternatives
+
+- Eager versus lazy renditions for the long tail of rarely watched videos.
+- Own CDN versus commercial CDN: at this egress, owning edge capacity changes the cost curve.
+
+#### Follow-up questions
+
+1. *"Upload drops at 90%."* Resume from the last acknowledged chunk.
+2. *"A video goes viral in minutes."* Origin shield collapses misses; pre-warm popular edges.
+3. *"Count views?"* Heartbeats into a log, aggregated as in Q6.
+4. *"Copyright?"* Fingerprint matching in the processing pipeline before publication.
+
+#### What distinguishes levels
+
+- **Mid:** upload, storage, transcoding and CDN boxes.
+- **Senior:** chunked parallel transcoding, adaptive bitrate mechanics, egress arithmetic.
+- **Staff:** treats codec and rendition choice as an economic policy, and plans origin protection and multi-CDN delivery.
+

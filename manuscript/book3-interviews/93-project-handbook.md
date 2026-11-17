@@ -970,3 +970,699 @@ Load tests run in two configurations. Single process: an open-loop generator wit
 | Failure policy | Errors when the store is down | Timeout, circuit breaker, fallback; measured over-admission | You can defend fail-open versus fail-closed per route |
 | Performance | Limiter works under load | Local and distributed costs measured; memory per key stated | You can size the Redis tier for §52.6's traffic from your numbers |
 
+### 93.1.5 Load-balancer simulation
+
+#### Goal and learning outcomes
+
+Build a discrete-event simulator of a load balancer in front of a small fleet, and then a real reverse proxy that applies the same policies to live HTTP traffic. Section 19.4.5 already compares balancing algorithms on a healthy, heterogeneous fleet. This project concentrates on what happens when backends misbehave: a backend that crashes, one that stays up but becomes slow (a **gray failure**, §24.8), a rolling deployment, and a total outage that turns retries into a storm. Those are the situations in which a balancer earns its keep, and they are hard to study on real machines because they are rare and messy. A simulator makes them repeatable.
+
+After this project you should be able to:
+
+- Build an event-driven simulation with a fixed seed whose results you can reproduce and explain line by line.
+- Implement passive health checking (outlier ejection) and active health checks, and measure detection time and the number of requests that hit a dead backend (§19.5).
+- Show why error-based health checks miss gray failures, and fix it with a latency-aware policy (§19.4.3–19.4.4).
+- Bound retry amplification with a retry budget, and demonstrate a retry storm without one (§22.12.3–22.12.4).
+- Drain connections during a rolling deployment with zero failed requests (§19.8.4, §42.7.4).
+- Validate the simulator against a real `asyncio` reverse proxy.
+
+#### Prerequisites
+
+- Load-balancing algorithms, including power of two choices and EWMA — §19.4; the existing simulation — §19.4.5.
+- Health checks — §19.5; balancer redundancy and connection draining — §19.8.
+- Partial and gray failures, timeouts — §24.8.
+- Retries, backoff, retry budgets and circuit breakers — §22.12–22.13.
+- Percentiles and tail latency — §4.8, §23.6; queueing intuition — §4.10.
+
+#### Specification
+
+**Functional requirements.**
+
+1. A simulator with configurable arrival process (Poisson, or replay from a trace), backends with service-time distributions and capacity (concurrent request slots with a FIFO queue), and a **scenario script** that changes backend state over time (`crash`, `slow`, `recover`, `drain`, `restart`).
+2. Policies: round robin, weighted round robin, random, least outstanding requests, power of two choices, and power of two choices with EWMA latency.
+3. Health checking: passive (eject after $k$ consecutive errors or when a backend's latency exceeds the fleet median by a factor), active (probe every $p$ seconds, mark down after $f$ failures, up after $s$ successes), and a maximum ejection percentage so that a fleet-wide problem does not eject everything.
+4. Client behavior: timeouts, one retry to a different backend, and a retry budget (retries ≤ 10% of requests over a sliding 10 s window).
+5. Output: per-second time series of throughput, error rate, p50 and p99 latency, retries and per-backend share, written to CSV for plotting.
+6. A real reverse proxy (`asyncio`, HTTP/1.1) in front of four copies of the §93.1.1 service, using the same policy and health-check code.
+
+**Non-functional requirements.**
+
+**Table 93.10 — Load-balancer simulation: targets.**
+
+| Property | Target | How you verify it |
+|---|---|---|
+| Reproducibility | Same seed and scenario give byte-identical CSV | Run twice, compare checksums |
+| Simulator speed | ≥ 1 million simulated requests per minute of wall time | Timed run |
+| Crash detection | Crashed backend receives ≤ 30 requests in total after the crash at 200 RPS, with one retry each | Crash scenario |
+| Gray-failure handling | Slow backend's traffic share falls below 2% within 5 s; fleet p99 ≤ 60 ms | Slow-backend scenario |
+| Rolling deployment | Zero failed requests while each of four backends is drained and restarted | Deploy scenario |
+| Retry storm | During a full outage, total backend attempts ≤ 1.1 × client requests with the budget | Outage scenario, with and without budget |
+| Real proxy overhead | Adds ≤ 2 ms at p50 and ≤ 10 ms at p99 at 300 RPS on loopback | Load test direct versus through the proxy |
+
+#### Architecture
+
+**Figure 93.5 — Load-balancer simulation: event loop, policies, health checking and scenario.**
+
+```mermaid
+flowchart LR
+  GEN([Arrival generator]) --> EQ[["Event queue<br/>heap ordered by time"]]
+  SCN[[Scenario script]] --> EQ
+  EQ --> LB["Balancer: policy +<br/>health state"]
+  LB -->|dispatch| B1[Backend 1]
+  LB -->|dispatch| B2[Backend 2]
+  LB -->|dispatch| B3[Backend 3]
+  LB -->|dispatch| B4[Backend 4]
+  B1 -.->|completion event| EQ
+  B2 -.->|completion event| EQ
+  HC["Active health checker"] -->|probe every p seconds| B3
+  LB --> MET[("Metrics CSV<br/>per-second series")]
+```
+
+**Reading the diagram.** Everything happens in simulated time, driven by one event queue, a heap ordered by timestamp. The arrival generator inserts request arrivals; the scenario script inserts state changes such as "backend 2 becomes slow at $t$ = 40 s". The main loop pops the earliest event and handles it. For an arrival, the balancer chooses a backend using its policy and its health state, and the dispatch is treated as synchronous from the client's view (solid arrows). The backend computes a service time from its distribution and current state and schedules a completion event back into the queue (dotted, because it arrives later in simulated time; only two of these are drawn). Completion events update in-flight counts, EWMA latency and the passive health checker's error streaks. The active health checker is just another event source that probes backends periodically (drawn for one backend). There is no real network or storage; the only output is the metrics CSV. The failure points are the scenario's: crashes, slowness and drains, plus the balancer's own decisions (ejecting too eagerly can overload the survivors). Scaling the simulator means more events per second of wall time; scaling the simulated system means more backends or several balancers, each with its own partial view, which is a good extension.
+
+#### Milestones
+
+1. **Simulator with queues and time series.** Turn the starter into a proper event loop with arrival, completion and scenario events; give each backend a fixed number of concurrent slots and a FIFO queue, so that overload produces queueing delay, not just slow service. Emit the per-second CSV. *Done when:* the reproducibility target holds and a run with a healthy fleet at 70% utilization shows the p99 you expect from an M/M/c intuition (§4.10).
+2. **Health checking.** Add active probes with up/down thresholds, passive ejection on errors and on latency outliers, and a maximum ejection percentage of 50%. *Done when:* the crash and gray-failure targets hold for at least two policies, and you can plot detection time against probe interval.
+3. **Retries and budgets.** Add client timeouts, one retry and a retry budget. Script a 30 s total outage followed by recovery. *Done when:* without the budget, attempts during the outage roughly double the offered load; with it they stay within 10% above it, and the fleet recovers within 5 s of the outage ending.
+4. **Rolling deployment.** Implement `drain` (no new requests; wait for in-flight ones to finish, up to a deadline) and slow start (ramp a restarted backend's weight up over 10 s, so that its cold caches are not hit with a full share at once). *Done when:* a four-backend rolling restart completes with zero failed requests.
+5. **Real proxy.** Write an `asyncio` HTTP/1.1 reverse proxy that reuses the policy and health-check classes, start four copies of your §93.1.1 service, and inject the same failures for real: kill one with SIGKILL, add a 250 ms sleep to another. *Done when:* the real proxy's per-second series has the same shape as the simulator's for the same scenario, and you have explained every difference.
+
+#### Starter code
+
+The starter simulates four backends at 200 RPS for 60 s. Backend 1 crashes at $t$ = 20 s and fails fast; backend 2 becomes 250 ms slower at $t$ = 40 s. The client retries a failed request once on a random other backend. It compares round robin with and without passive ejection (three errors in a row eject a backend for 5 s), power of two choices on in-flight count, and power of two choices on EWMA latency × (in-flight + 1). The simulation is simplified: backends have unlimited concurrency, so there is no queueing yet.
+
+```python
+"""Load-balancer simulation core: four backends, one crashes at t=20 s and one turns
+slow (a gray failure) at t=40 s. Compares policies with and without passive health
+checks (outlier ejection). Event-driven, fixed seed, no real sockets (starter)."""
+import heapq, random
+
+DURATION, RPS, N = 60.0, 200, 4
+
+def backend_state(i, t):
+    if i == 1 and t >= 20: return "down"        # crashed: connection refused
+    if i == 2 and t >= 40: return "slow"        # gray failure: alive but 250 ms slower
+    return "ok"
+
+class Balancer:
+    def __init__(self, policy, eject, rng):
+        self.policy, self.eject, self.rng = policy, eject, rng
+        self.rr, self.inflight, self.done = -1, [0] * N, []   # done: (finish, server, latency)
+        self.ewma = [0.010] * N                               # smoothed latency per backend
+        self.errors_in_row, self.ejected_until = [0] * N, [0.0] * N
+
+    def pick(self, now, exclude=None):
+        while self.done and self.done[0][0] <= now:        # retire finished requests
+            _, i, latency = heapq.heappop(self.done)
+            self.inflight[i] -= 1
+            self.ewma[i] = 0.8 * self.ewma[i] + 0.2 * latency  # learned only on completion
+        live = [i for i in range(N) if self.ejected_until[i] <= now and i != exclude]
+        live = live or [i for i in range(N) if i != exclude]   # never eject everyone
+        if exclude is not None:
+            return self.rng.choice(live)                     # a retry goes to a random other
+        if self.policy == "round robin":
+            self.rr += 1
+            return live[self.rr % len(live)]
+        a, b = self.rng.sample(live, 2) if len(live) > 1 else (live[0], live[0])
+        if self.policy == "p2c-ewma":                        # latency-aware score
+            score = lambda i: self.ewma[i] * (self.inflight[i] + 1)
+            return a if score(a) <= score(b) else b
+        return a if self.inflight[a] <= self.inflight[b] else b  # p2c: fewest in flight
+
+    def record(self, i, now, latency, ok):
+        self.inflight[i] += 1
+        heapq.heappush(self.done, (now + latency, i, latency))
+        self.errors_in_row[i] = 0 if ok else self.errors_in_row[i] + 1
+        if self.eject and self.errors_in_row[i] >= 3:      # passive check: 3 errors in a row
+            self.ejected_until[i], self.errors_in_row[i] = now + 5.0, 0
+
+def serve(i, t, rng):
+    state = backend_state(i, t)
+    if state == "down":
+        return 0.002, False                                 # fast failure
+    base = rng.expovariate(1 / 0.010)                       # 10 ms mean service time
+    return base + (0.250 if state == "slow" else 0.0), True
+
+def run(policy, eject, seed=11):
+    rng = random.Random(seed)
+    lb, t, lat, failed, retries = Balancer(policy, eject, rng), 0.0, [], 0, 0
+    while (t := t + rng.expovariate(RPS)) < DURATION:
+        i = lb.pick(t)
+        latency, ok = serve(i, t, rng)
+        lb.record(i, t, latency, ok)
+        if not ok:                                          # one retry on another backend
+            retries += 1
+            j = lb.pick(t + latency, exclude=i)
+            extra, ok = serve(j, t + latency, rng)
+            lb.record(j, t + latency, extra, ok)
+            latency += extra
+        failed += not ok
+        lat.append(latency)
+    lat.sort()
+    p = lambda q: lat[int(q * (len(lat) - 1))] * 1000
+    slow = sum(x > 0.100 for x in lat) / len(lat) * 100
+    return (f"{policy:<11} eject={str(eject):<5} failed={failed} retries={retries:>4}"
+            f"  >100ms={slow:4.1f}%  p50={p(.5):4.1f} ms  p99={p(.99):5.1f} ms")
+
+if __name__ == "__main__":
+    for policy, eject in [("round robin", False), ("round robin", True),
+                          ("p2c", True), ("p2c-ewma", True)]:
+        print(run(policy, eject))
+```
+
+Output:
+
+```text
+round robin eject=False failed=0 retries=1991  >100ms=11.2%  p50= 8.6 ms  p99=274.1 ms
+round robin eject=True  failed=0 retries=  24  >100ms=11.2%  p50= 8.0 ms  p99=273.2 ms
+p2c         eject=True  failed=0 retries=  24  >100ms= 1.7%  p50= 7.2 ms  p99=255.7 ms
+p2c-ewma    eject=True  failed=0 retries=  24  >100ms= 0.1%  p50= 7.0 ms  p99= 48.1 ms
+```
+
+What to notice:
+
+- Without ejection, 1,991 requests hit the crashed backend and had to be retried. With passive ejection only 24 did: three errors to trigger each ejection, eight 5 s ejections in 40 s. The worked example below derives both numbers. Because the failure is fast and the retry goes elsewhere, no request fails in any configuration; in production each of those 1,991 retries adds a round trip and load.
+- Ejection does nothing for the slow backend, because it returns successes. Round robin keeps sending it a quarter of the traffic (after ejection, a third of the first attempts), so 11.2% of all requests take more than 100 ms and p99 is 274 ms. Error-based health checks are blind to gray failures.
+- Power of two choices on in-flight count helps a lot (1.7% slow) but not completely. At 200 RPS the healthy backends often have zero or one request in flight, so a slow backend with one or two in flight does not look very different; about 5% of requests in the last 20 s still reach it.
+- Adding EWMA latency to the score nearly eliminates slow requests (0.1%) and brings p99 down to 48 ms. The EWMA is updated only when a request completes, which is realistic: the balancer learns that a backend is slow only after waiting for it.
+- The code tracks consecutive errors per backend and never ejects everyone (`live or ...`). Real systems cap ejection at a percentage of the fleet, which Milestone 2 adds.
+
+::: example
+**Worked example — How many requests hit a dead backend?**
+
+*Assumptions.* 200 RPS arriving, four backends, backend 1 dead from $t$ = 20 s to 60 s (40 s), fast failures.
+
+1. Round robin without ejection sends 1/4 of first attempts to backend 1: $200 \times 40 \times 0.25 = 2{,}000$ failed attempts. The simulation measured 1,991; Poisson arrivals make the count vary slightly.
+2. With passive ejection, each cycle is "three errors, then 5 s ejected". The errors arrive within a few tens of milliseconds (backend 1 gets about 50 RPS), so each cycle lasts about 5 s: $40 / 5 = 8$ cycles × 3 errors = 24 failed attempts, exactly as measured.
+3. An active checker probing every 2 s with a threshold of two failures would detect the crash within 2–4 s, during which round robin sends $50 \times 4 = 200$ requests to the dead backend before the first ejection; afterwards, probes, not real requests, discover whether it is back.
+
+*Interpretation.* Passive checks detect within a few requests but keep re-testing the dead backend with real traffic; active checks detect more slowly but test with probes. *Engineering implication.* Use both: passive ejection for fast reaction, active probes to decide readmission, which is what production proxies typically offer (§19.5.1).
+:::
+
+#### Test plan and load-test targets
+
+Test the simulator like any other program. Unit tests check each policy on hand-built states (round robin skips ejected backends; power of two choices never picks the worse of two; weighted round robin produces the exact smooth sequence for weights 5, 1, 1). Conservation tests check that every request either completes or fails exactly once and that in-flight counts return to zero at the end. Statistical tests compare a healthy-fleet run with theory: with Poisson arrivals and exponential service at 70% utilization on one server, the mean time in system should be close to $1/(\mu - \lambda)$ (§4.10).
+
+Then run every scenario in Table 93.10 for five seeds and report the mean and range of each metric. For the real proxy, load-test at 300 RPS directly against one backend and through the proxy with four backends; the difference in p50 and p99 is the proxy's overhead.
+
+#### Failure-injection exercises
+
+1. **Flapping backend.** Make a backend alternate between healthy and failing every 3 s. Tune ejection duration and readmission thresholds so that the error rate is low without permanently losing the backend; plot the trade-off.
+2. **Correlated failure.** Crash two of four backends at once. The survivors now run at double load; if that exceeds their capacity, latency explodes and passive latency-based ejection may eject a third backend, making things worse. Show the cascade, then show how the maximum ejection percentage stops it.
+3. **Retry storm and metastability.** In the full-outage scenario, set client retries to three with no budget and no backoff. Show that after the outage ends the fleet stays overloaded because retries keep the queues full, a metastable failure; then show that the retry budget breaks the loop (§22.12.3).
+4. **Health-check lies.** Make a backend's `/healthz` return `200` while real requests fail (a dependency is down). Active checks alone keep it in rotation; passive checks catch it. Then decide what a health check should test (§19.5.2).
+5. **Balancer failure.** Run two balancers that share no state, each seeing half the clients. Compare their ejection decisions and their per-backend load estimates, and discuss what a client-side balancer in every client would see (§19.10).
+
+#### Extensions
+
+- Add consistent hashing with bounded loads (§19.4.7) for a cache-like workload, and measure the trade-off between hit ratio (affinity) and balance.
+- Model a multi-zone fleet with zone-aware routing, and simulate the loss of one zone (§19.9).
+- Implement Maglev-style lookup tables and measure disruption when a backend is removed (§19.4.8).
+- Feed the simulator with the latency distribution you measured from the §93.1.1 service instead of an exponential distribution, and compare predictions with the real proxy.
+
+#### Self-assessment rubric
+
+**Table 93.11 — Load-balancer simulation: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Simulation correctness | Runs and prints metrics | Queues, conservation tests, reproducible CSV, healthy run matches queueing theory | You can explain every number in a run from first principles |
+| Health checking | Ejection on errors | Active and passive checks, latency outliers, ejection cap; detection time measured | You can explain why gray failures defeat error-based checks and what detects them |
+| Policies | Two policies | Six policies compared on every scenario | You can choose a policy for a fleet and defend it with your plots |
+| Retries and overload | Retries implemented | Budget, outage and recovery measured; metastable storm demonstrated | You can explain metastability and three defenses against it |
+| Real system | Simulator only | Real proxy, same scenarios, results compared | You can say where the simulator was wrong and why |
+
+## 93.2 Intermediate
+
+The Intermediate projects are distributed: several processes (or simulated nodes) that must cooperate while any of them may crash and any message may be delayed or lost. The main new skill is reasoning about state that lives in more than one place. Each project gives you a fault-injection harness from the start, because a distributed system that has only been run without failures has not really been tested. Run the nodes as separate processes on one machine, communicating over TCP or HTTP on different ports; Docker Compose is a convenient alternative that also lets you cut network links between containers.
+
+### 93.2.1 Message queue
+
+#### Goal and learning outcomes
+
+Build a small durable message broker in the style of a partitioned log: producers append messages to topics split into partitions, the broker stores them in segment files on disk, and consumer groups read them by offset and commit their progress. Chapter 30 explains queues and delivery guarantees, and Chapter 31 explains how Kafka builds a log-based broker. Here you discover why the details matter: a torn record after a crash, a consumer that processed messages but died before committing, a rebalance that hands a partition to a new consumer while the old one is still working.
+
+After this project you should be able to:
+
+- Store messages in an append-only, checksummed segment format and recover correctly from a crash at any byte (§31.3, §13.12).
+- Explain and demonstrate at-most-once and at-least-once delivery by moving one line of code (the commit) (§30.8, §31.8.2).
+- Partition a topic by key, preserve per-key order, and explain why order across partitions is not preserved (§31.5.3, §30.9).
+- Implement consumer groups with heartbeats, partition assignment and rebalancing, and measure the pause a rebalance causes (§31.7.2, §31.12).
+- Measure the throughput gained by batching and the latency it costs, and size consumers to drain a backlog (§30.4.3, §31.13).
+
+#### Prerequisites
+
+- Queues, acknowledgments and the visibility timeout — §30.4; delivery guarantees and where duplicates come from — §30.8; ordering — §30.9; poison messages and dead-letter queues — §30.10–30.11 (§30.11.2 has a runnable in-memory queue with visibility timeouts; this project builds the log-based alternative).
+- The log abstraction, partitions, producers, consumer groups and offsets — §31.3, §31.5–31.8; retention and compaction — §31.10.
+- `fsync`, checksums and torn writes — §13.12; log-structured storage — §13.7.
+- The REST service (§93.1.1) for the broker's API, or raw TCP with length-prefixed frames.
+
+#### Specification
+
+**Functional requirements.**
+
+1. Topics with a configurable number of partitions. `produce(topic, key, value)` chooses the partition by hashing the key (or round robin when the key is empty) and returns `(partition, offset)` once the record is durable.
+2. Each partition is a directory of segment files (roll a new segment at 1 MB) plus a sparse offset index; startup recovery truncates a torn tail and rebuilds the index.
+3. `fetch(topic, partition, offset, max_bytes, max_wait_ms)` returns records from `offset` onward; with long polling it waits up to `max_wait_ms` for new data instead of returning empty at once.
+4. Consumer groups: consumers join with heartbeats; the broker assigns partitions (range or round robin) and reassigns them when a consumer joins, leaves or misses heartbeats for the session timeout. `commit(group, topic, partition, offset)` stores progress durably.
+5. Retention by size and age: whole segments older than the limit are deleted.
+6. A dead-letter topic: consumers in the client library move a message there after five failed processing attempts.
+
+**Non-functional requirements.**
+
+**Table 93.12 — Message queue: non-functional targets (one broker process, laptop SSD).**
+
+| Property | Target | How you verify it |
+|---|---|---|
+| Producer throughput | ≥ 20,000 messages/s of 200 bytes with batching (one `fsync` per batch) | Producer benchmark |
+| Unbatched durable produce | Measured and explained against your disk's `fsync` latency | Same benchmark, batch size 1 |
+| End-to-end latency | p99 ≤ 50 ms from produce acknowledgment to consumer delivery at 1,000 messages/s | Timestamps in messages |
+| Durability | No acknowledged message lost over 100 `kill -9` trials | Crash test |
+| Ordering | Per-key order preserved for 1 million messages across 8 partitions | Consumer-side check |
+| Rebalance | Partitions of a dead consumer resume elsewhere within the 10 s session timeout plus 2 s | Kill a consumer during a run |
+| Duplicates | Only after a crash or rebalance, and every duplicate is detected by an idempotent consumer | Duplicate counter |
+
+#### Architecture
+
+**Figure 93.6 — Message queue: producers, partitioned log, consumer groups.**
+
+```mermaid
+flowchart LR
+  P1([Producer A]) -->|produce key=order-17| BR
+  P2([Producer B]) -->|produce batch| BR
+  subgraph BR[Broker process]
+    API[Request handler] --> PT{"hash of key<br/>mod partitions"}
+    PT --> L0[["Partition 0<br/>segments + index"]]
+    PT --> L1[["Partition 1<br/>segments + index"]]
+    GC["Group coordinator<br/>heartbeats, assignment"]
+    OFF[(Committed offsets)]
+  end
+  L0 -->|fetch from offset| C1([Consumer 1, group billing])
+  L1 -->|fetch from offset| C2([Consumer 2, group billing])
+  C1 -.->|heartbeat and commit| GC
+  C2 -.->|heartbeat and commit| GC
+  GC --> OFF
+```
+
+**Reading the diagram.** Producers send produce requests synchronously to the broker and wait for an acknowledgment that carries the record's partition and offset. The request handler hashes the key to pick a partition, so all messages with key `order-17` land in the same partition and keep their relative order. Each partition is an append-only log stored as segment files with a sparse index from offset to byte position; this is the storage boundary, and the only state that must survive a crash besides the committed offsets. Consumers pull: each one fetches from its current offset in the partitions assigned to it, with long polling so that an idle consumer does not spin. Consumers in the same group split the partitions between them, so a partition is read by exactly one member at a time; a second group (not drawn) would read the same partitions independently with its own offsets. Heartbeats and commits (dotted) go to the group coordinator, which reassigns partitions when a heartbeat stops arriving and stores committed offsets durably. Failure points: the broker process (everything stops; acknowledged data must survive), the disk, a consumer that dies before committing (its messages are redelivered) and a consumer that is only slow (it may lose its partitions while still processing, creating duplicates). Scaling: more partitions for more consumer parallelism (§31.5.2), and several brokers with replicated partitions, which is §93.2.3's subject applied to a log.
+
+#### Milestones
+
+1. **Durable partition log.** Extend the starter to segments with rolling, a sparse index file per segment and offset lookup by binary search. *Done when:* a crash test that kills the broker at random moments during writes shows that every acknowledged offset is readable after restart, and that no partially written record is ever returned.
+2. **Broker API and producers.** Expose produce and fetch over HTTP or TCP, with key hashing, batching (a producer sends up to 100 records or waits up to 5 ms, whichever comes first) and long-poll fetch. *Done when:* the throughput and end-to-end latency targets hold, and your results log shows throughput and p99 for batch sizes 1, 10, 100 and 1,000.
+3. **Consumer groups.** Implement join, heartbeat, assignment and rebalancing with a generation number, so that a commit from a consumer of an old generation is rejected. *Done when:* the rebalance target holds and a commit from a zombie consumer is refused (§26.13 explains why the generation number acts as a fencing token).
+4. **Delivery semantics.** Provide a client library with two modes: commit before processing (at-most-once) and commit after processing (at-least-once); write an idempotent consumer that deduplicates by message ID with a processed-ID table (§32.10). *Done when:* in crash tests, at-most-once loses some messages and never duplicates, at-least-once never loses and sometimes duplicates, and the idempotent consumer's side effects are exact.
+5. **Retention, dead letters and lag.** Add retention by size and age, the dead-letter topic, and a lag metric per group and partition (log end offset minus committed offset). *Done when:* old segments disappear on schedule while consumers keep reading, poison messages end up in the dead-letter topic after five attempts, and a lag graph shows a backlog draining after a consumer outage.
+
+#### Starter code
+
+The starter is one partition: an append-only file of records, each with a 4-byte length, a 4-byte CRC32 and a JSON payload. On startup it scans the file and truncates a torn tail. A consumer group's offset is committed by writing a temporary file and renaming it, which is atomic on POSIX file systems. The demonstration simulates a broker crash in the middle of a write, then a consumer crash between processing and committing.
+
+```python
+"""Message-queue core: a durable append-only log with CRC-checked, length-prefixed
+records, torn-tail recovery, and consumer-group offsets (starter)."""
+import json, os, struct, tempfile, zlib
+
+HEADER = struct.Struct(">II")                  # record length, CRC32 of the payload
+
+class Log:
+    def __init__(self, path):
+        self.path, self.offsets = path, []      # offsets[i] = byte position of record i
+        self.recover()
+        self.f = open(path, "ab")
+
+    def recover(self):
+        """Scan the file; keep the longest valid prefix, truncate a torn tail."""
+        if not os.path.exists(self.path):
+            open(self.path, "wb").close()
+        with open(self.path, "rb") as f:
+            data = f.read()
+        pos = 0
+        while pos + HEADER.size <= len(data):
+            length, crc = HEADER.unpack_from(data, pos)
+            payload = data[pos + HEADER.size: pos + HEADER.size + length]
+            if len(payload) < length or zlib.crc32(payload) != crc:
+                break                           # torn or corrupt record: stop here
+            self.offsets.append(pos)
+            pos += HEADER.size + length
+        if pos < len(data):
+            print(f"  recovery: truncating {len(data) - pos} bytes of torn tail")
+            with open(self.path, "r+b") as f:
+                f.truncate(pos)
+
+    def append(self, message, sync=True):
+        payload = json.dumps(message).encode()
+        self.offsets.append(self.f.tell())
+        self.f.write(HEADER.pack(len(payload), zlib.crc32(payload)) + payload)
+        self.f.flush()
+        if sync:
+            os.fsync(self.f.fileno())           # durable before we acknowledge
+        return len(self.offsets) - 1            # the record's offset (its index)
+
+    def read(self, offset, max_records=10):
+        out = []
+        with open(self.path, "rb") as f:
+            for i in range(offset, min(offset + max_records, len(self.offsets))):
+                f.seek(self.offsets[i])
+                length, _ = HEADER.unpack(f.read(HEADER.size))
+                out.append((i, json.loads(f.read(length))))
+        return out
+
+class ConsumerGroup:
+    """Committed offset per group, stored atomically (write temp file, then rename)."""
+    def __init__(self, path):
+        self.path = path
+        self.committed = json.load(open(path))["next"] if os.path.exists(path) else 0
+
+    def commit(self, next_offset):
+        tmp = self.path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"next": next_offset}, f); f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, self.path)              # atomic on POSIX
+        self.committed = next_offset
+
+if __name__ == "__main__":
+    d = tempfile.mkdtemp()
+    log = Log(os.path.join(d, "orders-0.log"))
+    for i in range(5):
+        log.append({"order": 100 + i, "amount": 10 * (i + 1)})
+    log.f.write(HEADER.pack(50, 12345) + b'{"order": 1')   # simulate a crash mid-write
+    log.f.close()
+
+    print("restart broker:")
+    log = Log(os.path.join(d, "orders-0.log"))
+    print("  records after recovery:", len(log.offsets))
+    print("  append ->", log.append({"order": 105, "amount": 60}))
+
+    group = ConsumerGroup(os.path.join(d, "billing.offset"))
+    batch = log.read(group.committed, max_records=4)
+    print("consumer reads:", [m["order"] for _, m in batch])
+    print("consumer crashes before commit; restarts")
+    group = ConsumerGroup(os.path.join(d, "billing.offset"))
+    batch = log.read(group.committed, max_records=4)
+    print("consumer re-reads:", [m["order"] for _, m in batch], "(at-least-once)")
+    group.commit(batch[-1][0] + 1)
+    print("after commit, next read:", [m["order"] for _, m in log.read(group.committed)])
+```
+
+Output:
+
+```text
+restart broker:
+  recovery: truncating 19 bytes of torn tail
+  records after recovery: 5
+  append -> 5
+consumer reads: [100, 101, 102, 103]
+consumer crashes before commit; restarts
+consumer re-reads: [100, 101, 102, 103] (at-least-once)
+after commit, next read: [104, 105]
+```
+
+What to notice:
+
+- The simulated crash left a header that promised 50 bytes followed by only 11. Recovery reads records until the first one that is incomplete or fails its CRC, keeps that prefix and truncates the rest (19 bytes: an 8-byte header plus 11 payload bytes). Five acknowledged records survive and the next append gets offset 5, so offsets stay dense.
+- `append` calls `fsync` before returning the offset. Acknowledging before `fsync` would make the broker faster and occasionally lose acknowledged messages after a power failure; batching (Milestone 2) lets you keep the `fsync` and amortize it.
+- The consumer processed offsets 0–3 and crashed before committing, so after restart it read them again: **at-least-once** delivery. Committing before processing would have lost them instead. There is no third option without making processing idempotent or transactional with the commit (§31.11).
+- An offset here is a record index, and the in-memory list `offsets` maps it to a byte position. That list is rebuilt by scanning the whole file at startup, which is fine for 1 MB and hopeless for 100 GB; the sparse index in Milestone 1 fixes it.
+- The commit uses write-to-temporary, `fsync`, then `os.replace`. Overwriting the offset file in place could leave it half-written after a crash, and the consumer group would lose its position.
+
+::: example
+**Worked example — How long does a backlog take to drain?**
+
+*Assumptions.* Producers write 1,000 messages/s steadily. The billing consumer group is down for 30 minutes. When it returns, its consumers can process 1,500 messages/s in total (§30.4.3 gives the general method).
+
+1. Backlog accumulated: $1{,}000 \times 30 \times 60 = 1.8 \times 10^6$ messages.
+2. While draining, new messages keep arriving, so the backlog shrinks at the *net* rate $1{,}500 - 1{,}000 = 500$ messages/s.
+3. Drain time: $1.8 \times 10^6 / 500 = 3{,}600$ s, one hour, twice as long as the outage.
+4. With 3,000 messages/s of consumer capacity, the net rate is 2,000/s and the drain takes $1.8 \times 10^6 / 2{,}000 = 900$ s, 15 minutes.
+
+*Interpretation.* Recovery time depends on spare capacity, not total capacity: a consumer group running at 67% utilization needs twice the outage length to catch up. *Engineering implication.* Size consumer groups for drain time, not only for steady state, and make sure there are enough partitions to add consumers when you need them (§31.7.3). Retention must also outlast the worst outage plus its drain time, or the backlog is deleted before it is read.
+:::
+
+#### Test plan and load-test targets
+
+Unit tests cover encoding and decoding, recovery at every possible truncation point of a three-record file (loop over all byte lengths), CRC detection of a flipped bit, index lookups at segment boundaries and the assignment algorithms. A **model-based test** runs random sequences of produce, fetch, commit, broker restart and consumer restart against your broker and against a trivially correct in-memory model, and checks that every fetched record matches the model and that offsets never go backward except to the committed position.
+
+Load tests run producers at increasing rates with batch sizes 1, 10, 100 and 1,000, recording throughput, produce latency p99 and end-to-end p99 (each message carries its produce timestamp). Run a 1 million-message ordering test with 1,000 keys over 8 partitions and three consumers, and check per-key sequence numbers at the consumers.
+
+#### Failure-injection exercises
+
+1. **Crash during a batch.** Kill the broker while it writes a batch of 100 records. Decide, and test, whether a batch is all-or-nothing after recovery or may be partially present, and what producers see in each case.
+2. **Disk full.** Point the log at a small `tmpfs` or loop-mounted file system and fill it. Produce must fail with a clear error; existing data must stay readable; nothing may be acknowledged without being written.
+3. **Zombie consumer.** Pause a consumer with SIGSTOP for longer than the session timeout, let its partitions move, then resume it with SIGCONT. It will try to commit; your generation check must refuse it. Count duplicates processed during the overlap.
+4. **Poison message.** Produce a message that makes the consumer throw. Without a dead-letter path, the partition stalls forever behind it (head-of-line blocking); with one, it moves on after five attempts (§30.11).
+5. **Slow consumer and retention.** Set retention to 5 minutes and stop a consumer for 10. On restart its committed offset no longer exists. Implement and justify the reset policy (earliest or latest) and record how many messages were lost.
+
+#### Extensions
+
+- Replicate each partition to a follower broker with an in-sync replica set and `acks=all`, following §31.9; then run §31.9.5's scenarios against your code.
+- Add log compaction for keyed topics: keep only the latest value per key in closed segments (§31.10.2).
+- Add idempotent producers: a producer ID and sequence number per partition, with the broker rejecting duplicates after a producer retry (§31.6.3).
+- Implement a share-group (queue) mode where consumers acknowledge individual messages instead of committing offsets, and compare it with the visibility-timeout queue of §30.11.2 (§31.7.4).
+- Benchmark against Kafka or RabbitMQ in Docker with the same workload, and explain the gap.
+
+#### Self-assessment rubric
+
+**Table 93.13 — Message queue: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Storage | Append and read work | Segments, index, CRC, torn-tail recovery; 100/100 crash trials | You can explain what an acknowledgment promises under each `fsync` policy |
+| Throughput | One producer works | Batching curve measured; targets met | You can explain the batching trade-off with your numbers and §31.13 |
+| Consumer groups | Single consumer | Assignment, heartbeats, rebalancing, generation fencing | You can describe the duplicate window during a rebalance and how to shrink it |
+| Delivery semantics | Messages delivered | At-most-once and at-least-once shown; idempotent consumer exact | You can explain why exactly-once needs cooperation from the consumer's side effects |
+| Operations | Runs | Retention, dead letters, lag metric, drain measured | You can size partitions and consumers for a given rate and drain time |
+
+### 93.2.2 Distributed key-value store
+
+#### Goal and learning outcomes
+
+Build a Dynamo-style key-value store: five or more node processes that partition keys with consistent hashing, replicate each key to three nodes, and serve reads and writes with tunable quorums. Section 52.8 designs this system in full and Chapters 14 and 27 explain each mechanism. In this project you will watch the mechanisms interact: a write that succeeds with one replica down, a stale replica that comes back, a read that repairs it, a node that joins and pulls its share of keys, and the cases where "eventually consistent" means a user briefly sees an old value.
+
+After this project you should be able to:
+
+- Implement a consistent-hash ring with virtual nodes and measure load balance and key movement when nodes join or leave (§14.8).
+- Implement quorum reads and writes with configurable $N$, $R$ and $W$, and demonstrate both what $R + W > N$ guarantees and what it does not (§27.8).
+- Implement read repair, hinted handoff and Merkle-tree anti-entropy, and measure how quickly replicas converge after a failure (§27.9, §27.13, §17.8).
+- Detect concurrent writes with version vectors and return siblings, and compare with last-writer-wins (§27.14).
+- Run a Jepsen-style test that records a history of operations under faults and checks it (§25.11).
+
+#### Prerequisites
+
+- Consistent hashing, virtual nodes and replication on the ring — §14.8; rebalancing — §14.9.
+- Leaderless replication, quorums, sloppy quorums and hinted handoff — §27.7–27.9; anti-entropy and read repair — §27.13; conflict resolution — §27.14.
+- Failure detection with heartbeats and gossip — §27.10.
+- Vector clocks and version vectors — §24.11; consistency models and Jepsen-style testing — §25.3, §25.7, §25.11.
+- The case study — §52.8; and the message-queue project's storage lessons (§93.2.1), since each node needs a durable local store.
+
+#### Specification
+
+**Functional requirements.**
+
+1. Each node is a process with an HTTP API: `GET /kv/{key}`, `PUT /kv/{key}` with an optional version context, `DELETE /kv/{key}` (a tombstone). Any node can act as **coordinator** for any key and forwards to the key's replicas.
+2. Configurable $N$, $R$, $W$ per request or per cluster; defaults $N = 3$, $R = W = 2$.
+3. Membership from a static seed list plus heartbeats; a node that misses heartbeats for 3 s is considered down by the coordinator.
+4. Hinted handoff: when a replica is down, the coordinator writes to the next healthy node on the ring with a hint naming the intended owner, and that node delivers the write when the owner returns.
+5. Anti-entropy: each pair of replicas compares Merkle trees of their key ranges every 30 s and exchanges only differing keys.
+6. Node join and decommission with background data movement, rate-limited.
+7. Each node persists data locally (SQLite, or an append-only log with an in-memory index, reusing §93.2.1).
+
+**Non-functional requirements.**
+
+**Table 93.14 — Distributed key-value store: targets (five to six node processes on one machine).**
+
+| Property | Target | How you verify it |
+|---|---|---|
+| Latency | `GET` and `PUT` p99 ≤ 20 ms at 1,000 operations/s across the cluster, loopback | Load test |
+| Load balance | Largest node holds ≤ 1.15 × the mean number of keys with 128 virtual nodes each | Key-count report |
+| Availability | Reads and writes at $R = W = 2$ keep succeeding with any one node down | Kill a node during a load test |
+| Read-your-writes | With $R + W > N$ and no sloppy-quorum substitutes, a read after an acknowledged write returns it in 100% of 10,000 trials | Linearizability-style checker on single-key histories |
+| Convergence | After a node is down for 60 s under writes and then returns, all replicas agree within 2 anti-entropy rounds | Replica comparison |
+| Join | Adding a sixth node moves ≈ 1/6 of the data, and foreground p99 stays ≤ 40 ms during movement | Movement counter and load test |
+| Conflict detection | Concurrent writes from two clients produce siblings, never silent loss, in version-vector mode | Concurrency test |
+
+#### Architecture
+
+**Figure 93.7 — Distributed key-value store: coordinator, ring and replicas.**
+
+```mermaid
+flowchart LR
+  CL([Client]) -->|PUT /kv/cart:7| N1["Node A<br/>coordinator for this request"]
+  N1 -->|replicate| N2["Node B<br/>replica 1"]
+  N1 -->|replicate| N3["Node E<br/>replica 2"]
+  N1 -->|replicate| N4["Node A local<br/>replica 3"]
+  N1 -.->|hinted write if a replica is down| N5["Node C<br/>holds hint"]
+  N2 --- S2[(Local store B)]
+  N3 --- S3[(Local store E)]
+  N4 --- S4[(Local store A)]
+  N2 -.->|Merkle tree exchange| N3
+  N1 -.->|heartbeats| N2
+```
+
+**Reading the diagram.** The client sends a request to any node, which becomes the coordinator for that request. The coordinator computes the key's preference list on the hash ring: the first three distinct nodes clockwise from the key's hash (here B, E and A itself). It sends the write to all three in parallel over HTTP and replies to the client as soon as $W$ of them acknowledge; the remaining replica's acknowledgment arrives later. Reads work the same way with $R$ responses, and if the responses disagree, the coordinator returns the newest and writes it back to the stale replicas (read repair). If a replica is down, the coordinator writes to the next node on the ring (C) with a hint (dotted), and C forwards the write when the owner recovers. In the background, replicas compare Merkle trees of shared key ranges and exchange only differences, and nodes exchange heartbeats (both dotted, asynchronous). Each node's storage boundary is its local store; there is no shared storage. Failure points: any node (tolerated up to $N - W$ for writes and $N - R$ for reads), the coordinator crashing after a partial write (the write may be present on fewer than $W$ nodes and still surface later), lost hints, and network partitions that make each side believe the other is down. Scaling: add nodes; each joins the ring at its virtual-node positions and takes over about $1/n$ of the keys.
+
+#### Milestones
+
+1. **Single-process prototype.** Extend the starter with tombstones, version vectors (instead of a global counter, which a real cluster does not have) and siblings, and a deterministic fault schedule. *Done when:* unit tests reproduce every scenario in the starter plus a concurrent-write test that returns two siblings.
+2. **Real nodes.** Move each node into its own process with an HTTP API and local persistence; the coordinator sends replica requests in parallel with a 200 ms timeout. *Done when:* the latency and availability targets hold with five processes, including a kill of one node mid-test.
+3. **Hinted handoff and anti-entropy.** Implement hints with durable storage on the substitute node and a Merkle tree over each node's key range (hash leaves by key-range bucket, as §17.8 describes). *Done when:* the convergence target holds, and you can show the number of keys exchanged by anti-entropy compared with a full comparison.
+4. **Membership changes.** Implement join and decommission with rate-limited streaming of the affected ranges, and switch reads to the new owner only after its copy is complete. *Done when:* the join target holds, and no acknowledged key is unreadable at any time during the move.
+5. **Consistency testing.** Write a test harness that runs concurrent clients, records every operation's invocation and completion time and result, injects faults (kills, pauses with SIGSTOP, and network delays through a small proxy), and checks single-key histories for stale reads. *Done when:* the checker finds stale reads with $R = W = 1$, finds none with $R = W = 2$ when sloppy quorums are disabled, and finds some again with sloppy quorums enabled, and you can explain each result (§27.8.2).
+
+#### Starter code
+
+The starter keeps all nodes in one process, so failure is just a flag. It builds a ring with 64 virtual nodes per node, writes 1,000 keys with $N = 3$, $R = W = 2$, takes a replica down during a write, brings it back stale, repairs it on read, and finally measures key movement when a sixth node joins, compared with naive `hash mod N` placement.
+
+```python
+"""Distributed KV core: consistent hashing with virtual nodes, N=3 replication,
+quorum reads and writes (R=W=2), last-writer-wins versions and read repair.
+Nodes are in-process objects so that failures are one flag away (starter)."""
+import bisect, hashlib
+
+def h(s):
+    return int.from_bytes(hashlib.md5(s.encode()).digest()[:8], "big")
+
+class Ring:
+    def __init__(self, nodes, vnodes=64):
+        self.vnodes, self.points = vnodes, []          # sorted (hash, node) pairs
+        for n in nodes:
+            self.add(n)
+
+    def add(self, node):
+        for v in range(self.vnodes):
+            bisect.insort(self.points, (h(f"{node}#{v}"), node))
+
+    def preference_list(self, key, n=3):
+        """First n distinct nodes clockwise from the key's position."""
+        i, out = bisect.bisect(self.points, (h(key), "")), []
+        while len(out) < n:
+            node = self.points[i % len(self.points)][1]
+            if node not in out:
+                out.append(node)
+            i += 1
+        return out
+
+class Node:
+    def __init__(self, name):
+        self.name, self.data, self.up = name, {}, True  # key -> (version, value)
+
+class Cluster:
+    def __init__(self, names, n=3, r=2, w=2):
+        self.nodes = {x: Node(x) for x in names}
+        self.ring, self.n, self.r, self.w, self.clock = Ring(names), n, r, w, 0
+
+    def put(self, key, value):
+        self.clock += 1                                 # stand-in for a hybrid clock
+        acks = 0
+        for name in self.ring.preference_list(key, self.n):
+            node = self.nodes[name]
+            if node.up:
+                node.data[key] = (self.clock, value)
+                acks += 1
+        return acks >= self.w                           # success only with W acks
+
+    def get(self, key):
+        replies = [(name, self.nodes[name].data.get(key, (0, None)))
+                   for name in self.ring.preference_list(key, self.n) if self.nodes[name].up]
+        if len(replies) < self.r:
+            raise RuntimeError("read quorum not met")
+        newest = max(v for _, v in replies)             # last-writer-wins by version
+        for name, v in replies:                         # read repair of stale replicas
+            if v < newest:
+                self.nodes[name].data[key] = newest
+        return newest[1]
+
+if __name__ == "__main__":
+    names = ["A", "B", "C", "D", "E"]
+    c = Cluster(names)
+    print("preference list for 'user:42':", c.ring.preference_list("user:42"))
+    for i in range(1000):
+        c.put(f"k{i}", f"v{i}")
+    print("keys per node:", {x: len(c.nodes[x].data) for x in names})
+
+    a, b, _ = c.ring.preference_list("cart:7")
+    c.put("cart:7", "1 item")
+    c.nodes[a].up = False                               # one replica down
+    print("put with one replica down ->", c.put("cart:7", "2 items"))
+    c.nodes[a].up = True                                # it returns with a stale value
+    print("stale replica holds:", c.nodes[a].data["cart:7"][1])
+    print("quorum read ->", c.get("cart:7"), "| after read repair:", c.nodes[a].data["cart:7"][1])
+    c.nodes[a].up = c.nodes[b].up = False
+    print("put with two replicas down ->", c.put("cart:7", "3 items"))
+
+    keys = [f"k{i}" for i in range(10_000)]
+    before = {k: c.ring.preference_list(k, 1)[0] for k in keys}
+    c.ring.add("F")
+    moved = sum(before[k] != c.ring.preference_list(k, 1)[0] for k in keys)
+    print(f"add node F: {moved / len(keys):.1%} of keys change primary (ideal 1/6 = 16.7%)")
+    naive = sum(h(k) % 5 != h(k) % 6 for k in keys)
+    print(f"hash mod N, 5 -> 6 nodes: {naive / len(keys):.1%} of keys move")
+```
+
+Output:
+
+```text
+preference list for 'user:42': ['B', 'E', 'A']
+keys per node: {'A': 535, 'B': 607, 'C': 634, 'D': 604, 'E': 620}
+put with one replica down -> True
+stale replica holds: 1 item
+quorum read -> 2 items | after read repair: 2 items
+put with two replicas down -> False
+add node F: 14.2% of keys change primary (ideal 1/6 = 16.7%)
+hash mod N, 5 -> 6 nodes: 83.5% of keys move
+```
+
+What to notice:
+
+- Five nodes with three replicas each should hold 600 keys on average; the actual range is 535–634, about ±10%, with 64 virtual nodes per node. More virtual nodes narrow the spread (§14.8.4); measure it with 16, 64, 128 and 256.
+- The write with one replica down succeeds because two acknowledgments meet $W = 2$. The returning replica still holds `1 item`, and the quorum read returns `2 items` because any two of the three replicas include at least one with the new value. Read repair then fixes the stale copy as a side effect.
+- The write with two replicas down returns `False`, but the one live replica *did* store `3 items`, and nothing undoes it. A later read that reaches that replica will return the "failed" value. A failed quorum write means "not guaranteed", not "did not happen"; clients must retry until success or treat the outcome as unknown.
+- Adding a sixth node moved 14.2% of keys' primary owner, close to the ideal 1/6, whereas `hash mod N` moved 83.5%. The difference between those two numbers is the reason consistent hashing exists (§14.8.1).
+- The global `self.clock` gives every write a total order, which no real cluster has. Replace it with version vectors in Milestone 1 and you will discover concurrent writes that last-writer-wins silently discards.
+
+::: example
+**Worked example — How available is a quorum write?**
+
+*Assumptions.* $N = 3$ replicas; each replica is independently reachable with probability $p = 0.99$ at any moment (§4.14 for the arithmetic; real failures are often correlated, which makes the true numbers worse).
+
+1. $W = 3$ (all replicas): $p^3 = 0.99^3 = 0.9703$, so about 3% of writes fail.
+2. $W = 2$: success when all three are up or exactly two are: $p^3 + 3p^2(1 - p) = 0.9703 + 3 \times 0.9801 \times 0.01 = 0.9703 + 0.0294 = 0.9997$.
+3. $W = 1$: success unless all three are down: $1 - (1 - p)^3 = 1 - 10^{-6} = 0.999999$.
+
+*Interpretation.* Moving from $W = 3$ to $W = 2$ cuts the write failure rate a hundredfold, from about 3% to 0.03%, while keeping $R + W > N$ possible with $R = 2$. *Engineering implication.* $N = 3$, $R = W = 2$ is the common default because it tolerates one replica failure for both reads and writes; sloppy quorums push availability further at the cost of the overlap guarantee (§27.9). Place replicas in different zones so that the independence assumption is closer to the truth (§39.4.2).
+:::
+
+#### Test plan and load-test targets
+
+Unit tests check the ring (preference lists have $N$ distinct nodes, wrap around correctly, and change minimally on join), version-vector comparison (equal, descends, concurrent), sibling merging and Merkle-tree diffing on ranges that differ by one key. Integration tests start five processes on different ports and run scripted fault scenarios.
+
+The consistency harness is the centerpiece of the test plan. Run 10 clients for 60 s against 100 keys, each performing random reads and writes of unique values, while a nemesis thread kills and restarts a random node every 10 s. Record histories and check, per key, that no read returns a value older than one whose write completed before the read began (when $R + W > N$ without substitutes). Load-test at 1,000 operations/s with 90% reads and a Zipf key distribution, and record p99 overall and during a node kill.
+
+#### Failure-injection exercises
+
+1. **Coordinator crash mid-write.** Kill the coordinator after it has sent the write to one replica. Show the value surfacing later through read repair or anti-entropy, and decide whether your client should treat a timed-out write as failed or unknown.
+2. **Network partition.** Put a forwarding proxy between nodes and drop traffic between {A, B} and {C, D, E}. With strict quorums, which keys can each side write? With sloppy quorums, both sides accept writes for every key; heal the partition and observe siblings or last-writer-wins losses (§25.8).
+3. **Lost hints.** Kill the node holding hints before it delivers them. Show that anti-entropy eventually repairs the owner, and measure how long it takes.
+4. **Clock skew with last-writer-wins.** Switch to wall-clock timestamps and skew one coordinator's clock by −5 s. Writes coordinated by it lose to older writes from other coordinators. Count the silently lost updates (§27.14.1).
+5. **Hot key.** Send 50% of traffic to one key. Its three replicas saturate while the other nodes idle. Measure it, then add a coordinator-side cache with a short TTL and discuss the consistency cost.
+
+#### Extensions
+
+- Add multi-datacenter replication with per-datacenter quorums (local quorum in each of two "datacenters" on different ports with added delay).
+- Replace last-writer-wins for a shopping-cart value with a CRDT (an observed-remove set) and show that concurrent adds and removes merge without loss (§27.14.3).
+- Use gossip (SWIM-style) for membership instead of a static list (§27.10.3).
+- Measure tail latency with hedged reads: send the read to a third replica if the first two have not answered within the p95 (§23.7).
+- Compare your store with a single-leader design built on the Raft simulator of §26.7.7 for the same workload: what do you gain and lose?
+
+#### Self-assessment rubric
+
+**Table 93.15 — Distributed key-value store: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Partitioning | Ring with virtual nodes | Balance and movement measured; join and decommission online | You can derive the movement fraction and the effect of virtual-node count |
+| Replication and quorums | Quorum reads and writes | Availability under a node failure; parallel requests with timeouts | You can explain what $R + W > N$ does and does not guarantee, with your checker's results |
+| Repair | Read repair | Hinted handoff and Merkle anti-entropy; convergence measured | You can compare the repair mechanisms by cost and by what they miss |
+| Conflicts | Last-writer-wins | Version vectors and siblings; lost updates demonstrated under clock skew | You can choose LWW, siblings or CRDTs for a given data type and defend it |
+| Testing | Unit tests | History checker with a nemesis | You can describe a bug your checker found and how you fixed it |
+

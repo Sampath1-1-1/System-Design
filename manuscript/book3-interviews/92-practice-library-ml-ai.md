@@ -643,3 +643,733 @@ No online serving. Monitor the score distribution week over week (PSI, §70.5.1)
 - **Senior:** point-in-time features, label delay, holdout-based measurement and voucher economics.
 - **Staff:** reframes the problem as uplift under a budget, makes the holdout permanent to break the feedback loop, and routes root causes to operations.
 
+### 92.4.6 Q6. Duplicate-question detection
+
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §16.5 (BM25), §74.9 (product quantization), §75.9 (cross-encoder reranking), §63.11 (hard negatives and sampling)
+
+#### Prompt
+
+"On our question-and-answer site, many new questions duplicate existing ones. Design a system that suggests likely duplicates while the user is writing, and helps moderators close duplicates."
+
+#### Clarifying questions and assumptions
+
+- Corpus? 50 million existing questions; 100,000 new questions a day, from about 300,000 drafts.
+- When? Suggestions as the user finishes the title and again before posting (about three lookups per draft); a moderator queue after posting.
+- Languages? English only at first.
+- Action on a match? Suggest, never block; moderators close duplicates.
+
+#### Requirements
+
+- **FR:** given a draft title and body, return up to 5 existing questions with a duplicate probability; flag high-confidence duplicates to moderators after posting; record accepted suggestions and moderator closures.
+- **NFR:** suggestion p99 ≤ 300 ms; new questions searchable as candidates within 10 minutes; suggestions shown only above 70% precision on the evaluation set.
+
+#### Estimation
+
+::: example
+**Worked example — Index memory and reranking compute (§74.9, §74.14, §89.13).** Assumptions: 384-dimension sentence embeddings; 900,000 lookups a day; PAR 4.8; a 22-million-parameter cross-encoder reading 256 tokens per (draft, candidate) pair over 100 candidates.
+
+1. Index memory: FP32 $5 \times 10^7 \times 384 \times 4 = 76.8$ GB; INT8 19.2 GB; product quantization at 64 bytes per vector 3.2 GB.
+2. Lookups: $9 \times 10^5 / 86{,}400 = 10.4$/s average, **50/s peak**. New questions to embed: $10^5 / 86{,}400 = 1.2$/s.
+3. Cross-encoder: $2 \times 2.2 \times 10^7 \times 256 = 1.13 \times 10^{10}$ FLOPs per pair; $1.13 \times 10^{12}$ per lookup; $5.6 \times 10^{13}$ FLOP/s at peak, well under one GPU.
+
+**Interpretation.** The index fits in one machine's memory even uncompressed, and reranking needs at most one GPU. **Implication.** Use exact or lightly compressed vectors with a replicated index, and spend the design effort on labels and thresholds.
+:::
+
+#### Data, labels and features
+
+- **Positives:** pairs moderators closed as duplicates; accepted suggestions (a user clicked a suggestion and abandoned the draft).
+- **Negatives:** random pairs are too easy. Use **hard negatives**: candidates retrieved for a question that moderators reviewed and did not close, and questions sharing many words but asking something different ("sort a list in Python" versus "sort a dictionary in Python").
+- **Label noise:** many true duplicates are never closed; treat unclosed pairs as unlabeled rather than negative, and build a judged evaluation set of 5,000 queries with graded duplicates.
+- **Features for the final model:** cross-encoder score, BM25 score, tag overlap, whether the candidate has an accepted answer, candidate age and views.
+
+#### Model and evaluation
+
+Baseline: BM25 over titles and bodies (§16.5). Retrieval: hybrid BM25 plus a bi-encoder trained contrastively on duplicate pairs with in-batch and hard negatives; recall@100 of judged duplicates is the retrieval gate. Ranking: a cross-encoder on the top 100, calibrated, plus a small model over the features above. Offline gate: precision at the suggestion threshold and recall@5 on the judged set, sliced by tag (programming languages differ). Online: randomize by drafting user; primary metric is the share of drafts resolved by a suggestion without lowering the rate of new, answered questions (a guardrail against suppressing legitimate questions).
+
+#### High-level design
+
+**Figure 92.7 — Retrieve, rerank, suggest.**
+
+```mermaid
+flowchart LR
+  W([Writer]) -->|HTTPS draft| DS[Duplicate service]
+  DS --> ENC[Query encoder]
+  DS --> BM[(BM25 index)]
+  ENC --> VI[(Vector index)]
+  BM --> FU[Fuse top 100]
+  VI --> FU
+  FU --> CE[Cross-encoder<br/>rerank, GPU]
+  CE --> TH{Above<br/>threshold?}
+  TH -->|yes| W
+  NQ[[New questions]] -.-> IDX[Indexer]
+  IDX -.-> VI
+  IDX -.-> BM
+  CE -.->|post-publish| MQ[[Moderator queue]]
+```
+
+**Reading the diagram.** The draft goes over HTTPS to the duplicate service, which encodes it and queries both indexes in parallel (storage boundaries), fuses the top 100, reranks them on one GPU pool and returns suggestions only above the calibrated threshold. Dotted arrows are asynchronous: new questions are indexed within minutes; posted questions with a high duplicate score go to a moderator queue. *Failure points:* if the GPU pool is slow, return BM25-only suggestions with a higher threshold; if the vector index is stale, recent duplicates are missed. *Scaling:* the indexes are replicated; at 100 times the corpus, compress vectors with product quantization.
+
+#### Serving and monitoring
+
+Budget: 30 ms retrieval, 150 ms reranking with batching, remainder headroom; debounce on the client so lookups fire on pauses. Monitor suggestion click-through, moderator agreement with high-score flags, index freshness, and the new-question rate per tag (a drop may mean suggestions are suppressing real questions).
+
+#### Deep dives
+
+1. **Bi-encoder versus cross-encoder.** The bi-encoder embeds each question once and supports ANN retrieval; the cross-encoder reads both texts together and is much more accurate but costs one forward pass per pair, so it runs only on the top 100.
+2. **Threshold by cost.** A wrong suggestion costs the writer a few seconds; a wrong moderator closure discourages a user. Use a lower threshold for suggestions and a higher one for moderator flags.
+3. **Re-embedding.** A new encoder version requires re-embedding 50 million questions; at 2,000 questions a second per GPU that is about 7 GPU-hours, so build the new index beside the old and swap atomically.
+
+#### Trade-offs and alternatives
+
+- Exact search versus ANN: at 50 million vectors and 50 lookups a second, a compressed exact scan on GPU is feasible; ANN becomes necessary at higher rates or larger corpora (§74.5.2).
+- Using an LLM judge for final verification improves precision on borderline cases at a cost per call; restrict it to the moderator queue.
+
+#### Follow-up questions
+
+1. *"How do you handle questions that are similar but not duplicates?"* Hard negatives in training, and a precision-oriented threshold.
+2. *"What if the original question has no good answer?"* Prefer candidates with accepted answers in ranking; a duplicate without an answer helps nobody.
+3. *"How do you evaluate recall when duplicates are rarely labeled?"* A judged set built from pooled candidates of several systems.
+4. *"How would this extend to 20 languages?"* A multilingual encoder for cross-lingual retrieval, and per-language thresholds.
+
+#### What distinguishes levels
+
+- **Mid:** embeddings plus nearest neighbors with a threshold.
+- **Senior:** hybrid retrieval and cross-encoder reranking sized by the estimate, hard negatives, judged evaluation set.
+- **Staff:** treats unclosed pairs as unlabeled, guards against suppressing legitimate questions, and plans re-embedding as an index migration.
+
+### 92.4.7 Q7. Product categorization
+
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §63.9 (active learning), §63.10 (label noise), §63.14.4 (LLM-assisted labeling), §79.8.1 (QuickBite menu enrichment)
+
+#### Prompt
+
+"Sellers on our marketplace list millions of products and often pick the wrong category. Design a system that assigns each listing to the right category in our taxonomy."
+
+#### Clarifying questions and assumptions
+
+- Taxonomy? About 6,000 leaf categories in a tree five levels deep; it changes monthly.
+- Volume? 500 million listings in the catalog; 5 million new or edited listings a day, arriving in bulk uploads with peaks ten times the average.
+- Inputs? Title, description, attributes, images, the seller's chosen category.
+- Consequence of an error? Wrong search results and wrong fees or legal restrictions (age-restricted categories).
+
+#### Requirements
+
+- **FR:** assign a leaf category with confidence to every new or edited listing; route low-confidence listings to human review; re-categorize the catalog after taxonomy changes; seller can dispute.
+- **NFR:** categorized within 5 minutes of listing; leaf accuracy ≥ 95% on auto-assigned listings weighted by traffic; restricted categories at ≥ 99% precision.
+
+#### Estimation
+
+::: example
+**Worked example — The human-review budget sets the threshold (§89.10, §63.5.2).** Assumptions: 20 ms of vCPU per listing for text features and model (image embedding computed once at upload); review takes 20 s per listing; 6.5 productive review hours per reviewer per day.
+
+1. Rate: $5 \times 10^6 / 86{,}400 = 58$/s average, **579/s** during bulk-upload peaks. Busy vCPU $579 \times 0.02 = 11.6$; at $u = 0.5$, 23 vCPU, two nodes.
+2. Full re-categorization of the catalog: $5 \times 10^8 \times 0.02 = 10^7$ vCPU-s = 2,778 vCPU-hours, about \$133 at \$0.048 per vCPU-hour.
+3. Human review at different confidence thresholds (Table 92.5).
+
+**Table 92.5 — Review workload by share of listings routed to people.**
+
+| Share routed | Listings/day | Review hours/day | Reviewers | Cost/day at \$15/h |
+|---|---|---|---|---|
+| 1% | 50,000 | 278 | 43 | \$4,167 |
+| 3% | 150,000 | 833 | 128 | \$12,500 |
+| 8% | 400,000 | 2,222 | 342 | \$33,333 |
+
+**Interpretation.** Compute costs a few dollars a day; people cost thousands. **Implication.** The interview question is where to set the confidence threshold: every point of automation traded against accuracy is worth about 43 reviewers.
+:::
+
+#### Data, labels and features
+
+- **Labels:** seller-chosen categories (plentiful, perhaps 80–85% correct, and biased toward cheap-fee categories), human-reviewed listings (clean but few), and buyer signals (a listing searched for and bought under "running shoes"). Use confident learning to find likely mislabeled seller choices (§63.10.2) and active learning to choose which listings humans label (§63.9).
+- **Features:** title tokens (most informative), attribute keys and values, description, image embedding, seller's category history, the seller-chosen category itself (a strong but noisy feature; drop it in an ablation to check the model is not just copying it).
+
+#### Model and evaluation
+
+Baseline: keyword rules per category plus the seller's choice. Model: a text classifier (fine-tuned small transformer) fused with the image embedding, predicting the leaf with a hierarchical loss so mistakes at sibling leaves cost less than mistakes across top-level branches; an LLM given the candidate subtree handles the long tail and new categories with few examples. Offline: leaf and path accuracy on a human-audited sample, weighted by listing traffic, per top-level branch; coverage at the accuracy target. Online: search conversion on categorized listings; dispute rate.
+
+#### High-level design
+
+**Figure 92.8 — Categorization with confidence routing.**
+
+```mermaid
+flowchart LR
+  S([Seller tools]) -->|listing created| LS[Listing service]
+  LS -.->|event| Q[[Listing events]]
+  Q -.-> CAT[Categorizer<br/>text plus image]
+  CAT --> CONF{Confidence<br/>above threshold?}
+  CONF -->|yes| CS[(Catalog store)]
+  CONF -->|no| LLM[LLM on candidate<br/>subtree]
+  LLM --> CONF2{Agree with<br/>top-3?}
+  CONF2 -->|yes| CS
+  CONF2 -->|no| HR[Human review queue]
+  HR --> CS
+  HR -.->|labels| TD[(Training data)]
+```
+
+**Reading the diagram.** Listings are created synchronously; categorization is asynchronous on the listing-event stream. The categorizer assigns a leaf with confidence; confident results write straight to the catalog store. Uncertain listings go to an LLM constrained to the top candidate subtree; agreement with the categorizer's top three is accepted, disagreement goes to human review, whose decisions are the cleanest training labels. *Failure points:* a taxonomy change invalidates leaves, so taxonomy versions are stored with each assignment; a review backlog leaves listings with the seller's category, which is the safe default. *Scaling:* the categorizer scales with the event rate; reviewers are the capacity constraint.
+
+#### Serving and monitoring
+
+Monitor the share routed to review per day (a jump means drift or a new seller segment), the category distribution of new listings, audited accuracy weekly, and disputes per category. Retrain weekly with new review labels; after a taxonomy change, map old leaves to new ones by rule where possible and re-categorize only affected subtrees.
+
+#### Deep dives
+
+1. **Threshold economics.** Table 92.5 turns a modeling choice into a staffing budget; a per-branch threshold (stricter for restricted categories) beats a global one.
+2. **Noisy seller labels.** Training on seller labels teaches the model their mistakes; reweight by estimated label quality and evaluate only on audited labels.
+3. **Taxonomy evolution.** Models with a flat softmax over leaves must be retrained when leaves change; a hierarchical model or an embedding-matching model (listing embedding against category-description embeddings) absorbs new leaves with fewer examples.
+
+#### Trade-offs and alternatives
+
+- LLM for every listing: simpler to start and good on the long tail, but at 5 million a day it costs more and is harder to pin to a version; use it for the uncertain slice.
+- Flat versus hierarchical classifier: flat is simpler and often as accurate at the leaf; hierarchical degrades more gracefully.
+
+#### Follow-up questions
+
+1. *"Sellers game categories to pay lower fees."* Use the model's category for fees above a confidence, and audit sellers with frequent overrides.
+2. *"How do you handle a product that fits two categories?"* Allow a primary and secondary category, or define the taxonomy rule explicitly.
+3. *"A new category launches tomorrow."* Seed it with rules and LLM-labeled examples, route its predictions to review for the first week.
+4. *"How do you know accuracy on the auto-assigned 97%?"* A weekly random audit sample, stratified by branch.
+
+#### What distinguishes levels
+
+- **Mid:** a text classifier over the taxonomy.
+- **Senior:** confidence routing sized against reviewer cost, noisy-label handling, audited evaluation.
+- **Staff:** turns the threshold into a business decision per branch, plans for taxonomy versioning, and treats sellers' incentives as adversarial.
+
+### 92.4.8 Q8. Store-level demand forecasting
+
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §83.4 (ride demand forecasting, full case on a related problem); §57.11.2 (pinball loss), §61.5 (batch pipelines)
+
+#### Prompt
+
+"A grocery chain with 2,000 stores wants daily forecasts of how many units of each product each store will sell, to drive automatic replenishment orders."
+
+#### Clarifying questions and assumptions
+
+- Granularity? Store × product × day, for the next 14 days, refreshed nightly; about 20,000 active products per store, so 40 million series.
+- How are forecasts used? An ordering system converts them into order quantities given lead time, pack sizes and shelf life.
+- Data? Point-of-sale history, prices and promotions (planned weeks ahead), stock levels, holidays, weather.
+- Perishables? Yes: overstock is waste, understock is a lost sale.
+
+#### Requirements
+
+- **FR:** nightly quantile forecasts (P10, P50, P90) per series for 14 days; promotion "what-if" forecasts for planners; aggregation to distribution-center level.
+- **NFR:** forecasts published by 04:00 for orders cut at 06:00; every forecast reproducible from snapshotted inputs; fallback to seasonal-naive forecasts if the job fails.
+- **Quality:** lower weighted absolute percentage error (WAPE) and pinball loss than the current method in a 52-week backtest, without increasing bias.
+
+#### Estimation
+
+::: example
+**Worked example — Forty million series is a batch job (§89.6, §89.13).** Assumptions: 40 million series; 14 horizons × 3 quantiles; 4 bytes per value; a global gradient-boosted model at 20 µs per row per quantile; two years of daily history.
+
+1. Outputs per night: $4 \times 10^7 \times 14 \times 3 = 1.68 \times 10^9$ values, **6.7 GB**.
+2. Inference: $1.68 \times 10^9 \times 20\ \mu s = 33{,}600$ core-seconds = 9.3 core-hours; in a 2-hour window, 5 cores.
+3. Training rows: $4 \times 10^7 \times 730 = 2.9 \times 10^{10}$ store-product-days over two years; sampling 2% gives $5.8 \times 10^8$ rows, a normal tree-training job.
+
+**Interpretation.** Inference and storage are small; feature construction over 29 billion history rows dominates. **Implication.** Build features incrementally (append yesterday's sales to running aggregates) and spend the design on the label and the evaluation.
+:::
+
+#### Data, labels and features
+
+- **The label is not sales.** When a product is out of stock, sales are zero but demand was not; training on raw sales teaches the model to forecast stockouts and order less, which causes more stockouts. Mark stockout days from inventory records and either exclude them or impute demand (the censored-demand problem of §83.4.8).
+- **Features:** lags and rolling means of demand (7, 28, 364 days), day of week, holidays and paydays, planned price and promotion type, product hierarchy (category, brand), store attributes, local events, weather forecasts.
+- **Leakage:** only information known at forecast time; promotions planned after the cutoff and actual weather must not enter backtests.
+
+#### Model and evaluation
+
+Baselines: seasonal naive (same weekday last week) and a 4-week weekday average. Model: one global gradient-boosted model across all series with quantile loss, which shares strength across sparse series; most store-product-days for slow movers are zero or one unit, so quantiles matter more than means. Offline: rolling-origin backtest (forecast each week of the last year as if it were the present), WAPE and pinball loss by category, bias, and coverage of the P10–P90 interval. Online: test by store (half the stores order from the new forecast) on stockout rate, waste for perishables and inventory days; stores interact through distribution centers only weakly.
+
+#### High-level design
+
+**Figure 92.9 — Nightly forecasting feeding replenishment.**
+
+```mermaid
+flowchart LR
+  POS[(Point-of-sale<br/>and inventory)] -.->|nightly load| WH[(Warehouse)]
+  PROMO[(Price and<br/>promotion plans)] -.-> WH
+  WX{{Weather and<br/>events feed}} -.-> WH
+  WH --> FE[Feature build<br/>incremental]
+  FE --> TR[Weekly training<br/>quantile GBM]
+  TR --> REG[(Registry)]
+  FE --> INF[Nightly batch<br/>inference]
+  REG --> INF
+  INF --> FC[(Forecast store)]
+  FC --> ORD[Replenishment<br/>ordering system]
+  FC --> PLN([Planner UI])
+```
+
+**Reading the diagram.** All data movement is batch: point-of-sale, inventory, promotion plans and external feeds land in the warehouse overnight (dotted). An incremental feature build feeds weekly training and nightly inference; forecasts land in a store read by the ordering system and planners. *Failure points:* a late point-of-sale load means yesterday's sales are missing; detect missing partitions and either wait or use the seasonal-naive fallback for affected stores rather than forecasting from a hole. *Scaling:* inference is parallel by store; training samples rows.
+
+#### Serving and monitoring
+
+Monitor input completeness per store (a store whose sales feed is missing looks like zero demand), forecast bias by category weekly, interval coverage, stockout and waste rates, and the share of orders that planners override (a rising override rate is a quality signal). Retrain weekly; refresh features nightly.
+
+#### Deep dives
+
+1. **Censored demand.** Explained above; the most common reason forecasting projects make shortages worse.
+2. **Quantile choice follows cost.** Ordering at the newsvendor critical ratio $c_u/(c_u + c_o)$ (underage over underage plus overage cost) means a perishable with \$0.30 lost margin per missed unit and \$0.70 waste per unsold unit should be stocked near the P30 of demand, while a shelf-stable product with \$0.40 and \$0.05 should be near the P89. The forecaster supplies quantiles; the ordering policy chooses.
+3. **Promotions and cannibalization.** A promoted product's lift partly comes from its substitutes; include category-level promotion features and evaluate on promoted weeks separately.
+
+#### Trade-offs and alternatives
+
+- Global model versus per-series classical models (exponential smoothing per series): classical models are interpretable and strong for long, regular series; a global model wins on sparse and new products.
+- Deep sequence models can capture complex patterns but are rarely worth it before the global tree model plateaus.
+
+#### Follow-up questions
+
+1. *"How do you forecast a new product?"* Borrow from similar products (same category and price band) via the global model's hierarchy features.
+2. *"Can you sum store forecasts to the distribution center?"* Means add; quantiles do not, so reconcile or simulate (§83.4.8).
+3. *"A pandemic changes everything."* Shorten training windows, raise the weight of recent data and widen intervals; let planners override with annotations.
+4. *"Why not forecast weekly?"* Ordering is daily and weekday patterns are strong; weekly forecasts lose them.
+
+#### What distinguishes levels
+
+- **Mid:** a time-series model per product with MAPE.
+- **Senior:** global quantile model, rolling-origin backtest, censored-demand awareness and a fallback.
+- **Staff:** separates forecasting from the ordering policy via cost-based quantiles, quantifies waste and stockouts as the business metrics, and plans for promotions and data gaps.
+
+### 92.4.9 Q9. Language identification service
+
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §62.3.4 (text features), §66.3 (inference modes), §75.5 (document ingestion)
+
+#### Prompt
+
+"Many of our systems need to know what language a piece of text is in: search, moderation, translation and ads. Design a language identification service."
+
+#### Clarifying questions and assumptions
+
+- Coverage? About 200 languages and major scripts, including romanized forms such as Hindi written in Latin script.
+- Volume? 5 billion texts a day across posts, comments and search queries; peak twice the average.
+- Text length? From two-word queries to long documents; short texts dominate by count.
+- Mixed language? Common (code-switching); return the top languages with probabilities and an "undetermined" result when unsure.
+
+#### Requirements
+
+- **FR:** `identify(text, hints?)` returning the top 3 languages with probabilities, or `und`; optional hints (user interface language, region); per-span detection for long mixed documents.
+- **NFR:** p99 ≤ 1 ms added to callers' latency; 99.99% availability (callers block on it); model under 10 MB so it can ship to every service and to mobile clients.
+- **Quality:** macro-F1 across languages above the current library, with per-language precision ≥ 95% on texts of 50 characters or more.
+
+#### Estimation
+
+::: example
+**Worked example — The network costs more than the model (§89.5, §89.10).** Assumptions: 5 billion texts a day, PAR 2; a character n-gram linear model costs 10 µs of CPU per short text; a remote call costs about 0.3 ms of CPU on each side for serialization and networking; hashed n-gram embeddings of 2 million buckets × 16 dimensions.
+
+1. Rate: $5 \times 10^9 / 86{,}400 = 57{,}870$/s average, **115,741/s peak**.
+2. Model CPU at peak: $115{,}741 \times 10\ \mu s = 1.2$ busy vCPU across the whole company.
+3. As a remote service: $115{,}741 \times 0.3\ \text{ms} \times 2 = 69$ busy vCPU for the calls alone, 60 times the model, plus a network round trip of about 0.5 ms.
+4. Model size: $2 \times 10^6 \times 16 \times 4 = 128$ MB in FP32, 32 MB in INT8; pruning rare buckets and product quantization bring it near 1 MB.
+
+**Interpretation.** Running the model costs almost nothing; calling it remotely costs most of the CPU and the latency budget. **Implication.** Ship it as a versioned in-process library, with a central service only for long documents and for clients that cannot embed it.
+:::
+
+#### Data, labels and features
+
+- **Training data:** text with known language from Wikipedia editions, parallel corpora, and curated web text, balanced so large languages do not swamp small ones; romanized and dialect data collected separately.
+- **Hard cases** need dedicated evaluation sets: very short texts (queries), closely related pairs (Malay and Indonesian; Serbian, Croatian and Bosnian; Danish and Norwegian Bokmål), romanized text, and code-switched posts. Label these with native speakers.
+- **Features:** character n-grams of length 1–5 (script and orthography carry most of the signal), word unigrams for longer texts, and Unicode script. Hints (interface language, region) enter as a prior, not as a feature learned from biased data.
+
+#### Model and evaluation
+
+Baseline: Unicode-script rules (Thai, Greek, Korean, Hebrew are identified by script alone) plus an open-source n-gram identifier. Model: a hashed character n-gram embedding averaged and fed to a linear softmax (fastText-style), or a tiny neural network; both are microsecond-scale. A **prior** from hints combines by Bayes' rule: if the text alone gives a likelihood ratio of 1.5 for Indonesian over Malay, but the user's region gives prior odds of 0.1 to 0.8, the posterior for Indonesian is $1.5 \times 0.1 / (1.5 \times 0.1 + 0.8) = 0.16$, so the answer is Malay. Offline: macro-F1 and per-language precision and recall by length bucket; confusion pairs tracked explicitly; calibration so the `und` threshold means something. Online: downstream metrics (translation request rate, search success for non-English queries) in an A/B test by user.
+
+#### High-level design
+
+**Figure 92.10 — Language identification as an embedded library with a central service.**
+
+```mermaid
+flowchart LR
+  subgraph Callers["Caller services"]
+    S1[Search] --> L1[LID library v7]
+    S2[Moderation] --> L2[LID library v7]
+  end
+  MOB([Mobile app]) --> L3[On-device LID]
+  DOC[Document pipeline] -->|gRPC| CS[LID service<br/>long docs, spans]
+  REG[(Model artifact<br/>registry)] -.->|versioned release| L1
+  REG -.-> L2
+  REG -.-> CS
+  L1 -.->|sampled predictions| LOG[[Prediction sample log]]
+  LOG -.-> EVAL[Eval and drift jobs]
+```
+
+**Reading the diagram.** Most callers link the library in-process (no network edge), so identification adds microseconds. Mobile clients run the same model on device. Long documents and span-level detection go over gRPC to a central service. Model artifacts are released from a registry as versioned library builds (dotted, asynchronous). Callers log a small sample of predictions for evaluation and drift detection. *Failure points:* version skew between callers (search on v6, moderation on v7) produces inconsistent routing; enforce upgrade windows and log the version with each prediction. *Scaling:* the library scales with its callers; the central service scales on document volume.
+
+#### Serving and monitoring
+
+Monitor the predicted language mix per surface (a sudden rise in one language may be a real event or a model bug), the `und` rate, confusion-pair rates on sampled human-reviewed texts, and library version adoption. Retrain quarterly or when a new language is added.
+
+#### Deep dives
+
+1. **Library versus service.** The estimate decides it: the model is cheaper than the call.
+2. **Short texts and priors.** For a two-word query, the prior from user context often outweighs the text; expose hints in the API and combine them by Bayes' rule rather than mixing them into training.
+3. **Fairness across languages.** Small languages get lower accuracy and their speakers lose search, translation and moderation quality; report per-language metrics and set a minimum per-language bar (§71.5).
+
+#### Trade-offs and alternatives
+
+- A large multilingual transformer is more accurate on hard pairs but thousands of times costlier; use it offline to label data or in the document service.
+- Returning a single label is simpler for callers; returning probabilities lets each caller choose its own threshold.
+
+#### Follow-up questions
+
+1. *"How do you add a new language?"* Collect data, add the class, retrain, check that confusable languages do not regress, release a new library version.
+2. *"Mixed-language posts?"* Sliding-window detection in the document service; return spans.
+3. *"How do you know accuracy in production?"* Sampled human review stratified by predicted language and length.
+4. *"Why not trust the user's interface language?"* Many people write in languages other than their interface language; use it as a prior only.
+
+#### What distinguishes levels
+
+- **Mid:** an n-gram classifier with an endpoint.
+- **Senior:** library-versus-service decision from the estimate, short-text and confusion-pair evaluation, priors from hints.
+- **Staff:** manages version skew across the company, sets per-language quality floors, and decides where heavy models are worth their cost.
+
+### 92.4.10 Q10. Click-through-rate prediction basics
+
+**Difficulty:** Easy · **Time:** 45 min · **Related:** §68.7.5 (recalibration after downsampling), §68.9 (feature crosses), §81.9 (ads at scale, see Q17), §89.13
+
+#### Prompt
+
+"QuickBite is launching sponsored restaurant listings: restaurants bid per click to appear in two slots on the home feed. Design the click-through-rate prediction model that decides which sponsored listing to show."
+
+#### Clarifying questions and assumptions
+
+- Traffic? Sponsored slots are requested alongside QuickBite's recommendation requests, 2,500/s at peak (§68.16); size as if every request carries them. About 6 million home-feed views a day display the 2 slots.
+- Candidates? About 50 eligible campaigns per request after delivery-area and budget filters.
+- Auction? Rank by bid × predicted CTR; charge the second-price per click.
+- Click rate? About 2% at launch.
+
+#### Requirements
+
+- **FR:** predict calibrated pCTR per (user, restaurant, slot, context); log impressions and clicks; exclude restaurants the user cannot order from; frequency caps.
+- **NFR:** CTR scoring ≤ 15 ms inside the 120 ms recommendation budget; calibration ratio (Σ predicted / Σ observed clicks) within 0.95–1.05 per city; no organic ranking change when the ad system fails (slots fall back to organic results).
+- **Quality:** lower log loss than the baseline, and an online increase in ad revenue without reducing orders per session.
+
+#### Estimation
+
+::: example
+**Worked example — Predictions, training rows and the calibration correction (§89.13, §68.7.5).** Assumptions: 2,500 requests/s × 50 candidates; 12 million impressions a day; 2% CTR; keep all clicks and 10% of non-clicks; 300 bytes per row; a gradient-boosted model at 10 µs per prediction.
+
+1. Predictions at peak: $2{,}500 \times 50 = 125{,}000$/s; CPU $125{,}000 \times 10\ \mu s = 1.25$ busy vCPU, 2.5 at $u = 0.5$. Even a 50 µs model needs 12.5 vCPU.
+2. Clicks: $1.2 \times 10^7 \times 0.02 = 240{,}000$/day. Training rows: $240{,}000 + 0.1 \times 1.176 \times 10^7 = 1.42 \times 10^6$/day, 0.42 GB.
+3. Correction: a model trained with negatives kept at $w = 0.1$ outputs $p' = 0.15$; the true probability is $p = p' / (p' + (1 - p')/w) = 0.15 / (0.15 + 8.5) = 0.0173$.
+
+**Interpretation.** Serving is cheap and data is modest; the error that matters is a probability that is off by a factor of nine if the correction is forgotten. **Implication.** Put the correction inside the served model artifact and monitor calibration per city.
+:::
+
+#### Data, labels and features
+
+- **Label:** click within the session on an impression that was actually viewed (at least 50% of the card on screen for 1 s), so unseen impressions do not count as negatives.
+- **Features:** user (order history, cuisine affinities, price sensitivity), restaurant (rating, delivery time, cuisine, historical CTR as a smoothed decayed counter), context (time of day, weather, slot position, device), and **crosses** such as user cuisine × restaurant cuisine (§68.9). Restaurant and user IDs enter as hashed categorical features.
+- **Position bias:** slot 1 gets more clicks regardless of quality; train with position as a feature and predict at a fixed position, so ranking compares restaurants on equal terms.
+
+#### Model and evaluation
+
+Baseline: smoothed historical CTR per restaurant. Model 1: logistic regression with hashed features and crosses, fast and well calibrated. Model 2: gradient-boosted trees or a small deep-and-cross network once data accumulates. Offline: log loss, normalized entropy and AUC on the next day's data, calibration ratio per city and per restaurant decile. Online: A/B test by user; primary metric revenue per 1,000 requests; guardrails organic order rate, sponsored-order cancellation rate, and restaurant return on ad spend.
+
+#### High-level design
+
+**Figure 92.11 — Sponsored listings: eligibility, prediction, auction.**
+
+```mermaid
+flowchart LR
+  APP([Customer app]) -->|HTTPS| REC[Recommendation<br/>service]
+  REC -->|ad request| ADS[Ad server]
+  ADS --> ELI[(Eligible campaigns<br/>by delivery area)]
+  ADS --> FS[(Online feature store)]
+  ADS --> CTR[CTR model<br/>with correction]
+  CTR --> AUC[Auction: bid x pCTR,<br/>second price]
+  AUC --> REC
+  ADS -.->|impressions| LOG[[Ad event log]]
+  APP -.->|views, clicks| LOG
+  LOG -.-> TR[Daily training]
+  TR -.-> CTR
+  LOG -.-> BILL[Billing and budgets]
+```
+
+**Reading the diagram.** The recommendation service asks the ad server for two listings inside its budget; the ad server reads eligible campaigns for the address and features (storage boundaries), scores candidates, runs the auction and returns winners and prices. Dotted arrows are asynchronous: impressions, views and clicks join in an event log that feeds training and billing. *Failure points:* if the ad server times out, the recommendation service fills slots organically; a missing correction or a calibration drift misprices every auction. *Scaling:* the ad server is stateless; the eligible-campaign table is small and replicated.
+
+#### Serving and monitoring
+
+Monitor calibration ratio hourly per city, CTR by slot, revenue per 1,000 requests, spend pacing per campaign, and feature freshness. Retrain daily with a warm start; roll out through a shadow comparison of log loss on live traffic.
+
+#### Deep dives
+
+1. **Why calibration matters.** Ranking by bid × pCTR uses absolute probabilities. With restaurant A bidding \$0.50 at pCTR 4% (expected \$20 per 1,000 impressions) and B bidding \$0.80 at 2% (\$16), A wins and pays $16/1{,}000/0.04 = \$0.40$ per click; a 30% overprediction for B makes it \$20.80 and flips the winner.
+2. **Downsampling and correction** (estimation step 3).
+3. **Cold start for new restaurants.** Smoothed priors from similar restaurants and a small exploration budget so new advertisers get impressions (§68.15).
+
+#### Trade-offs and alternatives
+
+- Logistic regression versus trees or deep models: start linear for calibration and speed; switch when the log-loss gain is worth its operational cost.
+- Separate ad and organic rankers versus one blended ranker: separate is simpler to govern; blending needs a common value currency (orders versus revenue).
+
+#### Follow-up questions
+
+1. *"Why not rank by bid alone?"* Users would see irrelevant listings; revenue falls because they do not click.
+2. *"How do you measure calibration?"* Σ predicted over Σ observed clicks per segment, and reliability curves (§57.10.3).
+3. *"What if a restaurant's CTR is high but orders are low?"* Add a conversion model and move to cost per order, the target design in Q17.
+4. *"How do you keep ads from hurting the user experience?"* Relevance floors, frequency caps and organic-order guardrails.
+
+#### What distinguishes levels
+
+- **Mid:** logistic regression on features with AUC.
+- **Senior:** calibration, downsampling correction, position bias and an auction-aware evaluation.
+- **Staff:** prices calibration errors in auction outcomes, sets guardrails for users and restaurants, and plans exploration for new advertisers.
+
+## 92.5 Medium questions (Q11–Q26)
+
+The Medium tier trains product-facing ML systems whose hard part is not the model. Ten of the sixteen prompts have full case studies elsewhere in the book, so their answers are compact and focus on what a 45-minute interview can hold; the other six are complete.
+
+### 92.5.1 Q11. News feed ranking
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §81.5 (full case study); §53.7 (feed serving), §68.7.4 (multi-task fusion), §89.18.3
+
+#### Prompt
+
+"Design the ranking system for a social app's home feed, which mixes posts from accounts a user follows with recommended posts."
+
+#### Clarifying questions and assumptions
+
+- Scale as in §81.5: 500 million daily users, 20 feed loads each, peak three times average, pages of 10 posts.
+- Objective? Long-term engagement and satisfaction, not clicks; integrity (no violating content recommended) is in scope.
+- Freshness? A new post from a followed account is eligible within one minute.
+
+#### Requirements
+
+- **FR:** ranked pages mixing connected and recommended posts; viewer controls ("not interested", mute) applied on the next request; impressions logged with features.
+- **NFR:** p99 ≤ 250 ms; chronological connected feed as fallback; post engagement counters ≤ 30 s old; per-head calibration within 0.95–1.05.
+
+#### Estimation
+
+::: example
+**Worked example — Feature fetch, not GPUs, is the load (§81.5.4, §89.13).**
+
+1. Feed requests: $5 \times 10^8 \times 20 = 10^{10}$/day, **347,222/s peak**.
+2. Heavy ranker on 500 candidates at 50 MFLOPs each: with Explore traffic, 98 GPUs at $u = 0.6$, **150** across three regions sized for one loss.
+3. Per-candidate feature lookups: about **184 million/s** at peak.
+
+**Interpretation.** The ranker is a modest GPU fleet; the feature fetch is the system. **Implication.** Co-locate post features with rankers in a sharded in-memory cache and fetch only the viewer's features remotely.
+:::
+
+#### Data, labels and features
+
+Labels are per action: like, comment, share, save, dwell above a threshold, and negative actions ("see fewer", hide, report), arriving within minutes. Features: viewer–author affinity, post engagement counters (decayed, §68.13), content embeddings, post age, viewer session context. Integrity classifier scores are inputs to eligibility, not ranking features.
+
+#### Model and evaluation
+
+Baseline: reverse-chronological connected posts. Production: candidate sources (followed accounts, two-tower interest retrieval), a light ranker, then a multi-task heavy ranker whose calibrated heads are fused into one value with positive and negative weights (§68.7.4). Offline gate: per-head normalized entropy and calibration; online: daily active users and time spent with negative-feedback rate, prevalence of violating content and connected-content share as guardrails.
+
+#### High-level design
+
+**Figure 92.12 — Feed ranking funnel.**
+
+```mermaid
+flowchart LR
+  V([Viewer]) -->|HTTPS| FS[Feed service]
+  FS --> SG[Social-graph source]
+  FS --> IG[Interest ANN source]
+  SG --> EL[Eligibility and<br/>integrity filter]
+  IG --> EL
+  EL --> LR[Light ranker]
+  LR --> HR[Multi-task ranker<br/>GPU]
+  HR --> MX[Mixer, diversity,<br/>controls]
+  MX --> V
+  FC[(Post feature cache)] --> HR
+  V -.->|actions| EV[[Engagement stream]]
+  EV -.-> FC
+```
+
+**Reading the diagram.** Two candidate sources feed a cheap eligibility filter that removes violating and muted content before any ranking compute; a light ranker narrows to 500 for the GPU ranker, which reads post features from a co-located cache; a mixer applies diversity, the connected-content share and viewer controls. Engagement events stream back (dotted) to refresh counters within seconds. *Failure points:* ranker failure falls back to chronological connected posts; a stale eligibility stream lets removed posts through. *Scaling:* sources and rankers scale with requests; the feature cache is sharded by post ID.
+
+#### Serving and monitoring
+
+Monitor per-head calibration by source, counter freshness, eligibility-stream lag, prevalence from sampled human labeling, and connected share. Retrain daily; keep a long-term holdout to measure cumulative effects.
+
+#### Deep dives
+
+1. **Value model.** Fused heads need calibration and weights set by experiment, not by intuition.
+2. **Integrity before ranking.** Filtering after ranking wastes compute and lets the ranker learn to amplify borderline content.
+3. **Gaming early signals.** Counters on new posts are easily inflated; weight engagement by account trust and use priors from author history.
+
+#### Trade-offs and alternatives
+
+Single-model end-to-end ranking is simpler but cannot meet the latency budget over thousands of candidates; a funnel trades some recall for cost (§68.4).
+
+#### Follow-up questions
+
+1. *"How do you rank a two-minute-old post?"* Author priors and content embedding, then Beta-smoothed counters.
+2. *"Why not optimize time spent?"* It rewards passive scrolling; satisfaction surveys and negative feedback correct it.
+3. *"Stop recommendations crowding out friends?"* A connected-share guardrail and a displacement margin.
+4. *"How do you test ranking changes with network effects?"* Randomize by viewer; watch creator-side metrics separately.
+
+#### What distinguishes levels
+
+- **Mid:** staged ranking with an engagement model.
+- **Senior:** multi-task heads with calibration, eligibility before ranking, feature fetch sized as the bottleneck.
+- **Staff:** measures integrity as prevalence, designs anti-gaming into features, and accounts for creator-side effects.
+
+### 92.5.2 Q12. Video recommendations
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §81.4 (full case study); §68.6 (two-tower), §56.5 (systems view), §54.4 (video platform)
+
+#### Prompt
+
+"Design the recommendations for a video platform's home page and 'up next' list."
+
+#### Clarifying questions and assumptions
+
+As in §81.4: 800 million daily viewers, 25 recommendation requests each, PAR 2; 500 million recommendable videos; objective is satisfied watch time, not clicks; new uploads eligible within 15 minutes.
+
+#### Requirements
+
+- **FR:** home page of 20 and up-next of 20 from a seed video; in-session adaptation; "not interested" honored on the next request.
+- **NFR:** p99 ≤ 200 ms; 99.99% availability of *some* page via popular-in-region fallback; impressions joined to outcomes ≥ 99.9%.
+
+#### Estimation
+
+::: example
+**Worked example — Where the GPUs go (§81.4.4, §89.18.8).**
+
+1. Requests: $8 \times 10^8 \times 25 = 2 \times 10^{10}$/day; **462,963/s peak**.
+2. Heavy ranker on 500 candidates at 200 MFLOPs: $4.63 \times 10^{16}$ FLOP/s; at 150 TFLOP/s effective and $u = 0.6$, 515 GPUs; **774** across three regions sized for one loss.
+3. Retrieval index with 32-byte product quantization: $5 \times 10^8 \times 32 = 16$ GB per replica.
+
+**Interpretation.** Retrieval is cheap; the ranker's input size sets the bill. **Implication.** Invest in the light ranker's recall so the heavy ranker can score fewer items.
+:::
+
+#### Data, labels and features
+
+Labels: click, watch time given click, like, dismissal, and survey responses on a sample; delays from seconds to days. Features: watch history sequence, video embeddings and engagement counters, creator, context, seed video. Negatives are sampled and corrected; impressions log the features used at serving time (§59.5.3).
+
+#### Model and evaluation
+
+Baseline: popular-in-region and co-watch item-to-item lists. Production: two-tower retrieval trained as next-watch prediction with sampling-bias correction (§68.6), several retrieval sources, a light ranker and a multi-task heavy ranker with watch-time weighting. Offline gates: recall@500 for retrieval, per-head log loss and calibration; online: satisfied watch time per viewer, with dismissals, survey score and creator coverage as guardrails.
+
+#### High-level design
+
+**Figure 92.13 — Video recommendation funnel.**
+
+```mermaid
+flowchart LR
+  V([Viewer]) -->|HTTPS| RS[Rec service]
+  RS --> UT[User tower]
+  UT --> ANN[(ANN index<br/>PQ, 16 GB)]
+  RS --> I2I[(Co-watch lists)]
+  ANN --> MRG[Merge 1,500]
+  I2I --> MRG
+  MRG --> LR[Light ranker CPU]
+  LR --> HR[Heavy ranker GPU<br/>500 items]
+  HR --> RR[Re-rank: diversity,<br/>policy]
+  RR --> V
+  UP[[New uploads]] -.-> IT[Item tower] -.-> ANN
+```
+
+**Reading the diagram.** The request runs the user tower, queries the ANN index and other sources, merges about 1,500 candidates, narrows them on CPU, scores 500 on GPU and re-ranks for diversity and policy before returning 20. New uploads are embedded asynchronously and inserted into the index (dotted). *Failure points:* a mismatch between user-tower and index versions silently ruins retrieval, so they are versioned and swapped together; GPU loss degrades to light-ranker order. *Scaling:* regions replicate the index; rankers scale with requests.
+
+#### Serving and monitoring
+
+Budget roughly 20 ms retrieval, 30 ms light ranking, 80 ms heavy ranking. Monitor per-head calibration, freshness of newest indexed video, candidate-source marginal recall and embedding drift. Rankers retrain daily with warm start; the candidate model weekly.
+
+#### Deep dives
+
+1. **Objective design:** watch-time weighting and satisfaction heads against clickbait.
+2. **Retrieval at scale:** two-tower with log-Q correction, index updates for fresh uploads.
+3. **Feedback loops:** exploration slots for new videos and a long-term holdout.
+
+#### Trade-offs and alternatives
+
+Fewer heavy-ranker items save GPUs at the risk of recall; generative sequence recommenders are an alternative where latency allows.
+
+#### Follow-up questions
+
+1. *"Why not optimize clicks?"* Clickbait; satisfied watch time is the target.
+2. *"How does a new video get impressions?"* Content-based item tower plus fresh-upload source and exploration.
+3. *"How do you keep tower and index consistent?"* Version together, swap atomically per region.
+4. *"Halve the GPU bill?"* Distill the light ranker and cut heavy-ranker input from 500 to 250.
+
+#### What distinguishes levels
+
+- **Mid:** two-tower retrieval and a ranker.
+- **Senior:** funnel with numbers, multi-task heads, label delays and versioned index swaps.
+- **Staff:** argues the objective, prices each stage, and treats feedback loops and creator effects as guardrails.
+
+### 92.5.3 Q13. Search ranking
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §81.7 (full case study); §56.4 (search serving), §16.5 (BM25), §68.12.2 (position bias)
+
+#### Prompt
+
+"Design the ranking models for a web search engine: given a query, order candidate documents so the best result is first."
+
+#### Clarifying questions and assumptions
+
+Serving from §56.4 is assumed: 81,019 queries/s reach ranking at peak; a leaf-level retrieval and first-pass stage hands 3,000 candidates to the root. Labels: graded human judgments and clicks. Personalization beyond locale is out of scope.
+
+#### Requirements
+
+- **FR:** query understanding (spelling, intent, rewrites), hybrid lexical and dense retrieval, multi-stage ranking, freshness boosts for news intent, impression logging.
+- **NFR:** ranking ≤ 110 ms inside the 300 ms end-to-end p99; ranking degrades to the previous stage's order rather than failing; no NDCG regression on any major slice.
+
+#### Estimation
+
+::: example
+**Worked example — Price each stage (§81.7.4).**
+
+1. Second pass (LambdaMART, 10 µs per document × 3,000): $81{,}019 \times 0.03 / 0.5 = $ **4,861 cores**.
+2. Cross-encoder (22 million parameters, 128 tokens) on the top 30: $1.37 \times 10^{16}$ FLOP/s, **152 GPUs** at $u = 0.6$; a 110-million-parameter version needs 760.
+3. Judgments: 600,000 per quarter; clicks: $3 \times 10^9$ per day.
+
+**Interpretation.** The cross-encoder is the expensive stage, linear in model size and documents read. **Implication.** Distill it and apply it only to the top 30.
+:::
+
+#### Data, labels and features
+
+Human judgments on a 0–4 scale are the trustworthy, scarce signal; clicks are plentiful but position-biased, so debias them with propensities from small randomized swaps (§68.12.2). Features: BM25 per field, dense similarity, link-based quality, freshness, spam scores, query–document click statistics, intent class.
+
+#### Model and evaluation
+
+Baseline: BM25 plus static quality. Production: L1 small model at leaves, L2 LambdaMART over a few hundred features, L3 distilled cross-encoder on the top 30. Offline: NDCG@10 on judged sets, gated per slice (navigational, long-tail, each major language); online: interleaving for sensitivity, then A/B on satisfied clicks with abandonment and reformulation as guardrails.
+
+#### High-level design
+
+**Figure 92.14 — Search ranking cascade.**
+
+```mermaid
+flowchart LR
+  U([Searcher]) -->|HTTPS| QU[Query understanding]
+  QU --> SC[Scatter to leaves]
+  SC --> LF[Leaves: BM25, dense,<br/>L1 ranker]
+  LF --> RT[Root: merge 3,000,<br/>L2 LambdaMART]
+  RT --> L3[L3 cross-encoder<br/>top 30, GPU]
+  L3 --> U
+  U -.->|clicks, dwell| LOG[[Search logs]]
+  LOG -.-> TRN[Training with<br/>debiased clicks]
+  JUD[(Judged query sets)] --> TRN
+```
+
+**Reading the diagram.** Query understanding runs once before the scatter; leaves retrieve and first-pass rank their shard; the root merges, applies L2 and sends the top 30 to the cross-encoder pool. Logs flow asynchronously into training together with judged sets (storage boundary). *Failure points:* L3 timeout returns L2 order; a stale propensity curve biases training silently. *Scaling:* leaves scale with index size, the root and L3 with query rate; caching L3 scores for head queries cuts GPU load.
+
+#### Serving and monitoring
+
+Weekly NDCG on a rotating judged set, L3 fallback rate, correction acceptance rate, abandonment by intent, propensity curve stability. Rankers retrain weekly; dictionaries daily.
+
+#### Deep dives
+
+1. **Labels:** judgments versus debiased clicks, and how propensities are estimated without hurting users.
+2. **Cascade economics:** the cost of each stage and distillation.
+3. **Evaluation hygiene:** slice gates and leakage from queries in both training and judged sets.
+
+#### Trade-offs and alternatives
+
+Neural ranking everywhere improves text matching but costs orders of magnitude more per document than trees; keep trees where features are engineered.
+
+#### Follow-up questions
+
+1. *"Why not train on clicks directly?"* The model would learn the old ranking's position bias.
+2. *"How do you get propensities?"* Randomized adjacent swaps on 1% of traffic.
+3. *"How do you handle a breaking-news query?"* A fresh-intent classifier and boosts from the real-time tier.
+4. *"Why LambdaMART at L2?"* Strong on engineered features at 10 µs per document.
+
+#### What distinguishes levels
+
+- **Mid:** learning to rank with NDCG.
+- **Senior:** cascade with costs, hybrid retrieval, position-bias correction.
+- **Staff:** treats labels as the core problem, prices every stage, guards slices and evaluation leakage.
+

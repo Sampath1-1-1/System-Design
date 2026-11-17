@@ -1412,3 +1412,709 @@ Peer-to-peer or client-authoritative designs avoid server cost but invite cheati
 - **Senior:** authoritative UDP servers, prediction and interpolation, matchmaking trade-offs, fleet sizing.
 - **Staff:** lag compensation and interest management with bandwidth arithmetic, regional placement under physics limits, and launch-day capacity planning.
 
+## 91.7 Expert questions (Q45–Q56)
+
+Expert prompts ask you to design the infrastructure other systems are built on, or to change a running system without stopping it. The interviewer is usually a staff or principal engineer, the session often becomes a design review, and the decisive signals are precise failure semantics, explicit invariants and a plan for evolution. Answers are full unless a case study exists; all are *Evidence: Illustrative* unless an `industry` callout says otherwise.
+
+### 91.7.1 Q45. Globally consistent database
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §28.8 (Spanner and TrueTime), §28.10, §44.4.3, §44.12, §26.7
+
+#### Prompt
+
+"Design a SQL database that spans continents, offers serializable transactions with external consistency, and survives the loss of a whole region."
+
+#### Clarifying questions and assumptions
+
+- *Data and load?* 1 PB; 500,000 writes/s and several million reads/s globally.
+- *Latency expectations?* Writes may take tens of milliseconds; reads should be local where staleness is acceptable.
+- *Regions?* Five regions in two continents; data placement configurable per table or row.
+- *Clocks?* We can deploy GPS and atomic time references in each data center (or accept a hybrid logical clock with weaker guarantees).
+
+#### Requirements
+
+**Functional.** SQL with serializable read-write transactions across any rows; consistent snapshot reads at any timestamp; bounded-staleness local reads; schema changes online; placement policies. **Non-functional.** External consistency (if T1 commits before T2 starts, T1's timestamp is smaller); survive one region's loss with RPO 0 and automatic failover in seconds; p99 single-region-homed write ≤ 20 ms where placement allows.
+
+#### Estimation
+
+::: example
+**Worked example — Ranges, quorums and replica placement.** Assumptions: 10 GB ranges, five replicas each; RTTs from the leader region: same-region replica 1 ms, nearby region 12 ms, cross-continent 65–150 ms (the Figure 44.2 values); clock uncertainty $\varepsilon \approx 4$ ms on average.
+
+1. Ranges: $10^{15} / 10^{10} = 100{,}000$, so 500,000 replicas, each range its own consensus group.
+2. One voter per region (five regions): commit waits for the second-fastest follower, about 65 ms.
+3. Placement 2–2–1 (two voters in the leader's region, two in a nearby region, one far): quorum of 3 = leader plus local follower plus the nearby region, about 12 ms. Losing any one region leaves at least 3 voters (§44.4.3), so region survival holds.
+4. Commit wait of about $2\varepsilon = 8$ ms overlaps the 12 ms consensus round, adding nothing.
+5. A transaction spanning two ranges with leaders in different places adds a two-phase commit round: roughly twice the slowest participant's consensus time.
+
+**Interpretation.** Replica placement, not clock uncertainty, sets write latency. **Engineering implication.** Home each range's leader and quorum near its writers, and make cross-range transactions the exception through schema design (interleaving related rows).
+:::
+
+#### API and data model
+
+```text
+SQL: BEGIN; ...; COMMIT (serializable)   SELECT ... AS OF SYSTEM TIME t   (snapshot)
+Placement: ALTER TABLE orders SET LOCALITY REGIONAL BY ROW (home region column)
+Internals: key space split into ranges; per range a consensus log (Paxos or Raft), a leaseholder,
+           MVCC versions keyed by (key, commit_timestamp); lock table for in-flight writes
+Directory: range -> replicas, leaseholder (itself stored in system ranges)
+```
+
+#### High-level design
+
+**Figure 91.117 — Globally consistent database: ranges as consensus groups, 2PC across groups, clock service.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|SQL| GW[SQL gateway<br/>planner, txn coordinator]
+  GW -->|lookup| DIR[(Range directory)]
+  GW -->|writes, prepare| L1[Range A leader]
+  GW -->|writes, prepare| L2[Range B leader]
+  L1 -->|consensus| R1[(Range A replicas<br/>2-2-1 regions)]
+  L2 -->|consensus| R2[(Range B replicas)]
+  TT[Time service<br/>bounded uncertainty] -.-> L1
+  TT -.-> L2
+  GW -->|stale read| NR[(Nearest replica)]
+```
+
+**Reading the diagram.** Clients send SQL to a gateway in their region, which plans the query, looks up range locations and acts as transaction coordinator. Writes buffer locks at each range leader; at commit, the coordinator runs two-phase commit across participant leaders, each of which logs the prepare and the commit through its own consensus group (synchronous). Leaders obtain timestamps from a time service exposing an uncertainty interval (dotted: polled, not on the critical path) and delay making a commit visible until the interval has passed. Stale or snapshot reads go to the nearest replica that is caught up to the requested timestamp. Storage boundaries: each range's replica set. Failure points: a leader loss (election in seconds), a coordinator crash during 2PC (participants block until recovery, which is safe because the coordinator's own state is replicated), and widened clock uncertainty (slower commits, never incorrect ones). Scaling: split ranges and add nodes.
+
+#### Deep dives
+
+1. **External consistency.** Assign each transaction a commit timestamp no earlier than the current time's upper bound, then wait until the lower bound passes it (commit wait). Any transaction starting afterward gets a larger timestamp, so timestamp order matches real-time order (§28.8.3). Without tight clocks, hybrid logical clocks plus read-time uncertainty restarts give serializability with weaker real-time guarantees (§24.12.4).
+2. **2PC on top of consensus.** Classical 2PC blocks when the coordinator dies; here every participant and the coordinator are replicated state machines, so a crash becomes a leader election rather than an indefinite block (§28.4.8).
+3. **Reads that do not cross oceans.** Snapshot reads at a timestamp slightly in the past are served by any replica whose safe time has passed it; strongly consistent reads go to the leaseholder. Offer "exact staleness 10 s" reads for dashboards.
+
+::: industry
+**Spanner.** Corbett et al. describe Spanner's TrueTime API, which exposes clock uncertainty from GPS and atomic-clock references, Paxos groups per split, two-phase commit across groups, and commit wait to achieve external consistency; they report uncertainty that typically varies between about 1 and 7 ms.
+*Evidence: Primary* — [Corbett et al. 2012]
+:::
+
+#### Trade-offs and alternatives
+
+Asynchronous multi-region replication (Q39) is faster and loses the last seconds of writes on region loss; a single-region database with cross-region replicas is simpler and cannot provide RPO 0 automatically. Calvin-style deterministic ordering (§28.9) avoids 2PC at the cost of declaring read and write sets in advance.
+
+#### Follow-up questions
+
+1. *"What if the time service fails?"* Uncertainty grows, commit wait lengthens, throughput falls; correctness holds. Alert on $\varepsilon$.
+2. *"Where does the leader live for a global table?"* Near most writers; read-mostly global tables can write at future timestamps so reads are local everywhere (§28.10.1).
+3. *"How do you handle a hot range?"* Load-based splitting; for a single hot row, redesign (sharded counters).
+4. *"What is the cost of surviving a region?"* At least three regions with voters and cross-region quorum latency for every write.
+5. *"How does schema change work online?"* Versioned schemas with intermediate states so two versions in use are always compatible.
+
+#### What distinguishes levels
+
+- **Mid:** replication across regions with a primary.
+- **Senior:** consensus per range, 2PC across ranges, and the latency consequence of quorum placement.
+- **Staff:** explains commit wait and external consistency precisely, designs replica placement for region survival at low latency, and offers bounded-staleness reads as the main latency lever.
+
+### 91.7.2 Q46. Distributed file system
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §15.5 (GFS, HDFS, Colossus, Tectonic), §15.6, §15.7, §49.4
+
+#### Prompt
+
+"Design a distributed file system for a data center: hundreds of petabytes, large files, used by batch analytics and by services storing blobs."
+
+#### Clarifying questions and assumptions
+
+- *Semantics?* Hierarchical namespace; files are mostly written once (append) and read many times; no random overwrite in the middle.
+- *Scale?* 100 PB logical, 1 billion files averaging 100 MB; 100,000 metadata operations/s.
+- *Clients?* Batch jobs (high throughput) and services (moderate latency).
+- *Durability?* Survive two simultaneous disk or node failures and one rack failure.
+
+#### Requirements
+
+**Functional.** Create, open, append, read, rename, delete, list; snapshots; quotas per tenant. **Non-functional.** Aggregate read throughput in the Tb/s range; metadata p99 ≤ 10 ms; durability of eleven nines per file per year (design target); repair begins within minutes of a failure; storage overhead ≤ 1.5×.
+
+#### Estimation
+
+::: example
+**Worked example — Metadata and repair decide the architecture.** Assumptions: 64 MB chunks; 64 bytes of metadata per chunk and per file (GFS-style); RS(6,3) erasure coding (§15.6); 20 TB disks filled to 70%; 2% annual disk failure rate; repair reads at 50 MB/s per source disk across 1,000 disks.
+
+1. Chunks: $10^{17} / (6.4 \times 10^7) = 1.56 \times 10^9$; chunk metadata 100 GB plus file metadata 64 GB: too much and too busy for one master's memory.
+2. Raw storage (§89.6): $100 \times 1.5 = 150$ PB, $150\ \text{PB} / (20\ \text{TB} \times 0.7) = 10{,}714$ disks.
+3. Failures: $10{,}714 \times 0.02 = 214$ disks a year, about 0.6 a day.
+4. Repair of one failed disk (14 TB of data): RS(6,3) reads 6 fragments per lost fragment, 84 TB, about 28 minutes across 1,000 disks; three-way replication would read only 14 TB (under 5 minutes) but cost 3× storage.
+
+**Interpretation.** A single in-memory master no longer fits at this scale, and erasure coding trades storage for six times the repair traffic. **Engineering implication.** Distribute metadata in a sharded, replicated store and reserve network bandwidth for continuous repair.
+:::
+
+#### API and data model
+
+```text
+Client library: open(path) -> handle; append(handle, bytes); read(handle, offset, len); rename; list
+Namespace service: path -> inode (directory tree in a sharded KV store, keyed by (parent_id, name))
+File service: inode -> [block ids]; Block service: block -> fragment locations, version, checksum
+Storage nodes: fragments on disks, checksummed per 64 KB
+```
+
+#### High-level design
+
+**Figure 91.118 — Layered metadata over a sharded store, data on storage nodes.**
+
+```mermaid
+flowchart LR
+  CL([Client library]) -->|path ops| NS[Namespace service]
+  CL -->|block lookup| FS[File and block service]
+  NS --> MKV[(Sharded metadata KV<br/>replicated)]
+  FS --> MKV
+  CL -->|read and write fragments| SN1[(Storage node)]
+  CL --> SN2[(Storage node)]
+  CL --> SN3[(Storage node)]
+  RP[Repair and rebalance<br/>service] -.->|reconstruct| SN2
+  SN1 -.->|heartbeats, disk health| RP
+```
+
+**Reading the diagram.** The client library resolves paths through a stateless namespace service and block locations through a file-and-block service; both keep their state in a sharded, replicated metadata key-value store, so metadata scales by adding shards (as Colossus and Tectonic do, §15.5.3). Data never passes through metadata services: the client writes data and parity fragments directly to storage nodes in different racks and reads them back directly (synchronous). Storage nodes report health asynchronously to a repair service, which reconstructs lost fragments elsewhere and rebalances. Storage boundaries: the metadata store and the storage nodes. Failure points: a metadata shard (replicated; a hot directory can overload one shard), correlated failures (rack or power domain), and repair falling behind failures. Scaling: storage nodes for capacity, metadata shards for operations.
+
+#### Deep dives
+
+1. **Scaling metadata.** Store the directory tree as rows keyed by (parent inode, name), sharded by parent; file and block metadata sharded by file ID. Rename within a directory is a single-shard transaction; across directories it needs a cross-shard transaction or is restricted. Huge directories are split further.
+2. **Write path and consistency.** An appending writer holds a lease on the file's last block; fragments carry a version, and the block becomes visible when enough fragments are durable. Readers verify checksums and fall back to reconstruction if a fragment is bad.
+3. **Durability through placement and repair.** Place the 9 fragments of each block on 9 different racks; prioritize repair of blocks that have lost the most fragments; throttle repair against foreground load but never let it fall behind the failure rate.
+
+::: industry
+**Tectonic.** Pan et al. describe Meta's Tectonic file system, which consolidated several storage systems into exabyte-scale clusters by disaggregating metadata into name, file and block layers stored in a sharded key-value store, with client-side Reed–Solomon encoding and tenant-specific tuning.
+*Evidence: Primary* — [Pan et al. 2021]
+:::
+
+#### Trade-offs and alternatives
+
+A single master (GFS, HDFS NameNode) is simpler and adequate to hundreds of millions of files; federation or a distributed metadata store is needed beyond. Replication suits hot, small or latency-sensitive data; erasure coding suits large, cold data (Table 89.8). Object storage (Q47) drops the hierarchical namespace and in exchange scales metadata more easily.
+
+#### Follow-up questions
+
+1. *"How do you handle small files?"* Pack them into larger blocks (container files), with an index; metadata per file is the cost, not bytes.
+2. *"What happens on a rack failure?"* At most one fragment per block is lost with rack-aware placement; repair proceeds at rack scale.
+3. *"How is a hot file served?"* Cache in client or storage-node memory; add replicas for read-hot blocks.
+4. *"Strong or eventual metadata?"* Strong: linearizable per shard, because rename and create semantics depend on it.
+5. *"How do you verify durability?"* Background scrubbing reads every fragment periodically and checks checksums.
+
+#### What distinguishes levels
+
+- **Mid:** master plus chunk servers with replication, GFS-style.
+- **Senior:** computes that metadata outgrows one master, chooses erasure coding with rack-aware placement.
+- **Staff:** designs sharded metadata semantics (rename, large directories), sizes repair bandwidth against failure rates, and argues replication versus coding by data temperature.
+
+### 91.7.3 Q47. Object storage service
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §15.4, §15.6, §15.8, §49.4.3, §52.5
+
+#### Prompt
+
+"Design an S3-like object storage service: buckets, keys, PUT and GET of objects from bytes to terabytes, eleven nines of durability."
+
+#### Clarifying questions and assumptions
+
+- *Scale?* 100 billion objects, 100 PB logical; 1 million GETs/s and 100,000 PUTs/s at peak.
+- *Consistency?* Strong read-after-write for PUT and LIST, as major providers now offer.
+- *Features?* Multipart upload, versioning, lifecycle tiers, presigned URLs; no in-place partial updates.
+- *Region model?* Single region with three availability zones; cross-region replication as a feature.
+
+#### Requirements
+
+**Functional.** Create bucket; PUT, GET (including ranges), DELETE, HEAD; LIST by prefix with pagination; multipart upload; versioning; lifecycle rules. **Non-functional.** Durability design target of eleven nines per object per year; 99.99% availability; first-byte latency p99 ≤ 100 ms for small objects; survive a zone loss without losing data or write availability.
+
+#### Estimation
+
+::: example
+**Worked example — Metadata is a database, data is erasure-coded disks.** Assumptions: 500 B of metadata per object; metadata replicated 3×; data in RS(10,4), 1.4× (Table 89.8); 20 TB disks at 80% fill; metadata nodes with 4 TB usable at 60%.
+
+1. Metadata: $10^{11} \times 500 = 50$ TB, 150 TB replicated: $150 / 2.4 = 63$ metadata nodes, storage-bound (§89.9).
+2. Data: $100 \times 1.4 = 140$ PB raw, $140\ \text{PB} / 16\ \text{TB} = 8{,}750$ disks.
+3. Expected loss at eleven nines (§89.12): $10^{11} \times 10^{-11} = 1$ object per year.
+
+**Interpretation.** At this scale "eleven nines" still means about one object a year; durability comes from fragment placement, fast repair and checksums, plus defenses against bugs and operator error. **Engineering implication.** Separate the metadata index (a range-partitioned, strongly consistent store) from data placement, and treat repair and scrubbing as permanent workloads.
+:::
+
+#### API and data model
+
+```text
+PUT /{bucket}/{key}           GET /{bucket}/{key} [Range]      DELETE ...      HEAD ...
+GET /{bucket}?list-type=2&prefix=&continuation-token=
+POST /{bucket}/{key}?uploads ; PUT ?partNumber=&uploadId= ; POST ?uploadId= (complete)
+object_index((bucket, key, version) PK, size, etag, placement_ref, created_at, state)   -- range-partitioned
+placement: data_id -> [fragment locations across zones], checksums
+```
+
+#### High-level design
+
+**Figure 91.119 — Object store: front ends, a strongly consistent index, erasure-coded data.**
+
+```mermaid
+flowchart LR
+  C([Clients]) -->|HTTPS| FE[Front end<br/>auth, routing]
+  FE -->|index ops| IX[Index service]
+  IX --> IDB[(Partitioned index<br/>by bucket and key)]
+  FE -->|stream fragments| PL[Placement service]
+  PL --> Z1[(Storage zone 1)]
+  PL --> Z2[(Storage zone 2)]
+  PL --> Z3[(Storage zone 3)]
+  GC[Lifecycle and GC] -.-> IDB
+  RP[Repair and scrub] -.-> Z2
+```
+
+**Reading the diagram.** Front ends authenticate, authorize and route requests. A PUT streams data through the placement service, which erasure-codes it and writes fragments across three zones (synchronous); only after enough fragments are durable does the front end commit the index entry, which makes the object visible atomically. A GET reads the index entry, then fetches enough fragments in parallel, preferring the local zone. The index is range-partitioned by (bucket, key) so LIST by prefix is a range scan. Lifecycle and garbage collection run asynchronously over the index; repair and scrubbing run continuously over storage. Failure points: an index partition hot from sequential key names, orphaned fragments after failed PUTs (garbage-collected), and correlated zone failures. Scaling: split index ranges by load; add storage nodes.
+
+#### Deep dives
+
+1. **Commit protocol and strong consistency.** Write data first, then a single index commit; readers see either the old or the new version, never a partial object. Overwrites create a new version and atomically switch the index pointer; garbage collection removes unreferenced data later.
+2. **Index partitioning and hot prefixes.** Range partitioning preserves LIST order but concentrates sequential keys (timestamps) on one range: split ranges automatically on load, and advise key prefixes with high-entropy components.
+3. **Small and large objects.** Objects under about 1 MB are packed into large append-only volumes to avoid per-object fragment overhead; large objects use multipart upload with parts coded independently and a manifest committed last (§15.8.1).
+
+#### Trade-offs and alternatives
+
+Hash-partitioned indexes spread load perfectly but make LIST a scatter-gather; range partitioning with load-based splits keeps LIST efficient. RS(10,4) halves raw storage compared with three replicas at the cost of repair traffic and higher small-read latency; small hot objects may be replicated instead. Cross-region replication is asynchronous and per bucket.
+
+#### Follow-up questions
+
+1. *"How do you give read-after-write consistency?"* All index operations go to a strongly consistent store, and caches in the front ends are invalidated or bypassed for metadata.
+2. *"What if a PUT fails halfway?"* No index commit means invisible data; GC reclaims orphaned fragments after a grace period.
+3. *"How do you defend durability against software bugs?"* Checksums end to end, staged deployments per zone, object versioning, deletion delays and audits of placement.
+4. *"How do presigned URLs work?"* A signature over method, bucket, key and expiry with the owner's key; front ends verify without a database lookup (§15.8.2).
+5. *"Tiering?"* Lifecycle moves cold objects to denser, cheaper media with slower retrieval.
+
+#### What distinguishes levels
+
+- **Mid:** metadata database plus blob servers with replication.
+- **Senior:** erasure coding across zones, commit-after-data protocol, range-partitioned index with hot-range splits.
+- **Staff:** interprets durability nines at scale, designs for software-bug and operator failure modes, and handles small-object packing and LIST semantics explicitly.
+
+### 91.7.4 Q48. Durable workflow engine
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §32.11 (durable execution), §32.7 (sagas), §52.9, §26.13
+
+#### Prompt
+
+"Design a workflow engine that lets developers write long-running business processes as ordinary code (order fulfillment, onboarding), which survive crashes and can run for months."
+
+#### Clarifying questions and assumptions
+
+- *Programming model?* Workflow code is deterministic and replayed; side effects run as activities executed by workers.
+- *Scale?* 10 million workflow starts/day, about 20 activities each, 60 history events per workflow; peak 5× average.
+- *Guarantees?* Workflow state never lost; activities at-least-once with retries; timers durable for months.
+- *Tenancy?* Many teams, isolated by namespace.
+
+#### Requirements
+
+**Functional.** Start, signal, query and cancel workflows; activities with retry policies and timeouts; durable timers; child workflows; versioning of workflow code; visibility (search by status). **Non-functional.** RPO 0 for history; task dispatch p99 ≤ 100 ms; a workflow resumes within seconds after a worker or service failure; 99.99% availability.
+
+#### Estimation
+
+::: example
+**Worked example — History is the database.** Assumptions: 500 B per history event; 30-day retention after close; 3 replicas; 1,024 history shards.
+
+1. Events: $10^7 \times 60 = 6 \times 10^8$/day, 6,944/s average, 34,722/s at peak.
+2. Storage (§89.6): $6 \times 10^8 \times 500 = 300$ GB/day; 30 days 9 TB, 27 TB replicated.
+3. Per shard at peak: $34{,}722 / 1{,}024 \approx 34$ events/s, so shards exist for parallelism and failover granularity, not capacity.
+
+**Interpretation.** The load is moderate; correctness of the per-workflow state machine is the design. **Engineering implication.** Choose a store with conditional writes per workflow and shard ownership with fencing; size for retention, not throughput.
+:::
+
+#### API and data model
+
+```text
+StartWorkflow(namespace, workflow_id, type, input)  SignalWorkflow(id, signal, payload)  QueryWorkflow(id, query)
+Worker API: PollWorkflowTask(queue) -> history; RespondWorkflowTaskCompleted(commands)
+            PollActivityTask(queue) -> task; RespondActivityCompleted(result) | heartbeat
+history_event(workflow_id, event_id, type, payload)       -- append-only, ordered per workflow
+mutable_state(workflow_id, next_event_id, pending activities, timers, version)   -- conditional updates
+timer(fire_at, shard, workflow_id, timer_id); task_queue(name) -> pending tasks
+```
+
+#### High-level design
+
+**Figure 91.120 — Durable execution: history shards, task queues, timers and replaying workers.**
+
+```mermaid
+flowchart LR
+  APP([Client apps]) -->|start, signal| FE[Frontend]
+  FE --> HS[History service<br/>sharded, owns workflows]
+  HS --> DB[(Persistence<br/>history + mutable state)]
+  HS -->|tasks| MQ[[Task queues]]
+  WW[Workflow workers<br/>replay code] -->|poll| MQ
+  WW -->|commands| HS
+  AW[Activity workers] -->|poll| MQ
+  AW -->|results| HS
+  TM[Timer service] -.->|fire| HS
+  DB -.-> VS[(Visibility index)]
+```
+
+**Reading the diagram.** Clients start and signal workflows through a frontend, which routes by workflow ID to the history service node that owns its shard (ownership by lease with a fencing range ID). The history service appends events and updates mutable state with a conditional write, then places a workflow task on a task queue. A workflow worker polls, receives the history, replays the deterministic code up to the new event and returns commands (schedule activity, start timer, complete), which the history service records as new events. Activity workers poll activity tasks, perform side effects and report results. Durable timers fire back into the history service asynchronously. A visibility index is updated asynchronously for search. Storage boundary: persistence. Failure points: worker crashes (tasks time out and are redispatched), shard owner failover (the fencing token rejects the old owner's writes), and non-deterministic code changes (replay mismatch). Scaling: more shards, more workers per task queue.
+
+#### Deep dives
+
+1. **Deterministic replay.** Workflow code may not read clocks, random numbers or the network directly; those come from the engine as recorded events. A worker can therefore crash at any point and another rebuilds the exact state by replay. Code changes need explicit versioning markers so running histories replay the old branch.
+2. **Exactly-once state transitions over at-least-once tasks.** Every history update is a conditional write on `next_event_id`; duplicate task completions fail the condition and are discarded. Activities remain at-least-once, so they need idempotency keys derived from workflow ID and activity ID (§22.15).
+3. **Long histories and timers.** Workflows running for months accumulate events: "continue-as-new" starts a fresh history with carried-over state. Timers are stored by fire time per shard and loaded ahead, like the scheduler in Q40.
+
+#### Trade-offs and alternatives
+
+**Table 91.105 — Ways to run a long business process.**
+
+| Approach | State lives in | Strength | Weakness |
+|---|---|---|---|
+| Choreographed events (§32.8) | Each service | Loose coupling | Process logic scattered; hard to see status |
+| Orchestrated saga in a service | Service database | Simple for one flow | Retries, timers, versioning rebuilt each time |
+| State-machine service (Step Functions-style, §32.11.2) | Engine, as JSON definitions | Visual, managed | Limited expressiveness |
+| Durable execution (replayed code) | Engine history | Ordinary code, long-running, testable | Determinism discipline; replay cost for long histories |
+
+#### Follow-up questions
+
+1. *"A developer calls `datetime.now()` in workflow code."* Replay diverges; the SDK should forbid or intercept it and tests should replay recorded histories.
+2. *"How are activities retried?"* Per-activity policies with backoff and maximum attempts; heartbeats detect stuck long activities.
+3. *"How do you isolate tenants?"* Namespaces with quotas on task dispatch and persistence; noisy namespaces rate-limited (§47.8).
+4. *"How is the shard owner fenced?"* A range ID incremented on each ownership change and checked by every conditional write (§26.13).
+5. *"How do you migrate the engine's database?"* Shard by shard, with the same capture-backfill-cutover pattern as Q33.
+
+#### What distinguishes levels
+
+- **Mid:** a job queue with a state table and retries.
+- **Senior:** event history, replay, task queues, durable timers and idempotent activities.
+- **Staff:** conditional writes and fencing as the exactly-once core, determinism and versioning as the developer contract, and continue-as-new for unbounded workflows.
+
+### 91.7.5 Q49. Multi-tenant SaaS platform with tenant isolation
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** Ch 47 (§47.4–§47.13), §14.7.2, §22.8, §44.10
+
+#### Prompt
+
+"Design the platform for a B2B SaaS product used by 50,000 companies, from free teams to large enterprises. One tenant must never see, slow down or break another."
+
+#### Clarifying questions and assumptions
+
+- *Load shape?* 100,000 RPS at peak; tenant sizes roughly Zipf: the largest tenant is 8% of load, the top 50 together 40%.
+- *Tiers?* Free and standard (pooled), business, enterprise (dedicated options, customer-managed keys, residency).
+- *Isolation requirements?* Data isolation is absolute; performance isolation is "a tenant's spike may not raise others' p99 by more than 10%".
+- *Operations?* One code base and deployment pipeline for all tiers.
+
+#### Requirements
+
+**Functional.** Tenant onboarding and offboarding; tenant-scoped authentication and authorization; per-tenant configuration and feature flags; tier migration; per-tenant usage metering. **Non-functional.** Zero cross-tenant data access; noisy-neighbor containment as above; blast radius of a bad deploy or cell failure ≤ 10% of tenants; 99.95% availability for pooled tiers, 99.99% for enterprise; data deletion within 30 days of offboarding.
+
+#### Estimation
+
+::: example
+**Worked example — Cells and whales.** Assumptions: a pooled cell (application tier plus database cluster) handles 10,000 RPS at saturation, 6,000 at $u = 0.6$.
+
+1. Pooled cells: $10^5 / 6{,}000 = 16.7$, so 17 cells; a cell failure touches $1/17 = 5.9\%$ of tenants, inside the 10% target.
+2. Largest tenant: $0.08 \times 10^5 = 8{,}000$ RPS, more than one cell's usable capacity: it needs a dedicated cell (or several, partitioned within the tenant).
+3. The top 50 tenants carry 40,000 RPS; placing them evenly needs a placement service that tracks load, not tenant count (§47.6.2).
+
+**Interpretation.** Average tenants are tiny, but the largest exceeds a cell, so "one cell per tenant" and "all tenants pooled" both fail. **Engineering implication.** A tenant directory maps each tenant to a cell; small tenants share pooled cells, whales get dedicated ones, and the same code runs in both.
+:::
+
+#### API and data model
+
+```text
+Every request carries a tenant context derived from the authenticated token, never from a URL parameter
+tenant_directory(tenant_id PK, tier, cell_id, region, kms_key_ref, state, limits)
+Pooled data: shared tables with tenant_id in every primary key + row-level security
+Enterprise data: database (or schema) per tenant; per-tenant encryption keys
+Usage: meter_event(tenant_id, metric, quantity, ts) -> billing
+```
+
+#### High-level design
+
+**Figure 91.121 — Cell-based multi-tenant platform with a global control plane.**
+
+```mermaid
+flowchart LR
+  U([Tenant users]) -->|HTTPS| ED[Edge and auth<br/>tenant context]
+  ED --> RT[Cell router]
+  RT -->|lookup| TD[(Tenant directory)]
+  RT --> C1[Pooled cell<br/>apps + shared DB]
+  RT --> C2[Pooled cell n]
+  RT --> CW[Dedicated cell<br/>enterprise tenant]
+  CP[Control plane<br/>onboarding, placement, flags] -.-> TD
+  CP -.-> C1
+  C1 -.->|usage events| MT[[Metering pipeline]]
+  CW -.-> MT
+```
+
+**Reading the diagram.** Users authenticate at the edge, which attaches a tenant context to the request. The cell router looks up the tenant's cell in the directory (cached) and forwards synchronously to a pooled or dedicated cell; each cell is a complete, independent stack with its own databases, the storage boundary. The control plane, outside the request path, onboards tenants, places and moves them between cells, and distributes configuration and flags asynchronously. Usage events flow asynchronously to metering. Failure points: a cell outage (affects only its tenants), a bad deploy (rolled out cell by cell), a stale directory entry during tenant migration (versioned entries and fencing), and a missing tenant filter in a query (prevented in depth, below). Scaling: add cells; move tenants between cells.
+
+#### Deep dives
+
+1. **Data isolation in depth.** Tenant ID comes only from the authenticated token; the data-access layer adds it to every query; row-level security in the database enforces it again (§47.5.2); per-tenant encryption keys for enterprise tenants make crypto-shredding the deletion mechanism (§47.5.4). Automated cross-tenant tests try to read other tenants' data on every release (§47.12.4).
+2. **Performance isolation.** Per-tenant rate limits and quotas at the edge, weighted fair queuing into shared resources such as worker pools and database connections (§47.8.2), and per-tenant limits on expensive operations (exports, searches). Detect noisy neighbors with per-tenant resource attribution (§47.7.2).
+3. **Tier migration.** Moving a growing tenant to a dedicated cell uses capture, backfill, verify and cutover per tenant (Q33): the directory entry flips with a brief write pause, and the old copy is deleted after a rollback window.
+
+#### Trade-offs and alternatives
+
+Silo-per-tenant maximizes isolation and simplifies compliance but costs far more per tenant and multiplies operations; pool maximizes efficiency with the weakest isolation; the bridge model (pooled compute, per-tenant databases) sits between (§47.4). Cells limit blast radius at the price of cross-cell features (global search, cross-tenant analytics) needing separate pipelines.
+
+#### Follow-up questions
+
+1. *"An enterprise demands its data stay in Germany."* Place its cell in an EU region; the directory and control plane store only non-personal metadata globally.
+2. *"How do you deploy safely?"* Canary cell with internal tenants, then cells in waves with automated rollback (§43.6).
+3. *"How do you charge fairly?"* Meter per tenant at the edge and at resource boundaries; reconcile metered totals against infrastructure cost for showback (§47.11.2).
+4. *"How do you offboard?"* Disable, export, delete data and destroy the tenant key; verify by audit.
+5. *"Can one shared database handle 30,000 small tenants?"* Yes, with tenant ID leading every key; the risk is a hot tenant, handled by moving it out.
+
+#### What distinguishes levels
+
+- **Mid:** a `tenant_id` column and per-tenant rate limits.
+- **Senior:** silo, pool and bridge with costs; row-level security; fair queuing; tenant directory.
+- **Staff:** cells for blast radius with arithmetic for whales, isolation tested continuously, tier migration as a routine operation, and residency through placement.
+
+### 91.7.6 Q50. Tracing and observability platform at exabyte scale
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §40.6 (tracing, sampling), §40.7 (OpenTelemetry), §56.6 (logging and monitoring case), §29.8
+
+#### Prompt
+
+"Design distributed tracing for a company whose services would generate exabytes of spans a year if everything were kept. Engineers must still find the slow and failing requests."
+
+#### Clarifying questions and assumptions
+
+- *Volume?* 200 million spans/s at 100% capture, 500 bytes each.
+- *What must never be dropped?* Error traces and traces slower than the service's latency objective.
+- *Uses?* Trace lookup by ID, search by attributes, service dependency maps, latency breakdowns, and RED metrics (rate, errors, duration).
+- *Retention?* 30 days hot; aggregates for 13 months.
+
+#### Requirements
+
+**Functional.** Instrumentation via OpenTelemetry; context propagation across services and queues; tail-based sampling; trace search and retrieval; derived metrics and dependency graphs; links from metrics and logs (exemplars). **Non-functional.** A trace is queryable within 60 s; trace retrieval p99 ≤ 2 s; 100% retention of error and slow traces; instrumentation overhead under 1% CPU; the platform degrades by sampling harder, never by blocking services.
+
+#### Estimation
+
+::: example
+**Worked example — Sample after deciding, compute metrics before.** Assumptions: tail sampling keeps all errors and slow traces (2% of traces) plus 1% of the rest, about 3% of bytes; columnar compression 10:1; 2 replicas; traces complete within a 30 s window.
+
+1. Generated: $2 \times 10^8 \times 500 = 100$ GB/s, $8.64$ PB/day, $3.15$ EB/year (§89.6).
+2. Kept: $100 \times 0.03 = 3$ GB/s, $259$ TB/day raw, $25.9$ TB/day compressed; 30 days $\times$ 2 replicas $\approx 1.56$ PB.
+3. Tail-sampling buffer: $100\ \text{GB/s} \times 30\ \text{s} = 3$ TB held in memory across the sampler tier.
+4. Metrics computed from 100% of spans before sampling cost a few million time series, not petabytes.
+
+**Interpretation.** The raw stream is exabytes a year, but the stored system is petabytes; the hard part is a 3 TB in-flight buffer and routing every span of a trace to the same sampler. **Engineering implication.** Derive RED metrics and dependency graphs from all spans at the collectors, and store full traces only for the sampled 3%.
+:::
+
+#### API and data model
+
+```text
+OTLP export from SDKs -> local agent -> regional collectors
+span(trace_id, span_id, parent_id, service, operation, start, duration, status, attributes{...})
+Trace store: columnar files partitioned by (day, hour), sorted by trace_id; index on (service, operation, status, duration bucket)
+GET /traces/{trace_id}; POST /traces/search {service, attrs, duration>, time range}
+```
+
+#### High-level design
+
+**Figure 91.122 — Tracing pipeline: agents, trace-ID-routed tail samplers, metrics before sampling.**
+
+```mermaid
+flowchart LR
+  S([Instrumented services]) -->|OTLP| AG[Local agents<br/>batch, head limits]
+  AG --> LB[Collector routing<br/>hash by trace_id]
+  LB --> TS[Tail samplers<br/>30 s buffer]
+  LB -.->|all spans| MG[Metrics and<br/>dependency derivation]
+  MG --> TSDB[(Metrics store)]
+  TS -->|kept traces| K[[Kept-span stream]]
+  K -.-> WR[Writers]
+  WR --> OS[(Columnar trace store<br/>object storage)]
+  Q([Engineers]) --> QS[Query service]
+  QS --> OS
+  QS --> TSDB
+```
+
+**Reading the diagram.** Services export spans over OTLP to a local agent, which batches them and enforces a rate ceiling so a misbehaving service cannot flood the pipeline. A routing tier hashes trace ID so that every span of a trace reaches the same tail sampler (consistent hashing). Samplers buffer each trace for about 30 s, then keep it if any span errored or exceeded its latency objective, or by a probabilistic rule otherwise. In parallel, every span updates RED metrics and the dependency graph (dotted, asynchronous) before any sampling. Kept traces stream to writers that build columnar files in object storage, the long-term storage boundary. Engineers query traces and metrics, with exemplars linking metric spikes to stored traces. Failure points: sampler node loss (its buffered traces are lost, so keep the buffer short), late spans arriving after a decision (attach to a kept trace or drop), and query load on hot time ranges. Scaling: samplers and writers scale horizontally by trace-ID hash.
+
+#### Deep dives
+
+1. **Tail versus head sampling.** Head sampling decides at the root and cannot know the request will fail; tail sampling decides after seeing the whole trace, at the cost of buffering every span and routing by trace ID (§40.6.3). A hybrid uses head sampling to cap volume from very chatty services and tail sampling for the rest.
+2. **Metrics before sampling.** Sampled traces cannot give correct request rates or percentiles; compute them from the full stream at collectors, and record sampling probabilities on kept traces so analyses can reweight.
+3. **Storage layout.** Columnar files sorted by trace ID make "fetch trace X" a few range reads; a separate small index on (service, operation, status, duration bucket, time) makes search efficient. Old traces downsample to aggregates.
+
+::: industry
+**Dapper and Canopy.** Sigelman et al. describe Dapper's low-overhead tracing at Google with aggressive sampling (early versions sampled about one request in 1,024) and out-of-band collection; Kaldor et al. describe Facebook's Canopy, which processes traces into derived datasets that engineers query instead of raw spans.
+*Evidence: Primary* — [Sigelman et al. 2010; Kaldor et al. 2017]
+:::
+
+#### Trade-offs and alternatives
+
+Keeping 100% of spans in cheap object storage with query-time scanning is possible for smaller fleets but not at 3 EB a year. Pure head sampling is simplest and loses rare failures. Storing traces in a search engine gives flexible queries at much higher cost per byte than columnar files.
+
+#### Follow-up questions
+
+1. *"How do you propagate context through Kafka?"* Trace context in message headers; consumer spans link to producer spans (§40.6.2).
+2. *"A team adds a high-cardinality attribute."* Allowed on spans (stored, not indexed); forbidden as a metric label (§40.5.3).
+3. *"How do you keep overhead low?"* Asynchronous export, batching, bounded queues that drop rather than block.
+4. *"How are tenants and PII handled?"* Attribute redaction at collectors; per-team quotas; access control on trace queries (§40.4.5).
+5. *"Collector region outage?"* Agents buffer briefly, then drop with counters; observability must never take down production.
+
+#### What distinguishes levels
+
+- **Mid:** spans, trace IDs, a collector and a storage backend.
+- **Senior:** tail sampling with trace-ID routing, metrics derived before sampling, cost arithmetic.
+- **Staff:** computes the buffer and storage regimes, designs degradation that never blocks services, and connects metrics, traces and logs through exemplars and sampling weights.
+
+### 91.7.7 Q51. Zero-downtime monolith-to-microservices migration
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §34.13 (strangler fig, branch by abstraction), §34.11, §43.13, §32.5–§32.6
+
+#### Prompt
+
+"Our e-commerce monolith serves 30,000 RPS from one shared database. Leadership wants microservices. Plan the migration without downtime or a feature freeze."
+
+#### Clarifying questions and assumptions
+
+- *Why migrate?* Release contention among 20 teams and one database at its limits; not microservices for their own sake.
+- *Shape?* 400 endpoints; a 5 TB database with 600 tables, many joined across domains.
+- *Constraints?* No downtime; features keep shipping; the migration must deliver value incrementally and be stoppable at any point.
+
+#### Requirements
+
+**Functional.** Same external API and behavior throughout; extracted services own their data; events replace cross-domain joins. **Non-functional.** No user-visible downtime; latency regression ≤ 10 ms p99 per extracted call path; availability at least as good as today (99.95%); each step reversible; measurable progress (share of traffic and tables migrated).
+
+#### Estimation
+
+::: example
+**Worked example — Why naive extraction makes things worse.** Assumptions: each service hop adds about 2 ms; a typical request crosses 4 hops after extraction; five services each at 99.95% sit in series on the checkout path.
+
+1. Added latency: $4 \times 2 = 8$ ms, inside the 10 ms budget but with no room for chatty calls (§34.8.2).
+2. Series availability (§89.12): $0.9995^5 = 0.99750$, about 21.9 hours of downtime a year, against $0.0005 \times 8{,}760 = 4.38$ hours for the monolith at 99.95%.
+3. Shadow traffic during verification doubles load on the extracted service for that endpoint: size it for 2× its share while shadowing.
+
+**Interpretation.** Splitting a synchronous call chain into five independently failing services can multiply downtime by five. **Engineering implication.** Extract along domain boundaries with few synchronous dependencies, take non-critical calls off the request path with events, and add timeouts, bulkheads and fallbacks before splitting.
+:::
+
+#### API and data model
+
+```text
+Edge routing table: path/method -> monolith | service (percent split, per-tenant overrides)
+Per extracted domain: service API + its own database; events published via outbox (catalog.updated, order.placed)
+Anticorruption layer in the monolith: interface -> old implementation | client of the new service (branch by abstraction)
+```
+
+#### High-level design
+
+**Figure 91.123 — Strangler fig: edge routing, extracted services, data synchronized by events.**
+
+```mermaid
+flowchart LR
+  C([Clients]) --> GW[Edge gateway<br/>routing table]
+  GW -->|unmigrated paths| MO[Monolith]
+  GW -->|migrated paths| SV[Catalog service]
+  MO --> MDB[(Shared database)]
+  SV --> SDB[(Catalog database)]
+  MDB -.->|CDC during migration| SDB
+  SV -.->|outbox events| EV[[Event stream]]
+  EV -.-> MO
+  GW -.->|shadow copy| SV
+  CMP[Comparator] -.-> SV
+```
+
+**Reading the diagram.** All traffic enters through an edge gateway whose routing table sends each path to the monolith or to an extracted service, with percentage splits for gradual rollout. Initially the new catalog service is fed by change data capture from the shared database (dotted) and receives shadow copies of requests whose responses a comparator checks against the monolith's. After cutover the service owns its data; the monolith reads catalog data through the service API or a replicated read model fed by the service's outbox events. Storage boundaries: the shared database and each service's database. Failure points: dual writes during the transition (avoid; one writer at a time per table), divergent behavior found only in production (shadowing catches most), and new synchronous dependencies. Scaling: each extracted service scales independently.
+
+#### Deep dives
+
+1. **Choosing the order.** Map domains and their table ownership; extract first a domain that changes often, has few inbound joins and clear value (for example, catalog or notifications), not the hardest core (orders, payments). Each extraction must pay for itself in release independence.
+2. **Data migration per domain.** Make the domain's tables owned by one code path inside the monolith first (branch by abstraction, §34.13.2); then replicate them to the new database by CDC; switch reads, then writes, with a reverse stream for rollback (the Q33 pattern); finally remove the monolith's access. Cross-domain joins become API calls, replicated read models or events (§34.11.3).
+3. **Verification and rollback.** Shadow traffic with response comparison, then canary percentages at the gateway, per-endpoint error budgets, and an instant route flip back. Track progress as share of traffic and tables migrated.
+
+#### Trade-offs and alternatives
+
+A modular monolith (enforced module boundaries, separate schemas inside one deployable) solves release contention at a fraction of the cost and is often the right first step. A big-bang rewrite promises a clean design and historically fails or overruns; the strangler approach accepts a long hybrid period in exchange for continuous delivery. Reverse the decision to split a domain if it needs synchronous transactions with another domain on most requests.
+
+#### Follow-up questions
+
+1. *"How do you handle a transaction that spans orders and inventory after the split?"* A saga with compensation and reservations (§32.7), or keep both in one service if the invariant is tight.
+2. *"How do you avoid a distributed monolith?"* Services own data, communicate asynchronously where possible, deploy independently, and do not share libraries that encode domain logic (§34.14).
+3. *"How long will it take?"* Months per major domain; plan in increments that each deliver value and can stop.
+4. *"What do you measure?"* Deployment frequency and lead time per team (§43.3.3), incident rate, p99 latency per path, and migrated share.
+5. *"Who owns the gateway routing table?"* A platform team, with changes reviewed and automated.
+
+#### What distinguishes levels
+
+- **Mid:** strangler fig at the gateway, one service at a time.
+- **Senior:** data ownership migration with CDC and cutover, shadow traffic, sagas for cross-domain transactions.
+- **Staff:** questions the goal (modular monolith first), computes availability and latency costs of splitting, orders extraction by value and coupling, and keeps every step reversible.
+
+### 91.7.8 Q52. Coordination and configuration service
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §26.7 (Raft), §26.8 (ZooKeeper), §26.9 (etcd), §26.10–§26.14
+
+#### Prompt
+
+"Design a coordination service, like ZooKeeper or etcd, that other systems use for leader election, distributed locks, service configuration and membership."
+
+#### Clarifying questions and assumptions
+
+- *Data size?* Small: a few gigabytes of keys and values, values under 1 MB.
+- *Clients?* 100,000 sessions; 1 million watches; 5,000 writes/s and 200,000 reads/s at peak.
+- *Guarantees?* Linearizable writes; reads linearizable on request, sequentially consistent by default; sessions with expiry; watches notify changes.
+- *Deployment?* One cluster per region, five members across three zones.
+
+#### Requirements
+
+**Functional.** Hierarchical or flat key space; create, get, set, delete, compare-and-set, multi-key transactions; ephemeral keys tied to sessions; sequential keys; watches; leases. **Non-functional.** Write p99 ≤ 20 ms within a region; survive one zone loss; session expiry detection within the session timeout (10 s); no split brain under any partition.
+
+#### Estimation
+
+::: example
+**Worked example — Heartbeats and watches dominate, not writes.** Assumptions: session timeout 10 s with heartbeats every 3 s; one server delivers 50,000 watch notifications/s; five servers.
+
+1. Session heartbeats: $10^5 / 3 = 33{,}333$/s, spread across followers so the leader does not handle them all.
+2. Writes: 5,000/s through one Raft leader, each batched and fsynced; group commit keeps fsyncs to a few hundred per second.
+3. A configuration key watched by all 100,000 clients changes: $10^5 / (5 \times 10^4 \times 5) = 0.4$ s to notify everyone, and then 100,000 clients may re-read it at once.
+
+**Interpretation.** The write path is modest; fan-out (heartbeats, watch notifications, herd re-reads) is the scaling risk. **Engineering implication.** Serve sessions, reads and watches from followers or proxies, and design recipes that avoid herds.
+:::
+
+#### API and data model
+
+```text
+put(key, value, lease?)  get(key | range, linearizable?)  delete(key)
+txn(if: [compare(key.version == v)], then: [ops], else: [ops])
+lease_grant(ttl) -> lease_id; keepalive(lease_id); watch(key | prefix, from_revision)
+Store: MVCC map key -> (value, create_rev, mod_rev, version, lease); global revision counter; Raft log + snapshots
+```
+
+#### High-level design
+
+**Figure 91.124 — Coordination service: Raft-replicated state machine with follower reads and watches.**
+
+```mermaid
+flowchart LR
+  CL([Clients]) -->|reads, watches, keepalives| F1[Follower zone 1]
+  CL -->|writes forwarded| LD[Leader zone 2]
+  LD -->|Raft append| F1
+  LD -->|Raft append| F2[Follower zone 3]
+  LD -->|Raft append| F3[Followers 4 and 5]
+  LD --> WAL[(WAL + snapshots)]
+  F1 -.->|watch events| CL
+  PX[Proxies for<br/>large client fleets] -.-> F2
+```
+
+**Reading the diagram.** Five members form a Raft group across three zones; the leader orders all writes, appends them to its write-ahead log and replicates to followers, committing once a majority (three) has them (synchronous). Clients connect to any member; writes are forwarded to the leader, reads and watches are served locally (linearizable reads first confirm the leader's commit index, §26.7.10). Watch events stream to clients asynchronously from the member they are connected to. Proxies aggregate many clients' watches and sessions into a few upstream connections. Storage boundary: each member's log and snapshots. Failure points: leader loss (election within a few seconds; writes pause), a minority partition (its members refuse writes and linearizable reads), slow disks (fsync latency is the write latency), and herd effects after a change. Scaling: reads, watches and sessions scale with members and proxies; writes do not, so keep the service small and shard by use case if needed.
+
+#### Deep dives
+
+1. **Leases, sessions and fencing.** Ephemeral keys and locks are tied to a lease kept alive by heartbeats; when it expires, the key disappears. A client paused longer than its lease may still believe it holds a lock, so every protected resource must check a fencing token, such as the key's revision, on each write (§26.13).
+2. **Recipes without herds.** A lock implemented by "everyone watches the lock key" wakes all waiters on release; the standard recipe creates sequential keys and has each waiter watch only its predecessor (§26.8.3). Configuration consumers should watch with a revision and apply deltas rather than re-read everything.
+3. **Membership changes and disaster recovery.** Change membership one member at a time through the log (§26.7.9); snapshot regularly; losing a majority permanently requires a manual, audited recovery from the most up-to-date member, never automatic.
+
+::: industry
+**Chubby.** Burrows describes Chubby, Google's lock service for coarse-grained locking and small-file storage, run as cells of typically five replicas using Paxos, with sessions kept alive by KeepAlive messages, event notifications, and sequencers that let servers reject requests from clients whose lock has been lost.
+*Evidence: Primary* — [Burrows 2006]
+:::
+
+#### Trade-offs and alternatives
+
+Three members tolerate one failure with lower write latency; five tolerate two at the cost of a larger quorum. ZooKeeper's hierarchical namespace and sequential nodes suit recipes; etcd's flat MVCC key space with revisions suits Kubernetes-style watches from a revision (§26.9.1). Embedding Raft in each application avoids a dependency but repeats hard work in every team.
+
+#### Follow-up questions
+
+1. *"Why not use this as a general database?"* All writes go through one leader and every member stores everything; it is a consensus kernel, not a scalable store.
+2. *"Can a follower serve a stale read?"* Yes by default; linearizable reads use ReadIndex or leader leases.
+3. *"A client's GC pause exceeds its lease."* Its lock is gone; fencing tokens stop its late writes.
+4. *"Cross-region coordination?"* Usually avoided: one cluster per region, with a global cluster only for rare global decisions, because quorum latency spans regions (§44.4.3).
+5. *"How do you upgrade without downtime?"* Rolling, one member at a time, leader last, checking quorum health between steps.
+
+#### What distinguishes levels
+
+- **Mid:** a replicated key-value store with leader election.
+- **Senior:** Raft details, leases and sessions, watches, linearizable versus follower reads.
+- **Staff:** fencing as mandatory, herd-free recipes, fan-out arithmetic, and operational rules for membership and majority loss.
+

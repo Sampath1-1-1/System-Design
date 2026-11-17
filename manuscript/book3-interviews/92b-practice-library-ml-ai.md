@@ -744,3 +744,551 @@ A large attention-based model on 30-second windows is accurate for batch transcr
 - **Mid:** a streaming model and WER.
 - **Senior:** sizes by concurrent streams, adds biasing and slices.
 - **Staff:** decomposes final latency to show the end-pointer dominates, normalizes text before WER, treats on-device as a privacy and cost lever, and designs improvement around consent.
+
+### 92.6.9 Q35. Machine translation
+
+**Difficulty:** Hard · **Time:** 45 min · **Related:** §84.7 (full case study), §73.6 (continuous batching)
+
+#### Prompt
+
+"Design translation for a communications platform: chat messages and documents in 200 languages, and live captions in each listener's language during meetings. Enterprise customers have glossaries."
+
+#### Clarifying questions and assumptions
+
+Text, speech or both? Acceptable caption lag? How are glossaries enforced? Assume §84.7: 500 million text segments a day (25 source and 28 target tokens), a 20% segment-cache hit rate, peak-to-average 3, and 1 million meeting-hours a day with live translation.
+
+#### Requirements
+
+Functional: text and document translation with optional glossary and formality; live speech captions; tenant glossaries and do-not-translate lists; quality feedback; published quality tier per direction. Non-functional: 25-token segment p95 ≤ 400 ms; captions with average lagging ≤ 3 s; no COMET regression on the 40 high-volume directions; glossary term accuracy ≥ 98%; content not retained without opt-in.
+
+#### Estimation
+
+::: example
+**Worked example — Output tokens, GPUs and the simultaneous policy (numbers of §84.7.4).** Peak uses §89.5; GPU throughput per second is the measured-rate form of §89.16.
+
+1. Text output tokens: $5 \times 10^8 \times 0.8 \times 28 = 1.12 \times 10^{10}$ a day; **388,889/s at peak**; at 5,000 tokens/s per GPU and 60% utilization, **130 GPUs**.
+2. Live speech: 83,333 concurrent meetings at peak; ASR $83{,}333 / 420 = 198$ GPUs.
+3. MT for speech: $83{,}333 \times 1.5 \times 3.5 = 437{,}500$ tokens/s, 146 GPUs if each word is translated once; with re-translation on every partial (about 3×), 438 GPUs.
+
+**Interpretation.** Live speech is the larger workload, and the latency policy changes its MT cost threefold. **Engineering implication.** Choose the simultaneous policy with both lag and GPU numbers in view, and cache and distill the highest-volume text directions.
+:::
+
+#### Data, labels and features
+
+Human reference translations, mined and back-translated parallel data, post-edits from tenants who opt in; tenant glossaries as versioned data. Quality labels: COMET on frozen test sets, human MQM for top directions.
+
+#### High-level design
+
+**Figure 92.109 — Text and live translation with a direction router.**
+
+```mermaid
+flowchart LR
+  C([Client]) -->|segments, target| API[Translate API]
+  API --> CACHE[(Segment cache)]
+  API --> GLO[Glossary masking<br/>and post-check]
+  GLO --> DR{Direction router}
+  DR -->|top directions| BI[Distilled bilingual<br/>models]
+  DR -->|long tail| ML[Multilingual model]
+  DR -->|low resource| PV[Pivot via English]
+  MTG([Meeting audio]) --> ASR[Streaming ASR]
+  ASR --> SIM[Simultaneous policy<br/>wait-k per direction]
+  SIM --> DR
+  BI --> OUT([Translations and captions])
+  ML --> OUT
+  PV --> OUT
+```
+
+**Reading the diagram.** Text requests check the segment cache, mask glossary terms, and go to a model chosen per direction by volume and measured quality. Live meetings run streaming ASR, then a simultaneous policy that decides when to emit, then the same router. Failure points: hallucinated or off-target output (language-ID check on output), caption flicker from re-translation, glossary violations (post-check). Scaling: GPUs by output tokens per second; distilled models for the highest-volume directions.
+
+#### Model and evaluation
+
+Baseline: a hosted general model for all directions. Production: a 1.3B multilingual encoder–decoder for coverage, distilled bilingual models for the top directions, pivot where it measures better [Johnson et al. 2017]. Offline: COMET per direction with no-regression gates, MQM for the top 10, glossary accuracy; online: flag rate and caption-off rate.
+
+#### Serving and monitoring
+
+Per direction: reference-free quality estimation on sampled traffic, off-target rate, flag rate; for speech: average lagging and flicker; per tenant: glossary accuracy. Fallback: multilingual model if a bilingual one fails; captions in the source language if MT fails.
+
+#### Deep dives
+
+1. **Simultaneous translation.** Wait-$k$ per direction, larger $k$ for verb-final sources; re-translation trades flicker and 3× compute for quality.
+2. **Many-language serving.** 39,800 directed pairs cannot each have a model; route by volume and quality.
+3. **Control.** Placeholder masking plus a post-check for do-not-translate terms.
+
+#### Trade-offs and alternatives
+
+End-to-end speech translation removes the ASR stage but loses transcripts and glossary control; a cascade is easier to debug and evaluate. BLEU is cheap but weakly correlated with quality; learned metrics plus human MQM gate releases.
+
+#### Follow-up questions
+
+1. *A verb-final source language?* Larger $k$ or an adaptive policy, and a published higher lag target.
+2. *One model or 39,800?* Multilingual for coverage, distilled pairs for volume.
+3. *How do you know a new model is better?* COMET on every routed direction, MQM on the top ones, then an online test.
+4. *A brand name gets translated.* Masking plus post-check; add it to the tenant's glossary tests.
+
+#### What distinguishes levels
+
+- **Mid:** a multilingual model with BLEU.
+- **Senior:** cascade for speech, glossary handling, COMET.
+- **Staff:** quantifies lag with average lagging and sets $k$ per direction, shows the simultaneous policy is a capacity decision, and routes directions by volume and measured quality.
+
+### 92.6.10 Q36. Perception data engine for autonomous driving
+
+**Difficulty:** Hard · **Time:** 45 min · **Related:** §63.5 (labeling pipelines), §63.9 (active learning), §63.14.4 (hybrid labeling), §80.6 (storage for training), Ch 74 (vector search for scene retrieval)
+
+#### Prompt
+
+"A fleet of test vehicles records camera and lidar data every day. Our perception models fail on rare situations. Design the data engine that finds the right data, labels it and turns it into better models."
+
+#### Clarifying questions and assumptions
+
+- Scope: offline data engine (collection, mining, labeling, training, evaluation, release to vehicles), not the on-vehicle planning stack.
+- Fleet: assume 500 vehicles driving 8 hours a day, each with 8 cameras (H.265 at 8 Mbit/s each) and one lidar (5 MB/s compressed).
+- Uploads: at the depot over 10 Gb/s links; small trigger summaries over cellular.
+- Labels: 3D boxes, tracks and lane geometry on keyframes at 2 Hz; assume \$3.00 per keyframe for full human labeling (illustrative; measure with vendors).
+
+#### Requirements
+
+Functional: ingest drives; on-vehicle and offline triggers that flag interesting moments; search over the fleet's data by metadata and by example (scene embeddings); select and label data; train and evaluate multi-task perception models; release models to vehicles in shadow mode first.
+
+Non-functional: a new failure class goes from first report to a labeled training set within one week; every release passes scenario regression suites with no regression on safety-critical classes (pedestrians, cyclists) at any distance bin; full lineage from model to data and labels; raw data retained by policy (for example, 90 days hot, triggered snippets for years).
+
+#### Estimation
+
+::: example
+**Worked example — Sensor volume, upload and labeling budget.** Storage uses §89.6; bandwidth uses §89.7; labeling cost uses the effort and hybrid-pipeline formulas of §63.5.2 and §63.14.4.
+
+1. Per vehicle: cameras $8 \times 8$ Mbit/s $= 8$ MB/s plus lidar 5 MB/s $= 13$ MB/s; 8 hours is **374 GB a day**.
+2. Fleet: $500 \times 374$ GB $= 187$ TB a day, **68 PB a year** if everything were kept.
+3. Depot upload at 10 Gb/s (1.25 GB/s): $374 / 1.25 = 300$ s per vehicle, so the depot network, not cellular, carries raw data.
+4. Selection: mining 1% of driving time gives $500 \times 8 \times 0.01 = 40$ hours a day, $40 \times 3{,}600 \times 2 = 288{,}000$ keyframes.
+5. Fully human labeling: $288{,}000 \times \$3.00 = \$864{,}000$ a day.
+6. Hybrid: an offline auto-labeler (large non-causal models that see past and future frames) labels everything at about 1 GPU-s per keyframe (80 GPU-hours a day); humans correct the 15% flagged as uncertain at full price and spot-check the rest at \$0.30: $288{,}000 \times (0.15 \times 3.00 + 0.85 \times 0.30) = \$203{,}040$, **23.5%** of the human-only cost.
+
+**Interpretation.** Storage and labeling, not training compute, are the constraints, and both are governed by *selection*. **Engineering implication.** Keep raw data short-lived, keep triggered snippets long-lived, and make the auto-labeler plus targeted human review the default labeling path.
+:::
+
+#### Data, labels and features
+
+- **Sources:** raw sensor logs, vehicle state (speed, braking, steering), disengagements and safety-driver annotations, map data.
+- **Triggers:** hard braking, disengagement, disagreement between the shipped model and a shadow model, low detection confidence, tracker identity switches, and class-specific detectors for rare objects (strollers, animals, construction).
+- **Labels:** 3D boxes and tracks, semantic attributes (occlusion, moving), lane geometry; quality measured by inter-annotator agreement and audit sampling (§63.6).
+- **Search features:** per-scene embeddings from a vision encoder, indexed for "find more like this" queries (Ch 74), plus metadata (weather, time, city, speed).
+
+#### High-level design
+
+**Figure 92.110 — The perception data engine loop.**
+
+```mermaid
+flowchart LR
+  V([Fleet vehicles]) -.->|depot upload| RAW[(Raw drive store<br/>90 days)]
+  V -.->|trigger summaries| TRG[Trigger service]
+  RAW --> IDX[Scene embedding<br/>and metadata index]
+  TRG --> MINE[Mining: queries,<br/>similarity, uncertainty]
+  IDX --> MINE
+  MINE --> SNIP[(Curated snippets<br/>long-term)]
+  SNIP --> AUTO[Offline auto-labeler]
+  AUTO --> HUM[Human review of<br/>uncertain frames]
+  HUM --> DS[(Versioned datasets)]
+  DS --> TRAIN[Training on<br/>GPU cluster]
+  TRAIN --> EVAL{Scenario regression<br/>and slice gates}
+  EVAL -->|pass| SHADOW[Shadow deploy<br/>on vehicles]
+  SHADOW -.->|disagreements| TRG
+```
+
+**Reading the diagram.** Raw drives arrive asynchronously at depots; trigger summaries arrive over cellular. A scene index (embeddings plus metadata) lets engineers and automated miners select snippets by query, similarity to a known failure, or model uncertainty. Snippets move to long-term storage, are auto-labeled, and uncertain frames go to human review; labeled data become versioned datasets. Training reads datasets; a release gate runs scenario suites and slice metrics; passing models run in shadow mode on vehicles, whose disagreements become new triggers, closing the loop. Storage boundaries: raw store (short retention), snippet store, dataset versions. Failure points: auto-labeler errors becoming training truth (human audit rates per class), triggers that flood the pipeline (per-trigger quotas), and dataset drift between training and evaluation versions. Scaling: storage by retention policy, labeling by selection rate, training by the GPU cluster (Ch 80).
+
+#### Model and evaluation
+
+- **Baseline:** train on uniformly sampled frames with human labels.
+- **Production:** multi-task perception network (detection, tracking, lanes) trained on mined data; active learning by uncertainty and diversity (core-set) selection [Settles 2009; Sener and Savarese 2018].
+- **Offline:** mAP and recall per class by distance bin, false negatives on safety-critical classes, tracking metrics; **scenario suites** (curated sets for each known failure) act as unit tests that must not regress.
+- **Online:** shadow mode measures disagreement rate with the shipped model and the human-reviewed outcome of disagreements; no A/B test on public roads without the safety process.
+
+#### Serving and monitoring
+
+On-vehicle inference is out of scope but sets constraints: the model must meet its latency budget on vehicle compute after quantization (Ch 67), so evaluation runs on the compiled, quantized model. The engine monitors trigger rates by type, labeling throughput and backlog age, auditor disagreement with the auto-labeler per class, dataset growth per failure class, and time from report to labeled set.
+
+#### Deep dives
+
+1. **Selection is the product.** Uniform sampling labels millions of boring highway frames; triggers, similarity search and uncertainty concentrate labels on rare cases. Per-trigger quotas keep one noisy trigger from consuming the budget.
+2. **Auto-labeling economics.** An offline labeler can be far larger than the vehicle model and can use future frames, so its labels are better than real-time predictions; humans correct the uncertain fraction. The audit rate per class is the safety valve.
+3. **Regression gates as scenario tests.** Every resolved failure becomes a permanent scenario suite; a release cannot regress any of them, and aggregate mAP cannot hide a pedestrian-recall loss at 60 m.
+
+#### Trade-offs and alternatives
+
+Labeling everything is simpler but unaffordable; simulation and synthetic data cover rare events cheaply but have a domain gap (§63.12); self-supervised pretraining on unlabeled fleet video reduces label needs but still needs labeled evaluation sets.
+
+#### Follow-up questions
+
+1. *How do you find more examples of a rare failure?* Embed the failing scene and run similarity search over the scene index, then filter by metadata.
+2. *The auto-labeler is wrong on a new object class.* Route that class to full human labeling until audit agreement recovers; retrain the auto-labeler on corrected labels.
+3. *How long do you keep raw data?* Weeks to months by policy; triggered snippets and evaluation sets for years, with privacy controls (faces and plates blurred).
+4. *How do you know the loop works?* Track per failure class: examples labeled, metric on its scenario suite and field disagreement rate over releases.
+
+#### What distinguishes levels
+
+- **Mid:** collect, label, train, evaluate on a test set.
+- **Senior:** triggers, active learning, scenario regression suites, shadow mode.
+- **Staff:** quantifies storage and labeling to show selection governs both, designs auto-labeling with per-class audit rates, and makes "report to labeled set in a week" a measured SLO.
+
+### 92.6.11 Q37. Experimentation platform
+
+**Difficulty:** Hard · **Time:** 45 min · **Related:** §57.14 (A/B statistics; sample size §57.14.2), §66.12 (shadow and canary), §68.14 (interleaving, holdouts) [Kohavi et al. 2020]
+
+#### Prompt
+
+"Hundreds of teams want to A/B test ranking models, UI changes and pricing at the same time. Design the experimentation platform."
+
+#### Clarifying questions and assumptions
+
+- Scale: assume 100 million daily active users, 1,000 concurrent experiments, 50 exposure events per user per day.
+- Units: users by default; sessions, devices or markets for special cases.
+- Who decides launches? Teams, using the platform's scorecard and guardrails.
+
+#### Requirements
+
+Functional: define experiments (unit, variants, allocation, metrics, duration); deterministic assignment with layers so independent experiments overlap; exposure logging; daily scorecards with confidence intervals; guardrail metrics and automatic alerts; sample-ratio-mismatch detection; holdouts.
+
+Non-functional: assignment adds < 1 ms (no network call on the request path); scorecards by 09:00 daily; exposure loss < 0.1%; reproducible analyses from versioned metric definitions.
+
+#### Estimation
+
+::: example
+**Worked example — How many users, and what does a scorecard cost?** Sample size uses the per-arm formula of §57.14.2 with $z_{0.975} = 1.96$ and $z_{0.80} = 0.84$; event volume uses §89.5–§89.6.
+
+1. Detecting a 1% relative lift on a 5% conversion rate ($\delta = 0.0005$): $n = 2\,(1.96 + 0.84)^2 \times 0.05 \times 0.95 / 0.0005^2 \approx$ **2.98 million users per arm**.
+2. With variance reduction using pre-experiment data (CUPED) and a correlation $\rho = 0.5$, variance falls by $1 - \rho^2 = 0.75$: about 2.24 million per arm [Deng et al. 2013].
+3. Exposures: $10^8 \times 50 = 5 \times 10^9$ a day; average 57,870/s; peak 115,741/s at 2×; at 200 bytes, **1 TB a day**.
+4. Sample-ratio check: a 50/50 test with 502,000 versus 498,000 users gives $\chi^2 = 16.0$, $p = 6 \times 10^{-5}$: flag it. 501,000 versus 499,000 gives $\chi^2 = 4.0$, $p = 0.046$: not alarming at the usual $p < 0.001$ threshold.
+
+**Interpretation.** Small lifts need millions of users per arm, so traffic is the scarce resource and layering (overlapping experiments) is essential; variance reduction is worth a quarter of the traffic. **Engineering implication.** Compute power before launch, reserve traffic per layer, and treat SRM as a hard stop because it signals a broken assignment or logging path.
+:::
+
+#### Data, labels and features
+
+Assignment records (unit, experiment, variant, layer, timestamp), exposure events from clients and services, metric events (orders, sessions, latency, errors), pre-experiment covariates for CUPED, metric definitions as versioned code. The "labels" are the metrics; their delays (purchases within 7 days, churn within 28) set test durations.
+
+#### High-level design
+
+**Figure 92.111 — Experimentation platform: deterministic assignment, logged exposure, batch analysis.**
+
+```mermaid
+flowchart LR
+  UI([Experiment owner]) --> CFG[Config service:<br/>layers, allocation]
+  CFG -.->|push config| SDK[Assignment SDK<br/>in services and apps]
+  SDK -->|hash unit and layer| VAR[Variant in-process]
+  SDK -.->|exposure events| EX[[Exposure log]]
+  APPEV[[Metric events]] -.-> LAKE[(Data lake)]
+  EX -.-> LAKE
+  LAKE --> JOB[Daily metric jobs<br/>join, aggregate]
+  JOB --> STATS[Stats engine:<br/>CUPED, intervals, SRM]
+  STATS --> SC[(Scorecards)]
+  SC --> UI
+  STATS -.->|guardrail breach| ALERT[Alerts and<br/>auto-stop]
+```
+
+**Reading the diagram.** Configuration is pushed asynchronously to SDKs embedded in services and apps; assignment is a local hash of the unit ID, layer salt and allocation, so the request path never waits on the network. Exposures and metric events flow into the lake; daily jobs join them by unit, compute per-unit metrics and pass them to the statistics engine, which writes scorecards and raises alerts. Failure points: stale config on clients (versioned configs logged with exposures), lost exposures (SRM detects it), and metric definitions changing mid-test (versioned definitions). Scaling: assignment scales with services; analysis scales with exposures and metrics per day.
+
+#### Model and evaluation
+
+The platform's "model" is statistical: difference in means with delta-method variance for ratio metrics, CUPED adjustment, and either a fixed horizon or a sequential test that allows peeking without inflating false positives. Validate the platform itself with A/A tests: across many A/A experiments, about 5% should be significant at $p < 0.05$ and SRM should be rare. For ML rankers add interleaving as a fast, sensitive pre-test (§68.14.2) and long-term holdouts for cumulative effects [Hohnhold et al. 2015].
+
+#### Serving and monitoring
+
+Monitor assignment latency, config propagation age, exposure loss by platform, SRM rate across experiments, A/A false-positive rate, scorecard job completion time, and the number of experiments per layer against traffic capacity.
+
+#### Deep dives
+
+1. **Layers and overlap.** Experiments in different layers use independent hashes and overlap freely; experiments that interact (two rankers on one surface) share a layer and split traffic [Tang et al. 2010].
+2. **Trustworthiness checks.** SRM, A/A tests, novelty and primacy effects (plot lift by day), and guardrails (latency, errors, revenue) evaluated with the same rigor as the primary metric.
+3. **Interference.** When treatment affects control (marketplaces, social graphs), user randomization is biased; randomize by market, cluster or time (switchback, Q40).
+
+#### Trade-offs and alternatives
+
+**Table 92.103 — Choosing the randomization unit.**
+
+| Unit | Use when | Cost |
+|---|---|---|
+| User | Most product and ranking changes | Needs a stable ID; logged-out users vary |
+| Session or request | Short-lived effects, no learning across visits | Inconsistent experience; carryover |
+| Device | Logged-out apps | Users with several devices see both |
+| Cluster (graph community) | Social or network effects | Fewer units, wider intervals |
+| Market or time slot (switchback) | Two-sided marketplaces, pricing | Few units; carryover between slots |
+
+#### Follow-up questions
+
+1. *A team peeks daily and stops when $p < 0.05$.* False-positive rate inflates; use sequential tests or a fixed horizon.
+2. *The scorecard shows SRM.* Stop reading results; find the assignment or logging bug first.
+3. *Twenty metrics, one is significant.* Pre-register the primary metric; correct or treat others as exploratory.
+4. *Offline AUC improved, online flat.* The offline metric does not track the business metric, or the ranker is miscalibrated in the new candidate distribution; trust the online test.
+
+#### What distinguishes levels
+
+- **Mid:** random split, t-test, dashboards.
+- **Senior:** power analysis, deterministic hashing, guardrails, SRM.
+- **Staff:** layers for overlapping experiments, variance reduction quantified, trustworthiness checks as platform features, and the right unit under interference.
+
+### 92.6.12 Q38. ML monitoring platform
+
+**Difficulty:** Hard · **Time:** 45 min · **Related:** Ch 70 (ML monitoring; architecture §70.15, delayed labels §70.8, alerting §70.13), §69.12 (retraining loop)
+
+#### Prompt
+
+"We run 2,000 models. Most failures are silent: a feature pipeline breaks or user behavior shifts and nobody notices for weeks. Design a monitoring platform that every model team uses."
+
+#### Clarifying questions and assumptions
+
+Online, batch or both? Do labels arrive, and when? Who gets paged? Assume 2,000 models (500 online) producing 1 million predictions/s in total at peak; 100 monitored features per model on average; feature vectors logged for 2% of predictions at 2 KB each; label delays from minutes (clicks) to 90 days (chargebacks).
+
+#### Requirements
+
+Functional: SDK to log predictions with IDs, model version and sampled features; label ingestion and joining; data-quality checks; drift on features and predictions; performance metrics by slice when labels mature; alerting with routing to owners; dashboards; retraining triggers. Non-functional: drift and data-quality signals within 1 hour; at most a few actionable alerts per model per month; no impact on serving latency (asynchronous logging); 13 months of aggregates.
+
+#### Estimation
+
+::: example
+**Worked example — Log volume and the multiple-testing trap.** Volume uses §89.6 and §89.11; false alarms use the formula of §70.6.4.
+
+1. Feature logs: $10^6 \times 0.02 \times 2$ KB $= 40$ MB/s, **3.5 TB a day**; prediction records without features are small enough to keep for every prediction.
+2. Drift tests: $2{,}000 \times 100 \times 24 = 4.8$ million per day if every feature is tested hourly.
+3. At $\alpha = 0.01$ with no real drift: **48,000 false alarms a day**. Per model: $1 - 0.99^{2{,}400} \approx 1$, so every model alerts every day.
+4. Even at $\alpha = 10^{-4}$, 480 false alarms a day remain.
+
+**Interpretation.** Data volume is easy; alert volume is the design problem. Testing everything with a fixed threshold guarantees an ignored pager. **Engineering implication.** Page on a few outcome-linked signals (prediction distribution, volume, nulls, delayed-label performance), file tickets for feature drift ranked by importance and effect size, and require minimum effect sizes rather than p-values on huge samples (§70.6.3).
+:::
+
+#### Data, labels and features
+
+Prediction records (prediction ID, model and version, timestamp, entity, score, decision, fallback level), sampled feature vectors, reference windows (training data or a stable production period), and labels joined by prediction ID or entity and time (§70.8). Proxies when labels are delayed: score distribution, decision rate, downstream engagement.
+
+#### High-level design
+
+**Figure 92.112 — Monitoring platform: log, aggregate, compare, alert.**
+
+```mermaid
+flowchart LR
+  MS[Model services<br/>with SDK] -.->|predictions, sampled features| PL[[Prediction log]]
+  LB{{Label sources}} -.-> LJ[Label joiner<br/>by prediction ID]
+  PL -.-> AGG[Stream aggregation:<br/>sketches per window]
+  PL -.-> LAKE[(Prediction lake)]
+  LJ --> LAKE
+  AGG --> TS[(Metric store)]
+  LAKE --> BATCH[Batch jobs: slice<br/>performance, calibration]
+  BATCH --> TS
+  TS --> DET[Detectors: quality,<br/>drift, performance]
+  REF[(Reference windows)] --> DET
+  DET --> AL{Alert policy}
+  AL -->|page| ONC([Model owner on-call])
+  AL -->|ticket| TQ[[Ticket queue]]
+  AL -.->|trigger| RT[Retraining pipeline]
+```
+
+**Reading the diagram.** Services log asynchronously through an SDK, so serving latency is untouched. A stream job keeps per-window sketches (counts, null rates, quantile sketches, category frequencies) per model and feature; the lake keeps raw records for batch jobs that compute slice performance once labels join. Detectors compare current windows to reference windows; an alert policy decides page, ticket or retraining trigger. Failure points: the logging path itself (alert on missing data per model, since silence looks healthy), label joins that silently drop rows (monitor join rate), and reference windows that include an incident. Scaling: sketches keep metric storage independent of traffic; batch jobs scale with labeled volume.
+
+#### Model and evaluation
+
+Detectors are the models: PSI or Jensen–Shannon distance with effect-size thresholds per feature, KS tests on numeric scores, a domain classifier or MMD for multivariate and embedding drift (§70.7), calibration error with confidence intervals per slice (§70.9). Evaluate detectors on replayed historical incidents (did they fire, how early) and on calm periods (false alarms per model-month).
+
+#### Serving and monitoring
+
+The platform monitors itself: log ingestion lag and loss per model, sketch job lag, label join rates, detector run completeness. Alert quality is tracked: pages per model per month and the share of pages that led to action.
+
+#### Deep dives
+
+1. **Alert design.** Few pages, tied to outcomes; feature drift ranked by importance-weighted effect size; seasonality-aware references (same hour last week); burn-rate alerts on quality SLOs (§70.13.2).
+2. **Delayed labels.** Track label maturity; report performance only on matured cohorts; estimate precision and recall from scores in the meantime (§70.8.2).
+3. **Bugs versus genuine change.** A step change at a deploy time with nulls or unit changes is a bug (roll back the pipeline); a gradual shift is drift (retrain or recalibrate).
+
+#### Trade-offs and alternatives
+
+Per-team dashboards are flexible but inconsistent; a vendor tool is fast to adopt but needs the same logging contract; logging all features gives fuller drift coverage at 50 times the storage.
+
+#### Follow-up questions
+
+1. *Every model alerts daily.* Fixed thresholds on huge samples; use effect sizes, importance weighting and fewer pages.
+2. *Labels arrive after 60 days.* Proxies plus estimated metrics now, true metrics on matured cohorts later.
+3. *How do you catch a broken upstream join?* Null and default rates per feature, and volume per entity, compared hour over hour.
+4. *Should drift trigger automatic retraining?* Only with validation gates; a pipeline bug retrained into the model is worse.
+
+#### What distinguishes levels
+
+- **Mid:** dashboards of feature distributions and accuracy.
+- **Senior:** drift tests, delayed-label handling, slice metrics.
+- **Staff:** quantifies the multiple-testing problem and designs alert policy around it, separates bugs from drift, and makes logging completeness and alert quality platform SLOs.
+
+### 92.6.13 Q39. Federated learning for a mobile keyboard
+
+**Difficulty:** Hard · **Time:** 45 min · **Related:** §71.11 (federated learning, secure aggregation), §71.10 (differential privacy), Ch 67 (model optimization)
+
+#### Prompt
+
+"Improve next-word suggestions in our mobile keyboard without collecting what users type. Design the training and serving system."
+
+#### Clarifying questions and assumptions
+
+How many devices, and when may they train? Model size limits on phones? Privacy commitments (no raw text leaves the device; formal DP)? Assume 100 million devices with the keyboard, 10% eligible at a time (idle, charging, unmetered network), a 5-million-parameter language model, 3,000 training rounds of 1,000 completing clients.
+
+#### Requirements
+
+Functional: on-device next-word prediction; federated training rounds; federated evaluation; model release to devices. Non-functional: suggestion latency ≤ 20 ms per keystroke on low-end phones; model ≤ 10 MB on device; no raw text uploaded; secure aggregation with client-level DP; each device spends at most a few minutes and tens of megabytes per participation.
+
+#### Estimation
+
+::: example
+**Worked example — Bytes and wall-clock per training run.** Apply the FedAvg communication formula of §71.11.1.
+
+1. Per participant: download FP32 model $5 \times 10^6 \times 4 = 20$ MB; upload an 8-bit update, 5 MB; **25 MB** per participation.
+2. Per round with 30% over-selection: $1{,}300 \times 20 + 1{,}000 \times 5 = 31$ GB at the server; 3,000 rounds, **93 TB**.
+3. Wall clock at 7 minutes per round (deadline-bound by slow devices): $3{,}000 \times 7 / 1{,}440 = 14.6$ days.
+4. Participation: $3{,}000 \times 1{,}000 / 10^7 = 0.3$ rounds per eligible device: most devices train once or never per run.
+
+**Interpretation.** Per-device cost is small; the run is bounded by rounds and stragglers. **Engineering implication.** Spend local epochs to cut rounds, compress uploads, and keep the model small; parallel runs (hyperparameters) multiply server bandwidth, not device cost.
+:::
+
+#### Data, labels and features
+
+Self-supervised: the next word the user actually typed is the label, available only on the device. Non-IID data (each user's vocabulary and language mix) and biased participation (newer, well-connected phones) are the main data hazards. A server-side proxy corpus (public text) is used for pre-training and sanity checks, never as the target distribution.
+
+#### High-level design
+
+**Figure 92.113 — Federated training with secure aggregation and on-device serving.**
+
+```mermaid
+flowchart LR
+  SRV[FL coordinator:<br/>rounds, selection] -->|model and plan| DEV([Eligible phones])
+  DEV -->|local training<br/>on own typing| DEV
+  DEV -->|masked, clipped updates| SA[Secure aggregator]
+  SA -->|sum only| SRV
+  SRV --> DP[Add DP noise,<br/>update global model]
+  DP --> FE[Federated evaluation<br/>on held-out devices]
+  FE --> GATE{Release gate}
+  GATE -->|pass| CDN[(Model CDN)]
+  CDN -.->|staged rollout| KB([Keyboard on device])
+```
+
+**Reading the diagram.** The coordinator selects eligible devices and sends the model and a training plan; each device trains locally and uploads a clipped, masked update; the secure aggregator reveals only the sum; the server adds noise for client-level DP and forms the next model [Bonawitz et al. 2017; McMahan et al. 2018]. Federated evaluation on other devices measures quality; a gate releases the model through a CDN with staged rollout. Failure points: dropouts mid-round (over-selection, dropout-tolerant aggregation), poisoned updates (norm clipping, robust aggregation), and slow convergence on non-IID data. Scaling: clients per round bounded by aggregation cost; runs bounded by wall clock.
+
+#### Model and evaluation
+
+Baseline: n-gram model trained on public text. Production: small recurrent or transformer language model, pre-trained on a public corpus then federated-trained, quantized to INT8 for the device [Hard et al. 2018]. Offline: federated top-3 recall of the next word on held-out devices, sliced by language and device tier. Online: suggestion tap rate and characters saved, A/B by device.
+
+#### Serving and monitoring
+
+On-device inference within 20 ms; monitor crash and latency telemetry, suggestion tap rate by locale, round completion rates, dropout rates, update norm distributions (poisoning detection) and the cumulative privacy budget per run.
+
+#### Deep dives
+
+1. **Rounds dominate.** FedAvg's local epochs cut communication rounds relative to one-step FedSGD [McMahan et al. 2017].
+2. **Privacy layering.** Data minimization (FL) + secure aggregation (server sees only sums) + client-level DP (sums do not reveal any one user).
+3. **Systems heterogeneity.** Eligibility rules bias participation; track slices by device tier and region, and cap rounds per device.
+
+#### Trade-offs and alternatives
+
+Central training on donated or public text is faster but conflicts with the privacy promise; on-device personalization without federation adapts to one user but does not improve the global model.
+
+#### Follow-up questions
+
+1. *Is FL private by itself?* No; updates can leak, hence secure aggregation and DP.
+2. *How do you debug a model you cannot see data for?* Federated analytics (aggregate statistics), synthetic test suites and the proxy corpus.
+3. *A malicious client sends huge updates.* Clip update norms and use robust aggregation.
+4. *Why is training slow?* Stragglers and non-IID data; over-select, use deadlines and more local work.
+
+#### What distinguishes levels
+
+- **Mid:** describes FedAvg.
+- **Senior:** adds eligibility, secure aggregation, compression and federated evaluation.
+- **Staff:** sizes rounds, bytes and wall clock, layers DP on secure aggregation with a budget, and treats participation bias as a fairness issue.
+
+### 92.6.14 Q40. Two-sided marketplace matching
+
+**Difficulty:** Hard · **Time:** 45 min · **Related:** §55.5 (ride matching: batched assignment, fencing), §83.5 (ETA at scale), §83.6 (dynamic pricing), §60.15 (QuickBite ETA)
+
+#### Prompt
+
+"QuickBite assigns each order to a courier as soon as it is placed. Food is often cold and couriers wait at restaurants. Design an ML-driven matching system."
+
+#### Clarifying questions and assumptions
+
+- Use the QuickBite shared assumptions: 500,000 orders a day, busiest-hour 27.8 orders/s and a 60 orders/s design peak, 20,000 couriers active at peak, 4,000 delivery zones, 35-minute median delivery.
+- Objective? Minimize late and cold deliveries while keeping courier idle time and earnings fair.
+- May one courier carry two orders (stacking)? Yes, within a lateness bound.
+- Decision latency? Seconds are fine; food preparation takes 10 minutes or more.
+
+#### Requirements
+
+Functional: decide which courier gets each order and when to dispatch; consider stacking; send offers with accept or decline; reassign on decline or delay.
+
+Non-functional: decisions within 5 s of a decision window closing; each order assigned to exactly one courier (leases and fencing, §55.5.8); p90 delivery-time error and lateness rate not worse than today at launch; courier earnings per hour fairness tracked by zone.
+
+#### Estimation
+
+::: example
+**Worked example — Supply, problem size and prediction load.** Concurrency uses Little's Law (§4.11); prediction load uses §89.13.
+
+1. Busiest hour: 27.8 orders/s × 20 minutes of courier time per order $= 33{,}360$ order-legs in flight against 20,000 couriers: an average of **1.67 orders per courier**, so stacking is not an optimization but a necessity at peak.
+2. A 30 s decision window at the 60/s design peak holds 1,800 orders; a large city with 10% of volume gives about 180 orders against a few thousand nearby couriers, a sparse assignment problem solved in well under a second.
+3. Predictions: 60 orders/s × 50 candidate couriers × 2 windows per order = **6,000 travel-time and acceptance predictions/s**, plus food-ready predictions per order: small next to search's 40,000 ETA predictions/s.
+
+**Interpretation.** Compute is cheap; the value is in deciding *when* and *whom* jointly across many orders. **Engineering implication.** Batch decisions in short windows with learned costs (ready time, travel time, acceptance), and dispatch late enough that couriers do not wait at restaurants.
+:::
+
+#### Data, labels and features
+
+- **Labels:** food-ready time (from courier arrival and pickup scans; censored when the courier arrives late), travel times per leg, offer acceptance, delivery lateness, customer ratings on cold food.
+- **Features:** restaurant prep-time history by hour and item count, live kitchen load (open orders), courier location, vehicle, recent decline rate, traffic and weather, zone supply and demand.
+- **Hazards:** selection bias (acceptance is only observed for offers made), and censoring of ready time when couriers arrive after the food is ready.
+
+#### High-level design
+
+**Figure 92.114 — Batched matching with learned costs.**
+
+```mermaid
+flowchart LR
+  ORD[[New orders]] --> WIN[Decision window<br/>per city, 30 s]
+  CL[(Courier locations<br/>and states)] --> CAND[Candidate generation:<br/>couriers within radius]
+  WIN --> CAND
+  CAND --> PRED[Prediction service:<br/>ready, travel, accept]
+  PRED --> OPT[Assignment solver:<br/>min-cost with stacking]
+  OPT --> DEC{Dispatch now<br/>or wait?}
+  DEC -->|now| OFF[Offer service<br/>lease and fencing]
+  DEC -->|wait| WIN
+  OFF -->|push| CR([Courier app])
+  CR -.->|accept, decline,<br/>scans| EVT[[Event log]]
+  EVT -.-> TR[Training and<br/>simulator calibration]
+```
+
+**Reading the diagram.** Orders accumulate in per-city windows; candidate generation finds couriers within a radius; the prediction service scores each order–courier pair (and stacked pairs) for food-ready time, travel time and acceptance probability; the solver minimizes expected lateness, cold-food time and courier waiting. A dispatch decision may defer an order to a later window if its food will not be ready. Offers are leased with fencing tokens so one order has one courier (§55.5.8). Events flow back asynchronously for training and for calibrating a simulator. Failure points: prediction service outage (fallback to distance-based costs), a declined offer (re-enter the next window), and solver timeouts (greedy fallback). Scaling: cities are independent problems, solved in parallel.
+
+#### Model and evaluation
+
+- **Baseline:** greedy nearest available courier at order time.
+- **Production:** gradient-boosted models for ready time (quantile loss, §57.11.2), travel time (reuse the ETA model) and acceptance; batched min-cost assignment with stacking [Kuhn 1955]; optionally a learned value of courier positions for future demand [Xu et al. 2018].
+- **Offline:** prediction metrics (MAE and p90 error for ready time, calibration for acceptance) plus **simulation** of the full policy on replayed demand, because assignments change outcomes and logged data cannot score a new policy directly.
+- **Online:** switchback experiments (alternate policies by city and time slot) because couriers are shared between arms; primary metric lateness and cold-food complaints; guardrails courier earnings per hour, wait time at restaurants, cancellations.
+
+#### Serving and monitoring
+
+Per city: window solve time, share of greedy fallbacks, offer acceptance rate, courier wait at pickup, lateness rate, stacked-order share and its lateness. Prediction monitoring per model as in Q38.
+
+#### Deep dives
+
+1. **When to dispatch.** Assigning at order time makes couriers wait while food cooks; dispatching so arrival matches predicted ready time cuts wait and frees supply. Quantile predictions bound the risk of being late.
+2. **Joint assignment and stacking.** Batched matching beats greedy when orders compete for couriers (§55.5.8); stacking costs are evaluated on order pairs whose restaurants and destinations are close.
+3. **Evaluation under interference.** User-level A/B tests are biased because arms share couriers; switchbacks with carryover buffers or city-level tests measure the policy.
+
+#### Trade-offs and alternatives
+
+Greedy is simple and immediate but myopic; reinforcement learning of the full policy can capture future value but is hard to validate safely; fixed zone-based dispatch is predictable for couriers but inefficient across zone boundaries.
+
+#### Follow-up questions
+
+1. *Why not assign immediately?* Couriers wait at restaurants and miss better matches; waiting a window costs seconds, not minutes.
+2. *A courier declines repeatedly.* Acceptance predictions lower their cost-adjusted value; policy, not the model, sets any penalties.
+3. *How do you test without a real A/B?* Switchbacks by city and time slot, with a simulator to pre-screen.
+4. *Is stacking fair to customers?* Bound the extra minutes for the first order and measure lateness by stacked versus single.
+
+#### What distinguishes levels
+
+- **Mid:** predicts ETAs and assigns nearest courier.
+- **Senior:** batched assignment with learned costs, exactly-one assignment with leases.
+- **Staff:** uses Little's Law to show stacking is necessary, decides *when* to dispatch from ready-time quantiles, and evaluates with simulation and switchbacks because of interference.
