@@ -500,7 +500,7 @@ A traditional system is specified by code: if the code is right and the servers 
 | M4 Model | Heuristic baseline, then a simple model, then justified complexity | Baseline named and beaten for a stated reason | §59.9.1 |
 | M5 Training | Pipeline, cadence, data volume, compute | Reproducible pipeline with validation gates | §60.5, Ch 69 |
 | M6 Offline evaluation | Metrics, slices, calibration, acceptance gate | Gate defined, including slices that must not regress | §59.10 |
-| M7 Serving | Batch or online, latency budget, fleet size, fallback | Budget split and fallback ladder stated | §60.8–60.12, Ch 66 |
+| M7 Serving | Batch or online, latency budget, fleet size, fallback | Budget split and fallback ladder stated | §60.8–§60.12, Ch 66 |
 | M8 Experimentation | A/B design, unit, guardrail metrics, duration | Launch decision rule written before the test | §57.14 |
 | M9 Monitoring | Data, prediction and outcome monitors, label delay | Silent-failure modes each have a detector | Ch 70 |
 | M10 Retraining | Cadence or trigger; feedback-loop mitigation | Loop named and broken (exploration, holdout) | §59.13, §68.12 |

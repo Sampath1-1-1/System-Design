@@ -27,18 +27,18 @@ Each starter is a runnable core of 60–120 lines that demonstrates the central 
 
 | § | Project | Level | Core concepts exercised | Owning chapters and case studies |
 |---|---|---|---|---|
-| 93.1.1 | REST API service | Beginner | Resource design, idempotency, pagination, persistence, observability | §8.6, §22.15, §40.4–40.5 |
+| 93.1.1 | REST API service | Beginner | Resource design, idempotency, pagination, persistence, observability | §8.6, §22.15, §40.4–§40.5 |
 | 93.1.2 | URL shortener | Beginner | ID generation, base62, cache-aside, redirect latency | §52.4, §17.10, §20.7 |
-| 93.1.3 | Redis-style cache | Beginner | Wire protocol, TTL and expiry, eviction, persistence | §20.6, §20.8–20.9 |
-| 93.1.4 | Rate limiter | Beginner | Token bucket, sliding window, distributed counters | §22.3–22.8, §52.6 |
-| 93.1.5 | Load-balancer simulation | Beginner | Health checks, ejection, draining, retry budgets | §19.4–19.8, §22.12 |
+| 93.1.3 | Redis-style cache | Beginner | Wire protocol, TTL and expiry, eviction, persistence | §20.6, §20.8–§20.9 |
+| 93.1.4 | Rate limiter | Beginner | Token bucket, sliding window, distributed counters | §22.3–§22.8, §52.6 |
+| 93.1.5 | Load-balancer simulation | Beginner | Health checks, ejection, draining, retry budgets | §19.4–§19.8, §22.12 |
 | 93.2.1 | Message queue | Intermediate | Append-only log, offsets, consumer groups, acknowledgments | Ch 30, Ch 31 |
-| 93.2.2 | Distributed key-value store | Intermediate | Consistent hashing, quorums, hinted handoff, rebalancing | §14.8, §27.7–27.9, §52.8 |
+| 93.2.2 | Distributed key-value store | Intermediate | Consistent hashing, quorums, hinted handoff, rebalancing | §14.8, §27.7–§27.9, §52.8 |
 | 93.2.3 | Replicated database simulation | Intermediate | WAL shipping, replication lag, failover, fencing | §14.4, §27.4, §27.11, §26.13 |
-| 93.2.4 | Notification service | Intermediate | Priority queues, deduplication, retries, preferences | §52.7, §30.10–30.11 |
+| 93.2.4 | Notification service | Intermediate | Priority queues, deduplication, retries, preferences | §52.7, §30.10–§30.11 |
 | 93.2.5 | Real-time chat | Intermediate | Persistent connections, per-conversation ordering, sync | Ch 9, §53.4 |
-| 93.3.1–93.3.5 | Job scheduler, event-driven microservices, real-time analytics, recommendation engine, distributed ML inference | Advanced | See §93.3 | §52.9, Ch 32, §56.7, Ch 68, Ch 66 |
-| 93.4.1–93.4.5 | Distributed training, multi-tenant feature store, production RAG, LLM inference platform, multi-agent orchestration | Expert | See §93.4 | Ch 65, Ch 62, Ch 75, Ch 73, Ch 77 |
+| 93.3.1–93.3.5 | Job scheduler, event-driven microservices, real-time analytics, recommendation engine, distributed ML inference | Advanced | See Table 93.42 | §52.9, Ch 32, §56.7, Ch 68, Ch 66 |
+| 93.4.1–93.4.5 | Distributed training, multi-tenant feature store, production RAG, LLM inference platform, multi-agent orchestration | Expert | See Table 93.42 | Ch 65, Ch 62, Ch 75, Ch 73, Ch 77 |
 
 Beginner projects take roughly 10–20 hours each and Intermediate projects 20–40 hours. They build on each other: the rate limiter reuses the cache's TTL logic, the notification service sits on top of the message queue, and the chat server reuses the REST service's operational scaffolding. If you have time for only four of the first ten projects, build the REST API service, the Redis-style cache, the message queue and the distributed key-value store; together they exercise almost every Book I chapter that interviews probe.
 
@@ -63,10 +63,10 @@ After this project you should be able to:
 #### Prerequisites
 
 - Client–server model and statelessness — §8.3; the request–response lifecycle — §8.5.
-- REST design: resources, methods, status codes, pagination, problem-details errors — §8.6.2–8.6.7.
+- REST design: resources, methods, status codes, pagination, problem-details errors — §8.6.2–§8.6.7.
 - Idempotency keys — §22.15; timeouts — §22.11.
 - Transactions and indexes — §11.7, §11.11; write-ahead logging and `fsync` — §13.5, §13.12.
-- Structured logs, correlation IDs and metric types — §40.4.1–40.4.2, §40.5.1; percentiles — §4.8.
+- Structured logs, correlation IDs and metric types — §40.4.1–§40.4.2, §40.5.1; percentiles — §4.8.
 
 #### Specification
 
@@ -307,7 +307,7 @@ After this project you should be able to:
 
 - The full case study — §52.4, especially capacity (§52.4.4), code generation (§52.4.8) and failure scenarios (§52.4.11).
 - Unique ID generation and the birthday bound — §17.10; counter blocks and ticket servers — §17.10.5.
-- Cache hit ratio and popularity skew — §20.3.2–20.3.3; cache-aside and its races — §20.7.1–20.7.2; LRU and TinyLFU — §20.9.
+- Cache hit ratio and popularity skew — §20.3.2–§20.3.3; cache-aside and its races — §20.7.1–§20.7.2; LRU and TinyLFU — §20.9.
 - HTTP redirects and caching headers — §7.9.1, §21.6.1.
 - The REST API service of §93.1.1 (reuse its server scaffolding, logging and load generator).
 
@@ -516,8 +516,8 @@ After this project you should be able to:
 
 #### Prerequisites
 
-- Redis internals: event loop, data structures, persistence — §20.6.1–20.6.3; Memcached for contrast — §20.6.5.
-- TTL — §20.8; eviction policies and Redis's approximations — §20.9.1, §20.9.4–20.9.5.
+- Redis internals: event loop, data structures, persistence — §20.6.1–§20.6.3; Memcached for contrast — §20.6.5.
+- TTL — §20.8; eviction policies and Redis's approximations — §20.9.1, §20.9.4–§20.9.5.
 - Event-driven I/O and the cost of system calls — §6.7; TCP byte streams (why a read can return half a command) — §7.7.1.
 - `fsync` and durability — §13.12; write-ahead logging — §13.5.
 - Cache patterns that clients will use against your server — §20.7.
@@ -756,7 +756,7 @@ Build a rate limiter in two forms: a library that decides "allow or reject" in m
 
 After this project you should be able to:
 
-- Implement token bucket, fixed window, sliding-window log and sliding-window counter, and demonstrate each one's behavior at window boundaries and under bursts (§22.4–22.7).
+- Implement token bucket, fixed window, sliding-window log and sliding-window counter, and demonstrate each one's behavior at window boundaries and under bursts (§22.4–§22.7).
 - Return correct `429 Too Many Requests` responses with `Retry-After` and rate-limit headers (§22.3.4).
 - Enforce a global limit across several processes with an atomic script in a shared store, and measure the latency it adds (§22.8.2).
 - Compare centralized counting with local counting plus periodic synchronization, and quantify the over- or under-admission of each (§22.8.3).
@@ -764,7 +764,7 @@ After this project you should be able to:
 
 #### Prerequisites
 
-- Rate limiting: purpose, placement, keys and headers — §22.3; the algorithms — §22.4–22.7; distributed limiting — §22.8.
+- Rate limiting: purpose, placement, keys and headers — §22.3; the algorithms — §22.4–§22.7; distributed limiting — §22.8.
 - The case study — §52.6, especially detailed design (§52.6.8) and failure scenarios (§52.6.11).
 - Load shedding and the difference from rate limiting — §22.9.
 - Redis atomicity and single-threaded execution — §20.6.1 (or your own server from §93.1.3).
@@ -953,7 +953,7 @@ Load tests run in two configurations. Single process: an open-loop generator wit
 | Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
 |---|---|---|---|
 | Algorithms | One algorithm works | Four algorithms; boundary and fairness traces explained | You can choose an algorithm for a given product requirement and justify it with your traces |
-| HTTP behavior | Returns `429` | `Retry-After` and quota headers correct; polite clients unaffected | You can explain where in the stack to enforce limits and which key to use (§22.3.2–22.3.3) |
+| HTTP behavior | Returns `429` | `Retry-After` and quota headers correct; polite clients unaffected | You can explain where in the stack to enforce limits and which key to use (§22.3.2–§22.3.3) |
 | Distributed accuracy | Shared counter used | Atomic script with server time; accuracy target met with uneven traffic | You can quantify the error of local, limit ÷ N and synchronized designs |
 | Failure policy | Errors when the store is down | Timeout, circuit breaker, fallback; measured over-admission | You can defend fail-open versus fail-closed per route |
 | Performance | Limiter works under load | Local and distributed costs measured; memory per key stated | You can size the Redis tier for §52.6's traffic from your numbers |
@@ -968,8 +968,8 @@ After this project you should be able to:
 
 - Build an event-driven simulation with a fixed seed whose results you can reproduce and explain line by line.
 - Implement passive health checking (outlier ejection) and active health checks, and measure detection time and the number of requests that hit a dead backend (§19.5).
-- Show why error-based health checks miss gray failures, and fix it with a latency-aware policy (§19.4.3–19.4.4).
-- Bound retry amplification with a retry budget, and demonstrate a retry storm without one (§22.12.3–22.12.4).
+- Show why error-based health checks miss gray failures, and fix it with a latency-aware policy (§19.4.3–§19.4.4).
+- Bound retry amplification with a retry budget, and demonstrate a retry storm without one (§22.12.3–§22.12.4).
 - Drain connections during a rolling deployment with zero failed requests (§19.8.4, §42.7.4).
 
 #### Prerequisites
@@ -977,7 +977,7 @@ After this project you should be able to:
 - Load-balancing algorithms, including power of two choices and EWMA — §19.4; the existing simulation — §19.4.5.
 - Health checks — §19.5; balancer redundancy and connection draining — §19.8.
 - Partial and gray failures, timeouts — §24.8.
-- Retries, backoff, retry budgets and circuit breakers — §22.12–22.13.
+- Retries, backoff, retry budgets and circuit breakers — §22.12–§22.13.
 - Percentiles and tail latency — §4.8, §23.6; queueing intuition — §4.10.
 
 #### Specification
@@ -1194,8 +1194,8 @@ After this project you should be able to:
 
 #### Prerequisites
 
-- Queues, acknowledgments and the visibility timeout — §30.4; delivery guarantees and where duplicates come from — §30.8; ordering — §30.9; poison messages and dead-letter queues — §30.10–30.11 (§30.11.2 has a runnable in-memory queue with visibility timeouts; this project builds the log-based alternative).
-- The log abstraction, partitions, producers, consumer groups and offsets — §31.3, §31.5–31.8; retention and compaction — §31.10.
+- Queues, acknowledgments and the visibility timeout — §30.4; delivery guarantees and where duplicates come from — §30.8; ordering — §30.9; poison messages and dead-letter queues — §30.10–§30.11 (§30.11.2 has a runnable in-memory queue with visibility timeouts; this project builds the log-based alternative).
+- The log abstraction, partitions, producers, consumer groups and offsets — §31.3, §31.5–§31.8; retention and compaction — §31.10.
 - `fsync`, checksums and torn writes — §13.12; log-structured storage — §13.7.
 - The REST service (§93.1.1) for the broker's API, or raw TCP with length-prefixed frames.
 
@@ -1429,7 +1429,7 @@ After this project you should be able to:
 #### Prerequisites
 
 - Consistent hashing, virtual nodes and replication on the ring — §14.8; rebalancing — §14.9.
-- Leaderless replication, quorums, sloppy quorums and hinted handoff — §27.7–27.9; anti-entropy and read repair — §27.13; conflict resolution — §27.14.
+- Leaderless replication, quorums, sloppy quorums and hinted handoff — §27.7–§27.9; anti-entropy and read repair — §27.13; conflict resolution — §27.14.
 - Failure detection with heartbeats and gossip — §27.10.
 - Vector clocks and version vectors — §24.11; consistency models and Jepsen-style testing — §25.3, §25.7, §25.11.
 - The case study — §52.8; and the message-queue project's storage lessons (§93.2.1), since each node needs a durable local store.
@@ -1653,14 +1653,14 @@ After this project you should be able to:
 
 - Implement WAL shipping with log sequence numbers (LSNs), in-order apply and catch-up after a disconnection (§14.4.5, §27.12).
 - Compare asynchronous, semi-synchronous and synchronous acknowledgment by latency and by acknowledged writes lost at failover (§14.4.1).
-- Reproduce the replication-lag anomalies (stale reads, non-monotonic reads) and fix them with session guarantees (§14.4.3–14.4.4, §25.6).
+- Reproduce the replication-lag anomalies (stale reads, non-monotonic reads) and fix them with session guarantees (§14.4.3–§14.4.4, §25.6).
 - Run a failover: detect the dead primary, pick the most up-to-date replica, redirect clients, and fence the old primary with an epoch (§27.11, §26.13).
 
 #### Prerequisites
 
-- Primary–replica architecture, replication modes, lag and its anomalies — §14.3–14.4.
-- Primary–backup replication — §27.4; failure detection — §27.10; failover and recovery — §27.11–27.12.
-- Session guarantees — §25.6; split brain, leases and fencing tokens — §26.11–26.13.
+- Primary–replica architecture, replication modes, lag and its anomalies — §14.3–§14.4.
+- Primary–backup replication — §27.4; failure detection — §27.10; failover and recovery — §27.11–§27.12.
+- Session guarantees — §25.6; split brain, leases and fencing tokens — §26.11–§26.13.
 - Write-ahead logging — §13.5; the Raft simulator — §26.7.7 (for the extension).
 - The message-queue log format (§93.2.1) can be reused as the WAL.
 
@@ -1854,14 +1854,14 @@ After this project you should be able to:
 
 - Accept requests durably and idempotently, then deliver asynchronously through queues (§52.7.8, §22.15).
 - Isolate priorities so that critical traffic meets its latency target during a large campaign (§52.7.3).
-- Retry transient provider failures with exponential backoff and jitter, and route permanent failures to a dead-letter queue (§22.12, §30.10–30.11).
+- Retry transient provider failures with exponential backoff and jitter, and route permanent failures to a dead-letter queue (§22.12, §30.10–§30.11).
 - Respect per-provider rate limits with the limiter of §93.1.4, and per-user preferences and quiet hours.
 
 #### Prerequisites
 
 - The case study — §52.7; mobile push and its delivery limits — §9.8.
-- Queues, retries, poison messages and dead letters — §30.4, §30.10–30.11; idempotent consumers — §32.10.
-- Retries with backoff and jitter, circuit breakers and idempotency keys — §22.12–22.13, §22.15.
+- Queues, retries, poison messages and dead letters — §30.4, §30.10–§30.11; idempotent consumers — §32.10.
+- Retries with backoff and jitter, circuit breakers and idempotency keys — §22.12–§22.13, §22.15.
 - The message queue (§93.2.1) as the transport and the rate limiter (§93.1.4) for provider quotas.
 
 #### Specification
@@ -2032,7 +2032,7 @@ Unit tests cover idempotent acceptance (same key and body → same ID; same key,
 #### Extensions
 
 - Add digesting: group several low-priority notifications to the same user within 15 minutes into one message.
-- Add per-tenant fairness so that one calling service's campaign cannot delay another's transactional mail (§47).
+- Add per-tenant fairness so that one calling service's campaign cannot delay another's transactional mail (Chapter 47).
 - Add delivery-status webhooks back to calling services with signed payloads and retries (§10.4.6).
 - Add a send-time optimization model (Ch 92, Q21 frames it as an ML problem) behind a simple interface.
 
@@ -2056,15 +2056,15 @@ Build a chat service with one-to-one and group conversations, live delivery over
 
 After this project you should be able to:
 
-- Serve thousands of persistent connections from an `asyncio` gateway and measure memory per connection (§9.9.1–9.9.2).
+- Serve thousands of persistent connections from an `asyncio` gateway and measure memory per connection (§9.9.1–§9.9.2).
 - Assign a total order per conversation on the server and use it for deduplication, gap detection and sync (§53.4).
 - Route messages between gateways through a registry and a publish/subscribe backplane (§9.9.3).
-- Implement presence with heartbeats, and survive a reconnect storm with jittered backoff (§9.9.5–9.9.6).
+- Implement presence with heartbeats, and survive a reconnect storm with jittered backoff (§9.9.5–§9.9.6).
 - Upgrade the transport to WebSockets and explain the handshake, framing and heartbeat (§9.6).
 
 #### Prerequisites
 
-- Polling, long polling, Server-Sent Events and WebSockets — §9.3–9.6; connection management at scale — §9.9; mobile push for offline users — §9.8.
+- Polling, long polling, Server-Sent Events and WebSockets — §9.3–§9.6; connection management at scale — §9.9; mobile push for offline users — §9.8.
 - The chat case study — §53.4, especially its ordering and sync requirements.
 - Delivery guarantees and idempotent receivers — §30.8, §32.10.
 - The message queue (§93.2.1) as the backplane, or Redis publish/subscribe in Docker.
@@ -2119,7 +2119,7 @@ flowchart LR
 2. **Multiple gateways.** Run two gateways, a registry and a backplane (your §93.2.1 broker or Redis pub/sub). *Done when:* cross-gateway latency meets the target, and dropping 1% of backplane messages produces gaps that clients detect and repair by syncing, with zero missing messages at the end.
 3. **Presence and offline delivery.** Add heartbeats, last-seen, typing indicators and fake push for offline members. *Done when:* presence changes within 60 s of a client vanishing without closing its connection, and offline members receive one push per conversation burst, not one per message.
 4. **Scale and storms.** Use a load client to open 10,000 connections per gateway and measure memory; kill a gateway and have its clients reconnect with exponential backoff and full jitter. *Done when:* the connection and reconnect-storm targets hold, and your results log shows the reconnect rate per second with and without jitter.
-5. **WebSockets.** Replace newline-delimited JSON with WebSockets, including ping/pong heartbeats and close frames (§9.6.2–9.6.5); optionally add a browser client. *Done when:* every earlier test passes over WebSockets, and you can explain each field of the handshake.
+5. **WebSockets.** Replace newline-delimited JSON with WebSockets, including ping/pong heartbeats and close frames (§9.6.2–§9.6.5); optionally add a browser client. *Done when:* every earlier test passes over WebSockets, and you can explain each field of the handshake.
 
 #### Starter code
 
@@ -2256,8 +2256,8 @@ Unit tests cover sequence assignment, deduplication, sync ranges (empty, partial
 #### Extensions
 
 - End-to-end encryption with per-device keys, so that the server stores only ciphertext (§53.5 discusses the design).
-- Message search over each user's history with an inverted index (§16).
-- Attachments through presigned upload URLs to a local object store such as MinIO in Docker (§15).
+- Message search over each user's history with an inverted index (Chapter 16).
+- Attachments through presigned upload URLs to a local object store such as MinIO in Docker (Chapter 15).
 - Rolling deploys with graceful connection draining (§9.9.7).
 
 #### Self-assessment rubric

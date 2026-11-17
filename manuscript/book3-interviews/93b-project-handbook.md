@@ -86,7 +86,7 @@ flowchart LR
   R -.->|alert| O([On-call])
 ```
 
-**Reading the diagram.** Clients create jobs through the **Scheduler API**, which inserts rows into the **job store** (PostgreSQL in production, SQLite for the first milestone); the store is the only source of truth, and every state change is a single conditional `UPDATE`. The **recurrence planner** turns cron expressions into concrete `run_at` rows, one occurrence ahead. **Workers** pull: they claim due rows with `SELECT … FOR UPDATE SKIP LOCKED` (or an equivalent compare-and-set), receive a lease and a fencing token, heartbeat while working and finish with the token. All of these calls are synchronous request/response (solid arrows). Workers write their effect to the **downstream sink** (a payout API, a table) carrying the fence, and the sink rejects writes older than the newest fence it has seen. The **reaper** scans for expired leases and dead jobs; its alerts are asynchronous (dotted). Failure points: a worker can crash (lease expires, job is re-claimed), pause (it becomes a zombie holding a stale fence) or lose its connection; the store itself is the availability bottleneck and is made highly available with a replica and automatic failover (§27). Scaling: partition jobs by `hash(job_id)` across store shards and give each worker pool a shard set, or move to a log-based design (Kafka topics per delay bucket) once one database cannot sustain the claim rate.
+**Reading the diagram.** Clients create jobs through the **Scheduler API**, which inserts rows into the **job store** (PostgreSQL in production, SQLite for the first milestone); the store is the only source of truth, and every state change is a single conditional `UPDATE`. The **recurrence planner** turns cron expressions into concrete `run_at` rows, one occurrence ahead. **Workers** pull: they claim due rows with `SELECT … FOR UPDATE SKIP LOCKED` (or an equivalent compare-and-set), receive a lease and a fencing token, heartbeat while working and finish with the token. All of these calls are synchronous request/response (solid arrows). Workers write their effect to the **downstream sink** (a payout API, a table) carrying the fence, and the sink rejects writes older than the newest fence it has seen. The **reaper** scans for expired leases and dead jobs; its alerts are asynchronous (dotted). Failure points: a worker can crash (lease expires, job is re-claimed), pause (it becomes a zombie holding a stale fence) or lose its connection; the store itself is the availability bottleneck and is made highly available with a replica and automatic failover (§27.11). Scaling: partition jobs by `hash(job_id)` across store shards and give each worker pool a shard set, or move to a log-based design (Kafka topics per delay bucket) once one database cannot sustain the claim rate.
 
 #### Milestones
 
@@ -473,7 +473,7 @@ What to notice:
 
 ### 93.3.3 Real-time analytics pipeline
 
-**Level:** 3–4 · **Effort:** about 30–40 hours · **Related:** windows and watermarks §29.8, Flink state and checkpoints §29.9, Kafka consumers and offsets §31.7–31.8, full case study §56.7, streaming features §61.6
+**Level:** 3–4 · **Effort:** about 30–40 hours · **Related:** windows and watermarks §29.8, Flink state and checkpoints §29.9, Kafka consumers and offsets §31.7–§31.8, full case study §56.7, streaming features §61.6
 
 #### Goal and learning outcomes
 
@@ -714,7 +714,7 @@ After this project you should be able to:
 - Why recommenders are funnels and how budgets are split across stages — §68.4 and §56.5.
 - Two-tower models, in-batch negatives and serving with precomputed item embeddings — §68.6.
 - Ranking models and calibration — §68.7; offline metrics and A/B tests — §68.14.
-- ANN indexes (HNSW, IVF) and recall–latency trade-offs — §74.6–74.8.
+- ANN indexes (HNSW, IVF) and recall–latency trade-offs — §74.6–§74.8.
 - Feature stores and training–serving skew — §62.7 and §62.9 (the expert feature-store project, §93.4.2, builds one).
 
 #### Specification
@@ -886,7 +886,7 @@ What to notice:
 
 ### 93.3.5 Distributed ML inference service
 
-**Level:** 4 · **Effort:** about 30–40 hours · **Related:** model server anatomy §66.4, dynamic batching §66.6, autoscaling §66.9, model loading §66.10, versioning and safe deployment §66.11–66.12, reliability §66.14, ETA serving reference §66.16, case studies §85.6–85.7, load shedding §22.9
+**Level:** 4 · **Effort:** about 30–40 hours · **Related:** model server anatomy §66.4, dynamic batching §66.6, autoscaling §66.9, model loading §66.10, versioning and safe deployment §66.11–§66.12, reliability §66.14, ETA serving reference §66.16, case studies §85.6–§85.7, load shedding §22.9
 
 #### Goal and learning outcomes
 
@@ -905,7 +905,7 @@ After this project you should be able to:
 - Dynamic batching and its latency and throughput formula — §66.6. The starter reproduces that formula's predictions.
 - Autoscaling with headroom for reaction time — §66.9; cold-start time — §66.10.
 - Shadow, canary and rollback — §66.12; timeouts, fallbacks and load shedding — §66.14 and §22.9.
-- Little's Law and queueing near saturation — §4.10–4.11 and §89.11.
+- Little's Law and queueing near saturation — §4.10–§4.11 and §89.11.
 
 #### Specification
 
@@ -1098,7 +1098,7 @@ After this project you should be able to:
 - Sharded data parallelism (ZeRO/FSDP) — §65.9, for the extension.
 - What to checkpoint and how often — §65.15; failure rates and elastic restart — §65.16.
 - Gang scheduling and why distributed training needs all-or-nothing placement — §46.10; quotas and preemption — §46.8.
-- The full platform design — §85.5; goodput and stragglers — §80.9–80.10.
+- The full platform design — §85.5; goodput and stragglers — §80.9–§80.10.
 
 #### Specification
 
@@ -1729,11 +1729,11 @@ What to notice:
 
 ### 93.4.4 Scalable LLM inference platform (simulated where GPUs are needed)
 
-**Level:** 5 · **Effort:** about 60–90 hours · **Related:** latency metrics §73.4, GPU memory budget §73.5, batching §73.6, PagedAttention §73.7, prefix caching §73.8, disaggregation §73.12, scheduling and admission §73.14, capacity planning §73.15, gateways and routers §79.5–79.6, token quotas §79.9, tenant isolation §79.10, case study §86.5, practice question Ch 92 Q41
+**Level:** 5 · **Effort:** about 60–90 hours · **Related:** latency metrics §73.4, GPU memory budget §73.5, batching §73.6, PagedAttention §73.7, prefix caching §73.8, disaggregation §73.12, scheduling and admission §73.14, capacity planning §73.15, gateways and routers §79.5–§79.6, token quotas §79.9, tenant isolation §79.10, case study §86.5, practice question Ch 92 Q41
 
 #### Goal and learning outcomes
 
-QuickBite now runs several LLM workloads on self-hosted GPUs: the support chatbot (a Llama-2-7B-shaped model, up to 200 concurrent conversations at peak, §73.3), menu enrichment (100,000 dish updates a day, batch) and review tagging (20,000 reviews a day), while the operations agents of §93.4.5 call an external API today and are candidates to move in-house (Table 79.1). A platform team must serve them all from one GPU pool with per-tenant quotas in tokens, latency SLOs on time to first token (TTFT) and time per output token (TPOT), and a cost per million tokens that finance can see. You will build the **control plane and scheduler for real** (gateway, token quotas, router, admission control, per-replica continuous-batching scheduler with a paged KV cache, autoscaler) and **simulate the GPU** with the step-time model of §73.3, so that every number traces back to a stated assumption. If you have a GPU, swap the simulator for vLLM or another engine behind the same replica interface (§73.16) and compare.
+QuickBite now runs several LLM workloads on self-hosted GPUs: the support chatbot (a Llama-2-7B-shaped model, up to 200 concurrent conversations at peak, §73.5), menu enrichment (100,000 dish updates a day, batch) and review tagging (20,000 reviews a day), while the operations agents of §93.4.5 call an external API today and are candidates to move in-house (Table 79.1). A platform team must serve them all from one GPU pool with per-tenant quotas in tokens, latency SLOs on time to first token (TTFT) and time per output token (TPOT), and a cost per million tokens that finance can see. You will build the **control plane and scheduler for real** (gateway, token quotas, router, admission control, per-replica continuous-batching scheduler with a paged KV cache, autoscaler) and **simulate the GPU** with the step-time model of §73.3, so that every number traces back to a stated assumption. If you have a GPU, swap the simulator for vLLM or another engine behind the same replica interface (§73.16) and compare.
 
 After this project you should be able to:
 
@@ -1914,7 +1914,7 @@ What to notice:
 - Preemption here restarts the victim from scratch, including tokens already streamed; real engines keep the generated tokens and recompute their KV cache (or swap it to CPU memory). Count how much work preemption wastes in your version.
 
 ::: industry
-**vLLM and PagedAttention; Orca's iteration-level scheduling.** Yu et al. introduced iteration-level scheduling, in which the server reschedules the batch after every decoding iteration instead of after every request, in the Orca serving system [Yu et al. 2022]. Kwon et al. introduced PagedAttention, which stores the KV cache in fixed-size blocks addressed through block tables, and built vLLM on it, reporting large throughput gains over earlier systems by reducing KV-cache fragmentation [Kwon et al. 2023]. The starter's block allocator and per-iteration admission loop are simplified versions of these two ideas; §73.6–73.7 explain them in depth.
+**vLLM and PagedAttention; Orca's iteration-level scheduling.** Yu et al. introduced iteration-level scheduling, in which the server reschedules the batch after every decoding iteration instead of after every request, in the Orca serving system [Yu et al. 2022]. Kwon et al. introduced PagedAttention, which stores the KV cache in fixed-size blocks addressed through block tables, and built vLLM on it, reporting large throughput gains over earlier systems by reducing KV-cache fragmentation [Kwon et al. 2023]. The starter's block allocator and per-iteration admission loop are simplified versions of these two ideas; §73.6–§73.7 explain them in depth.
 *Evidence: Primary* — [Yu et al. 2022], [Kwon et al. 2023]
 :::
 
@@ -1979,7 +1979,7 @@ After this project you should be able to:
 - Tool schemas, validation and the mini agent loop — §77.5 (especially §77.5.5); compounding errors over $n$ steps — §77.6.4.
 - Durable execution for agents — §77.8.2 and §32.11.1; when multiple agents help — §77.9.1.
 - Step state, idempotency keys, compensation and retry budgets — §77.10; idempotency keys in general — §22.15.
-- Guardrails, human approval, least privilege and indirect prompt injection — §77.11–77.13 and §78.13.
+- Guardrails, human approval, least privilege and indirect prompt injection — §77.11–§77.13 and §78.13.
 - Cost per task — §77.17.1; the customer-support agent case study — §86.7.
 
 #### Specification

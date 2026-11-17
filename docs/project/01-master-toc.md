@@ -208,35 +208,35 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part XIV — Model Serving and Optimization
 
 **Ch 66 — Model Serving** (L3, B) — online, offline, batch, real-time, sync, async and streaming inference; model servers (Triton, TorchServe, TensorFlow Serving, KServe, Ray Serve, BentoML); dynamic batching; model-parallel serving; autoscaling; model loading; versioning; shadow, canary and A/B deployment; online vs offline inference
-**Ch 67 — ML Model Optimization** (L4, B) — quantization (dynamic, static, QAT, PTQ for LLMs: GPTQ, AWQ), pruning, distillation, ONNX, ONNX Runtime, TensorRT, compilation (XLA, TorchInductor, TVM), operator fusion, memory optimization, latency/throughput optimization; TensorRT vs ONNX Runtime
+66.3 Inference modes · 66.4 Anatomy of a model server · 66.5 Model servers compared · 66.6 Dynamic batching · 66.7 CPU versus GPU serving · 66.8 Model-parallel and multi-model serving · 66.9 Autoscaling inference · 66.10 Model loading and warm-up · 66.11 Model versioning and routing · 66.12 Safe deployment · 66.13 Batch inference at scale · 66.14 Reliability · 66.15 Observability for serving · 66.16 Reference architecture: QuickBite ETA serving at 40,000 predictions/s
 **Ch 68 — Recommendation and Ranking Systems Architecture** (L4, B) — multi-stage funnel (candidate generation, filtering, ranking, re-ranking), two-tower models, embedding retrieval with ANN, DLRM and embedding tables, feature crossing, exploration/exploitation, feedback loops, real-time personalization
-
+68.3 The recommendation problem · 68.4 The multi-stage funnel · 68.5 Candidate generation · 68.6 Two-tower models · 68.7 Ranking models · 68.8 Embedding tables at scale · 68.9 Feature crossing and context features · 68.10 Re-ranking and business logic · 68.11 Exploration versus exploitation · 68.12 Feedback loops and biases · 68.13 Real-time personalization · 68.14 Evaluation · 68.15 Cold start · 68.16 Reference architecture for QuickBite recommendations
 ## Part XV — MLOps and Responsible ML
 
 **Ch 69 — MLOps and ML Platforms** (L3–L4, B) — CI/CD/CT for ML, experiment tracking, MLflow, model registry, pipeline orchestration (Kubeflow, Airflow, Metaflow, Flyte), governance, reproducibility, model monitoring hooks, drift detection, rollback; platform case studies (Michelangelo, TFX, FBLearner as published)
-**Ch 70 — ML Monitoring** (L3, B) — data, concept, feature and prediction drift; statistical tests (PSI, KS, KL/JS divergence); performance degradation with delayed labels; prediction quality; freshness; latency; GPU utilization; cost; retraining triggers
+69.3 What MLOps adds to DevOps · 69.4 CI for ML · 69.5 Continuous training · 69.6 CD for ML · 69.7 Experiment tracking · 69.8 Model registry · 69.9 Pipeline orchestration for ML · 69.10 Reproducibility in practice · 69.11 Governance · 69.12 Monitoring hooks and the retraining loop · 69.13 Rollback · 69.14 Platform case studies as published · 69.15 Build versus buy an ML platform · 69.16 Reference QuickBite ML platform architecture
 **Ch 71 — Responsible ML: Fairness, Privacy and Explainability** (L4, B) — fairness metrics, bias mitigation, explainability (SHAP, LIME), differential privacy, federated learning, model cards, regulation (EU AI Act overview)
-
+71.3 Why responsible ML is a systems problem · 71.4 Fairness definitions · 71.5 Measuring fairness in practice · 71.6 Bias mitigation · 71.7 Explainability · 71.8 Explanations in production · 71.9 Privacy risks in ML · 71.10 Differential privacy for ML · 71.11 Federated learning · 71.12 Documentation and transparency · 71.13 Regulation overview · 71.14 A responsible-ML review process for teams
 ## Part XVI — LLM and AI Systems
 
 **Ch 72 — LLM Fundamentals** (L3, B) — transformer architecture, tokenization (BPE, SentencePiece), embeddings, attention, self-attention, multi-head/MQA/GQA, positional encoding (sinusoidal, RoPE), prefill and decode, KV cache, context windows, autoregressive generation, sampling, mixture of experts
-**Ch 73 — LLM Inference Infrastructure** (L4, B) — serving architecture, GPU memory requirements, KV cache management, static/dynamic/continuous batching, PagedAttention, prefix caching, FlashAttention, speculative decoding, tensor/pipeline/expert parallelism for inference, disaggregated prefill/decode, quantization, TTFT, TPOT/ITL, tokens/s, goodput, utilization, cost optimization; engines compared (vLLM, TensorRT-LLM, SGLang, TGI, llama.cpp)
+72.3 What a language model is · 72.4 Tokenization · 72.5 Token embeddings and the output head · 72.6 Attention from first principles · 72.7 Multi-head attention, MQA and GQA · 72.8 The transformer block · 72.9 Positional information · 72.10 Prefill versus decode · 72.11 The KV cache · 72.12 Context windows · 72.13 Autoregressive generation and sampling · 72.14 Mixture of experts · 72.15 FLOPs per token for inference and training · 72.16 Model families and scaling at a high level
 **Ch 74 — Embeddings, Vector Search and Vector Databases** (L3–L4, B) — embedding models, similarity metrics, exact vs approximate search, HNSW, IVF, PQ, ScaNN, DiskANN, filtering, vector database architecture, recall/latency trade-offs
-**Ch 75 — RAG Architecture** (L4, B) — document ingestion, parsing, chunking, embedding generation, indexing, similarity search, hybrid search with BM25, reciprocal rank fusion, reranking (cross-encoders), query rewriting, context construction, grounded generation and citations, retrieval evaluation, RAG monitoring, GraphRAG and agentic RAG
+74.3 Embedding models · 74.4 Similarity metrics · 74.5 Exact search and why it does not scale · 74.6 ANN quality metrics · 74.7 Graph-based ANN: HNSW · 74.8 Clustering-based ANN: IVF · 74.9 Compression: product, scalar and binary quantization · 74.10 ScaNN and DiskANN · 74.11 Filtering · 74.12 Updates and deletes · 74.13 Vector database architecture · 74.14 Capacity planning · 74.15 Choosing an approach
 **Ch 76 — LLM Adaptation: Prompting, Fine-Tuning and Alignment Pipelines** (L4, B) — prompting, in-context learning, structured output; SFT, LoRA/QLoRA, RLHF, DPO; RAG vs fine-tuning; training data pipelines for LLMs
-**Ch 77 — AI Agents and Agentic Systems** (L4, B) — agent architecture, tool calling, planning (ReAct, plan-and-execute), memory, orchestration, multi-agent systems, workflow engines, state management, retries, guardrails, human-in-the-loop, evaluation, observability, failure handling, security and sandboxing, Model Context Protocol
+76.3 The adaptation ladder · 76.4 Prompt engineering as an engineering discipline · 76.5 Structured output · 76.6 In-context learning limits · 76.7 Supervised fine-tuning · 76.8 Parameter-efficient fine-tuning: LoRA and QLoRA · 76.9 Serving fine-tuned models · 76.10 Preference alignment: RLHF and DPO · 76.11 Training data pipelines for LLM adaptation · 76.12 Continued pre-training and domain adaptation · 76.13 Distillation from large to small models · 76.14 RAG versus fine-tuning · 76.15 Risks and governance
 **Ch 78 — LLM Evaluation and Reliability** (L4, B) — offline/online evaluation, benchmarks and their limits, LLM-as-a-judge, human evaluation, hallucination detection, groundedness, retrieval quality, safety, prompt injection, model routing, fallback models, cost–quality trade-offs
-**Ch 79 — Production AI Infrastructure** (L4–L5, B) — model gateways, inference routers, multi-model serving, model registries, GPU clusters, distributed inference, autoscaling, multi-region AI, rate limiting by tokens, tenant isolation, AI observability, data privacy, cost allocation
+78.3 Why LLM evaluation is hard · 78.4 Offline evaluation design · 78.5 Benchmarks and their limits · 78.6 Reference-based and programmatic metrics · 78.7 LLM-as-a-judge · 78.8 Human evaluation · 78.9 Hallucination and groundedness · 78.10 RAG evaluation end to end · 78.11 Online evaluation · 78.12 Safety evaluation and red teaming · 78.13 Prompt injection · 78.14 Model routing · 78.15 Fallback models and reliability engineering · 78.16 Cost–quality trade-offs · 78.17 An evaluation platform architecture
 **Ch 80 — Large-Scale AI Infrastructure** (L5, B) — building and operating 10k+ GPU clusters (networking topologies, storage for training, power and cooling, failure rates and goodput), publicly documented infrastructure from Meta, Google (TPU), NVIDIA, OpenAI, Anthropic
-
+80.3 Why AI clusters are a distinct engineering discipline · 80.4 Anatomy of a large training cluster · 80.5 Networking for training · 80.6 Storage for training · 80.7 Power, cooling and facilities · 80.8 Reliability at scale · 80.9 Goodput and its components · 80.10 Stragglers and performance variability · 80.11 Scheduling and cluster operations · 80.12 Publicly documented infrastructure · 80.13 Inference at very large scale · 80.14 Economics · 80.15 Sustainability at AI scale
 ## Part XVII — ML and AI Case Studies
 
 **Ch 81 — Case Studies VI: Recommendation, Search and Ads** — 81.4 YouTube Recommendations · 81.5 Instagram Recommendations · 81.6 Netflix Recommendations · 81.7 Search Ranking · 81.8 Product Recommendation · 81.9 Personalized Advertising · 81.10 Large-scale Recommendation Platform
-**Ch 82 — Case Studies VII: Risk and Trust** — 82.4 Real-time Fraud Detection · 82.5 Credit Risk Prediction · 82.6 Spam Detection · 82.7 Content Moderation
+81.3 How to use these case studies · 81.4 Video recommendations (YouTube-scale) · 81.5 Feed and Explore recommendations (Instagram-style) · 81.6 Homepage recommendations (Netflix-style) · 81.7 Search ranking · 81.8 E-commerce product recommendation · 81.9 Personalized advertising · 81.10 Large-scale recommendation platform
 **Ch 83 — Case Studies VIII: Marketplace Forecasting and Optimization** — 83.4 Ride Demand Prediction · 83.5 ETA Prediction · 83.6 Dynamic Pricing
-**Ch 84 — Case Studies IX: Perception and Language** — 84.4 Face Recognition · 84.5 Image Classification Service · 84.6 Speech Recognition · 84.7 Real-time Translation
+83.3 How to use these case studies · 83.4 Ride Demand Forecasting · 83.5 ETA Prediction at Ride-Hailing Scale · 83.6 Dynamic (Surge) Pricing
 **Ch 85 — Case Studies X: ML Platforms** — 85.4 Feature Store · 85.5 Distributed Model Training Platform · 85.6 Multi-tenant ML Serving Platform · 85.7 Real-time ML Inference Platform
-**Ch 86 — Case Studies XI: LLM and Agent Systems** — 86.4 Enterprise RAG Assistant · 86.5 LLM Inference Platform · 86.6 AI Coding Assistant · 86.7 Customer-Support Agent · 86.8 AI-powered Search
+85.3 How to use these case studies · 85.4 Feature Store (company-wide, for hundreds of models) · 85.5 Distributed Model Training Platform (self-service for many teams) · 85.6 Multi-tenant ML Serving Platform · 85.7 Real-time ML Inference Platform (low-latency decisioning)
 
 ---
 
@@ -245,16 +245,16 @@ Levels: **L1** Absolute beginner · **L2** Intermediate · **L3** Advanced · **
 ## Part XVIII — Interview Preparation
 
 **Ch 87 — Interview Fundamentals** — what interviewers evaluate; requirements gathering; FR/NFR; estimation; API design; data modeling; diagrams; bottlenecks; trade-offs; communication; pacing a 45/60-minute interview
-**Ch 88 — The Interview Readiness Framework** — the 14-step traditional sequence; the ML extension (problem formulation → retraining); rubrics by level (L3–L7 equivalents: junior, mid, senior, staff, principal)
+87.3 What a system-design interview is and what it measures · 87.4 The interview timeline · 87.5 Requirements gathering · 87.6 Estimation in the interview · 87.7 API design in the interview · 87.8 Data modeling in the interview · 87.9 Drawing the high-level design · 87.10 Deep dives and bottlenecks · 87.11 Trade-off communication · 87.12 Communication and collaboration · 87.13 Common failure patterns · 87.14 How ML system-design interviews differ · 87.15 Preparing: a practice plan
 **Ch 89 — Capacity Estimation Handbook** — RPS, DAU, peak traffic, storage, bandwidth, read/write ratio, replication overhead, cache hit ratio, database sizing, memory, GPU memory, training FLOPs, inference throughput, cost (all with worked examples)
-**Ch 90 — Company-Level Interview Preparation** — Google, Amazon, Meta, Microsoft, Apple, Netflix, Uber, Airbnb, LinkedIn, Stripe, Databricks, Snowflake, OpenAI, Anthropic, NVIDIA (verified public information separated from general advice)
+89.3 The estimation mindset · 89.4 Reference numbers cheat sheet · 89.5 Users and traffic · 89.6 Storage · 89.7 Bandwidth · 89.8 Caching · 89.9 Database sizing · 89.10 Servers and memory · 89.11 Queues and streams · 89.12 Availability and durability budgets · 89.13 ML estimation · 89.14 GPU memory · 89.15 Training FLOPs and time · 89.16 LLM inference throughput · 89.17 Cost estimation · 89.18 Twelve end-to-end estimation drills · 89.19 A runnable estimation calculator
 **Ch 91 — Interview Practice Library I: Traditional System Design** (≥ 55 questions, easy → expert)
-**Ch 92 — Interview Practice Library II: ML and AI System Design** (≥ 50 questions, easy → expert)
+91.3 How to use this library · 91.4 Easy questions (Q1–Q12) · 91.5 Medium questions (Q13–Q28)
 
 ## Part XIX — Practical Projects
 
 **Ch 93 — Project Handbook** — 93.1 Beginner (REST API, URL shortener, Redis cache, rate limiter, load balancer simulation) · 93.2 Intermediate (message queue, distributed KV store, replicated DB simulation, notification service, real-time chat) · 93.3 Advanced (distributed job scheduler, event-driven microservices, real-time analytics pipeline, recommendation engine, distributed ML inference) · 93.4 Expert (distributed training platform, multi-tenant feature store, production RAG, scalable LLM inference platform, multi-agent orchestration platform)
-
+93.1 Beginner projects · 93.2 Intermediate projects
 ---
 
 # APPENDICES
