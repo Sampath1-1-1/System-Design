@@ -1070,3 +1070,659 @@ What to notice:
 | Deployment | Restart to deploy | Warm-up, shadow, canary, rollback | Automatic rollback criteria with statistical justification |
 | Scaling | Fixed replicas | Queue-depth autoscaling without oscillation | Replica count for 40,000/s with headroom for reaction time (§66.9) |
 | Explanation | Describes the server | Explains router choice and batching | Connects $t_0$, $t_1$ to hardware choice (CPU versus GPU) |
+
+## 93.4 Expert projects
+
+The expert projects are **platforms**: systems whose users are other teams or other programs. That changes what "done" means. A platform must be correct for workloads you did not write, isolate tenants from each other, expose versioned contracts and make its own failures diagnosable by someone else at 3 a.m. Three of the five (training, RAG, LLM inference) normally need GPUs or hosted models; here they are **simulated** on CPU with the mechanism kept real and the hardware replaced by a cost model whose parameters are stated. Be explicit about this when you present the work (§93.7): "the scheduler, checkpointing and all-reduce are real code; GPU time is modeled" is a strong statement, while implying you ran a cluster you did not run is a weak one.
+
+Each expert project is sized for 40–100 hours. They reuse earlier projects: the training platform needs the job scheduler of §93.3.1, the feature store feeds the inference service of §93.3.5, and the multi-agent platform calls the RAG system of §93.4.3 as a tool.
+
+### 93.4.1 Distributed training platform (simulated on CPU)
+
+**Level:** 5 · **Effort:** about 50–70 hours · **Related:** data parallelism §65.6, collectives §65.7, ZeRO and FSDP §65.9, checkpointing §65.15, fault tolerance §65.16, orchestration §65.18, gang scheduling §46.10, goodput §80.9, case study §85.5, practice questions Ch 92 Q28 and Q42
+
+#### Goal and learning outcomes
+
+QuickBite's ML teams train the ETA, ranking and fraud models daily and continue pre-training a 7B support model monthly on 64 GPUs (the worked example in §65.9). Each team today writes its own launch scripts, loses hours when a node dies, and cannot reproduce last month's run. You will build a small **training platform**: a job API, a gang scheduler that starts all workers of a job together or not at all, a data-parallel runtime with a real all-reduce, sharded checkpoints with automatic restart, and per-job goodput accounting. Workers are processes on one machine (`torch.distributed` with the CPU `gloo` backend works well), and GPU time is a stated cost model.
+
+After this project you should be able to:
+
+- **Implement** synchronous data-parallel training with a ring all-reduce, and prove numerically that it matches single-process training on the global batch.
+- **Make** a training job restartable: save model, optimizer, step and data position; restore them so that a crashed run ends bit-identical to an uninterrupted one.
+- **Choose** a checkpoint interval with the Young/Daly formula and account for goodput (useful step time over wall-clock time).
+- **Design** gang scheduling, quotas and preemption for many teams sharing a fixed pool.
+
+#### Prerequisites
+
+- The synchronous data-parallel step and its communication volume — §65.6; ring all-reduce and NCCL — §65.7.
+- Sharded data parallelism (ZeRO/FSDP) — §65.9, for the extension.
+- What to checkpoint and how often — §65.15; failure rates and elastic restart — §65.16.
+- Gang scheduling and why distributed training needs all-or-nothing placement — §46.10; quotas and preemption — §46.8.
+- The full platform design — §85.5; goodput and stragglers — §80.9–80.10.
+
+#### Specification
+
+**Functional requirements.**
+
+1. `POST /jobs` submits a training job: container image or entry point, `world_size`, resources per worker, dataset URI, `checkpoint_every`, priority and team.
+2. A **gang scheduler** places all `world_size` workers at once on available slots, respects per-team quotas and may preempt lower-priority jobs (which checkpoint before stopping).
+3. The **runtime** launches workers with rank and world size, runs synchronous data-parallel steps with an all-reduce of gradients, and logs step time, loss and throughput.
+4. **Checkpointing:** rank 0 (or every rank, for sharded state) writes model, optimizer, step, RNG states and data-loader position to a checkpoint store with an atomic `latest` pointer.
+5. **Fault handling:** a heartbeat failure from any worker stops the gang, reschedules it and resumes from the latest complete checkpoint, up to a restart budget.
+6. **Accounting:** per job, the platform reports wall-clock time, productive step time, time lost to restarts and checkpoint stalls, and goodput.
+
+**Non-functional requirements (laptop scale).**
+
+- **Correctness:** replicas stay bit-identical; data-parallel parameters match single-process training within $10^{-5}$; a crashed and resumed run matches an uninterrupted run exactly.
+- **Recovery:** after a worker is killed, training resumes within 30 s with at most `checkpoint_every` steps of lost work.
+- **Isolation:** a team at its quota cannot start new workers; a high-priority job preempts a low-priority one within 60 s with the victim checkpointed.
+- **Goodput:** at least 90% for a 30-minute job with one injected failure and a well-chosen interval.
+- **Reproducibility:** the job record pins code version, data snapshot, seed and configuration.
+
+::: example
+**Worked example — choosing `checkpoint_every` with Young's interval.** Use $\tau = \sqrt{2\,\delta\,M}$ and the waste estimate $w \approx \delta/\tau + (\tau/2 + R)/M$ from §65.15.2, with the per-GPU interruption rate taken there from the Llama 3 report (about one unexpected interruption per 50,700 GPU-hours), a checkpoint stall $\delta = 20$ s and restart time $R = 600$ s.
+
+1. QuickBite's 64-GPU run: $M = 50{,}700 / 64 = 792$ h $= 2{,}851{,}875$ s. $\tau = \sqrt{2 \times 20 \times 2{,}851{,}875} = 10{,}681$ s, about 3 hours. Waste $= 20/10{,}681 + (5{,}340 + 600)/2{,}851{,}875 = 0.19\% + 0.21\% = 0.4\%$.
+2. A 1,024-GPU tenant job: $M = 49.5$ h $= 178{,}242$ s. $\tau = \sqrt{2 \times 20 \times 178{,}242} = 2{,}670$ s, about 45 minutes. Waste $= 0.75\% + 1.09\% = 1.8\%$.
+3. On the laptop, inject a failure every $M = 4$ h with $\delta = 20$ s and $R = 120$ s: $\tau = 759$ s; waste $= 2.6\% + 3.5\% = 6.1\%$.
+
+**Interpretation.** Checkpoint frequency should fall as the square root of reliability: a job 16× larger needs checkpoints 4× more often. **Engineering implication.** The platform should compute `checkpoint_every` from the job's size, measured stall and fleet failure rate rather than leave it to each team; then report the realized goodput so teams can see what a slow checkpoint costs.
+:::
+
+#### Architecture
+
+**Figure 93.106 — Training platform: job API, gang scheduler, data-parallel workers and checkpoint store.**
+
+```mermaid
+flowchart LR
+  U([ML engineer]) -->|HTTPS submit job| API[Job API]
+  API -->|insert job| JDB[(Job and quota DB)]
+  GS[Gang scheduler] -->|read pending, quotas| JDB
+  GS -->|launch all ranks| N1[Worker rank 0]
+  GS -->|launch all ranks| N2[Worker rank 1..N-1]
+  N1 <-->|ring all-reduce| N2
+  DS[(Dataset snapshots)] -->|read shard| N1
+  DS -->|read shard| N2
+  N1 -->|write checkpoint| CK[(Checkpoint store)]
+  N2 -->|write shards| CK
+  N1 -.->|heartbeat, metrics| MON[Health monitor and accounting]
+  N2 -.->|heartbeat, metrics| MON
+  MON -->|failure: stop and requeue gang| GS
+```
+
+**Reading the diagram.** Engineers submit jobs to the **job API**, which records them in the **job and quota database**. The **gang scheduler** polls pending jobs, checks team quotas and free slots, and launches *all* ranks of a job at once; partial placement would leave workers waiting at the first collective while holding resources, which is the deadlock gang scheduling exists to prevent (§46.10.1). **Workers** read their data shards from immutable **dataset snapshots**, compute gradients and exchange them with a **ring all-reduce** (the bidirectional edge; synchronous, every step). Rank 0, or every rank for sharded optimizer state, writes **checkpoints** to the checkpoint store, finishing with an atomic `latest` pointer so a crash mid-write never corrupts the last good checkpoint. Workers send heartbeats and step metrics asynchronously to the **health monitor**, which on a missed heartbeat tells the scheduler to stop the whole gang and requeue it; the new gang restores from `latest`. Failure points: any single worker failure stops the job (synchronous training has no partial progress), a straggler slows every step, and checkpoint writes can stall training. Scaling: more workers raise throughput until all-reduce time dominates (§65.6.2); the scheduler scales with jobs, not steps, because it is off the step path.
+
+#### Milestones
+
+1. **Data-parallel runtime.** Workers as processes with `torch.distributed` (`gloo`), deterministic data sharding by step, all-reduce of gradients. *Done when:* final parameters match a single-process run on the global batch within $10^{-5}$.
+2. **Checkpoint and restart.** Save model, optimizer, step, RNG and data position; atomic `latest`. *Done when:* a run killed at a random step and resumed ends bit-identical to an uninterrupted run, for 10 random kill points.
+3. **Gang scheduler and job API.** Slots, quotas, priorities, preemption with checkpoint-before-stop; reuse the lease-based job store of §93.3.1. *Done when:* three teams' jobs share 8 slots with no partial gangs, and a high-priority job preempts within 60 s.
+4. **Failure detection and accounting.** Heartbeats, automatic gang restart with a restart budget, goodput report. *Done when:* a 30-minute job with one injected kill reports at least 90% goodput and the report's components add up to wall-clock time.
+5. **Sharded state.** Shard optimizer state across ranks (ZeRO stage 1 style) and write per-rank checkpoint shards. *Done when:* per-rank optimizer memory falls by roughly the world size and restore still matches exactly.
+
+#### Starter code
+
+The starter simulates four data-parallel workers in one process. Each worker computes gradients on its quarter of a 256-example global batch; a hand-written ring all-reduce (reduce-scatter then all-gather, as in §65.7) averages them. A checkpoint is taken every 50 steps, and a second run "loses" a worker at step 130 and restarts every rank from the step-100 checkpoint.
+
+```python
+import copy, io, torch, torch.nn as nn
+
+torch.set_num_threads(1)
+W, GLOBAL_BATCH, STEPS, CKPT_EVERY = 4, 256, 200, 50
+g = torch.Generator().manual_seed(0)
+X = torch.randn(8192, 20, generator=g)
+y = (X[:, :5].sum(1) + 0.3 * torch.randn(8192, generator=g) > 0).long()
+
+def batch_indices(step):                       # data order is a pure function of (seed, step)
+    epoch, k = divmod(step * GLOBAL_BATCH, len(X))
+    perm = torch.randperm(len(X), generator=torch.Generator().manual_seed(100 + epoch))
+    return perm[k:k + GLOBAL_BATCH]
+
+def ring_allreduce(vectors):
+    """Average equal-length vectors with reduce-scatter then all-gather (2(W-1) steps)."""
+    n = len(vectors); chunks = [list(v.chunk(n)) for v in vectors]
+    for s in range(n - 1):                      # reduce-scatter: worker r sends chunk (r-s)
+        sends = [(r, (r - s) % n, chunks[r][(r - s) % n].clone()) for r in range(n)]
+        for r, c, data in sends:
+            chunks[(r + 1) % n][c] += data
+    for s in range(n - 1):                      # all-gather: pass completed chunks around
+        sends = [(r, (r + 1 - s) % n, chunks[r][(r + 1 - s) % n].clone()) for r in range(n)]
+        for r, c, data in sends:
+            chunks[(r + 1) % n][c] = data
+    return [torch.cat(c) / n for c in chunks]
+
+def make():
+    torch.manual_seed(1)
+    m = nn.Sequential(nn.Linear(20, 64), nn.ReLU(), nn.Linear(64, 2))
+    return m, torch.optim.SGD(m.parameters(), lr=0.1, momentum=0.9)
+
+def train(fail_at=None):
+    replicas = [make() for _ in range(W)]
+    ckpt, step, wasted = None, 0, 0
+    while step < STEPS:
+        if step == fail_at:                     # worker 2 dies: every rank restarts from checkpoint
+            fail_at, wasted = None, step - ckpt["step"]
+            for m, opt in replicas:
+                m.load_state_dict(torch.load(io.BytesIO(ckpt["model"])))
+                opt.load_state_dict(torch.load(io.BytesIO(ckpt["opt"])))
+            step = ckpt["step"]; continue
+        shards = batch_indices(step).chunk(W)
+        grads = []
+        for (m, opt), idx in zip(replicas, shards):
+            opt.zero_grad()
+            nn.functional.cross_entropy(m(X[idx]), y[idx]).backward()
+            grads.append(torch.cat([p.grad.flatten() for p in m.parameters()]))
+        for (m, opt), avg in zip(replicas, ring_allreduce(grads)):
+            off = 0
+            for p in m.parameters():
+                p.grad.copy_(avg[off:off + p.numel()].view_as(p)); off += p.numel()
+            opt.step()
+        step += 1
+        if step % CKPT_EVERY == 0:              # rank 0 writes model + optimizer + step
+            buf_m, buf_o = io.BytesIO(), io.BytesIO()
+            torch.save(replicas[0][0].state_dict(), buf_m); torch.save(replicas[0][1].state_dict(), buf_o)
+            ckpt = dict(step=step, model=buf_m.getvalue(), opt=buf_o.getvalue())
+    flat = lambda m: torch.cat([p.detach().flatten() for p in m.parameters()])
+    spread = max((flat(m) - flat(replicas[0][0])).abs().max().item() for m, _ in replicas)
+    with torch.no_grad():
+        acc = (replicas[0][0](X).argmax(1) == y).float().mean().item()
+    return flat(replicas[0][0]), spread, acc, wasted
+
+def single_process():                           # reference: one process, full global batch
+    m, opt = make()
+    for step in range(STEPS):
+        idx = batch_indices(step); opt.zero_grad()
+        nn.functional.cross_entropy(m(X[idx]), y[idx]).backward(); opt.step()
+    return torch.cat([p.detach().flatten() for p in m.parameters()])
+
+ref = single_process()
+clean, spread, acc, _ = train()
+crashed, _, acc2, wasted = train(fail_at=130)
+print(f"replica divergence after {STEPS} steps: {spread:.1e}")
+print(f"max |data-parallel - single-process|: {(clean - ref).abs().max().item():.1e}")
+print(f"accuracy clean {acc:.4f} | with crash at step 130 {acc2:.4f} | steps redone {wasted}")
+print(f"max |crashed run - clean run|: {(crashed - clean).abs().max().item():.1e}")
+```
+
+Output:
+
+```text
+replica divergence after 200 steps: 0.0e+00
+max |data-parallel - single-process|: 1.8e-07
+accuracy clean 0.9628 | with crash at step 130 0.9628 | steps redone 30
+max |crashed run - clean run|: 0.0e+00
+```
+
+What to notice:
+
+- **Replica divergence is exactly zero.** Every worker receives the same averaged gradient and applies the same optimizer step, so the replicas never drift. If they ever differ, you have a non-deterministic kernel or a missing broadcast at start-up.
+- Data-parallel training differs from single-process training by $1.8 \times 10^{-7}$: floating-point addition is not associative, and averaging four shard means sums in a different order than one mean over 256 examples. This is the expected size of the difference; anything near $10^{-3}$ signals a bug such as summing instead of averaging.
+- The crashed run ends **bit-identical** to the clean run, because `batch_indices` is a pure function of the step and the checkpoint includes the optimizer's momentum buffers. Leave either out and the resumed run silently diverges: a classic reproducibility bug.
+- 30 steps were redone (130 − 100). With checkpoints every 50 steps, the expected loss is 25 steps per failure, which is the $\tau/2$ term of the Young waste estimate.
+- `ring_allreduce` moves $2(W-1)/W$ of the gradient per worker, independent of $W$ for large $W$ (§65.6.2). Count the bytes your implementation sends to confirm it.
+
+#### Test plan and load-test targets
+
+- **Numerical equivalence:** data-parallel versus single-process at world sizes 1, 2, 4 and 8; difference below $10^{-5}$.
+- **Restart determinism:** 10 random kill points; final parameters bit-identical; repeat with a kill *during* a checkpoint write (the previous checkpoint must be used).
+- **Scheduler tests:** never a partial gang; quotas enforced; preemption order by priority then age; starvation test where a large job eventually runs (backfill with a reservation, §46.12.2).
+- **Throughput:** measure step time against world size for a model with 1M, 10M and 50M parameters; plot compute versus all-reduce time and find where scaling stops paying.
+- **Goodput report:** for a 30-minute job with one failure, productive, checkpoint, lost and restart times add to wall-clock time within 1%.
+
+#### Failure-injection exercises
+
+**Table 93.111 — Distributed training platform: failure injections.**
+
+| Inject | Expected behavior | How you verify |
+|---|---|---|
+| `SIGKILL` one rank | Gang stopped, rescheduled, resumed from `latest` | Restart log; final parameters equal clean run |
+| Kill rank 0 during checkpoint write | Partial checkpoint ignored; previous one used | `latest` points to a complete checkpoint |
+| One rank 3× slower (straggler) | Every step slows; monitor flags the rank | Per-rank step-time histogram (§80.10) |
+| Checkpoint store full | Job fails loudly before losing the last good checkpoint | Pre-write space check; alert |
+| Corrupted data shard | Loader detects checksum mismatch; job stops | Data checksum error in job log |
+| Restart loop (bug crashes at step 120 each time) | Restart budget exhausted; job marked failed | Job state `FAILED` after N restarts, not infinite retries |
+
+#### Extensions
+
+- Switch to **FSDP** (`torch.distributed.fsdp` on CPU) and compare memory per rank and step time with plain data parallelism (§65.9).
+- Add **elastic training**: when a rank is lost, continue with $W-1$ ranks and a rescaled learning rate (§65.16.2), and compare goodput with stop-and-restart.
+- Add **asynchronous checkpointing**: copy state to memory, return to training and write in a background thread; measure the drop in $\delta$.
+- Model a **GPU cluster** in the scheduler (nodes, GPUs per node, network topology) and add topology-aware placement (§46.11.2).
+
+#### Self-assessment rubric
+
+**Table 93.112 — Distributed training platform: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Data parallelism | Multi-process training runs | Equivalence to single-process proven | You compute all-reduce volume and predict where scaling stops |
+| Fault tolerance | Manual restart from a checkpoint | Automatic restart, bit-identical resume | Young/Daly interval chosen and goodput reported per job |
+| Scheduling | FIFO launches | Gangs, quotas, preemption with checkpoint | Backfill and starvation analysis; fairness policy defended |
+| Reproducibility | Seeds fixed | Code, data, config and RNG pinned per job | You explain each source of non-determinism and how you removed it |
+| Honesty about simulation | Says "simulated" | States the cost model and its parameters | Explains which conclusions transfer to GPUs and which do not |
+
+### 93.4.2 Multi-tenant feature store
+
+**Level:** 5 · **Effort:** about 50–70 hours · **Related:** feature store architecture §62.7, point-in-time correctness §62.8, training–serving skew §62.9, freshness §62.10, online serving §62.11, Feast §62.12, governance §62.15, case study §85.4, multi-tenancy Ch 47, practice question Ch 92 Q27
+
+#### Goal and learning outcomes
+
+Three QuickBite teams compute overlapping features: the ETA team needs a restaurant's recent preparation time, the ranking team needs a dish's order count over the last hour, the fraud team needs a customer's refunds over the last week. Each team currently writes one SQL query for training and different service code for serving, and the two disagree in subtle ways. You will build a **multi-tenant feature store**: a registry of feature definitions owned by teams, an offline store with point-in-time joins for training data, an online store for low-latency serving, a materialization pipeline that keeps them consistent, and tenant isolation for namespaces, quotas and cost.
+
+After this project you should be able to:
+
+- **Implement** a point-in-time (as-of) join and demonstrate, with a model, how a naive join leaks future information into training.
+- **Build** one feature definition that produces both offline history and online values, and **verify** online–offline consistency automatically.
+- **Design** tenant isolation: namespaces, access control, per-tenant quotas on online reads and materialization, and cost attribution.
+- **Measure** online read latency for batched lookups and feature freshness, and state both as SLOs.
+
+#### Prerequisites
+
+- Feature store components and the online read path — §62.7; Feast's concepts — §62.12.
+- Point-in-time correctness and the as-of join — §62.8. The starter's leakage demo mirrors §62.8.2 with a different feature.
+- Training–serving skew detection — §62.9; freshness budgets — §62.10; key design and batch reads — §62.11.
+- Multi-tenancy: isolation patterns, noisy neighbors and quotas — §47.5, §47.7 and §47.8.
+- The full company-wide design — §85.4.
+
+#### Specification
+
+**Functional requirements.**
+
+1. **Registry:** teams declare entities (`restaurant`, `customer`, `dish`), feature views (source, transformation, window, TTL, owner, tenant) and feature services (the set a model reads). Definitions are versioned files reviewed like code.
+2. **Offline store:** append-only history of `(entity_id, feature_ts, created_ts, value)` per view, in Parquet or DuckDB/SQLite tables.
+3. **Training data API:** `get_historical_features(entity_df, features)` returns, for each row's `(entity_id, event_ts)`, the latest value with `feature_ts ≤ event_ts` and age within the TTL.
+4. **Materialization:** batch and streaming jobs write new values to both stores; the online store keeps the newest value by `feature_ts`, so out-of-order arrivals cannot regress it.
+5. **Online API:** `get_online_features(feature_service, entity_ids)` returns values for up to 100 entities in one call, with defaults for missing or stale values and per-value freshness metadata.
+6. **Tenancy:** each request carries a tenant identity; tenants read their own views and views explicitly shared with them; quotas apply to online reads per second and materialization jobs.
+
+**Non-functional requirements (laptop scale).**
+
+- **Online latency:** p99 below 10 ms for a 50-entity, 20-feature batch read against Redis or SQLite at 2,000 reads/s.
+- **Correctness:** 100% agreement between online values and offline as-of values at the same timestamp, checked hourly on a sample.
+- **Freshness:** streaming features visible online within 30 s of the event (p99); batch features within 1 hour of the source partition landing.
+- **Isolation:** one tenant at 10× its read quota does not raise another tenant's p99 by more than 20%; cross-tenant reads without a grant are refused and audited.
+- **Point-in-time safety:** a leakage test in CI fails any training-data path that returns a value with `feature_ts > event_ts`.
+
+#### Architecture
+
+**Figure 93.107 — Multi-tenant feature store: registry, offline and online stores, materialization and serving.**
+
+```mermaid
+flowchart LR
+  T([Team repos]) -->|feature definitions| REG[(Registry<br/>views, owners, tenants)]
+  SRC[(Warehouse tables)] -->|batch jobs| MAT[Materialization]
+  EV[[Event stream]] -->|stream jobs| MAT
+  REG -->|definitions| MAT
+  MAT -->|append history| OFF[(Offline store)]
+  MAT -->|upsert newest| ON[(Online store)]
+  TR([Training pipeline]) -->|entity rows and timestamps| HAPI[Historical API<br/>as-of join]
+  HAPI -->|read| OFF
+  SV([Model servers]) -->|tenant token, entity ids| OAPI[Online API<br/>auth, quotas]
+  OAPI -->|batch get| ON
+  OAPI -.->|served values log| OFF
+  CHK[Consistency checker] -->|compare samples| ON
+  CHK -->|compare samples| OFF
+```
+
+**Reading the diagram.** Teams commit **feature definitions** to the **registry**, which records owner, tenant, entity, transformation, window and TTL. **Materialization** runs the same definition as batch jobs over **warehouse tables** and as streaming jobs over the **event stream**, appending every value with its `feature_ts` to the **offline store** and upserting the newest value into the **online store**; writing both from one job is what keeps them consistent. Training pipelines call the **historical API**, which performs the as-of join against offline history. **Model servers** call the **online API** synchronously with a tenant token; the API authenticates, enforces per-tenant quotas and issues a batched read. Served values are logged asynchronously (dotted) back to the offline side, so future training can use exactly what was served (§62.9.4). The **consistency checker** samples entities and compares online values with offline as-of values. Storage boundaries: offline is columnar, cheap and append-only; online is a key–value store keyed by `tenant:view:entity`, sized for the latest values only. Failure points: a stalled stream job makes online values stale (TTL and freshness metadata expose it), a hot entity concentrates reads on one partition, and a schema change in a source table breaks a view (registry validation catches it). Scaling: the online store partitions by key hash; tenants with heavy traffic get dedicated partitions or clusters (§47.6).
+
+#### Milestones
+
+1. **Registry and offline store.** Define views in YAML or Python; materialize a batch view to Parquet or DuckDB. *Done when:* a view's history for 50 restaurants over two days is queryable and versioned.
+2. **Point-in-time joins.** Implement `get_historical_features` with TTL. *Done when:* the leakage test passes and the starter's leaky-versus-PIT comparison is reproduced on your store.
+3. **Online store and API.** Redis or SQLite online store, batched reads, defaults and freshness metadata. *Done when:* p99 below 10 ms for 50-entity reads at 2,000 reads/s.
+4. **Streaming materialization and consistency.** A stream job (reuse §93.3.3's worker) writing both stores; the hourly checker. *Done when:* online–offline agreement is 100% on a 1,000-entity sample and freshness p99 is below 30 s.
+5. **Tenancy.** Tenant tokens, grants for shared views, per-tenant quotas and a cost report. *Done when:* the noisy-tenant test meets the isolation target and a refused cross-tenant read appears in the audit log.
+
+#### Starter code
+
+The starter is an in-memory store with an append-only offline history and a newest-wins online map, namespaced by tenant. The feature is a restaurant's mean preparation time over its last five *finished* orders, written when each order finishes. Training rows are joined two ways: point-in-time at the order's placement time (what the server will see) and, the common bug, at the order's completion time. A one-variable linear model is fitted on each and evaluated on serving-time features.
+
+```python
+import bisect, random
+from collections import defaultdict
+
+class FeatureStore:
+    """Offline log + online latest-value store, namespaced by tenant."""
+    def __init__(self, ttl_s):
+        self.offline = defaultdict(list)            # (tenant, view, entity) -> sorted [(ts, value)]
+        self.online = {}                            # (tenant, view, entity) -> (ts, value)
+        self.ttl_s = ttl_s
+
+    def write(self, tenant, view, entity, ts, value):
+        rows = self.offline[(tenant, view, entity)]
+        bisect.insort(rows, (ts, value))            # append-only history
+        cur = self.online.get((tenant, view, entity))
+        if cur is None or ts >= cur[0]:             # newest event time wins, not arrival order
+            self.online[(tenant, view, entity)] = (ts, value)
+
+    def get_online(self, tenant, view, entity, now):
+        hit = self.online.get((tenant, view, entity))
+        if hit is None or now - hit[0] > self.ttl_s:
+            return None                              # missing or stale -> default upstream
+        return hit[1]
+
+    def as_of(self, tenant, view, entity, ts):
+        """Point-in-time lookup: latest value with feature_ts <= ts (strictly no future data)."""
+        rows = self.offline.get((tenant, view, entity), [])
+        k = bisect.bisect_right(rows, (ts, float("inf")))
+        if k == 0 or ts - rows[k - 1][0] > self.ttl_s:
+            return None
+        return rows[k - 1][1]
+
+rng = random.Random(5)
+fs = FeatureStore(ttl_s=6 * 3600)
+orders = []                                     # (restaurant, placed_ts, prep_minutes)
+for r in range(40):
+    base, recent = rng.uniform(8, 20), []
+    for placed in sorted(rng.randrange(0, 2 * 86400) for _ in range(150)):
+        rush = 6 if (placed // 3600) % 24 in (12, 13, 19, 20) else 0
+        prep = base + rush + rng.gauss(0, 3)
+        orders.append((f"r{r}", placed, prep))
+        recent = (recent + [prep])[-5:]          # feature: mean prep of last 5 finished orders,
+        done = placed + prep * 60                 # written when this order finishes
+        fs.write("eta", "prep_mean_5", f"r{r}", done, sum(recent) / len(recent))
+fs.write("fraud", "prep_mean_5", "r0", 0, -1.0)   # same entity id, different tenant
+
+def fit(xs, ys):                                  # least-squares y = a*x + b
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    a = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
+    return a, my - a * mx
+def mae(a, b, xs, ys):
+    return sum(abs(a * x + b - y) for x, y in zip(xs, ys)) / len(xs)
+
+rows = [(r, t, p) for r, t, p in orders if fs.as_of("eta", "prep_mean_5", r, t) is not None]
+rng.shuffle(rows); train, test = rows[:3000], rows[3000:]
+pit = lambda r, t, p: fs.as_of("eta", "prep_mean_5", r, t)                 # value known at order time
+leaky = lambda r, t, p: fs.as_of("eta", "prep_mean_5", r, t + p * 60)       # joined on completion time
+serve_x = [pit(*o) for o in test]; serve_y = [o[2] for o in test]
+for name, join in (("point-in-time", pit), ("leaky (completion ts)", leaky)):
+    xs = [join(*o) for o in train]; ys = [o[2] for o in train]
+    a, b = fit(xs, ys)
+    off = mae(a, b, [join(*o) for o in test], serve_y)
+    print(f"{name:<22} offline MAE {off:.2f} min | MAE on serving-time features {mae(a, b, serve_x, serve_y):.2f} min")
+
+now = 2 * 86400 + 3600
+mismatch = sum(fs.get_online("eta", "prep_mean_5", f"r{r}", now) != fs.as_of("eta", "prep_mean_5", f"r{r}", now)
+               for r in range(40))
+print(f"online/offline mismatches at t={now}: {mismatch}/40")
+print("tenant isolation holds:", fs.get_online("fraud", "prep_mean_5", "r0", 0) == -1.0
+      and fs.get_online("eta", "prep_mean_5", "r0", now) != -1.0)
+print("read after TTL expiry:", fs.get_online("eta", "prep_mean_5", "r0", now + 86400))
+```
+
+Output:
+
+```text
+point-in-time          offline MAE 3.17 min | MAE on serving-time features 3.17 min
+leaky (completion ts)  offline MAE 2.46 min | MAE on serving-time features 3.26 min
+online/offline mismatches at t=176400: 0/40
+tenant isolation holds: True
+read after TTL expiry: None
+```
+
+What to notice:
+
+- The leaky join looks **better offline** (2.46 minutes) because joining at completion time includes the order's own preparation time in the feature. On features the server can actually see, it is **worse** (3.26 versus 3.17). This is the signature of leakage: an offline win that disappears or reverses online, and it is exactly why §62.8 insists on joining at the prediction timestamp.
+- `as_of` uses `bisect_right` on `(ts, inf)`, so a value written at exactly the prediction time is included. Decide deliberately whether "at" counts as "before" for your sources, and test the boundary.
+- The online store keeps the value with the newest `feature_ts`, not the newest arrival. A late-arriving old value therefore cannot overwrite a fresher one, which would otherwise create online–offline mismatches that are hard to trace.
+- Tenants share entity IDs (`r0` exists in both `eta` and `fraud`) but not values: the namespace is part of every key. In your version, namespaces must also be part of access control and of the online store's key schema, not just a Python tuple.
+- TTL turns staleness into an explicit `None`, so the caller chooses a default rather than silently using a day-old value.
+
+::: industry
+**Uber Michelangelo's shared feature store.** Hermann and Del Balso described Michelangelo's feature store as shared across teams, with batch-computed features stored for training in Hive and bulk-loaded into Cassandra for serving, and near-real-time features computed from Kafka streams written to Cassandra and logged back for training; a domain-specific language applied the same transformations in training and serving [Hermann and Del Balso 2017]. The project's single materialization job writing both stores is the same idea at laptop scale. §62.13.1 summarizes this and other published designs.
+*Evidence: Primary* — [Hermann and Del Balso 2017]
+:::
+
+#### Test plan and load-test targets
+
+- **Leakage test in CI:** for random entity rows, assert every returned value has `feature_ts ≤ event_ts`; inject a deliberate off-by-one and confirm the test fails.
+- **Consistency test:** hourly sample of 1,000 entities per view; online equals offline as-of at the same instant; mismatches reported by view and owner.
+- **Out-of-order writes:** replay a stream with 5% reordering; the online value must equal the offline newest-by-`feature_ts`.
+- **Load test:** 2,000 online reads/s of 50 entities × 20 features for 10 minutes; p99 below 10 ms; measure the effect of pipelining or `MGET` versus per-key reads.
+- **Isolation test:** tenant A at 10× quota while tenant B runs at its normal rate; B's p99 rises by at most 20% and A receives `429`s.
+
+#### Failure-injection exercises
+
+**Table 93.113 — Multi-tenant feature store: failure injections.**
+
+| Inject | Expected behavior | How you verify |
+|---|---|---|
+| Stop the streaming job for 10 minutes | Online values age past TTL; defaults served with stale flags | Freshness metric and alert; stale-flag counter |
+| Late batch partition (source lands 3 h late) | Materialization waits or backfills; history stays point-in-time correct | Backfill log; leakage test still passes |
+| Source column renamed | Registry validation fails the job before writing | Job fails with a schema error; no partial writes |
+| Online store node lost | Reads for its keys fail over to a replica or default | Error and default rates; p99 during failover |
+| Noisy tenant floods reads | Quota throttles it; others' p99 within target | Per-tenant latency panels |
+| Clock skew on a producer (timestamps 10 min ahead) | Values rejected or clamped at ingestion | Clamp counter; no future values in history |
+
+#### Extensions
+
+- Add **on-demand features** computed at request time from request data (§62.4.1) and keep their code identical in training and serving.
+- Add **feature monitoring**: distribution drift per feature and tenant, with PSI alerts (§70.5).
+- Implement **embedding features** with versioning: a new embedding model version creates a new view, and consumers migrate explicitly.
+- Add **lineage and deletion**: given a customer ID, find and delete every feature value derived from that customer (§61.12, §62.15).
+
+#### Self-assessment rubric
+
+**Table 93.114 — Multi-tenant feature store: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Point-in-time | As-of join works | TTL, boundary tests and CI leakage test | You demonstrate leakage with a model and explain why offline gains vanish online |
+| Consistency | Two stores written | One definition, one job, automated checker | You explain newest-by-event-time and late-data handling |
+| Online serving | Single-key reads | Batched reads meet p99 at 2,000 reads/s | You size the online store and its partitions for QuickBite's entities |
+| Tenancy | Namespaced keys | Auth, grants, quotas, audit | Noisy-tenant test passes; cost attribution per tenant |
+| Explanation | Describes the components | Explains why feature stores exist (§62.6) | Knows when a team does *not* need one (§62.14) |
+
+### 93.4.3 Production RAG system
+
+**Level:** 5 · **Effort:** about 50–80 hours · **Related:** reference architecture §75.4, ingestion and ACL propagation §75.5, chunking §75.6, hybrid retrieval and RRF §75.8, reranking §75.9, context construction and injection §75.11, citations §75.12, retrieval evaluation §75.13, cost per query §75.15.3, filtered vector search §74.11, groundedness §78.9, RAG evaluation §78.10, case study §86.4, practice question Ch 92 Q32
+
+#### Goal and learning outcomes
+
+QuickBite's support assistant answers customers and helps human agents from an 8.6-million-token knowledge corpus (about 25,800 chunks): public FAQs, agent-only playbooks and finance-only reports, at about 75,000 queries a day and 8 queries per second at peak (§75.4). A demo RAG pipeline is an afternoon's work; a production one must never show a customer an agent-only refund threshold, must cite the passage behind every claim, must update within minutes when a policy changes, and must be evaluated before every change. You will build that system with a stub or small local model for generation, so that everything except the language model is real.
+
+After this project you should be able to:
+
+- **Build** an ingestion pipeline (parse, chunk, embed, index) that propagates document permissions and deletions to every derived chunk.
+- **Implement** hybrid retrieval (BM25 + dense) with reciprocal rank fusion and **permission-aware filtering applied before ranking**, and explain why post-filtering is both unsafe and lossy.
+- **Construct** grounded prompts with citations, and defend against prompt injection carried in retrieved text.
+- **Evaluate** retrieval (recall@k, MRR) and answers (groundedness, citation accuracy, refusal correctness) on a labeled set, and gate releases on it.
+
+#### Prerequisites
+
+- The two-pipeline RAG architecture and one query step by step — §75.4.
+- Parsing, deduplication, incremental updates, deletes and ACL propagation — §75.5, especially §75.5.4.
+- Chunking strategies and chunk-size choice — §75.6; embedding at scale and re-embedding — §75.7.
+- Dense, sparse and hybrid retrieval with RRF — §75.8; reranking — §75.9; filtered ANN search — §74.11.
+- Context construction, "lost in the middle", citations and prompt injection — §75.11 and §75.12; evaluation — §75.13 and §78.10.
+- The multi-tenant enterprise design — §86.4.
+
+#### Specification
+
+**Functional requirements.**
+
+1. **Ingestion:** watch a folder (or a mock CMS API) of Markdown, HTML and PDF documents with metadata `doc_id`, `acl_groups`, `version`, `updated_at`; parse, chunk by structure, embed and index. Updates replace all chunks of a document atomically; deletes remove them within 5 minutes.
+2. **Query API:** `POST /answer` with the user's identity and groups; returns an answer, citations (`doc_id`, chunk ID, quoted span) and a `trace_id`. `POST /search` returns ranked chunks only.
+3. **Retrieval:** BM25 and dense retrieval over chunks the user may read, fused with RRF, optionally reranked by a cross-encoder; top-k chunks under a token budget.
+4. **Generation:** a prompt template that separates instructions from retrieved content, requires citations, and instructs refusal when the context does not contain the answer. Use a local small model if available, otherwise a deterministic extractive stub that quotes the best-supported sentence.
+5. **Guardrails:** strip or neutralize instruction-like text in retrieved chunks; refuse or escalate when no chunk passes a relevance threshold; redact personal data in logs.
+6. **Feedback:** thumbs up/down and "escalated to human" events joined to the `trace_id`.
+
+**Non-functional requirements (laptop scale).**
+
+- **Security:** zero chunks returned to a user outside their ACL groups across the whole evaluation set and a fuzzed permission test (this is a hard gate, not a metric to trade off).
+- **Retrieval quality:** recall@5 at least 0.85 and MRR at least 0.6 on a 100-question labeled set built from your corpus.
+- **Answer quality:** at least 90% of answers grounded (every claim supported by a cited chunk) and at least 90% correct refusals on unanswerable questions, judged by rubric with a 20% human spot check (§78.7).
+- **Latency:** p95 below 3 s end to end with the stub generator at 8 QPS; retrieval p95 below 150 ms.
+- **Freshness:** an edited policy is answerable from its new version within 5 minutes; a deleted document is unretrievable within 5 minutes.
+- **Cost model:** cost per query computed with the §75.15.3 method; the book's worked figure for QuickBite is about \$0.0019 per query (\$141 a day at 75,000 queries).
+
+#### Architecture
+
+**Figure 93.108 — Production RAG: ingestion with ACL propagation, permission-filtered hybrid retrieval and grounded generation.**
+
+```mermaid
+flowchart LR
+  subgraph ING["Ingestion pipeline"]
+    SRC{{Document sources}} -->|change events| PAR[Parse and chunk]
+    PAR -->|chunks with doc ACL| EMB[Embed]
+    EMB -->|vectors and text| IDX[(Hybrid index<br/>BM25 and vectors, ACL field)]
+  end
+  U([Customer or agent]) -->|HTTPS question, identity| GW[Answer service]
+  GW -->|user groups| AUTH{{Identity provider}}
+  GW -->|query with ACL filter| IDX
+  GW -->|top chunks| RR[Reranker]
+  GW -->|grounded prompt| LLM[Generator<br/>local model or stub]
+  GW -.->|trace, citations, feedback| LOG[(Trace and eval store)]
+  LOG -->|labeled set, regressions| EVAL[Offline evaluation gate]
+```
+
+**Reading the diagram.** In the **ingestion pipeline**, **document sources** emit change events; **parse and chunk** splits each document by structure and copies the document's `acl_groups` and `version` onto every chunk; **embed** computes vectors; the **hybrid index** stores text for BM25, vectors for dense search and the ACL field used as a filter. Online, a user asks the **answer service** a question; the service resolves the user's groups from the **identity provider** (never from the request body), queries the index *with the ACL filter applied inside the search*, reranks the top candidates, builds a prompt that fences retrieved text as data, and calls the **generator**. Everything up to the answer is synchronous; traces, citations and feedback are written asynchronously to the **trace and eval store**, which feeds the **offline evaluation gate** that every index, prompt or model change must pass. Storage boundaries: the index holds copies of document text and must honor deletions; the trace store holds user questions and is subject to retention and redaction (§79.14). Failure points: ACLs that change in the source but not in the index (stale permissions are a data leak), injected instructions inside documents, an embedding-model change without re-embedding (vectors from two models are not comparable, §75.7.2) and generator timeouts. Scaling: ingestion scales with document change rate, retrieval with QPS (replicate the index; 25,800 chunks fit on one node), generation with tokens.
+
+#### Milestones
+
+1. **Corpus and labeled set.** Write or collect 100–300 documents with three ACL groups and 100 questions with gold chunks, including 15 unanswerable and 15 permission-sensitive questions. *Done when:* the labeled set is versioned and each question has a gold answer and gold chunk IDs.
+2. **Ingestion with ACLs.** Structure-aware chunker, embeddings (a small local sentence-embedding model, or the starter's hashed stand-in), index with an ACL field, update and delete paths. *Done when:* editing and deleting documents are reflected in search within 5 minutes, verified by a test.
+3. **Permission-aware hybrid retrieval.** BM25, dense, RRF, pre-filtering, optional reranker. *Done when:* the security gate passes and recall@5 is at least 0.85.
+4. **Grounded generation.** Prompt template, citations, refusal, injection defenses, extractive stub or local model. *Done when:* groundedness and refusal targets are met on the labeled set and an injected instruction in a document does not change behavior.
+5. **Evaluation gate and operations.** CI job that runs the evaluation on every change and blocks regressions; latency, cost and feedback dashboards. *Done when:* a deliberately worse chunk size is blocked by the gate, and p95 latency meets the target at 8 QPS.
+
+#### Starter code
+
+The starter indexes ten short QuickBite documents with three permission groups, implements BM25 and a stand-in dense encoder (hashed character trigrams; replace it with a real embedding model), fuses them with RRF ($k = 60$, §75.8.3), and compares three ways of applying permissions on eight labeled questions.
+
+```python
+import math, re, zlib
+from collections import Counter
+import numpy as np
+
+DOCS = [  # (doc_id, allowed groups, text)
+    ("faq-refund",   {"public"},  "Refunds for missing items are paid to the original card within 5 days."),
+    ("faq-late",     {"public"},  "If delivery is more than 20 minutes late you receive a voucher."),
+    ("faq-damaged",  {"public"},  "Report damaged food with a photo within 24 hours for a refund."),
+    ("faq-allergy",  {"public"},  "Allergen information is listed on each dish page by the restaurant."),
+    ("faq-courier",  {"public"},  "Couriers are assigned by distance and current load in your zone."),
+    ("agent-refund", {"agent"},   "Agents may approve refunds up to 40 dollars without a supervisor."),
+    ("agent-fraud",  {"agent"},   "Escalate refund requests from accounts with three refunds this week."),
+    ("fin-chargeback", {"finance"}, "Chargeback reserves are booked weekly against restaurant payouts."),
+    ("fin-refund-cost", {"finance"}, "Refund cost last quarter was 2.1 percent of gross order value."),
+    ("faq-promo",    {"public"},  "Promo codes cannot be combined and expire after 30 days."),
+]
+tok = lambda s: re.findall(r"[a-z0-9]+", s.lower())
+
+class BM25:
+    def __init__(self, texts, k1=1.2, b=0.75):
+        self.docs = [Counter(tok(t)) for t in texts]
+        self.avg = sum(sum(d.values()) for d in self.docs) / len(self.docs)
+        df = Counter(w for d in self.docs for w in d)
+        self.idf = {w: math.log(1 + (len(texts) - n + 0.5) / (n + 0.5)) for w, n in df.items()}
+        self.k1, self.b = k1, b
+    def scores(self, q):
+        out = []
+        for d in self.docs:
+            L = sum(d.values()); s = 0.0
+            for w in tok(q):
+                f = d.get(w, 0)
+                s += self.idf.get(w, 0) * f * (self.k1 + 1) / (f + self.k1 * (1 - self.b + self.b * L / self.avg))
+            out.append(s)
+        return np.array(out)
+
+def embed(text, dim=256):          # stand-in dense encoder: hashed character trigrams, L2-normalized
+    v = np.zeros(dim)
+    for w in tok(text):
+        w = f"#{w}#"
+        for i in range(len(w) - 2):
+            v[zlib.crc32(w[i:i + 3].encode()) % dim] += 1
+    return v / (np.linalg.norm(v) + 1e-9)
+
+bm25 = BM25([t for _, _, t in DOCS])
+E = np.stack([embed(t) for _, _, t in DOCS])
+
+def retrieve(query, groups, k=3, mode="pre"):
+    """Hybrid retrieval with reciprocal rank fusion; ACL applied before (pre) or after (post) top-k."""
+    allowed = np.array([bool(acl & groups) for _, acl, _ in DOCS])
+    cand = np.arange(len(DOCS)) if mode != "pre" else np.flatnonzero(allowed)
+    fused = Counter()
+    for scores in (bm25.scores(query), E @ embed(query)):
+        for rank, i in enumerate(sorted(cand, key=lambda i: -scores[i])):
+            fused[i] += 1 / (60 + rank + 1)                      # RRF with k = 60
+    top = [i for i, _ in fused.most_common(k)]
+    if mode == "post":
+        top = [i for i in top if allowed[i]]                       # may return fewer than k
+    return [DOCS[i][0] for i in top]
+
+EVAL = [("how much can an agent refund without approval", {"public", "agent"}, "agent-refund"),
+        ("refund for missing items", {"public"}, "faq-refund"),
+        ("my food arrived damaged", {"public"}, "faq-damaged"),
+        ("what did refunds cost last quarter", {"public", "finance"}, "fin-refund-cost"),
+        ("late delivery compensation", {"public"}, "faq-late"),
+        ("refund policy", {"public"}, "faq-refund"),
+        ("refund requests approved this week", {"public"}, "faq-refund"),
+        ("refund cost for accounts", {"public"}, "faq-refund")]
+for mode in ("none", "post", "pre"):
+    hits = leaks = short = 0
+    for q, groups, gold in EVAL:
+        res = retrieve(q, groups if mode != "none" else {"public", "agent", "finance"}, mode=mode)
+        hits += gold in res; short += len(res) < 3
+        leaks += sum(not (dict((d, a) for d, a, _ in DOCS)[r] & groups) for r in res)
+    print(f"ACL {mode:<4}: recall@3 {hits}/{len(EVAL)} | forbidden docs returned {leaks} | short result lists {short}")
+print("public user, 'refund policy' ->", retrieve("refund policy", {"public"}))
+```
+
+Output:
+
+```text
+ACL none: recall@3 6/8 | forbidden docs returned 9 | short result lists 0
+ACL post: recall@3 6/8 | forbidden docs returned 0 | short result lists 5
+ACL pre : recall@3 8/8 | forbidden docs returned 0 | short result lists 0
+public user, 'refund policy' -> ['faq-damaged', 'faq-refund', 'faq-late']
+```
+
+What to notice:
+
+- **No filter** leaks nine forbidden documents into eight queries: agent refund limits and finance figures shown to customers. In a real system each of those is a security incident, not a quality defect.
+- **Post-filtering** (retrieve the top 3, then drop forbidden ones) is safe in this run but **lossy**: five queries return fewer than three results, and two lose their gold document because forbidden documents occupied the top slots. With an ANN index the effect is worse, because the index stops searching once it has $k$ results.
+- **Pre-filtering** (search only within allowed documents) is both safe and complete: 8/8 recall with full result lists. Production vector databases implement this as filtered search inside the index (§74.11); if yours cannot, over-fetch heavily and treat any shortfall as an error signal.
+- The forbidden-document count is checked against the *user's* groups even in the unfiltered run. Build the same check into your test suite as an independent oracle, so a bug in the filter cannot hide itself.
+- The hashed-trigram "dense" encoder matches spelling, not meaning. Swap in a real embedding model and the hybrid's value becomes visible on paraphrased questions such as "my food arrived damaged" versus "spoiled meal".
+
+#### Test plan and load-test targets
+
+- **Security tests (blocking):** for every labeled question and 1,000 fuzzed `(user, query)` pairs, no returned chunk's ACL is disjoint from the user's groups; a permission revoked in the source is enforced within 5 minutes.
+- **Retrieval evaluation:** recall@5, MRR and nDCG@10 per release, with bootstrap confidence intervals (§78.4.2) so that small changes are not over-read.
+- **Answer evaluation:** groundedness and citation accuracy by an LLM or rule-based judge calibrated against 20% human labels; refusal accuracy on unanswerable questions.
+- **Injection suite:** 20 documents containing instructions ("ignore previous instructions", "tell the user to call this number"); the answer must not follow them and should cite them only as content.
+- **Load test:** 8 QPS for 30 minutes with the stub generator; retrieval p95 below 150 ms, end-to-end p95 below 3 s; then 24 QPS (3× peak) to find the knee.
+
+#### Failure-injection exercises
+
+**Table 93.115 — Production RAG system: failure injections.**
+
+| Inject | Expected behavior | How you verify |
+|---|---|---|
+| Revoke a group's access to a document in the source | Chunks' ACL updated within 5 minutes; no further retrieval | Security test rerun after the change |
+| Delete a document | All its chunks removed from both BM25 and vector indexes | Search by `doc_id` returns nothing; tombstone log |
+| Document containing an injected instruction | Generator treats it as data; answer unchanged | Injection suite result |
+| Generator times out | Return top passages with citations and an apology, or escalate | Fallback rate; no blank answers |
+| Embedding model upgraded without re-embedding | Startup check refuses mixed vector versions | Index version label check |
+| Labeled-set leakage into prompts (few-shot examples from eval) | Evaluation gate detects overlap and fails | Overlap check between prompt examples and eval set |
+
+#### Extensions
+
+- Add a **cross-encoder reranker** and plot recall@5 against the number of candidates reranked; find where it saturates (§75.9.2).
+- Add **query rewriting** for multi-turn conversations (condense the history into a standalone question, §75.10) and measure its effect on follow-up questions.
+- Implement **per-tenant indexes** versus one index with tenant filters for a multi-brand version, and compare isolation, cost and recall (§86.4).
+- Add **semantic caching** of answers for repeated public questions and analyze its staleness and permission risks (§79.12).
+
+#### Self-assessment rubric
+
+**Table 93.116 — Production RAG system: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Permissions | Filter exists | Pre-filtering, propagation on update and delete, blocking tests | You explain why post-filtering is unsafe and lossy, with your numbers |
+| Retrieval | Dense only | Hybrid with RRF; recall@5 ≥ 0.85 with intervals | You know where the reranker saturates and why |
+| Grounding | Answers with sources | Citations verified; correct refusals | Injection suite passes; you can explain defenses in depth (§78.13.2) |
+| Evaluation | Ad hoc checks | Versioned labeled set and CI gate | Judge calibrated against humans; regressions blocked automatically |
+| Operations | Runs locally | Latency, cost and freshness dashboards | Cost per query by component, with the levers that change it |

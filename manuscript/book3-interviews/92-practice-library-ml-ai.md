@@ -1373,3 +1373,890 @@ Neural ranking everywhere improves text matching but costs orders of magnitude m
 - **Senior:** cascade with costs, hybrid retrieval, position-bias correction.
 - **Staff:** treats labels as the core problem, prices every stage, guards slices and evaluation leakage.
 
+### 92.5.4 Q14. People You May Know
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §68.5.3 (item-to-item similarity), §68.12 (feedback loops), §71.9 (privacy risks), §53.7 (social graph)
+
+#### Prompt
+
+"Design the 'People You May Know' feature for a social network: suggest people the user is likely to know and connect with."
+
+#### Clarifying questions and assumptions
+
+- Scale? 1 billion users, 300 million daily; average 300 connections; connections are mutual (request and accept).
+- Surfaces? A PYMK module shown twice a day per active user, 3 suggestions visible at a time; also in onboarding.
+- Signals allowed? The graph, profile fields (schools, workplaces), and uploaded contacts with consent. No location history or messages.
+- Goal? Accepted connections that lead to engagement, not requests sent.
+
+#### Requirements
+
+- **FR:** ranked suggestions per user; dismiss ("not now", "don't suggest"); new users get suggestions within minutes of signup or contact upload.
+- **NFR:** module p99 ≤ 150 ms; candidates refreshed daily, with new connections reflected within an hour; never reveal private relationships (a suggestion must not imply that two people share a hidden contact).
+- **Quality:** accepted connections per impression above the current system without raising report or block rates.
+
+#### Estimation
+
+::: example
+**Worked example — Friends-of-friends is the expensive part (§89.6, §89.10, §89.13).** Assumptions: adjacency lists at 8 bytes per directed edge; 500 candidates kept per daily user at 12 bytes; 2 module loads per daily user per day, PAR 2; ranking 500 candidates at 10 µs each.
+
+1. Graph: $10^9 \times 300 / 2 = 1.5 \times 10^{11}$ edges; both directions $2 \times 1.5 \times 10^{11} \times 8 = 2.4$ TB.
+2. Two-hop paths for daily users: $3 \times 10^8 \times 300 \times 300 = 2.7 \times 10^{13}$ a day; sampling at most 100 neighbors of each friend: $9 \times 10^{12}$.
+3. Candidate store: $3 \times 10^8 \times 500 \times 12 = 1.8$ TB.
+4. Serving: $6 \times 10^8$ loads a day, 6,944/s average, **13,889/s peak**; $13{,}889 \times 5\ \text{ms} = 69$ busy vCPU, 139 at $u = 0.5$, 9 nodes.
+5. Outcomes: $1.8 \times 10^9$ impressions a day; at 1% sending requests and 40% accepted, 7.2 million new connections a day.
+
+**Interpretation.** Online ranking is a small fleet; the daily two-hop computation over a 2.4 TB graph is the heavy job. **Implication.** Precompute candidates offline with sampling for high-degree nodes, and rank online with fresh features.
+:::
+
+#### Data, labels and features
+
+- **Label:** suggestion impression → request sent → accepted within 14 days. Train two heads (send, accept) because a suggestion people send but recipients ignore creates spam-like requests.
+- **Candidates and features:** mutual-connection count and their strength (recent interaction, not just existence); shared schools and workplaces with overlapping years; contact-book matches (consented); graph-embedding similarity; recency of the candidate's join; whether the candidate has dismissed or blocked the user.
+- **Leakage:** features must be computed as of the impression; the connection itself, if it happened later, must not leak into "mutual connections".
+
+#### Model and evaluation
+
+Baseline: rank by mutual-connection count. Model: gradient-boosted trees or a small neural ranker over the features, with graph embeddings (for example node2vec-style or a graph neural network trained on link prediction) as a candidate source and a feature. Offline: recall of next-week new connections among candidates (retrieval gate), AUC and calibration of both heads, sliced by user tenure and region. Online: randomize by viewer; primary metric accepted connections followed by interaction within 28 days; guardrails on decline, report and block rates for the *recipient*, who is outside the treated group (an interference effect, so also monitor recipients in aggregate).
+
+#### High-level design
+
+**Figure 92.15 — PYMK: offline candidates, online ranking.**
+
+```mermaid
+flowchart LR
+  subgraph Offline
+    G[(Graph snapshot)] --> FOF[Two-hop job<br/>sampled FoF]
+    PROF[(Profiles, contacts)] --> AFF[Affiliation matcher]
+    G --> EMB[Graph embeddings]
+    FOF --> CAND[(Candidate store<br/>500 per user)]
+    AFF --> CAND
+    EMB --> CAND
+  end
+  U([User]) -->|HTTPS| PS[PYMK service]
+  PS --> CAND
+  PS --> OFS[(Online features)]
+  PS --> RK[Ranker: send x accept]
+  RK --> PF[Privacy and<br/>dismiss filter]
+  PF --> U
+  NE[[New connections,<br/>signups]] -.-> INC[Incremental<br/>candidate updates]
+  INC -.-> CAND
+  NE -.-> OFS
+```
+
+**Reading the diagram.** Offline jobs read a daily graph snapshot and profile data, generate candidates from sampled friends-of-friends, shared affiliations and embeddings, and write 500 per user to a candidate store. Online, the service reads candidates and fresh features, ranks by the product of send and accept probabilities, and filters by privacy rules and dismissals. Dotted arrows are streaming updates: new connections and signups update candidates and features within the hour. *Failure points:* a failed offline job serves yesterday's candidates (stale but safe); a broken privacy filter is a serious incident, so it is a separate, tested component. *Scaling:* the two-hop job partitions by user; serving scales horizontally.
+
+#### Serving and monitoring
+
+Monitor acceptance rate per impression, recipient decline and block rates, candidate-store freshness, and the share of suggestions from each source. Retrain weekly; regenerate candidates daily with incremental updates in between.
+
+#### Deep dives
+
+1. **Two-hop at scale.** High-degree nodes (celebrities) produce millions of paths; cap or sample their contribution and weight mutual connections by tie strength.
+2. **Privacy.** Contact-upload matches can reveal sensitive relationships (a therapist and a patient who share a phone contact). Require consent, never show the reason "in your contacts" for one-directional uploads, and exclude sensitive categories by policy (§71.9).
+3. **Feedback loop.** The network grows along suggested edges, so PYMK shapes the graph it learns from; keep an exploration slice and a holdout, and track diversity of new connections (not only within one cluster).
+
+#### Trade-offs and alternatives
+
+- Graph neural networks capture more structure than hand-made graph features but are heavy to train on 1.5×10¹¹ edges; start with features and embeddings.
+- Fully online candidate generation is fresher but too expensive; incremental updates for recent events get most of the freshness.
+
+#### Follow-up questions
+
+1. *"Why model accept as well as send?"* Requests that are ignored annoy recipients and degrade trust.
+2. *"New user with no connections?"* Contact upload, affiliations and popular-in-region accounts as cold-start candidates.
+3. *"How do you A/B test with network effects?"* Randomize by viewer and monitor recipients; for larger changes use graph-cluster randomization.
+4. *"A user complains PYMK suggested their ex."* Dismiss and block signals must be honored, and some relationships should be suppressible.
+
+#### What distinguishes levels
+
+- **Mid:** friends-of-friends ranked by mutual count.
+- **Senior:** offline candidates sized against the graph, send and accept heads, fresh features online.
+- **Staff:** privacy leaks through suggestions, interference on recipients, and the feedback loop on graph growth.
+
+### 92.5.5 Q15. Payment fraud detection
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §82.4 (full case study); §70.8 (QuickBite fraud monitoring), §89.18.9, §63.4.2 (label delay)
+
+#### Prompt
+
+"Design a fraud detection system that decides, during authorization, whether to approve, challenge or decline a card payment."
+
+#### Clarifying questions and assumptions
+
+As in §82.4: a payment processor with 100 million authorizations a day, PAR 5, 0.1% fraud; fraud confirmed by chargebacks within 120 days. A smaller variant is QuickBite's order-fraud model (0.5% fraud, flags 0.7% of orders at 50% precision and 70% recall, §70.8).
+
+#### Requirements
+
+- **FR:** synchronous decision with score and reason codes; analyst rules deployable in minutes; streaming velocity features; case review; label ingestion; audit.
+- **NFR:** p99 ≤ 50 ms, hard deadline 80 ms then fallback; 99.995% of authorizations get a decision; velocity counters fresh within 2 s.
+
+#### Estimation
+
+::: example
+**Worked example — Counter updates dominate (§82.4.4, §89.18.9).**
+
+1. Peak: **6,000 authorizations/s** (design).
+2. Counter updates: 5 entities × 6 windows = 30 per authorization, **174,000/s**.
+3. Feature state: 1.21 billion entities × 500 bytes = 605 GB, 1.8 TB replicated.
+4. Fleet: 6 ms of vCPU per decision; **9 nodes** across three regions, set by redundancy.
+
+**Interpretation.** Scoring is cheap; freshness of state is the system. **Implication.** Size the stream processor and feature store, not the model servers.
+:::
+
+#### Data, labels and features
+
+Labels: chargebacks and issuer fraud reports (weeks late), analyst verdicts (fast), with declined transactions censored (no chargeback can happen). Train on matured windows with point-in-time features. Features: velocity counts and amounts per card, device, IP, email and merchant over 1 minute to 30 days; card–merchant history; device reputation; amount relative to the card's norm.
+
+#### Model and evaluation
+
+Baseline: rules (velocity limits, block lists). Production: gradient-boosted trees plus a small network, calibrated; a **decision policy** declines when expected loss $p \times \text{amount}$ exceeds the cost of a false decline, with step-up authentication in between (§82.4.8). Offline: recall of fraud *dollars* at a fixed decline rate, calibration per score decile; online: champion–challenger with a small random holdout that is approved regardless, to measure what declines would have been.
+
+#### High-level design
+
+**Figure 92.16 — Fraud decision inside authorization.**
+
+```mermaid
+flowchart LR
+  M{{Merchant}} -->|authorize| GW[Payment gateway]
+  GW -->|80 ms deadline| FD[Fraud decision service]
+  FD --> FS[(Velocity feature store)]
+  FD --> MOD[Model and rules]
+  MOD --> POL[Decision policy<br/>approve, step-up, decline]
+  POL --> GW
+  GW -.->|auth events| ST[[Event stream]]
+  ST -.-> AGG[Stream aggregator]
+  AGG --> FS
+  CB{{Chargebacks,<br/>analyst verdicts}} -.-> LAB[Label join] -.-> TR[Weekly training]
+```
+
+**Reading the diagram.** The gateway calls the fraud service synchronously with an 80 ms deadline; the service batch-reads velocity features, runs rules and the model, and the policy returns a decision. Events flow asynchronously to the stream aggregator that updates counters within seconds; chargebacks and verdicts join to logged decisions for training weeks later. *Failure points:* model timeout falls back to rules and request-only features, never to failing the payment; aggregator lag lets card-testing bursts through. *Scaling:* the service is stateless; counter state is partitioned by entity key.
+
+#### Serving and monitoring
+
+Decline and step-up rates per merchant segment hourly, score distribution drift, counter lag, and precision on immature labels corrected by the label-arrival curve (§70.8). Retrain weekly; rules deploy in minutes.
+
+#### Deep dives
+
+1. **Fresh velocity features** with read-your-own-write so a burst is counted.
+2. **Cost-sensitive thresholds** from calibrated probabilities and amounts.
+3. **Censored, delayed labels:** matured windows, fast labels, holdout.
+
+#### Trade-offs and alternatives
+
+Graph features (shared devices across cards) catch rings but add latency; compute them nearline and serve as features.
+
+#### Follow-up questions
+
+1. *"Why not optimize F1?"* Errors have different dollar costs.
+2. *"The model is down."* Rules and request-only features; never block payments.
+3. *"How do you measure recall of declined fraud?"* A random holdout with a loss budget.
+4. *"How do fraudsters adapt?"* Probing with small amounts; use features expensive to fake.
+
+#### What distinguishes levels
+
+- **Mid:** classifier with imbalance handling.
+- **Senior:** synchronous path with fallback, velocity features sized by updates, calibrated threshold.
+- **Staff:** prices both errors, designs evaluation for censored delayed labels, governs rules and models together.
+
+### 92.5.6 Q16. ETA prediction
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §60.15 (QuickBite worked design), §83.5 (full case study, ride-hailing), §66.16 (ETA serving), §89.18.10
+
+#### Prompt
+
+"QuickBite shows a delivery time next to every restaurant in search results and on the order screen. Design the ETA prediction system."
+
+#### Clarifying questions and assumptions
+
+QuickBite assumptions: 500,000 orders a day; 2,000 search requests/s at peak × 20 restaurants = **40,000 predictions/s**, 360 million a day, about 720 per order; median delivery 35 minutes. Being late costs more than being early (refunds, churn).
+
+#### Requirements
+
+- **FR:** ETA per restaurant in search; quoted ETA at checkout; re-prediction at each order status event.
+- **NFR:** p99 ≤ 100 ms inside search; quality SLI: share of orders delivered within ±5 minutes of the quote, per city; fallback ladder so search never lacks an ETA.
+
+#### Estimation
+
+::: example
+**Worked example — Size from predictions (§60.11.1, §89.18.10).**
+
+1. Peak 40,000/s; average 4,167/s (PAR 9.6).
+2. Trees at 0.1 ms vCPU: 4 busy vCPU; one node, **three** for zone redundancy, \$2.31/h.
+3. Cost: \$0.000154 per 1,000 predictions, about \$0.00011 per order. A 2 ms deep model needs 11 nodes.
+
+**Interpretation.** Redundancy, not compute, sizes the tree fleet. **Implication.** Spend on features and freshness (kitchen backlog, courier supply), not on hardware.
+:::
+
+#### Data, labels and features
+
+Label: actual delivery time from order to drop-off, known about 35 minutes later; decompose into preparation, courier pickup and travel to give partial labels early. Features: restaurant preparation history by hour, live kitchen backlog, courier supply in the zone, travel time from a zone grid, weather, basket size. Leakage risk: features computed after order time.
+
+#### Model and evaluation
+
+Baseline: restaurant median preparation time plus grid travel time. Production: gradient-boosted trees predicting a high quantile (for example P80) with pinball loss (§57.11.2), so the quote is rarely late. Offline: pinball loss and within-±5-minute share per city and hour; online: A/B by city–time switchback because couriers are shared; conversion and lateness as joint metrics.
+
+#### High-level design
+
+**Figure 92.17 — QuickBite ETA (condensed from Figure 60.12).**
+
+```mermaid
+flowchart LR
+  APP([Customer app]) -->|HTTPS| SR[Search service]
+  SR -->|gRPC 100 ms| ETA[ETA service]
+  ETA --> OFS[(Online features)]
+  ETA --> GRID[(Zone travel grid)]
+  ETA --> MR[Tree model in-process]
+  EV[[Order and courier events]] -.-> SJ[Stream jobs:<br/>backlog, supply]
+  SJ --> OFS
+  ETA -.->|prediction log| EV
+  EV -.-> TP[Training pipeline] -.-> MR
+```
+
+**Reading the diagram.** Search calls the ETA service with a 100 ms deadline; the service makes one multi-get to the feature store and grid and runs the model in-process. Stream jobs refresh kitchen backlog and courier supply within about a minute; predictions are logged and joined with delivery events for training (dotted). *Failure points and fallbacks:* feature store down → reduced model; model down → grid heuristic; stream lag → age checks flag stale features. *Scaling:* stateless service scaled on predictions per second.
+
+#### Serving and monitoring
+
+Within-±5-minute SLI per city with label delay of about 35 minutes; fallback rate; feature freshness; mean signed error (bias) by hour. Retrain twice a week.
+
+#### Deep dives
+
+1. **Asymmetric loss** and quoting a quantile.
+2. **Real-time features**: backlog and supply freshness budget.
+3. **Feedback**: quoted ETAs change behavior (customers choose fast restaurants, dispatch prioritizes), so evaluate with switchbacks.
+
+#### Trade-offs and alternatives
+
+Deep sequence models over the courier's route help at re-prediction time, not in search, where trees meet the budget at a fraction of the cost.
+
+#### Follow-up questions
+
+1. *"Why not predict the mean?"* Lateness is costlier; quote a high quantile.
+2. *"How is ride-hailing ETA different?"* Dominated by driving over a road network and requested about six times as often (§83.5).
+3. *"The kitchen backlog feed lags."* Detect by age and fall back to historical preparation times.
+4. *"Why 720 ETAs per order?"* Every restaurant shown in every search counts.
+
+#### What distinguishes levels
+
+- **Mid:** regression on historical features.
+- **Senior:** quantile loss, fallback ladder, fleet sized from predictions, real-time features.
+- **Staff:** decomposes the label, designs switchback evaluation, and treats the quote as a marketplace lever.
+
+### 92.5.7 Q17. Ad CTR prediction at scale
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §81.9 (full case study); §68.7.5 (recalibration), §68.8 (embedding tables); Q10 for the basics
+
+#### Prompt
+
+"Design click-through and conversion prediction for a large social platform's ad system, where predictions feed a real-time auction."
+
+#### Clarifying questions and assumptions
+
+As in §81.9: 1 billion daily users, 30 ad opportunities each, PAR 2; 5,000 eligible ads per request after targeting; CTR 1%; conversions reported by advertisers up to 28 days later.
+
+#### Requirements
+
+- **FR:** calibrated pCTR and pCVR per (user, ad, context); auction ranking and second pricing; budget pacing; exactly-once billing events.
+- **NFR:** ad server p99 ≤ 100 ms (ranking ≤ 40 ms); calibration ratio 0.97–1.03 per major segment; continuous or hourly model updates.
+
+#### Estimation
+
+::: example
+**Worked example — Every 0.1% is money (§81.9.4).**
+
+1. Requests: $3 \times 10^{10}$/day; **694,444/s peak**.
+2. Light model on 5,000 ads at 2 µs: 13,889 cores; heavy model on 500 at 20 MFLOPs: **117 GPUs** across three regions.
+3. Feature lookups: **347 million/s**.
+4. Revenue at \$5 per 1,000 impressions: \$150 million a day, so a 0.1% improvement is \$150,000 a day.
+
+**Interpretation.** Model gains are worth more than the GPUs that produce them. **Implication.** Justify complexity in dollars and keep ad-side features in memory on each ad server.
+:::
+
+#### Data, labels and features
+
+Impressions with clicks (seconds) and conversions (up to 28 days); all clicks and 5% of non-clicks kept, corrected at serving. Features: user embeddings and history, ad and advertiser IDs, creative embeddings, context, and crosses; large hashed ID embedding tables (§68.8).
+
+#### Model and evaluation
+
+Baseline: logistic regression with crosses. Production: a deep ranking model (DLRM or DCN style, §68.7.3) with multi-task CTR and CVR heads, trained continuously with daily full retrains; delayed conversions handled by modeling the delay or by correcting late positives. Offline: normalized entropy, AUC, calibration per segment; online: revenue per 1,000 requests with user engagement, ad hides and advertiser conversions per dollar as guardrails.
+
+#### High-level design
+
+**Figure 92.18 — Ad ranking and the money path.**
+
+```mermaid
+flowchart LR
+  F([Feed]) -->|ad request| AS[Ad server]
+  AS --> TG[Targeting index]
+  TG --> LM[Light model CPU<br/>5,000 to 500]
+  LM --> HM[Heavy model GPU<br/>pCTR, pCVR]
+  HM --> AU[Auction and<br/>pacing check]
+  AU --> F
+  AS -.->|impressions| EV[[Event log]]
+  EV -.-> BILL[Exactly-once billing]
+  EV -.-> SPD[Spend aggregator] -.-> AU
+  EV -.-> TR[Continuous training] -.-> HM
+```
+
+**Reading the diagram.** The synchronous path narrows 5,000 targeted ads to 500 on CPU, scores them on GPU, and runs the auction against pacing state. Asynchronously, events feed billing (exactly once), the spend aggregator that updates pacing, and continuous training. *Failure points:* spend-aggregator lag causes overspend; an online update with bad calibration misprices every auction within minutes, so updates pass gates and can be rolled back instantly. *Scaling:* ad servers scale with requests; GPU rankers with candidates scored.
+
+#### Serving and monitoring
+
+Calibration ratio per advertiser segment and placement, normalized entropy on a holdout stream, overspend, label-delay distribution. Rollback path for every model push.
+
+#### Deep dives
+
+1. **Calibration as a contract** (the auction uses absolute probabilities).
+2. **Delayed conversions** and their effect on fresh models.
+3. **Online updates** safely gated.
+
+#### Trade-offs and alternatives
+
+Larger embedding tables improve accuracy but need sharded training and serving; measure the revenue gain per GPU.
+
+#### Follow-up questions
+
+1. *"Why calibrate if you only rank?"* Prices depend on the probability.
+2. *"Spend aggregator lags?"* Count pending spend and stop near the limit.
+3. *"Training on conversions not yet reported?"* Delay modeling or late-positive correction.
+4. *"How big is a meaningful gain?"* 0.1% revenue is \$150,000 a day here.
+
+#### What distinguishes levels
+
+- **Mid:** CTR model plus auction.
+- **Senior:** calibration, downsampling correction, latency budget and pacing.
+- **Staff:** prices model changes in dollars, makes the money path exactly-once and independent of model failures.
+
+### 92.5.8 Q18. Content moderation
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §82.7 (full case study); §63.14.3 (annotator well-being), §63.6 (agreement)
+
+#### Prompt
+
+"Design content moderation for a social network with text, images and video, enforcing the platform's policies at scale."
+
+#### Clarifying questions and assumptions
+
+As in §82.7: 500 million posts, 3 billion comments, 300 million images and 20 million videos a day; policies from spam to imminent harm; human review, appeals and regional law are in scope.
+
+#### Requirements
+
+- **FR:** hash matching against known violating content; per-policy classifiers; human review queues; actions (remove, restrict, age-gate); reports and appeals; policy versioning.
+- **NFR:** pre-publish checks p99 ≤ 300 ms; post-publish action p95 ≤ 10 min; automated removal precision ≥ 90% per policy; reviewer exposure limits.
+
+#### Estimation
+
+::: example
+**Worked example — People dominate (§82.7.4).**
+
+1. Items: $3.82 \times 10^9$/day; about **60 GPUs** classify everything at peak.
+2. LLM policy classifier on the borderline 1% of text: about \$2,520 a day.
+3. Human review: 3 million items a day × 45 s = 37,500 hours a day, about **10,000 reviewers** at 1,380 productive hours a year each.
+
+**Interpretation.** Compute is cheap; review labor is the cost and the capacity constraint. **Implication.** Judge model work by review hours removed at equal accuracy.
+:::
+
+#### Data, labels and features
+
+Labels from trained reviewers under versioned guidelines (with agreement measured), user reports (noisy, adversarial), and hash databases. Features: content embeddings per modality, account reputation, report history, context (where posted, audience).
+
+#### Model and evaluation
+
+Baseline: hash matching plus keyword rules. Production: multimodal multi-task classifiers with per-policy thresholds, an LLM policy classifier for borderline text whose prompt carries the current policy, and routing to review by severity, language and skill. Offline: per-policy precision and recall on golden sets labeled under the current policy version; online: **prevalence** (share of views that were violating, from random view samples) and appeal overturn rate.
+
+#### High-level design
+
+**Figure 92.19 — Moderation pipeline with people in the loop.**
+
+```mermaid
+flowchart LR
+  P([Poster]) -->|upload| PRE[Pre-publish:<br/>hash, fast check]
+  PRE --> PUB[(Published content)]
+  PUB -.-> CLS[Per-policy classifiers]
+  CLS --> RT{Score and<br/>severity}
+  RT -->|high| ACT[Automated action]
+  RT -->|borderline| LLM[LLM policy check]
+  LLM --> RQ[[Review queues]]
+  RT -->|uncertain| RQ
+  REP([Reports]) -.-> RQ
+  RQ --> HR[Human reviewers]
+  HR --> ACT
+  HR -.->|labels| TR[Training]
+```
+
+**Reading the diagram.** Severe known content is blocked before publication by hash matching and a fast check; everything else is published and classified asynchronously. High-confidence violations are actioned automatically; borderline items go through an LLM policy check and uncertain ones directly to queues routed by language and policy; reports join the same queues. Reviewer decisions become labels. *Failure points:* a classifier regression floods queues; a stale policy version mislabels data. *Scaling:* classifiers scale with GPUs; reviewers with hiring, so queue routing and automation determine capacity.
+
+#### Serving and monitoring
+
+Prevalence per policy from sampled views, queue age per severity, appeal overturn rate, reviewer occupancy (≤ 75% on graphic queues).
+
+#### Deep dives
+
+1. **Human workforce sizing** with Erlang C per queue and an occupancy cap.
+2. **Policy versioning:** golden sets and labels tagged by version.
+3. **Prevalence measurement** independent of the models.
+
+#### Trade-offs and alternatives
+
+Pre-publish checking of everything adds latency and over-blocks; reserve it for severe known content.
+
+#### Follow-up questions
+
+1. *"How do you measure what you missed?"* Prevalence from random view samples.
+2. *"Policy changes tomorrow."* New golden set, LLM prompt update, re-labeling, retraining.
+3. *"How many reviewers?"* Volume × handle time over productive hours, then Erlang C per queue.
+4. *"Different laws per country?"* Regional scope on actions, not separate models.
+
+#### What distinguishes levels
+
+- **Mid:** classifiers plus human review.
+- **Senior:** latency tiers, hash matching, per-policy thresholds, review routing.
+- **Staff:** sizes the workforce and shows it dominates cost, measures prevalence, treats well-being and appeals as requirements.
+
+### 92.5.9 Q19. Visual search
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §74.9 (product quantization), §74.11 (filtered search), §84.5 (image pipeline economics), §68.6 (two-tower training)
+
+#### Prompt
+
+"Design visual search for an e-commerce marketplace: a shopper photographs an item, or taps one in a picture, and we show similar products we sell."
+
+#### Clarifying questions and assumptions
+
+- Catalog? 200 million product images; 5 million added or changed a day.
+- Queries? 20 million visual searches a day, PAR 3; photos from phone cameras.
+- Results? 50 products, filtered by availability in the shopper's country, price range and category.
+- Latency? Results within 1 s end to end; server-side p99 ≤ 400 ms.
+
+#### Requirements
+
+- **FR:** detect and crop the main objects in the query photo; let the shopper choose one; return similar in-stock products with filters; log clicks and purchases.
+- **NFR:** server p99 ≤ 400 ms; new products searchable within 1 hour; index rebuild for a new embedding model without downtime.
+- **Quality:** recall@50 of the exact or near-exact product on a judged set; online add-to-cart rate from visual search.
+
+#### Estimation
+
+::: example
+**Worked example — Index memory and query compute (§74.14, §89.13).** Assumptions: 256-dimension embeddings; detection at 30 GFLOPs and embedding at 8 GFLOPs per query photo; an effective 50 TFLOP/s per GPU for small batches; HNSW-style graph with 64 neighbor links of 4 bytes per vector at the base layer.
+
+1. Vectors: FP32 $2 \times 10^8 \times 256 \times 4 = 204.8$ GB; FP16 102.4 GB; product quantization at 64 bytes **12.8 GB**.
+2. Graph links: $2 \times 10^8 \times 64 \times 4 = 51.2$ GB, so a graph index over PQ codes needs about 64 GB per replica.
+3. Queries: $2 \times 10^7 / 86{,}400 = 231$/s average, **694/s peak**; GPU work $694 \times 3.8 \times 10^{10} = 2.6 \times 10^{13}$ FLOP/s, 0.9 GPUs at $u = 0.6$; deploy 2 plus a spare.
+4. Re-embedding the catalog at 2,000 images/s per GPU: $2 \times 10^8 / 2{,}000 = 10^5$ s, about **28 GPU-hours**.
+
+**Interpretation.** Query compute is small; the index and its rebuild are the large resources. **Implication.** Compress vectors, re-rank the top few hundred at full precision, and treat a model change as a 28-GPU-hour migration.
+:::
+
+#### Data, labels and features
+
+- **Training pairs:** the domain gap is the problem: catalog photos are clean studio shots, queries are cluttered phone photos ("street-to-shop"). Positives: user photos in reviews paired with the reviewed product; the same product's different catalog images; query–purchase pairs from logs. Hard negatives: visually similar different products (same color, different cut).
+- **Judged set:** 5,000 query photos with the correct product and graded similar products, per category.
+- **Re-ranking features:** visual similarity, category match, price proximity, product popularity and rating, seller quality.
+
+#### Model and evaluation
+
+Baseline: a pretrained image embedding (no fine-tuning) with exact search on a category subset. Production: object detector for crops, an embedding model fine-tuned contrastively on the pairs above (a query tower and a catalog tower can share weights), an ANN index, then a learned re-ranker over the features. Offline: recall@50 and NDCG on the judged set by category; online: A/B by user on add-to-cart and purchase from visual search, with zero-result rate as a guardrail.
+
+#### High-level design
+
+**Figure 92.20 — Visual search: detect, embed, retrieve, re-rank.**
+
+```mermaid
+flowchart LR
+  S([Shopper]) -->|photo upload| VS[Visual search API]
+  VS --> DET[Detector and<br/>embedder GPU]
+  DET --> ANN[(ANN index<br/>PQ plus graph)]
+  ANN --> FLT[Availability and<br/>attribute filters]
+  FLT --> RR[Re-ranker]
+  RR --> S
+  CAT[[Catalog changes]] -.-> EMB[Batch embedder]
+  EMB -.-> ANN
+  S -.->|clicks, purchases| LOG[[Search logs]]
+  LOG -.-> TR[Training pairs]
+```
+
+**Reading the diagram.** The query photo goes over HTTPS to the API, which runs detection and embedding on GPU, searches the ANN index (the storage boundary), applies filters and re-ranks. Catalog changes are embedded and inserted asynchronously; logs produce new training pairs. *Failure points:* filters applied after retrieval can leave too few results when most neighbors are out of stock (§74.11), so the index carries filterable attributes; a model update without re-indexing mixes incompatible embeddings. *Scaling:* index replicas scale with query rate; partitions by category scale with catalog size.
+
+#### Serving and monitoring
+
+Budget: 150 ms detection and embedding (including upload decode), 50 ms ANN, 50 ms re-ranking. Monitor zero-result and low-result rates per filter, click-through by position, index freshness, and embedding-norm drift. Retrain monthly; re-index with each embedding version.
+
+#### Deep dives
+
+1. **Domain gap.** Training only on catalog images fails on phone photos; review photos and query–purchase pairs bridge it, and augmentations (blur, perspective, lighting) help.
+2. **Filtered ANN.** Shoppers filter by country and stock; pre-filtering by partition (per country) or filtered graph search keeps result counts stable (§74.11).
+3. **Index versioning.** Build the new index beside the old, shadow-compare recall on the judged set, switch atomically.
+
+#### Trade-offs and alternatives
+
+- Multimodal image–text embeddings allow "like this but in red", at higher cost and harder evaluation.
+- On-device embedding saves upload bandwidth and latency but freezes the model version per app release.
+
+#### Follow-up questions
+
+1. *"How do you handle an image with several items?"* The detector returns crops; the shopper picks one, or the top crop is searched by default.
+2. *"Exact product versus similar style?"* Two result sections with different thresholds.
+3. *"New products with no interactions?"* Image embeddings need none; they are searchable once indexed.
+4. *"How do you cut index memory further?"* Shorter PQ codes with full-precision re-ranking of the top 500.
+
+#### What distinguishes levels
+
+- **Mid:** embeddings plus nearest-neighbor search.
+- **Senior:** detection, domain-gap training data, ANN sized with compression, filtered search.
+- **Staff:** treats embedding versions as index migrations, designs the judged set, and links retrieval quality to purchases.
+
+### 92.5.10 Q20. Playlist generation
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §54.6 (music service), §68.10 (re-ranking and diversity), §68.15 (cold start), §68.11 (exploration)
+
+#### Prompt
+
+"For the music service of §54.6, design two features: a personalized weekly discovery playlist of 30 new-to-you tracks, and an endless 'radio' that continues from a seed track."
+
+#### Clarifying questions and assumptions
+
+- Scale from §54.6: 600 million monthly users, 240 million daily; 100 million tracks, of which about 30 million have enough plays to recommend confidently.
+- Discovery playlist: 400 million weekly listeners; generated before Monday morning local time.
+- Radio: a quarter of daily users start a radio session, about 4 requests per session for the next batch of tracks.
+- Objective? Listening that users choose to continue: saves, full plays, return next week; not raw minutes.
+
+#### Requirements
+
+- **FR:** weekly 30-track playlist per user of tracks they have never played; radio returning the next 10 tracks given the seed, recent plays and skips; "don't play this" and skip feedback applied to the next batch.
+- **NFR:** weekly generation within a 48-hour window; radio p99 ≤ 200 ms; no track repeated within a radio session; artist at most twice per playlist.
+- **Quality:** save rate and skip rate on recommended tracks; weekly return to the discovery playlist.
+
+#### Estimation
+
+::: example
+**Worked example — Weekly batch and online radio (§89.13, §89.10).** Assumptions: 1,000 candidates scored per user at 5 µs each; 8 bytes per stored track ID; 128-dimension FP32 track embeddings; radio PAR 2; radio ranks 300 candidates at 20 µs each; 16-vCPU nodes at $u = 0.5$.
+
+1. Weekly scoring: $4 \times 10^8 \times 1{,}000 = 4 \times 10^{11}$ scores × 5 µs = 556 vCPU-hours, 12 cores over a 48-hour window.
+2. Playlists: $4 \times 10^8 \times 30 \times 8 = 96$ GB.
+3. Embeddings: all tracks $10^8 \times 128 \times 4 = 51.2$ GB; the 30 million recommendable tracks 15.4 GB, which fits one server's memory for ANN retrieval.
+4. Radio: $2.4 \times 10^8 \times 0.25 \times 4 = 2.4 \times 10^8$ requests/day, 2,778/s average, **5,556/s peak**; $5{,}556 \times 6\ \text{ms} = 33$ busy vCPU, 67 at $u = 0.5$: 5 nodes plus redundancy.
+
+**Interpretation.** Both products are cheap to compute. **Implication.** The design effort belongs in sequencing, novelty and feedback, not hardware.
+:::
+
+#### Data, labels and features
+
+- **Labels from listening:** a play over 30 seconds (the qualifying-stream threshold of §54.6) is weakly positive, a full play or a save strongly positive, a skip within 30 seconds negative. Labels arrive within minutes; skips depend on position in the playlist (late tracks are skipped more), so log the position.
+- **Features:** user taste embedding from listening history; track embeddings from collaborative signals (co-occurrence in user playlists) and from audio (for new tracks); track metadata (genre, tempo, key, energy, release date, language); user context (time of day, device, activity).
+
+#### Model and evaluation
+
+Baseline: popular tracks in the user's top genres that they have not played. Production: candidate retrieval by ANN over collaborative track embeddings plus an audio-embedding source for new tracks; a ranker predicting save and full-play probabilities; then **sequencing**: a re-ranker that enforces novelty, artist limits and smooth transitions (tempo and energy) while maximizing the sum of scores, with maximal marginal relevance for diversity (§68.10). Offline: recall@30 of tracks the user discovers and saves in the following weeks (on held-out discovery events), plus diversity and novelty metrics. Online: A/B by user on save rate, return to the playlist next week, and skip rate; artist-exposure concentration as a guardrail.
+
+#### High-level design
+
+**Figure 92.21 — Weekly discovery and online radio share embeddings.**
+
+```mermaid
+flowchart LR
+  subgraph Weekly["Weekly batch"]
+    LH[(Listening history)] --> EMB[Embedding training<br/>collab and audio]
+    EMB --> TE[(Track embeddings)]
+    TE --> GEN[Candidate, rank,<br/>sequence per user]
+    GEN --> PL[(Playlist store)]
+  end
+  U([Listener]) -->|open playlist| PLS[Playlist service]
+  PLS --> PL
+  U -->|radio next| RAD[Radio service]
+  RAD --> ANN[(ANN over<br/>track embeddings)]
+  RAD --> SEQ[Rank and sequence<br/>with session skips]
+  SEQ --> U
+  U -.->|plays, skips, saves| EV[[Play events]]
+  EV -.-> LH
+  EV -.-> RAD
+```
+
+**Reading the diagram.** The weekly batch trains embeddings from listening history, generates, ranks and sequences each user's playlist and writes it to a store that the playlist service reads synchronously. The radio service retrieves candidates near the seed and the session's recent plays from the ANN index, then ranks and sequences them with in-session skips. Play events stream back (dotted) to history and to the radio's session state. *Failure points:* a failed weekly job must keep last week's playlist rather than show an empty one; radio falls back to precomputed similar-track lists. *Scaling:* weekly generation is parallel by user; radio scales with sessions.
+
+#### Serving and monitoring
+
+Monitor generation completion per region before the Monday deadline, save and skip rates by position, novelty (share of never-played tracks must be 100% for discovery), artist concentration, and audio-embedding coverage of new releases. Retrain embeddings weekly; rankers weekly.
+
+#### Deep dives
+
+1. **Sequencing.** A playlist is a set ordered for flow, not a top-30 list; greedy selection with transition costs and artist constraints is enough.
+2. **Cold-start tracks.** New releases have no co-listening; audio embeddings place them, and a few exploration slots gather feedback (§68.11).
+3. **Two-sided effects.** Recommendation concentrates plays on few artists; monitor exposure and reserve slots for emerging artists, because the catalog's supply depends on artists being heard.
+
+#### Trade-offs and alternatives
+
+- Sequence models over listening sessions capture flow directly but are harder to constrain; use them as a feature in the sequencer.
+- Fully online generation of the weekly playlist adds freshness nobody needs; a weekly product can be a batch.
+
+#### Follow-up questions
+
+1. *"How do you measure discovery?"* Saves and later plays of tracks first heard in the playlist.
+2. *"A user skips the first three radio tracks."* Shift the session embedding away from them and lower similarity to the seed.
+3. *"Why not maximize minutes?"* Background listening inflates minutes; saves and returns reflect choice.
+4. *"Licensing differs by country."* Filter candidates by market availability before ranking.
+
+#### What distinguishes levels
+
+- **Mid:** collaborative filtering top-30.
+- **Senior:** batch versus online split from the estimate, sequencing constraints, skip-aware labels, cold start via audio.
+- **Staff:** treats artist exposure and exploration as product requirements and designs metrics for discovery rather than consumption.
+
+### 92.5.11 Q21. Notification ranking and send-time optimization
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §88.7 (Deal Nudge worked design); §52.7 (notification platform), §68.12.2 (IPS)
+
+#### Prompt
+
+"Users complain about too many notifications. Design an ML system that decides which notification, if any, each user receives, and when to send it."
+
+#### Clarifying questions and assumptions
+
+As in §88.7: 80 million eligible users a day, up to 5 candidate notifications each; the cost of a bad send is a user disabling notifications. New here: choosing the send hour.
+
+#### Requirements
+
+- **FR:** pick at most one notification per user per day; pick a send hour; hard caps and quiet hours; log sends with propensities.
+- **NFR:** decisions ready before each time zone's day; send-time check re-reads fatigue counters; opt-out honored within a minute.
+
+#### Estimation
+
+::: example
+**Worked example — Adding the send-time model (§88.7.2, §89.13).** Assumptions: 20 µs per score; 24 candidate hours per user; the policy sends to 15% of users (12 million a day).
+
+1. Which-notification scores: $8 \times 10^7 \times 5 = 4 \times 10^8$, 2.2 vCPU-hours a day.
+2. Send-time scores: $8 \times 10^7 \times 24 = 1.92 \times 10^9$, 10.7 vCPU-hours.
+3. Delivery bursts: if 40% of sends land in one 10-minute window, $1.2 \times 10^7 \times 0.4 / 600 = 8{,}000$ sends/s; spread over 4 hours, 333/s.
+
+**Interpretation.** Compute stays trivial; send timing reshapes the notification platform's peak. **Implication.** Coordinate send-time choices with the platform's rate limits (§52.7).
+:::
+
+#### Data, labels and features
+
+Labels: open within 24 hours and opt-out within 48 hours (§88.7.1), plus, for timing, open within 1 hour of the chosen send time. Historical send times were chosen by campaigns, so open-by-hour data are confounded; collect exploration data with a randomized hour for 1% of sends, logged with its propensity. Features add the user's hourly app-activity profile and time zone.
+
+#### Model and evaluation
+
+Baseline: send at each user's most active hour. Production: Deal Nudge's open and opt-out models (§88.7.2), plus a send-time model predicting open probability by hour; choose the (notification, hour) pair maximizing $V \cdot p_{open} - K \cdot p_{off}$. Offline: inverse-propensity-weighted policy value on exploration data (§68.12.2); online: per-user randomization with a 2% no-send holdout; purchases over 28 days, opt-outs as guardrail.
+
+#### High-level design
+
+**Figure 92.22 — Which notification and when.**
+
+```mermaid
+flowchart LR
+  CAND[Candidate notifications] --> SC[Batch scorer<br/>open, opt-out]
+  ACT[(Hourly activity profiles)] --> ST[Send-time model]
+  SC --> PICK[Choose pair:<br/>notification, hour]
+  ST --> PICK
+  PICK --> SQ[[Scheduled sends]]
+  SQ --> CHK[Send-time check<br/>caps, quiet hours]
+  CHK --> NP{{Notification platform}}
+  NP -.->|opens, opt-outs| LOG[(Outcome log)]
+  LOG -.-> SC
+  LOG -.-> ST
+```
+
+**Reading the diagram.** A daily batch scores candidates and send hours and writes scheduled sends to a queue; at each scheduled time a deterministic check re-reads fatigue counters and quiet hours before handing the message to the notification platform. Outcomes flow back asynchronously to both models. *Failure points:* scoring failure means no sends that day, not a fallback to spam; clustering at the same hour overloads the platform, so the scheduler smooths within the chosen hour. *Scaling:* scoring parallel by user; delivery bounded by platform rate caps.
+
+#### Serving and monitoring
+
+Daily send volume, opens by hour versus predicted, opt-out rate, exploration share, platform queue depth at peak minutes.
+
+#### Deep dives
+
+1. **Confounded timing data** and randomized-hour exploration.
+2. **Harm model and holdout** from §88.7.
+3. **Interaction with platform capacity.**
+
+#### Trade-offs and alternatives
+
+A contextual bandit over hours learns online and handles drift; offline models with exploration logs are easier to evaluate first.
+
+#### Follow-up questions
+
+1. *"Why not send everyone at 18:00?"* Platform peak and lower opens for people busy then.
+2. *"How do you know timing helps?"* A/B with users randomized between fixed-hour and model-hour.
+3. *"Time zones change while traveling?"* Use device time zone at send time, not the profile's.
+4. *"Multiple teams want to notify the same user?"* A single arbiter across teams with one daily cap.
+
+#### What distinguishes levels
+
+- **Mid:** open-probability model with thresholds.
+- **Senior:** opt-out cost, caps, timing model with exploration.
+- **Staff:** off-policy evaluation, a no-send holdout, cross-team arbitration and platform capacity.
+
+### 92.5.12 Q22. ML query autocomplete
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §16.9 (worked design: trie and top-k serving), §81.7 (query understanding), §68.12.2 (position bias)
+
+#### Prompt
+
+"Our online store already has trie-based autocomplete that suggests the most popular completions. Design an ML version that ranks suggestions better, personalizes them and handles prefixes no one has typed before."
+
+#### Clarifying questions and assumptions
+
+- Scale from §16.9: 50 million searches a day, peak twice average, 8 characters typed per search, half of keystrokes send a request; 10 million distinct past queries.
+- Budget? The whole round trip within 100 ms; the ranking step gets 10 ms.
+- Personalization? Signed-in users' recent searches and category interests; nothing sensitive.
+- Safety? Never suggest offensive, unsafe or trademark-abusive completions.
+
+#### Requirements
+
+- **FR:** top 10 completions per prefix; personalized re-ranking; completions for unseen prefixes; blocklist and safety filtering; trending queries within 15 minutes.
+- **NFR:** suggestion p99 ≤ 50 ms server-side; never slower than the trie-only path (fallback); offensive-suggestion rate near zero on audited samples.
+- **Quality:** fewer keystrokes per completed search and higher search success (a purchase or add-to-cart from the results).
+
+#### Estimation
+
+::: example
+**Worked example — Personalization costs cache hits (§16.9.1, §89.8, §89.13).** Assumptions: the ML ranker re-ranks 50 trie candidates at 5 µs each; an unpersonalized response cache hits 60% of requests, a personalized one 20%; 10 suggestions shown per request; 5% of requests hit prefixes with too few completions and use a small generative model (60 million parameters, 20 tokens, beam 10).
+
+1. Requests at peak: $1{,}157 \times 8 \times 0.5 = 4{,}630$/s (§16.9.1).
+2. Ranking: $4{,}630 \times 50 = 231{,}500$ scores/s, 1.2 busy vCPU.
+3. Backend load: unpersonalized, $4{,}630 \times 0.4 = 1{,}852$/s reach the trie service; personalized, $4{,}630 \times 0.8 = 3{,}704$/s.
+4. Generation: $4{,}630 \times 0.05 = 231$/s × $2 \times 6 \times 10^7 \times 20 \times 10 = 2.4 \times 10^{10}$ FLOPs = $5.6 \times 10^{12}$ FLOP/s, a fraction of one GPU.
+5. Training impressions: $5 \times 10^7 \times 8 \times 0.5 \times 10 = 2 \times 10^9$ suggestion impressions a day.
+
+**Interpretation.** ML ranking is cheap; personalization doubles backend traffic by defeating the cache. **Implication.** Cache the unpersonalized top 50 and re-rank per user at the edge of the service, so the cache still works.
+:::
+
+#### Data, labels and features
+
+- **Labels:** for each prefix shown, which suggestion was selected, or which query the user finally submitted (a better label, because it counts users who ignored the suggestions). Selections are position-biased: the first suggestion is chosen partly because it is first, so estimate position propensities from a small randomized shuffle and weight training examples (§68.12.2).
+- **Features:** candidate's global and recent frequency (decayed counts for trending), prefix length, candidate's search success rate (does the query lead to purchases?), user's recent queries and category affinities, session context (the product page the user is on), device and locale.
+
+#### Model and evaluation
+
+Baseline: most popular completion (the existing trie). Production: candidates from the trie (top 50 per prefix), from the user's own history, and from a small generative model for sparse prefixes; a gradient-boosted listwise ranker; a safety filter (blocklist, classifier) after ranking. Offline: mean reciprocal rank of the submitted query and keystrokes saved, on held-out sessions, sliced by prefix length and new versus returning users. Online: A/B by user; search success rate and keystrokes per search; guardrails on latency and zero-result searches.
+
+#### High-level design
+
+**Figure 92.23 — Cached candidates, per-user re-ranking.**
+
+```mermaid
+flowchart LR
+  B([Browser]) -->|HTTPS prefix| EDGE[Suggest service]
+  EDGE --> RC[(Response cache<br/>unpersonalized top 50)]
+  RC -.->|miss| TRIE[Trie service]
+  EDGE --> UP[(User recent queries)]
+  EDGE --> RK[Ranker 10 ms]
+  RK --> SF[Safety filter]
+  SF --> B
+  EDGE -.->|sparse prefix| GEN[Generative<br/>completion GPU]
+  LOGS[[Query and selection logs]] -.-> BUILD[Hourly trie build,<br/>trending counts]
+  BUILD -.-> TRIE
+  LOGS -.-> TR[Ranker training]
+```
+
+**Reading the diagram.** The browser sends the prefix over HTTPS; the suggest service reads unpersonalized candidates from a response cache (falling back to the trie service on a miss), reads the user's recent queries, re-ranks and filters before responding. Sparse prefixes trigger the generative model asynchronously from the main path, with a strict timeout. Logs feed an hourly trie build with trending counts and the ranker's training (dotted). *Failure points:* ranker timeout returns trie order; generation timeout returns fewer suggestions; a broken safety filter is unacceptable, so it runs in-process with no external dependency. *Scaling:* the cache absorbs most traffic; the trie scales by replication.
+
+#### Serving and monitoring
+
+Monitor p99 by stage, cache hit ratio, selection rate by position, offensive-suggestion audits, and trending freshness. Retrain weekly; rebuild the trie hourly.
+
+#### Deep dives
+
+1. **Cache-preserving personalization** (estimation step 3).
+2. **Labels from submitted queries** with position debiasing.
+3. **Safety of generated completions.** Generated text can produce unseen offensive or defamatory phrases; filter with a classifier and a blocklist, and show generated completions only above a confidence threshold.
+
+#### Trade-offs and alternatives
+
+- Generating all completions with a language model gives full coverage but cannot meet the latency budget at 4,630 requests/s on the head; use it only for the tail.
+- Per-user tries are memory-prohibitive; re-ranking a shared candidate list achieves most of the benefit.
+
+#### Follow-up questions
+
+1. *"How do trending queries appear quickly?"* Decayed counts from the log stream merged into the hourly build, with a fast path for spikes.
+2. *"Why use submitted queries as labels?"* Selections only exist when a suggestion was good enough to click.
+3. *"How do you keep personalization from being creepy?"* Use only the user's own recent searches and clear them when the user deletes history.
+4. *"How do you evaluate safety?"* Audited samples and a red-team list of prefixes.
+
+#### What distinguishes levels
+
+- **Mid:** ranks trie candidates with a model.
+- **Senior:** position-debiased labels, latency budget with fallback, cache impact of personalization.
+- **Staff:** separates head and tail strategies by cost, treats generated-suggestion safety as a requirement, and ties metrics to search success.
+
+### 92.5.13 Q23. Dynamic pricing
+
+**Difficulty:** Medium · **Time:** 45 min · **Related:** §83.6 (full case study, surge pricing); §83.4 (demand forecasts), §83.5 (pickup ETA)
+
+#### Prompt
+
+"Design dynamic pricing for a ride-hailing marketplace: set a price multiplier per area every minute so riders get cars quickly when demand exceeds supply."
+
+#### Clarifying questions and assumptions
+
+As in §83.6: 400,000 active hexagons at peak, re-priced every 60 s; multipliers capped by policy and regulation; the purpose is reliability (avoiding drivers chasing distant pickups), not revenue.
+
+#### Requirements
+
+- **FR:** multiplier per hexagon per minute; signed quotes valid for a few minutes; caps, smoothing and emergency mode; experimentation by switchback.
+- **NFR:** quotes never blocked by pricing failures (last-good table decaying toward 1.0); prices identical for all riders in a hexagon at a time, with no personal inputs.
+
+#### Estimation
+
+::: example
+**Worked example — Tiny compute, consequential numbers (§83.6.4).**
+
+1. Pricing work: $400{,}000 / 60 = 6{,}667$ hexagons/s; table of 900,000 × 32 bytes = 28.8 MB, replicated in every pricing node.
+2. Quote log: 150 million quotes a day, 75 GB, the training data for price response.
+3. Clearing example: forecast 120 requests, supply 80, rider elasticity 0.5, supply elasticity 0.3, so $m^\ast = 1.5^{1.25} = 1.66$; a cap at 1.5 leaves about 7.6 requests per 15 minutes waiting.
+
+**Interpretation.** The system is computationally trivial; elasticities and caps decide outcomes. **Implication.** Spend the design on estimation, stability and experiments.
+:::
+
+#### Data, labels and features
+
+Inputs: demand forecasts (§83.4), supply counts and pickup ETAs (§83.5), and two learned response models: rider conversion given price (label: quote became a request) and driver supply response to multipliers. Prices are set by the system itself, so observational data are confounded; estimate elasticities from randomized price bands or discontinuities.
+
+#### Model and evaluation
+
+Baseline: multiplier = forecast demand ÷ supply, capped and smoothed. Production: a control loop using the clearing formula with learned elasticities, step limits and smoothing; monotonic conversion models. Offline: elasticity calibration on randomized data; simulation of pickup ETA and unfulfilled rate. Online: **switchback** experiments by city and time window, since riders in A/B arms share drivers.
+
+#### High-level design
+
+**Figure 92.24 — Sense, decide, act.**
+
+```mermaid
+flowchart LR
+  EV[[Requests, sessions,<br/>driver locations]] -.-> AGG[Per-hexagon<br/>minute aggregates]
+  FC[Demand forecaster] --> PR[Pricing controller]
+  AGG --> PR
+  EL[(Elasticity models)] --> PR
+  PR --> TAB[(Multiplier table)]
+  TAB --> QS[Quote service]
+  R([Rider]) -->|fare quote| QS
+  QS -.->|quotes, conversions| LOG[(Quote log)]
+  LOG -.-> EL
+```
+
+**Reading the diagram.** Streaming aggregates and forecasts feed a controller that writes a replicated multiplier table each minute; the quote service reads it synchronously and signs quotes. Quotes and conversions return asynchronously to train elasticity models. *Failure points:* controller failure keeps the last-good table decaying toward 1.0; oscillation from over-reactive control is prevented by smoothing and step limits. *Scaling:* table replicated everywhere; controller partitioned by city.
+
+#### Serving and monitoring
+
+Pickup ETA and unfulfilled-request rate per hexagon (the targets), multiplier volatility, share of time at cap, complaints; audits that prices use no personal attributes.
+
+#### Deep dives
+
+1. **Confounded elasticity** and randomized price bands.
+2. **Control stability**: smoothing, step limits, caps.
+3. **Switchback experiment design** and sizing.
+
+#### Trade-offs and alternatives
+
+Personalized prices could raise revenue but undermine trust and invite regulation; area-level prices with caps are the defensible choice.
+
+#### Follow-up questions
+
+1. *"Why not A/B test by rider?"* Shared drivers bias the estimate.
+2. *"Pricing service down?"* Last-good table decaying to 1.0; never block quotes.
+3. *"A disaster strikes."* Emergency mode caps or freezes multipliers.
+4. *"How does pricing affect forecasting?"* Price is a feature; forecast unconstrained demand.
+
+#### What distinguishes levels
+
+- **Mid:** demand-over-supply multiplier.
+- **Senior:** control loop with caps and smoothing, quotes, fallback.
+- **Staff:** explains why surge exists, handles confounded elasticity, and designs switchbacks.
+

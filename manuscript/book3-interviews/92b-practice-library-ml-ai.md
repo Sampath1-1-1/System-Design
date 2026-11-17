@@ -1292,3 +1292,705 @@ Greedy is simple and immediate but myopic; reinforcement learning of the full po
 - **Mid:** predicts ETAs and assigns nearest courier.
 - **Senior:** batched assignment with learned costs, exactly-one assignment with leases.
 - **Staff:** uses Little's Law to show stacking is necessary, decides *when* to dispatch from ready-time quantiles, and evaluates with simulation and switchbacks because of interference.
+
+## 92.7 Expert (Q41–Q52)
+
+Expert prompts are platforms or products whose cost is measured in thousands of GPUs, whose quality cannot be read off a single metric, or whose failure modes include safety and abuse. The interviewer expects you to size the system from tokens, FLOPs or GPU-seconds within the first ten minutes, to name the one decision that moves cost or risk by multiples, and to define how quality is measured before you defend an architecture. Seven of the twelve questions have a full case study or an owning chapter; five are full solutions here. As in §92.6, all designs are *Evidence: Illustrative*.
+
+**Table 92.104 — Expert questions at a glance.**
+
+| Q | Title | Solution | Deciding deep dive | Owner |
+|---|---|---|---|---|
+| 41 | LLM inference platform | Compact | Size per class from token shapes; disaggregation | §86.5, Ch 73 |
+| 42 | LLM pre-training infrastructure | Compact | $6ND$, job MTBF, checkpoint bursts, goodput | Ch 65, Ch 80 |
+| 43 | Multi-tenant fine-tuning service | Compact | Job economics; multi-LoRA serving; base-version lock | §76.8–§76.9 |
+| 44 | AI coding assistant | Compact | Keystroke latency budget; prefix affinity; cancellation | §86.6 |
+| 45 | Multi-agent orchestration platform | Full | Durable execution, budgets, delegated permissions | Ch 77 |
+| 46 | LLM evaluation platform | Compact | Interval-based gates; judge calibration; tiered suites | Ch 78 |
+| 47 | AI answer engine | Compact | Eligibility, routing and cost per 1,000 queries | §86.8 |
+| 48 | GPU cluster scheduler | Compact | Gangs, topology, reservations and backfill | Ch 46, §80.11 |
+| 49 | Billion-scale vector database | Compact | Compression choice decides node count; deletes and filters | Ch 74 |
+| 50 | Guardrails and safety system | Full | Base rates, cascades and layered controls | §77.11, §78.12–§78.13 |
+| 51 | Image-generation service | Full | GPU-seconds per image; step distillation; safety | §66.6, §80.13 |
+| 52 | Cold-start recommendations with bandits | Full | Priors, exploration budget, logged propensities | §68.11, §68.15 |
+
+### 92.7.1 Q41. LLM inference platform
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §86.5 (full case study), Ch 73 (LLM inference; capacity plan §73.15), §89.16 (inference throughput), Ch 79 (gateways, quotas)
+
+#### Prompt
+
+"Design the internal platform that serves open-weight LLMs to every product team: chat, RAG, agents and batch jobs, on our own GPUs."
+
+#### Clarifying questions and assumptions
+
+Workload mix and token shapes per class? Models (70B-class and 8B-class)? SLOs on TTFT and TPOT? Why self-host (volume above break-even, fine-tuned weights, data residency)? Assume the §86.5 mix at peak: chat 300 calls/s (2,000 input, 350 output tokens), RAG 250/s (6,000 input, 250 output), agent steps 100/s (10,000 input, 250 output), classification 1,000/s on the 8B model.
+
+#### Requirements
+
+Functional: OpenAI-compatible chat, embeddings and batch APIs; model catalog with LoRA adapters; priority classes and token quotas; onboarding with evaluation gates; chargeback. Non-functional (Table 86.6): TTFT p95 ≤ 800 ms chat, ≤ 1.5 s RAG; TPOT p95 ≤ 50 ms; 99.9% per alias with fallback; quality within 1 point of the BF16 reference; one team's burst raises others' TTFT p95 by ≤ 20%; ≥ 45% busy GPU time.
+
+#### Estimation
+
+::: example
+**Worked example — GPU-seconds per call by class (numbers of §86.5.4).** Prefill time, decode step and GPU-seconds per request follow §89.16 and §73.15; H100 at \$2.50/h; FP8 KV cache of 163,840 bytes per token for the 70B model.
+
+1. RAG: prefill $5{,}200 \times 283\ \mu$s $= 1.472$ GPU-s; decode at a KV-limited batch of 128, 0.211; $g = 1.683$ GPU-s. Chat $g = 0.355$; agent $g = 0.914$.
+2. Busy 70B GPUs at peak: $250 \times 1.683 + 300 \times 0.355 + 100 \times 0.914 = 618.9$, of which prefill is 80%. RAG is 38% of calls and **68% of GPU time**.
+3. Colocated at $\rho = 0.5$: 311 four-GPU replicas, **1,244 GPUs**; disaggregated prefill and decode pools at $\rho = 0.7$: 177 + 47 replicas, **896 GPUs**.
+4. Cutting RAG prompts from 6,000 to 4,000 tokens frees about 142 busy GPUs.
+
+**Interpretation.** In a long-prompt fleet, prompt length is the first capacity lever and attainable utilization the second. **Engineering implication.** Size per class from token shapes, disaggregate the long-prompt 70B classes, and push prefix caching and shorter contexts before buying GPUs.
+:::
+
+#### Data, labels and features
+
+The platform's data are request ledgers (tokens in, cached, out; GPU-seconds; class; team), engine metrics (queue depth, KV usage, prefix-hit ratio) and evaluation suites for parity gates. "Labels" are suite scores per configuration (precision, speculation, engine version).
+
+#### High-level design
+
+**Figure 92.115 — Inference platform: gateway, router, disaggregated pools.**
+
+```mermaid
+flowchart LR
+  T([Team services]) -->|OpenAI-compatible API| GW[Model gateway:<br/>auth, token quotas]
+  GW --> RT{Router: class,<br/>prefix affinity, load}
+  RT --> PF[Prefill pool<br/>70B, TP=4]
+  PF -->|KV transfer| DC[Decode pool<br/>70B, TP=4]
+  RT --> S8[8B pool<br/>colocated]
+  RT -.->|P2 batch window| BT[Batch scheduler]
+  BT -.-> PF
+  DC -->|streamed tokens| GW
+  S8 --> GW
+  GW -.-> LED[(Usage ledger)]
+  EVS[Parity eval suite] -.->|gate| REG[(Model and<br/>config registry)]
+  REG -.-> PF
+  REG -.-> DC
+```
+
+**Reading the diagram.** The gateway authenticates, enforces token quotas and records usage; the router picks a pool by class and model, preferring replicas holding the request's prefix. Long-prompt 70B traffic prefills in one pool and decodes in another after a KV transfer; the 8B pool is colocated. Batch work fills night troughs at low priority. Every configuration change passes a parity suite before the registry rolls it out. Failure points: a pool outage (fallback to a second pool or an external API per alias), KV-transfer saturation, noisy neighbors (priority admission and per-team concurrency). Scaling: per pool on queue depth, KV usage and TTFT, not GPU utilization.
+
+#### Model and evaluation
+
+The "model" decisions are which open-weight models to serve, at which precision and layout. Gate each configuration on the platform suite (within 1 point of BF16, no safety regression), then canary by alias.
+
+#### Serving and monitoring
+
+Per pool: TTFT and TPOT by class, queue depth, KV usage, preemptions, prefix-hit ratio, transfer latency; per team: tokens, GPU-seconds, quota rejections; weekly busy versus provisioned GPU-hours.
+
+#### Deep dives
+
+1. **Capacity from token shapes.** A longer prompt raises decode cost too: fewer sequences fit in KV memory.
+2. **Disaggregation.** Buys attainable utilization under both SLOs, not cheaper calls [Zhong et al. 2024].
+3. **Parity gates.** Quantization, speculation and engine upgrades must be invisible on the evaluation suite.
+
+#### Trade-offs and alternatives
+
+API providers avoid fleet operations and win below break-even volume (§79.16); colocated pools with chunked prefill are simpler and may reach similar utilization (§73.14).
+
+#### Follow-up questions
+
+1. *Is GPU utilization a good autoscaling signal?* No; it reads near 100% whenever anything runs.
+2. *When not to disaggregate?* Small pools, decode-heavy traffic, slow interconnect.
+3. *How do you charge teams?* GPU-seconds or weighted tokens from the ledger; reserved capacity billed regardless.
+4. *A team needs a fine-tuned variant.* Multi-LoRA on the shared base (Q43).
+
+#### What distinguishes levels
+
+- **Mid:** an engine with continuous batching behind an API.
+- **Senior:** sizes from tokens, prefix caching, quotas.
+- **Staff:** sizes per class with the KV-limited batch, quantifies disaggregation as utilization, and gates every precision change on parity.
+
+### 92.7.2 Q42. LLM pre-training infrastructure
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** Ch 65 (distributed training: $6ND$ §65.4, checkpoints §65.15, fault tolerance §65.16), Ch 80 (cluster, network, storage, goodput), §89.15 (training FLOPs and time), §89.18.12 (pre-training drill)
+
+#### Prompt
+
+"We will pre-train a 405-billion-parameter dense model on about 15 trillion tokens. Design the infrastructure and tell me how long it takes and what it costs."
+
+#### Clarifying questions and assumptions
+
+GPU type and count available? Target MFU? Failure tolerance? Assume the reference job of Ch 80: 16,384 H100-class GPUs at $10^{15}$ FLOP/s, 40% MFU, 15.6 trillion tokens, one interruption per 50,700 GPU-hours (job MTBF 3.1 hours), \$2.50 per GPU-hour.
+
+#### Requirements
+
+Functional: run one synchronous job across 16,384 GPUs with tensor, pipeline and data parallelism; stream training data; checkpoint and restart automatically; detect stragglers and silent data corruption. Non-functional: goodput ≥ 90%; checkpoint stall ≤ 1% of step time; restart in ≤ 10 minutes; data loader never stalls the step.
+
+#### Estimation
+
+::: example
+**Worked example — Compute, time, failures and checkpoints (numbers of §65.4 and Chapter 80).** Use the compute-time-cost form of §89.15.
+
+1. Compute: $6ND = 6 \times 4.05 \times 10^{11} \times 1.56 \times 10^{13} = 3.79 \times 10^{25}$ FLOPs, matching the published figure [Dubey et al. 2024].
+2. Ideal time: $3.79 \times 10^{25} / (16{,}384 \times 4 \times 10^{14}) = 66.9$ days; ideal GPU-hours 26.4 million.
+3. At 90% goodput: 29.3 million GPU-hours, **74.6 days, about \$73 million**.
+4. Failures: at one interruption per 50,700 GPU-hours, $29.3 \times 10^6 / 50{,}700 \approx 580$ interruptions over the run (job MTBF 3.1 hours); the Young interval with a 20 s stall is $\sqrt{2 \times 20 \times 11{,}160} = 668$ s.
+5. Checkpoint: $4.05 \times 10^{11} \times 14$ bytes $= 5.67$ TB; averaging 8.5 GB/s, but keeping a synchronous stall under 1% needs about 846 GB/s: size the tier for a burst about 100 times its average.
+
+**Interpretation.** At this scale failures are routine and checkpoint bursts, not average bandwidth, size storage. **Engineering implication.** Asynchronous checkpoints to local memory then storage, automated restart in minutes, and goodput as the headline metric.
+:::
+
+#### Data, labels and features
+
+Tokenized, deduplicated, filtered corpus (about 15.6 trillion tokens at roughly 2 bytes each, around 30 TB of token shards), mixed by source weights; deterministic data loading by step so a restart resumes the exact sequence. Labels are the next tokens.
+
+#### High-level design
+
+**Figure 92.116 — Pre-training cluster: compute, fabric, storage and operations.**
+
+```mermaid
+flowchart LR
+  DATA[(Token shards on<br/>parallel file system)] -->|prefetch| GPUS[16,384 GPUs<br/>TP x PP x DP]
+  GPUS <-->|collectives over<br/>RDMA fabric| FAB[Rail-optimized<br/>fat tree]
+  GPUS -->|async checkpoint| MEM[Host memory<br/>staging]
+  MEM -.-> CKS[(Checkpoint tier)]
+  HM[Health and straggler<br/>monitor] -.->|cordon, replace| SCH[Gang scheduler<br/>with hot spares]
+  SCH --> GPUS
+  CKS -.->|restart| GPUS
+  GPUS -.->|metrics, loss| OBS[Training observability]
+```
+
+**Reading the diagram.** Data shards stream from a parallel file system; GPUs exchange gradients and activations over the RDMA fabric every step, synchronously. Checkpoints copy to host memory in seconds and drain asynchronously to the checkpoint tier. Health monitoring cordons failed or slow nodes, the scheduler swaps in hot spares, and the job restarts from the last complete checkpoint. Failure points: any GPU or link failure stops the whole job; silent data corruption (loss spikes, cross-replica checks); stragglers set step time. Scaling: hierarchical collectives and topology-aware placement keep communication within pods (§80.5).
+
+#### Model and evaluation
+
+The model is fixed by the prompt; the infrastructure's evaluation is goodput (useful step time over wall time), MFU, step-time variance and loss-curve health. Validate the configuration with short runs at scale before committing.
+
+#### Serving and monitoring
+
+Monitor step time and its variance per rank, MFU, interruptions by cause, time to restart, checkpoint stall and drain time, loss spikes and gradient norms.
+
+#### Deep dives
+
+1. **Parallelism layout.** Tensor parallelism inside a node, pipeline across nodes, data parallelism across replicas (§65.13).
+2. **Failure economics.** Job MTBF falls with GPU count; checkpoint interval and restart time set lost work (§80.9).
+3. **Storage bursts.** Stage checkpoints in host memory; stagger writes.
+
+#### Trade-offs and alternatives
+
+Fewer GPUs for longer lowers failure rates and network demands but delays the model; mixture-of-experts reduces FLOPs per token but adds all-to-all traffic (§65.12.2).
+
+#### Follow-up questions
+
+1. *Why does MFU stay near 40%?* Communication, pipeline bubbles, memory-bound kernels and stragglers.
+2. *How do you detect silent corruption?* Loss and gradient anomalies, periodic cross-replica checksums, burn-in tests.
+3. *What does one point of goodput cost?* About 1% of 26.4 million GPU-hours, roughly \$0.7 million.
+4. *How big is the power draw?* Megawatts at facility level; see §80.7.
+
+#### What distinguishes levels
+
+- **Mid:** data parallelism and checkpoints.
+- **Senior:** $6ND$ time and cost, 3D parallelism, restart.
+- **Staff:** derives job MTBF and checkpoint interval, sizes storage for bursts, and manages goodput as a budget.
+
+### 92.7.3 Q43. Multi-tenant fine-tuning service (LoRA)
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §76.8 (parameter-efficient fine-tuning), §76.9 (multi-LoRA serving), §85.5 (training platform), §79.10 (tenant isolation)
+
+#### Prompt
+
+"Our customers want to fine-tune our 7B model on their own data and call their tuned model through our API. Design the fine-tuning service, training and serving."
+
+#### Clarifying questions and assumptions
+
+How many tenants and jobs a day? Data sizes? Isolation requirements? Assume 2,000 tenants, 300 jobs a day of about 20 million training tokens each (5 million tokens × 4 epochs), LoRA rank 16 on attention projections (33.6 MB per adapter, §76.9), a 7B base (13.5 GB in BF16, 524,288 KV bytes per token).
+
+#### Requirements
+
+Functional: upload datasets; validate and scan them; run LoRA jobs with presets; evaluate against the base on the tenant's held-out split and safety suites; serve each tenant's adapter through the shared API; versioning and rollback. Non-functional: job results within 2 hours; adapters isolated per tenant; no tenant data used for others; serving overhead ≤ 10% TTFT versus the base; safety evaluations cannot regress.
+
+#### Estimation
+
+::: example
+**Worked example — Training cost per job and serving density.** Training compute uses §89.15 with $6ND$ as an upper bound (frozen weights skip weight gradients); adapter memory uses §76.9.
+
+1. Per job: $6 \times 7 \times 10^9 \times 2 \times 10^7 = 8.4 \times 10^{17}$ FLOPs; at $4 \times 10^{14}$ FLOP/s, 2,100 GPU-s, **0.58 GPU-hours, about \$1.46**.
+2. Daily: 300 jobs, 175 GPU-hours, about 7.3 busy GPUs.
+3. Serving: 2,000 adapters × 33.6 MB $= 67.2$ GB in host memory; 50 resident per GPU take 1.68 GB, displacing $1.68 \times 10^9 / 524{,}288 = 3{,}204$ KV tokens.
+4. Merged weights instead: 2,000 full models of 13.5 GB, at least one GPU each, mostly idle.
+
+**Interpretation.** Training is cheap per job; the platform's cost is serving many variants, and multi-LoRA makes that nearly free in memory. **Engineering implication.** Serve adapters on shared base replicas with adapter-affinity routing; spend engineering on data validation and evaluation, where tenant risk lives.
+:::
+
+#### Data, labels and features
+
+Tenant instruction or chat datasets with chat templates and loss masking (§76.7.1); validation for format, duplicates, PII and toxic content; held-out splits for evaluation. Labels are the tenant's target responses.
+
+#### High-level design
+
+**Figure 92.117 — Fine-tuning service: validate, train, evaluate, serve on a shared base.**
+
+```mermaid
+flowchart LR
+  TN([Tenant]) -->|dataset| VAL[Validation and<br/>safety scan]
+  VAL --> Q[(Job queue)]
+  Q --> TRN[LoRA training<br/>on shared GPU pool]
+  TRN --> EV{Eval: tenant split,<br/>safety suite}
+  EV -->|pass| AREG[(Adapter registry<br/>keyed by base checksum)]
+  TN -->|inference with<br/>adapter ID| GW[Gateway]
+  GW --> RT{Adapter-affinity<br/>router}
+  RT --> E1[Base replica with<br/>multi-LoRA kernels]
+  AREG -.->|load on first use| E1
+  E1 -->|streamed tokens| GW
+```
+
+**Reading the diagram.** Datasets are validated and scanned before any GPU time; jobs train on a shared pool like Q28's small-job class; evaluation compares the adapter with the base on the tenant's held-out split and a safety suite. Passing adapters are registered against the base checksum. Inference requests name an adapter; the router prefers replicas holding it; adapters load asynchronously into host memory and page into GPU memory. Failure points: an adapter trained on another base version (checksum check), cold-load latency, a hot tenant overloading replicas (per-tenant quotas). Scaling: base replicas by token load; adapters by host memory.
+
+#### Model and evaluation
+
+Baseline: prompt engineering and few-shot on the base. Production: LoRA with presets for rank and learning rate; QLoRA for memory (§76.8.2). Offline: task metric on the tenant split versus base, regression on general and safety suites. Online: tenant-visible comparison and rollback by adapter version.
+
+#### Serving and monitoring
+
+TTFT including cold loads, adapter hit rate per replica, per-tenant tokens and quotas, safety classifier rates per adapter.
+
+#### Deep dives
+
+1. **Multi-LoRA serving.** Shared base, gathered adapter kernels, unified paging of adapters and KV [Chen et al. 2024; Sheng et al. 2024].
+2. **Safety of tenant tuning.** Fine-tuning can erode safety behavior; evaluate every adapter on a safety suite and keep output guardrails (Q50).
+3. **Isolation.** Per-tenant storage keys, no cross-tenant data, adapters loaded only for authorized callers.
+
+#### Trade-offs and alternatives
+
+Full fine-tuning gives the most capacity but a full model per tenant; prompt tuning or RAG may meet needs without training (§76.14).
+
+#### Follow-up questions
+
+1. *A tenant's adapter returns garbage after a base upgrade.* Adapters are keyed by base checksum; retrain or keep the old base for them.
+2. *How do you schedule jobs?* Small-job queue with backfill; preemptible with checkpoints.
+3. *Can a tenant extract another's data?* Not through adapters if isolation holds; test with red-team prompts.
+4. *Why not merge weights?* Only for a few high-volume tenants.
+
+#### What distinguishes levels
+
+- **Mid:** runs LoRA jobs and serves merged models.
+- **Senior:** multi-LoRA serving, evaluation against base, quotas.
+- **Staff:** computes job and serving economics, locks adapters to base versions, and treats dataset validation and safety evaluation as the core of the product.
+
+### 92.7.4 Q44. AI coding assistant
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §86.6 (full case study), §73.10 (speculative decoding), §73.8 (prefix caching)
+
+#### Prompt
+
+"Design an AI assistant inside developers' editors: inline completion as they type, chat about the code, and an agent mode that edits files and runs tests."
+
+#### Clarifying questions and assumptions
+
+Which mode first? Latency for completion? Code privacy commitments? Assume §86.6: 500,000 developers active per day, 600 completion requests each after debouncing, peak-to-average 2.5, 40% of requests canceled by the client, a 3B code model with fill-in-the-middle.
+
+#### Requirements
+
+Functional: inline completion with text before and after the cursor; repository context; chat with citations; agent mode in a sandbox producing a reviewable diff; admin policies (content exclusion, retention). Non-functional: completion p50 ≤ 200 ms, p95 ≤ 400 ms from pause to ghost text; the editor never blocks; zero retention for business customers; acceptance on shown suggestions ≥ 25%.
+
+#### Estimation
+
+::: example
+**Worked example — Completion traffic and fleet (numbers of §86.6.4).** GPU-seconds per call follow §89.16.
+
+1. Requests: $3 \times 10^8$ a day; peak **8,681/s**; served after cancellations, 5,208/s.
+2. Per served call: prefill of 600 uncached tokens 7.3 ms; 24 output tokens with speculative decoding (3 tokens per verification at 1.15× step cost) 52 ms instead of 135 ms.
+3. Busy GPUs at peak about 59; at $\rho = 0.5$, **118 GPUs**; without prefix caching, 354.
+4. Cost: $118 \times 24 \times \$2.50 = \$7{,}080$ a day, \$0.42 per daily developer per month.
+
+**Interpretation.** Prefix caching triples capacity and cancellation saves the decode of 40% of requests. **Engineering implication.** Route each editor session to the same replica, propagate cancellations to the engine, and keep batches small: latency sets the fleet.
+:::
+
+#### Data, labels and features
+
+Prompt context: prefix and suffix around the cursor, open files, recently edited code, imported symbols, retrieved snippets from a per-organization repository index. Labels: what the developer typed next (offline), acceptance and retention of suggestions (online), tests passing and diffs accepted (agent mode).
+
+#### High-level design
+
+**Figure 92.118 — Coding assistant: client-side debounce, prefix-affine completion, sandboxed agent.**
+
+```mermaid
+flowchart LR
+  ED([Editor plugin]) -->|debounced request,<br/>cancel on keystroke| GW[Completion gateway]
+  GW --> CTX[Context assembly:<br/>prefix, suffix, snippets]
+  RI[(Repository index<br/>per organization)] --> CTX
+  CTX --> RT{Session-affine router}
+  RT --> CM[Small FIM model<br/>with speculation]
+  CM -->|ghost text| ED
+  ED -->|chat or task| AG[Agent orchestrator]
+  AG --> LM[Larger model]
+  AG --> SB[Sandbox: edit,<br/>run tests]
+  SB -->|diff for review| ED
+  ED -.->|shown, accepted, retained| TEL[[Telemetry]]
+```
+
+**Reading the diagram.** The client debounces typing and cancels stale requests; the gateway assembles context from the editor and the organization's repository index; a session-affine router keeps each file's prefix hot on one replica; a small fill-in-the-middle model returns ghost text. Chat and agent tasks go to a larger model through an orchestrator that edits and tests in a sandbox and returns a diff for human review. Telemetry is asynchronous and code-free by default. Failure points: late responses (discarded if the prefix no longer matches), index staleness, sandbox escape (network egress denied). Scaling: completion by GPUs at low utilization for latency; agents by sandbox capacity.
+
+#### Model and evaluation
+
+Baseline: a hosted general model for completion (too slow). Production: small FIM code model distilled from a larger one; larger models for chat and agents. Offline: exact match and pass@k on held-out repositories (§78.6.3), agent resolve rate on an internal suite. Online: acceptance, retention and accepted characters per hour randomized by developer [Peng et al. 2023].
+
+#### Serving and monitoring
+
+Latency by region and editor, cancellation and late-discard rates, prefix-hit ratio, acceptance by language, agent resolve rate, cost per developer.
+
+#### Deep dives
+
+1. **Latency budget term by term.** Debounce and network take half; the model gets about 60 ms.
+2. **Repository context.** Retrieval of relevant symbols within a token budget; freshness within 10 minutes of a push.
+3. **Privacy.** Zero retention, per-organization encryption, content exclusion enforced client- and server-side.
+
+#### Trade-offs and alternatives
+
+A bigger completion model raises quality but breaks the budget; on-premises deployment satisfies strict customers at higher operating cost.
+
+#### Follow-up questions
+
+1. *Why not a 70B model for completion?* Its decode step alone (about 27 ms) makes 24 tokens exceed 200 ms even with speculation.
+2. *How do you know suggestions help?* Acceptance and retention plus controlled productivity studies.
+3. *Acceptance rose but retention fell.* The model learned to propose short, easily accepted text; optimize retained characters.
+4. *How do you contain the agent?* Sandbox without credentials or egress; human review before any push.
+
+#### What distinguishes levels
+
+- **Mid:** chooses a code model and streams.
+- **Senior:** FIM, small model, speculation, repository retrieval.
+- **Staff:** writes the latency budget term by term, designs the client as part of the system, sizes the fleet with prefix hits and cancellations, and warns that acceptance can be gamed.
+
+### 92.7.5 Q45. Multi-agent orchestration platform
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §77.8 (durable execution), §77.9 (multi-agent systems), §77.10 (state and retries), §77.13 (sandboxing), §77.17 (cost and latency), Ch 79 (AI platform)
+
+#### Prompt
+
+"Fifty product teams are building agents, some with several cooperating sub-agents. Each team reinvents state handling, tool access, budgets and tracing. Design a shared platform for running agents and multi-agent workflows."
+
+#### Clarifying questions and assumptions
+
+- Workloads: research assistants (orchestrator–worker), back-office automations (sequential with tools), coding tasks in sandboxes.
+- Scale: assume 2 million tasks a day, 12 model calls per task on average, peak-to-average 3, 90 s average task duration, 20% of tasks needing a code sandbox.
+- Models: through the company gateway; frontier at \$2.50/M input, \$0.25/M cached input, \$10/M output; small at \$0.15/M input, \$0.60/M output (as of 2026, the book's illustrative prices).
+- Tools: internal APIs exposed through a registry, some through the Model Context Protocol [MCP 2025].
+
+#### Requirements
+
+Functional: define agents (prompt, model, tools, policies) as versioned configurations; run tasks as durable workflows; orchestrator–worker and hand-off patterns; tool registry with per-agent permissions; human approval steps; budgets per task; traces; offline replay and evaluation.
+
+Non-functional: no lost or duplicated side effects across crashes and retries; a sub-agent never holds more permissions than its parent task; per-task budget enforcement within one step; trace for every step; platform overhead ≤ 50 ms per step; tenant isolation between teams.
+
+#### Estimation
+
+::: example
+**Worked example — Calls, concurrency, sandboxes and cost.** Concurrency uses Little's Law (§4.11); cost uses §88.8 and §77.17; reliability uses the $n$-step success formula of §77.6.4.
+
+1. Calls: $2 \times 10^6 \times 12 = 2.4 \times 10^7$ a day; **833/s at peak**. State writes at two per step: about 1,700/s.
+2. Concurrent tasks at peak: $2 \times 10^6 / 86{,}400 \times 3 = 69.4$ starts/s × 90 s $= 6{,}250$; sandboxes $6{,}250 \times 0.2 = 1{,}250$ concurrent.
+3. Per call with 8,000 input tokens (6,000 a cached static prefix) and 300 output: frontier $(2{,}000 \times 2.50 + 6{,}000 \times 0.25 + 300 \times 10)/10^6 = \$0.0095$; small model without caching $(8{,}000 \times 0.15 + 300 \times 0.60)/10^6 = \$0.00138$.
+4. Routing 60% of steps to the small model: \$0.00463 per call, \$0.056 per task, **\$111,000 a day** against \$228,000 all-frontier.
+5. Reliability: at 98% per-step success, a 12-step task succeeds $0.98^{12} = 78.5\%$ of the time without retries; at 99%, 88.6%.
+
+**Interpretation.** Throughput is moderate; cost and compounding errors dominate. **Engineering implication.** Make routing, caching and budgets platform features, and make every step retryable and idempotent so detectable errors do not compound.
+:::
+
+#### Data, labels and features
+
+Task inputs, step records (prompt version, model, tool calls and results, tokens, latency), approvals, final outcomes, and evaluation labels from end-state checks and human review (§77.14). Tool results and retrieved content are *untrusted data*, never instructions.
+
+#### High-level design
+
+**Figure 92.119 — Agent platform: durable runtime, policy, tools and observability.**
+
+```mermaid
+flowchart LR
+  APP([Team application]) -->|start task| API[Task API]
+  API --> RUN[Durable workflow<br/>runtime]
+  RUN --> ORC[Orchestrator agent]
+  ORC -->|subtasks with<br/>narrowed scopes| WK[Worker agents]
+  ORC --> GWY[Model gateway:<br/>routing, caching]
+  WK --> GWY
+  WK -->|tool call| POL{Policy engine:<br/>scopes, budgets}
+  POL -->|allowed| TR[Tool registry<br/>and MCP servers]
+  POL -->|approval| HQ[[Human approval queue]]
+  TR --> SBX[Sandboxes]
+  RUN -.-> ES[(Event-sourced<br/>task state)]
+  RUN -.->|spans| OT[(Traces and<br/>replay store)]
+```
+
+**Reading the diagram.** A task becomes a durable workflow whose every step is recorded in an event-sourced store, so a crashed worker resumes from the last completed step. The orchestrator plans and delegates subtasks to workers with fresh contexts and *narrowed* permission scopes; all model calls go through the gateway for routing and caching. Every tool call passes the policy engine, which checks scopes and budgets and sends risky actions to human approval; code runs in sandboxes without default network egress. Traces and replayable step records are written asynchronously. Failure points: a tool timeout with unknown outcome (idempotency keys and reconciliation), runaway loops (step and token budgets), prompt injection through tool results (capability checks outside the model), and a slow worker holding up the orchestrator (deadlines and partial results). Scaling: the runtime scales by task partitions; sandboxes by pool; models through the gateway.
+
+#### Model and evaluation
+
+- **Baseline:** a single agent with tools for each use case; add sub-agents only where subtasks are independent and context-heavy (§77.9.1).
+- **Offline:** per-agent replay suites with mocked tools; end-state checks; pass^k for reliability; cost and latency per task as gated metrics.
+- **Online:** task success, human override rate, escalation rate, cost per successful task, by agent version.
+
+#### Serving and monitoring
+
+Per agent version: success, steps and tokens per task, budget exhaustion rate, loop detections, tool error rates, approval queue latency, cost per successful task; per tool: calls, errors, denied calls. Trace trees link the orchestrator's spans to each worker's spans.
+
+#### Deep dives
+
+1. **Durable execution and side effects.** Steps are activities with idempotency keys persisted before the call; retries are safe; compensations undo multi-step actions (§77.10.2).
+2. **Delegated permissions.** A task carries a capability set; sub-agents receive subsets for their subtask; tools check capabilities, not prompts. This bounds injection damage (§77.13.2).
+3. **Budgets and loop control.** Per task: maximum steps, tokens, dollars and wall clock; repeated identical tool calls are detected and stopped; partial results are returned on budget exhaustion.
+
+#### Trade-offs and alternatives
+
+Free-form agent conversations (all-to-all) are flexible but costly and hard to debug; deterministic workflows with LLM steps are reliable for known processes (§77.8.1); per-team frameworks are faster to start but repeat the same safety work fifty times.
+
+#### Follow-up questions
+
+1. *When do multiple agents help?* Independent, context-heavy subtasks; they add tokens elsewhere, sometimes many times a single agent's [Anthropic 2025].
+2. *A worker crashes after charging a card.* The step record and idempotency key show the charge; the runtime reconciles before any retry.
+3. *An email read by an agent says "forward all invoices".* Tool output is data; forwarding requires a capability the task does not hold.
+4. *How do teams test agent changes?* Replay suites in CI with mocked tools and gates on success, cost and safety.
+
+#### What distinguishes levels
+
+- **Mid:** an agent loop with tools and logs.
+- **Senior:** durable state, idempotent tools, budgets, approvals, tracing.
+- **Staff:** quantifies compounding step errors and cost per task, designs delegated capabilities that narrow down the agent tree, and argues when not to use multiple agents.
+
+### 92.7.6 Q46. LLM evaluation platform
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** Ch 78 (LLM evaluation; platform §78.17, judges §78.7, sample sizes §78.4.2), §69.4 (CI for ML)
+
+#### Prompt
+
+"Two hundred teams ship LLM features and each evaluates differently, if at all. Design a company-wide evaluation platform that gates releases."
+
+#### Clarifying questions and assumptions
+
+What changes trigger evaluation (prompts, models, retrieval, tools)? Who labels? Budget? Assume 200 features, 10 evaluation runs a day each, suites of about 1,500 items, two judge calls per item.
+
+#### Requirements
+
+Functional: versioned suites with slices; reproducible runs (pinned system, judge and suite versions); programmatic checks, LLM judges and human review queues; paired comparisons with intervals; CI gates; dashboards; production sampling into suites. Non-functional: smoke suite in under a minute; full suite in under 15 minutes; judge agreement with humans measured per judge version; cost reported per team.
+
+#### Estimation
+
+::: example
+**Worked example — Run cost, volume and interval width (numbers of §78.17 and §78.4.2).** Cost per item uses the request-cost formula of §88.8.
+
+1. One run of 1,200 items at \$0.00093 generation and \$0.00925 judging per item: **\$12.22**; with 32 workers at 9 s per item, 5.6 minutes.
+2. Company scale: $200 \times 10 \times 1{,}500 \times 2 = 6$ million judge calls a day; at \$0.00925 each, about \$55,500 a day before caching and tiering.
+3. Precision: 400 items give about ±3.8 points on a pass rate; detecting +3 points needs about 1,039 items paired versus 2,281 per version unpaired.
+
+**Interpretation.** Evaluation is a production workload with a real bill, and small suites cannot detect small regressions. **Engineering implication.** Tier suites (smoke per commit, full per merge candidate, safety nightly, humans weekly), use paired designs, and cache generations when only the judge changes.
+:::
+
+#### Data, labels and features
+
+Suite items from stratified production samples (redacted), incidents, unanswerable and adversarial cases; references or rubrics; human labels for judge calibration; per-item results and traces.
+
+#### High-level design
+
+**Figure 92.120 — Evaluation platform in the release path.**
+
+```mermaid
+flowchart LR
+  CH([Prompt, model or<br/>config change]) --> CI[CI trigger]
+  CI --> RUNR[Eval runner:<br/>parallel workers]
+  SUITES[(Versioned suites<br/>and slices)] --> RUNR
+  JREG[(Judge registry:<br/>versions, agreement)] --> RUNR
+  RUNR -->|calls| SUT[System under test<br/>with mock tools]
+  RUNR -->|calls| JUD{{Judge models}}
+  RUNR --> RES[(Per-item results)]
+  RES --> GATE{Paired-interval<br/>gate by slice}
+  GATE -->|pass| REGS[(Release registry)]
+  GATE -->|fail| BLOCK([Block release])
+  PROD[[Production samples]] -.-> SUITES
+  HUM[[Human review]] -.-> JREG
+```
+
+**Reading the diagram.** A change triggers a run; workers read pinned suite and judge versions, call the system under test and the judges, and store per-item results; the gate compares paired results per slice with intervals and blocks or registers the release. Production samples and human labels flow in asynchronously, keeping suites fresh and judges calibrated. Failure points: judge rate limits, unpinned versions, judge drift, results kept only as aggregates. Scaling: items × judges × runs; caching and tiering control cost.
+
+#### Model and evaluation
+
+The platform evaluates its own instruments: judge agreement with humans (κ, sensitivity and specificity), position and length bias checks, and corrections of pass rates for judge error (§78.7.3) [Zheng et al. 2023].
+
+#### Serving and monitoring
+
+Runs per team, cost per run, gate outcomes and overrides, judge agreement over time, suite staleness (share of items from the last 90 days), flaky items.
+
+#### Deep dives
+
+1. **Gates on intervals.** Block when the lower bound of the paired difference falls below −1 point or any critical slice loses an item.
+2. **Judges as instruments.** Versioned, calibrated against humans, re-checked after every judge model change.
+3. **Suites that grow from production.** Every incident becomes an item; stale items are retired.
+
+#### Trade-offs and alternatives
+
+Public benchmarks are cheap but contaminated and off-task; human-only evaluation is accurate but slow; per-team scripts are flexible but not comparable.
+
+#### Follow-up questions
+
+1. *Scores improved but users complain.* The suite no longer represents traffic; refresh from production samples and check online metrics.
+2. *The judge prefers longer answers.* Measure and control length bias; use rubric judges with explicit criteria.
+3. *How big must the suite be?* Size from the interval you need; paired designs halve it.
+4. *Can teams override a failed gate?* With a recorded reviewer and reason, audited.
+
+#### What distinguishes levels
+
+- **Mid:** a test set and an accuracy number.
+- **Senior:** LLM judges, slices, CI gating.
+- **Staff:** sizes suites from interval width, calibrates judges as instruments, tiers suites by cost, and builds the production-to-suite loop.
+
+### 92.7.7 Q47. AI answer engine
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** §86.8 (full case study), §56.4 (web search engine), Ch 75 (RAG)
+
+#### Prompt
+
+"Design a search engine that answers questions with a short cited summary, streamed within a second, above the classic results."
+
+#### Clarifying questions and assumptions
+
+Query volume, share of queries that benefit from an answer, freshness needs, cost target. Assume §86.8: 50 million queries a day, peak-to-average 2, 60% answer-eligible, 20% of those served from an answer cache, prompts of about 4,000 tokens and answers of 300.
+
+#### Requirements
+
+Functional: per-query decision to answer or not; hybrid retrieval and passage reranking; streamed grounded answers with citations; follow-ups; publisher controls. Non-functional (Table 86.17): results p95 ≤ 400 ms; answer TTFT p50 ≤ 600 ms; citation precision and sentence support ≥ 90%; news searchable within 5 minutes; ≤ \$0.50 per 1,000 queries.
+
+#### Estimation
+
+::: example
+**Worked example — Generations, GPUs and cost per 1,000 queries (numbers of §86.8.4).** GPU-seconds per call follow §89.16; cost per query §89.17.
+
+1. Peak 1,157 queries/s; generations $1{,}157 \times 0.6 \times 0.8 = 556$/s; 103 billion tokens a day.
+2. Routing 30% to a 70B model ($g = 1.135$ GPU-s) and 70% to an 8B model ($g = 0.153$): blended $g = 0.448$; busy $556 \times 0.448 = 249$ GPUs; at $\rho = 0.6$, **415 GPUs**.
+3. Cost: $415 \times 24 \times 0.75 \times \$2.50 = \$18{,}675$ a day, **\$0.37 per 1,000 queries**.
+
+**Interpretation.** A modest search engine is a large LLM workload. **Engineering implication.** Eligibility, caching and routing are the first levers; model choice comes after.
+:::
+
+#### Data, labels and features
+
+Web or catalog index, passage index, query logs, rater labels for relevance and answer quality, click and reformulation signals, freshness tiers per source.
+
+#### High-level design
+
+**Figure 92.121 — Answer engine: results never wait for the answer.**
+
+```mermaid
+flowchart LR
+  U([User query]) --> QU[Query understanding:<br/>intent, eligibility]
+  QU --> SR[Classic search]
+  SR -->|results page| U
+  QU -->|eligible| AC[(Answer cache)]
+  AC -->|miss| RET[Hybrid passage<br/>retrieval]
+  RET --> RR[Reranker]
+  RR --> GEN[Routed generator<br/>8B or 70B]
+  GEN --> VER[Streaming citation<br/>verifier]
+  VER -->|streamed answer| U
+```
+
+**Reading the diagram.** Query understanding decides eligibility; classic results are served independently so an answer failure never delays results. Eligible queries check the answer cache, then retrieve and rerank passages and stream a routed generation through a verifier that checks each sentence's citation. Failure points: stale cached answers (TTL by freshness class), unsupported sentences (dropped or regenerated), GPU shortage (shed answers, keep results). Scaling: GPUs by generations per second; cache and eligibility cut load.
+
+#### Model and evaluation
+
+Baseline: snippets from the top results. Production: eligibility classifier, cross-encoder reranker, routed generator with citation constraints. Offline: sentence support, citation precision, side-by-side preference versus results-only. Online: reformulation and follow-up rates rather than click-through.
+
+#### Serving and monitoring
+
+TTFT by stage, answer coverage and shed rate, verifier rejections, rater-sampled support and citation precision, freshness lag per tier, cost per 1,000 queries.
+
+#### Deep dives
+
+1. **Eligibility and routing.** Answer only where it adds value; send hard or high-stakes queries to the larger model.
+2. **Attribution during streaming.** Verify sentences against cited passages before display.
+3. **Freshness.** Tiers, freshness-aware reranking, cache TTL by class.
+
+#### Trade-offs and alternatives
+
+Answering every query maximizes coverage at many times the cost; precomputed answers for head queries are cheap but stale.
+
+#### Follow-up questions
+
+1. *Why not answer every query?* Navigational queries gain nothing and each answer costs tens of times a results page.
+2. *How do you measure quality as clicks fall?* Support, citation precision, preference, reformulation.
+3. *What about publishers?* Prominent citations, honoring opt-outs, measured referrals.
+
+#### What distinguishes levels
+
+- **Mid:** retrieve and summarize.
+- **Senior:** hybrid retrieval, reranking, citations, caching.
+- **Staff:** cost per 1,000 queries versus classic search, eligibility and routing designed around it, results separated from answers for availability.
+
+### 92.7.8 Q48. GPU cluster scheduler
+
+**Difficulty:** Expert · **Time:** 60 min · **Related:** Ch 46 (gang §46.10, GPU §46.11, backfill §46.12.2, fairness §46.9), §80.11 (scheduling huge jobs), §79.8 (inference pools), §85.5 (training platform)
+
+#### Prompt
+
+"Design the scheduler for a 4,096-GPU cluster shared by training jobs from 1 to 1,024 GPUs and by inference services."
+
+#### Clarifying questions and assumptions
+
+Topology (8 GPUs per node, nodes per rack, network pods)? Priority classes? Preemption allowed? Assume Q28's cluster and job mix, plus inference pools that must keep a guaranteed floor.
+
+#### Requirements
+
+Functional: gang admission (all or nothing); topology-aware placement; quotas and weighted fair share; priorities and preemption with notice; reservations and backfill; GPU sharing for small jobs (MIG, time slicing); health-aware placement. Non-functional: scheduling decision ≤ 1 s for small jobs; large jobs start within 4 h; fragmentation keeps ≥ 90% of free GPUs usable by whole-node jobs; no starvation.
+
+#### Estimation
+
+::: example
+**Worked example — Fragmentation and the price of a reservation.** Uses the redundancy and utilization forms of §89.10.
+
+1. At 86% allocation, $4{,}096 \times 0.14 = 573$ GPUs are free; if they are scattered one to three per node, no 8-GPU node is free, and a 64-node job cannot start.
+2. Reserving 512 GPUs for a large job whose blockers finish uniformly over 4 hours idles on average 256 GPUs for 4 hours: **1,024 GPU-hours (\$2,560)** per reservation.
+3. Backfilling the draining GPUs with jobs predicted to finish in time recovers, say, 80%: 205 GPU-hours (\$512) lost.
+
+**Interpretation.** Placement quality and reservation handling, not the queue, decide utilization for mixed gang sizes. **Engineering implication.** Bin-pack small jobs onto partially used nodes, keep whole nodes and racks free for gangs, and backfill reservations using runtime predictions.
+:::
+
+#### Data, labels and features
+
+Cluster state (free GPUs by node, rack and pod; health), job specs, historical runtimes per user and job type (for runtime prediction), quotas and usage.
+
+#### High-level design
+
+**Figure 92.122 — Scheduler loop for gangs, topology and backfill.**
+
+```mermaid
+flowchart LR
+  JQ[(Pending jobs<br/>by queue)] --> FS[Fair-share and<br/>priority ordering]
+  FS --> GA{Gang fits on<br/>topology block?}
+  GA -->|yes| BIND[Bind all pods<br/>atomically]
+  GA -->|no, large| RES[Reserve block,<br/>drain]
+  RES --> BF[Backfill with jobs<br/>ending before start]
+  GA -->|no, small| WAIT[Requeue]
+  CS[(Cluster state:<br/>topology, health)] --> GA
+  BIND --> NODES[GPU nodes]
+  FS -.->|preempt borrowed| NODES
+  NODES -.->|health, usage| CS
+```
+
+**Reading the diagram.** Pending jobs are ordered by fair share and priority; a gang binds only if a topology block can hold all of it, atomically; otherwise large jobs reserve a block and the draining time is backfilled, while small jobs wait. Preemption reclaims borrowed capacity with notice. Node health and usage update cluster state asynchronously. Failure points: partial binding (deadlock between gangs), bad runtime predictions delaying reservations (enforce limits), unhealthy nodes in a gang. Scaling: shard by pool; score only a sample of nodes per decision (§46.6.3).
+
+#### Model and evaluation
+
+Runtime prediction from history (quantile regression) supports backfill. Evaluate policies by trace replay in a simulator: queue wait by class, allocation, fragmentation, fairness deviation and preemption cost [Gu et al. 2019; Narayanan et al. 2020].
+
+#### Serving and monitoring
+
+Queue wait by class, allocation and fragmentation (free GPUs usable by 8-GPU jobs), reservation idle GPU-hours, preemptions, scheduling latency.
+
+#### Deep dives
+
+1. **Gangs and topology.** All-or-nothing binding on blocks that share a switch tier.
+2. **Reservations and backfill.** Price of draining, recovered by predicted-short jobs.
+3. **Fairness.** Weighted fair share with borrowing; DRF where CPU and memory matter [Ghodsi et al. 2011].
+
+#### Trade-offs and alternatives
+
+Slurm excels at batch HPC; Kubernetes with gang plugins unifies training and serving; static partitions are simple but strand capacity.
+
+#### Follow-up questions
+
+1. *How do inference pools coexist?* Guaranteed floors at high priority; training borrows above the floor.
+2. *A job lies about runtime to get backfilled.* Kill it at its stated limit.
+3. *Why not spread small jobs?* Spreading fragments nodes; pack them.
+
+#### What distinguishes levels
+
+- **Mid:** queue and GPU requests.
+- **Senior:** gangs, quotas, preemption.
+- **Staff:** quantifies fragmentation and reservation cost, uses runtime prediction for backfill, and evaluates policy changes by trace replay.

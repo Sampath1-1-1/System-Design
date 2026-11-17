@@ -1666,3 +1666,410 @@ The consistency harness is the centerpiece of the test plan. Run 10 clients for 
 | Conflicts | Last-writer-wins | Version vectors and siblings; lost updates demonstrated under clock skew | You can choose LWW, siblings or CRDTs for a given data type and defend it |
 | Testing | Unit tests | History checker with a nemesis | You can describe a bug your checker found and how you fixed it |
 
+### 93.2.3 Replicated database simulation
+
+#### Goal and learning outcomes
+
+Build a primary–replica database out of a simple key-value state machine and a write-ahead log (WAL): the primary appends every change to its log and ships the log to two replicas, which apply it in order. Then break it. Make replicas lag, read from them, crash the primary, promote a replica, and bring the old primary back. Chapter 14 introduced replication modes and lag, Chapter 27 failover and recovery, and Chapter 26 fencing; this project lets you produce each anomaly on purpose and measure what each mode costs.
+
+After this project you should be able to:
+
+- Implement WAL shipping with log sequence numbers (LSNs), in-order apply and catch-up after a disconnection (§14.4.5, §27.12).
+- Compare asynchronous, semi-synchronous and synchronous acknowledgment by latency and by acknowledged writes lost at failover (§14.4.1).
+- Reproduce the replication-lag anomalies (stale reads, non-monotonic reads) and fix them with session guarantees (§14.4.3–14.4.4, §25.6).
+- Run a failover: detect the dead primary, pick the most up-to-date replica, redirect clients, and fence the old primary with an epoch (§27.11, §26.13).
+- Explain why automatic failover without consensus risks split brain, and what Raft adds (§26.12, §26.7).
+
+#### Prerequisites
+
+- Primary–replica architecture, replication modes, lag and its anomalies — §14.3–14.4.
+- Primary–backup replication — §27.4; failure detection — §27.10; failover and recovery — §27.11–27.12.
+- Session guarantees — §25.6; split brain, leases and fencing tokens — §26.11–26.13.
+- Write-ahead logging — §13.5; the Raft simulator — §26.7.7 (for the extension).
+- The message-queue log format (§93.2.1) can be reused as the WAL.
+
+#### Specification
+
+**Functional requirements.**
+
+1. Three node processes: one primary and two replicas. Clients send `PUT`/`GET` over HTTP; writes go to the primary, and reads go to the primary or a replica according to a client-side policy.
+2. The primary assigns each write an LSN, appends it to its WAL, applies it to its state, and streams WAL records to each replica over a long-lived TCP connection. Replicas acknowledge the highest LSN they have durably written.
+3. Replication mode per cluster: `async` (acknowledge the client after the local write), `semi-sync` (after at least one replica acknowledges) or `sync` (after all replicas acknowledge).
+4. A replica that reconnects requests records from its last LSN; if the primary no longer has them, it requests a snapshot.
+5. A failover controller monitors heartbeats, declares the primary dead after a timeout, promotes the replica with the highest LSN, increments the **epoch**, and publishes the new primary's address. Every replicated record and every write carries the epoch; nodes reject records from a lower epoch.
+6. Client sessions carry the LSN of their last write, so that a read can be served by a replica only if it has applied at least that LSN (read-your-writes).
+
+**Non-functional requirements.**
+
+**Table 93.16 — Replicated database simulation: targets (three processes, 2 ms and 6 ms injected one-way delays to the two replicas).**
+
+| Property | Target | How you verify it |
+|---|---|---|
+| Write latency by mode | Measured p50/p99 for each mode; semi-sync p50 ≈ async p50 + the faster replica's round trip | Load test at 500 writes/s |
+| Lost writes at failover | Semi-sync and sync: 0 acknowledged writes lost over 50 crash trials; async: measured and explained | Crash harness with an acknowledgment log |
+| Read-your-writes | 0 violations in 10,000 session reads served by replicas | Session checker |
+| Failover time | New primary accepting writes within heartbeat timeout + 1 s | Timeline from logs |
+| Fencing | 0 writes from a deposed primary accepted by any node | Old-primary return test |
+| Catch-up | A replica disconnected for 60 s at 500 writes/s catches up within 10 s of reconnecting | Lag metric |
+
+#### Architecture
+
+**Figure 93.8 — Semi-synchronous write, primary crash and failover with fencing.**
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant P as Primary (epoch 1)
+  participant R1 as Replica 1 (2 ms)
+  participant R2 as Replica 2 (6 ms)
+  participant FC as Failover controller
+  C->>P: PUT k=v
+  P->>P: append LSN 9 to WAL
+  P->>R1: WAL record LSN 9, epoch 1
+  P->>R2: WAL record LSN 9, epoch 1
+  R1-->>P: ack LSN 9
+  P-->>C: OK (one replica has it)
+  Note over P: primary crashes
+  FC->>R1: heartbeats missed, promote, epoch 2
+  FC->>R2: follow Replica 1, epoch 2
+  R1->>R2: catch-up records, epoch 2
+  P->>R2: late record, epoch 1
+  R2-->>P: rejected, epoch 1 is fenced
+```
+
+**Reading the diagram.** Time runs downward. The client's write is synchronous: it waits for the primary's `OK`. The primary appends the record to its WAL, sends it to both replicas over their streaming connections, and in semi-synchronous mode replies to the client as soon as the faster replica acknowledges (dashed arrows are replies). The slower replica's copy is still in flight, which is replication lag. When the primary crashes, the failover controller notices missing heartbeats, promotes Replica 1 (it has the highest LSN), increments the epoch to 2 and tells Replica 2 to follow it. Replica 1 then sends Replica 2 the records it is missing. If the old primary was not really dead (a long pause, or a network partition that only hid it from the controller), its late record carries epoch 1 and is rejected: that rejection is the fence. Storage boundaries are each node's WAL and state. Failure points: the primary (acknowledged writes that reached no replica are lost in async mode), the controller (it must not promote two replicas, which is why production systems run it on a consensus service), and the network (a partition can make a live primary look dead). Scaling: add read replicas for read throughput, at the cost of more lag to manage; write throughput stays bounded by one primary.
+
+#### Milestones
+
+1. **WAL shipping.** Turn the starter into three processes with a streaming TCP connection per replica, LSN-ordered apply, acknowledgments and a lag metric (primary LSN minus replica LSN). Inject delay in the sender. *Done when:* replicas converge to an identical state hash after a 100,000-write run, and lag is visible on a per-second graph.
+2. **Modes and their costs.** Implement the three acknowledgment modes and run the latency load test and the crash harness for each. *Done when:* your results log has a table of mode × (p50, p99, lost acknowledged writes), and each number is explained.
+3. **Session guarantees.** Reproduce a stale read (write to the primary, read immediately from the slow replica) and a non-monotonic read (two reads from different replicas going back in time); then implement LSN-based read-your-writes and monotonic reads. *Done when:* the checker finds violations without the session LSN and none with it.
+4. **Failover and fencing.** Build the controller and the epoch checks; make clients rediscover the primary. *Done when:* failover and fencing targets hold, including a test that pauses the primary with SIGSTOP (so that it is alive but silent) and resumes it after promotion.
+5. **Catch-up and snapshots.** Truncate the WAL after a checkpoint, so that a replica that has been away too long needs a snapshot followed by the log tail. *Done when:* the catch-up target holds for both paths.
+
+#### Starter code
+
+The starter simulates log shipping in 1 ms ticks. One write per millisecond goes to the primary, which ships it to replicas with one-way delays of 2 ms and 6 ms (the code calls them followers). The primary crashes at $t$ = 10 ms; the most up-to-date replica is promoted; the old primary then tries to keep shipping.
+
+```python
+"""Replicated database core: a primary ships its write-ahead log to two followers
+with different network delays. Compares asynchronous and semi-synchronous
+acknowledgment across a primary crash and failover, then fences the old primary.
+Time advances in 1 ms ticks; everything is deterministic (starter)."""
+
+DELAY = {"F1": 2, "F2": 6}                       # one-way log-shipping delay, ms
+
+class Follower:
+    def __init__(self, name):
+        self.name, self.log, self.epoch = name, [], 1
+
+    def apply(self, epoch, lsn, record):
+        if epoch < self.epoch:                   # fencing: reject a deposed primary
+            return False
+        self.epoch = epoch
+        if lsn == len(self.log) + 1:             # apply strictly in log order
+            self.log.append(record)
+        return True
+
+def run(mode, writes=10, crash_at=10):
+    followers = {n: Follower(n) for n in DELAY}
+    in_flight, acked = [], []                    # (deliver_at, follower, lsn, record)
+    for t in range(1, writes + 1):               # one client write per ms
+        record = f"w{t}"
+        for name, d in DELAY.items():
+            in_flight.append((t + d, name, t, record))
+        ack_at = t if mode == "async" else t + min(DELAY.values())   # semi-sync: wait for 1
+        if ack_at <= crash_at:
+            acked.append(record)
+        if t == 6:                               # a read served by the slower follower
+            seen = [x for x in in_flight if x[1] == "F2" and x[0] <= t]
+            print(f"  [{mode}] t=6 ms: primary has w1..w6, follower F2 has {len(seen)} record(s)")
+    for deliver_at, name, lsn, record in sorted(in_flight):
+        if deliver_at <= crash_at:               # only what arrived before the crash
+            followers[name].apply(1, lsn, record)
+    new = max(followers.values(), key=lambda f: len(f.log))   # promote the most up to date
+    lost = [r for r in acked if r not in new.log]
+    print(f"  [{mode}] crash at t={crash_at} ms: acked {len(acked)}, promoted {new.name} "
+          f"with {len(new.log)} records, lost acknowledged writes: {lost or 'none'}")
+    return followers, new
+
+if __name__ == "__main__":
+    for mode in ("async", "semi-sync"):
+        followers, new = run(mode)
+    for f in followers.values():                 # failover bumps the epoch everywhere
+        f.epoch = 2
+    other = [f for f in followers.values() if f is not new][0]
+    print("old primary (epoch 1) returns and ships w11 ->",
+          "accepted" if other.apply(1, len(other.log) + 1, "w11") else "rejected (fenced)")
+    nxt = new.log[len(other.log)]                # catch-up record from the new primary
+    print(f"new primary (epoch 2) ships {nxt} to {other.name} ->",
+          "accepted" if other.apply(2, len(other.log) + 1, nxt) else "rejected")
+```
+
+Output:
+
+```text
+  [async] t=6 ms: primary has w1..w6, follower F2 has 0 record(s)
+  [async] crash at t=10 ms: acked 10, promoted F1 with 8 records, lost acknowledged writes: ['w9', 'w10']
+  [semi-sync] t=6 ms: primary has w1..w6, follower F2 has 0 record(s)
+  [semi-sync] crash at t=10 ms: acked 8, promoted F1 with 8 records, lost acknowledged writes: none
+old primary (epoch 1) returns and ships w11 -> rejected (fenced)
+new primary (epoch 2) ships w5 to F2 -> accepted
+```
+
+What to notice:
+
+- At $t$ = 6 ms the primary has six writes and the slow replica none, because its first record arrives at 7 ms. A client that writes to the primary and reads from that replica sees nothing: the stale read of §14.4.3.
+- In asynchronous mode all ten writes were acknowledged, but only eight had reached the faster replica by the crash, so promoting it loses `w9` and `w10`, writes the client was told had succeeded.
+- In semi-synchronous mode the primary acknowledged only after the faster replica had a record, so writes 9 and 10 were never acknowledged (their acknowledgments were due at 11 and 12 ms), and nothing acknowledged is lost. The cost is that each write waits for a replica.
+- After failover, the replicas are at epoch 2. The old primary's record carries epoch 1 and is rejected, while the new primary's catch-up record `w5` is accepted. The epoch is a fencing token (§26.13): it makes a deposed primary harmless even if it does not know it has been deposed.
+- The starter promotes "the replica with the longest log" by looking at all replicas at once, which a real controller cannot do if a replica is unreachable. Choosing safely with partial information is exactly what consensus solves (§26.5.2).
+
+::: example
+**Worked example — Translating replication lag into a recovery point objective.**
+
+*Assumptions.* The primary accepts 2,000 writes/s; asynchronous replication runs with a typical lag of 50 ms and spikes to 2 s during a bulk import; the replica with the least lag is promoted.
+
+1. Typical loss on failover: $2{,}000 \times 0.050 = 100$ acknowledged writes.
+2. Loss during a lag spike: $2{,}000 \times 2 = 4{,}000$ acknowledged writes.
+3. Semi-synchronous mode with the nearest replica in another zone 1 ms away adds about one round trip, 1 ms, to every write's latency, and reduces the loss to zero for any single-node failure.
+
+*Interpretation.* With asynchronous replication, the recovery point objective (§39.8.1) is not a fixed number; it is whatever the lag happens to be at the moment of failure. *Engineering implication.* Monitor lag in seconds and alert on it, and if the business requires RPO = 0, pay the round trip for semi-synchronous replication or use a consensus-replicated log.
+:::
+
+#### Test plan and load-test targets
+
+Unit tests check in-order apply (out-of-order and duplicate records are handled), epoch rejection, LSN bookkeeping across reconnection and snapshot installation. The **crash harness** runs a client that logs every acknowledged write, kills the primary at a random moment, waits for failover and then reads every logged key from the new primary; any missing acknowledged write is a loss and is counted per mode. The **session checker** runs clients that write and immediately read, randomly routed to replicas, and counts reads that do not reflect the client's own last write. Load-test writes at 500 per second in each mode for 60 s and report p50 and p99.
+
+#### Failure-injection exercises
+
+1. **Network partition around the primary.** Block the controller's heartbeats from the primary while clients can still reach it. The controller promotes a replica; for a while two nodes believe they are primary. Count the writes the old primary accepts and then loses, and show that a primary lease (stop accepting writes when the lease expires, §26.11) closes the window.
+2. **Slow disk on a replica.** Delay `fsync` on Replica 2. In sync mode every write slows down; in semi-sync mode nothing changes until Replica 1 also fails. Measure both.
+3. **Double failure.** Kill the primary and the fastest replica together in semi-sync mode. The remaining replica may lack acknowledged writes; quantify how often, and explain why "semi-synchronous" protects against one failure only.
+4. **Replica falls behind retention.** Pause a replica until the primary has truncated the WAL it needs. Verify that it falls back to a snapshot and does not silently skip records.
+5. **Promotion of a lagging replica.** Force the controller to promote the slower replica. Measure the lost writes, and then make the controller refuse to promote a replica more than a configured lag behind (and explain the availability cost).
+
+#### Extensions
+
+- Replace the controller with Raft: run the §26.7.7 simulator's election and log rules over your WAL so that commit requires a majority and failover needs no external controller.
+- Add logical replication: stream row-level change events to a fourth process that builds a read-optimized view (§14.4.5, §32.6).
+- Implement chain replication with reads at the tail and compare latency and consistency (§27.5).
+- Add point-in-time recovery from WAL archives (§39.9.3).
+
+#### Self-assessment rubric
+
+**Table 93.17 — Replicated database simulation: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Log shipping | Replicas apply the log | Streaming, acknowledgments, lag metric, catch-up and snapshots | You can explain LSNs, ordering and idempotent apply |
+| Modes | Async works | Three modes measured for latency and loss | You can pick a mode for a given RPO and latency budget with your numbers |
+| Read consistency | Reads from replicas | Stale and non-monotonic reads reproduced and fixed | You can explain session guarantees and their implementation cost |
+| Failover | Manual promotion | Automatic failover with epochs; paused-primary test passes | You can explain split brain and why fencing is needed even with leases |
+| Rigor | Happy path | Crash harness and session checker run in CI | You can argue when to replace the controller with consensus |
+
+### 93.2.4 Notification service
+
+#### Goal and learning outcomes
+
+Build a service that accepts "notify this user" requests from other services and delivers them over e-mail, SMS and push through fake providers, respecting user preferences, provider quotas and priorities. Section 52.7 designs this system at the scale of 50 million recipients per campaign. The hard parts survive the scaling down: a one-time password must not wait behind a marketing campaign, a retried API call must not send two text messages, a provider outage must not lose messages, and an opt-out must take effect before the next send.
+
+After this project you should be able to:
+
+- Accept requests durably and idempotently, then deliver asynchronously through queues (§52.7.8, §22.15).
+- Isolate priorities so that critical traffic meets its latency target during a large campaign (§52.7.3).
+- Retry transient provider failures with exponential backoff and jitter, and route permanent failures to a dead-letter queue (§22.12, §30.10–30.11).
+- Respect per-provider rate limits with the limiter of §93.1.4, and per-user preferences and quiet hours.
+- Track each notification's state from accepted to delivered, failed or suppressed, with a recorded reason.
+
+#### Prerequisites
+
+- The case study — §52.7; mobile push and its delivery limits — §9.8.
+- Queues, retries, poison messages and dead letters — §30.4, §30.10–30.11; idempotent consumers — §32.10.
+- Retries with backoff and jitter, circuit breakers and idempotency keys — §22.12–22.13, §22.15.
+- The message queue (§93.2.1) as the transport and the rate limiter (§93.1.4) for provider quotas.
+
+#### Specification
+
+**Functional requirements.**
+
+1. `POST /notifications` with an `Idempotency-Key`, a user ID, a template ID, parameters, a kind (`otp`, `transactional` or `marketing`) and optional channels. The API returns `202 Accepted` with a notification ID after the request is durably stored.
+2. A preference service: per user and channel opt-outs, quiet hours in the user's time zone (marketing is deferred, OTPs are not), and a frequency cap for marketing (at most 3 per day).
+3. Per-channel worker pools reading from per-priority queues; critical queues are always served first, and marketing has its own quota so that it can never consume all provider capacity.
+4. Fake providers for e-mail, SMS and push with configurable latency, transient error rate, permanent errors (invalid number) and a per-second quota that returns `429`.
+5. Retries with exponential backoff and full jitter up to 4 attempts, then a dead-letter queue with the last error; a circuit breaker per provider.
+6. `GET /notifications/{id}` returns the state history (accepted, queued, attempt *n*, sent, delivered, failed, suppressed) with timestamps and reasons.
+
+**Non-functional requirements.**
+
+**Table 93.18 — Notification service: targets (one machine, fake providers).**
+
+| Property | Target | How you verify it |
+|---|---|---|
+| Acceptance | `POST` p99 ≤ 50 ms at 200 requests/s; 0 accepted requests lost on `kill -9` | Load test and crash test |
+| OTP latency during a campaign | p99 ≤ 5 s from acceptance to provider acceptance while a 100,000-recipient campaign runs | Mixed load test |
+| Campaign throughput | 100,000 marketing sends within 10 min with the SMS provider capped at 200/s | Campaign test |
+| Duplicates | ≤ 1 duplicate provider send per 100,000 under retries and worker crashes | Provider-side counter keyed by notification ID |
+| Opt-out freshness | An opt-out stops all not-yet-sent notifications within 60 s | Opt-out during a campaign |
+| Accounting | Every accepted notification ends in exactly one terminal state with a reason | Reconciliation query |
+
+#### Architecture
+
+**Figure 93.9 — Notification service: acceptance, prioritized delivery and retries.**
+
+```mermaid
+flowchart LR
+  SVC([Calling service]) -->|POST /notifications| API[Notification API]
+  API -->|insert with idempotency key| DB[(Notification store)]
+  API -.->|enqueue by priority| QH[[Critical queue]]
+  API -.->|enqueue by priority| QL[[Marketing queue]]
+  QH -.-> W[Channel workers]
+  QL -.-> W
+  W -->|check| PREF[(Preferences)]
+  W -->|send, quota-limited| PRV{{Fake SMS, e-mail, push}}
+  W -.->|retry with backoff| RQ[[Delayed retry queue]]
+  RQ -.-> W
+  W -.->|after 4 attempts| DLQ[[Dead-letter queue]]
+  W -->|state transitions| DB
+  PRV -.->|delivery callback| API
+```
+
+**Reading the diagram.** The calling service makes one synchronous request; the API stores the notification with its idempotency key and returns `202`, so a retry of the same request finds the stored row and enqueues nothing new. Everything after acceptance is asynchronous (dotted). The API enqueues the notification on a queue chosen by priority; channel workers drain the critical queue before the marketing queue and hold a separate quota for marketing. For each notification, a worker re-checks preferences at send time (an opt-out that arrived after acceptance must still win), renders the template and calls the fake provider through a rate limiter. Transient failures go to a delayed retry queue with exponential backoff and jitter; after four attempts the notification moves to the dead-letter queue. Every transition is recorded in the notification store, which is the storage boundary and the source of truth for accounting; provider delivery callbacks update it later. Failure points: the provider (outage, throttling, slow responses), workers crashing between a successful send and recording it (the source of duplicates), and a campaign filling the queues. Scaling: more workers per channel up to the provider's quota, partitioned queues, and per-tenant quotas so that one sender cannot starve others (§52.7.12).
+
+#### Milestones
+
+1. **Accept durably.** Build the API on the §93.1.1 scaffolding with the notification store in SQLite and the queues from §93.2.1. *Done when:* the acceptance target holds and a retried `POST` with the same key returns the same notification ID.
+2. **Deliver with priorities and quotas.** Build workers, fake providers and per-channel limiters; implement priority queues and a marketing quota. *Done when:* the OTP-latency and campaign-throughput targets hold simultaneously.
+3. **Retries, circuit breakers and dead letters.** *Done when:* with a provider error rate of 20%, every notification ends in a terminal state; with a 60 s provider outage, the circuit breaker opens, nothing is lost, and the backlog drains after recovery.
+4. **Preferences and deduplication.** Implement opt-outs, quiet hours, frequency caps and send-time preference checks; make workers record "sending" before calling the provider and pass the notification ID as the provider's idempotency key (most real providers accept one). *Done when:* the opt-out and duplicate targets hold with workers killed at random.
+5. **Tracking and reconciliation.** Add the state history endpoint, provider callbacks and a reconciliation job that finds notifications stuck in a non-terminal state for more than 10 minutes. *Done when:* the accounting target holds after a run with crashes and outages.
+
+#### Starter code
+
+The starter compresses the pipeline into one function with simulated time: it deduplicates by idempotency key, applies opt-outs (OTPs bypass marketing opt-outs because they are security messages), schedules by priority under a provider quota of 20 sends per second, retries failures with exponential backoff and full jitter, and dead-letters after four attempts. A 400-recipient campaign arrives first; 20 OTPs arrive 2–4 s later, plus one duplicate client retry.
+
+```python
+"""Notification service core: deduplication by idempotency key, preference checks,
+priority scheduling, a flaky fake provider, retries with exponential backoff and
+jitter, and a dead-letter list. Simulated time; fixed seed (starter)."""
+import heapq, random
+from collections import Counter
+
+rng = random.Random(5)
+OPTED_OUT = {("u3", "sms")}                         # (user, channel) preferences
+PRIORITY = {"otp": 0, "order": 1, "marketing": 2}  # lower number = served first
+MAX_ATTEMPTS, SENDS_PER_SECOND = 4, 20             # provider quota per channel
+
+def provider_send(note):                            # fake SMS provider: 20% transient errors
+    return rng.random() > 0.20
+
+def run(requests):
+    seen, status, queue = set(), Counter(), []      # queue: (ready_at, priority, seq, note)
+    first_seen, done_at, seq = {}, {}, 0
+    for t, note in requests:                        # 1) accept: dedupe and check preferences
+        if note["key"] in seen:
+            status["duplicate suppressed"] += 1; continue
+        seen.add(note["key"])
+        if (note["user"], note["channel"]) in OPTED_OUT and note["kind"] != "otp":
+            status["suppressed (opted out)"] += 1; continue
+        note["attempts"] = 0
+        first_seen[note["key"]] = t
+        heapq.heappush(queue, (t, PRIORITY[note["kind"]], seq := seq + 1, note))
+    now = 0.0
+    while queue:                                    # 2) dispatch, one tick per second
+        now = max(now, queue[0][0])
+        batch = []
+        while queue and queue[0][0] <= now:         # everything that is due now
+            batch.append(heapq.heappop(queue))
+        batch.sort(key=lambda item: (item[1], item[0]))   # priority first, then age
+        for item in batch[SENDS_PER_SECOND:]:       # over the provider quota: next second
+            heapq.heappush(queue, (now + 1.0,) + item[1:])
+        for _, prio, s, note in batch[:SENDS_PER_SECOND]:
+            note["attempts"] += 1
+            if provider_send(note):
+                status["sent"] += 1; done_at[note["key"]] = now
+            elif note["attempts"] >= MAX_ATTEMPTS:
+                status["dead-lettered"] += 1
+            else:                                   # exponential backoff with full jitter
+                delay = rng.uniform(0, 0.5 * 2 ** note["attempts"])
+                heapq.heappush(queue, (now + delay, prio, s, note))
+        now += 1.0
+    return status, first_seen, done_at
+
+if __name__ == "__main__":
+    reqs = [(0.0, {"key": f"mkt-{i}", "user": f"u{i % 50}", "channel": "sms", "kind": "marketing"})
+            for i in range(400)]                    # a campaign of 400 arrives first
+    reqs += [(2.0 + i * 0.1, {"key": f"otp-{i}", "user": f"u{i}", "channel": "sms", "kind": "otp"})
+             for i in range(20)]                    # then 20 one-time passwords
+    reqs += [(3.0, dict(reqs[-1][1]))]              # a client retry of the last OTP request
+    status, first, done = run(reqs)
+    for k, v in sorted(status.items()):
+        print(f"{k:<24}{v}")
+    for kind in ("otp", "mkt"):
+        lat = sorted(done[k] - first[k] for k in done if k.startswith(kind))
+        print(f"{kind}: delivered {len(lat)}, median {lat[len(lat) // 2]:.1f} s, max {lat[-1]:.1f} s")
+```
+
+Output:
+
+```text
+dead-lettered           1
+duplicate suppressed    1
+sent                    411
+suppressed (opted out)  8
+otp: delivered 20, median 0.7 s, max 3.0 s
+mkt: delivered 391, median 13.0 s, max 26.0 s
+```
+
+What to notice:
+
+- Even though the campaign arrived first and fills the queue, OTPs are delivered with a median of 0.7 s: each second, due items are sorted by priority before the quota is applied. Without that sort, an OTP arriving at $t$ = 2 s would wait behind about 360 marketing messages, 18 s at 20 per second.
+- The slowest OTP took 3.0 s because a 20% transient error rate forces some to retry, and each retry waits a random backoff. The p99 target of 5 s therefore depends on the retry policy as much as on the queue; compute the worst case for four attempts before accepting it.
+- The duplicate OTP request was suppressed at acceptance. This protects against client retries only. A worker that crashes after the provider accepted a message but before recording it will send again on redelivery; Milestone 4's provider-side idempotency key is what closes that gap.
+- Eight marketing messages to user `u3` were suppressed because of the SMS opt-out, and the outcome is counted, not silently dropped: every request ends in one of four terminal states (sent, suppressed, duplicate, dead-lettered), which is the accounting property in Table 93.18.
+- Marketing messages took up to 26 s. At the quota of 20 per second, 392 campaign messages need at least $392 / 20 = 19.6$ s; OTPs, retries and backoff explain the rest.
+
+::: example
+**Worked example — Can the campaign finish on time without hurting OTPs?**
+
+*Assumptions.* The milestone's campaign: 100,000 SMS within 10 minutes; SMS provider quota 200 sends/s; transient error rate 5% with up to 4 attempts; OTP traffic at most 10/s.
+
+1. Required campaign rate: $100{,}000 / 600 = 167$ sends/s.
+2. Retries add about 5% more attempts: $167 \times 1.05 = 175$ attempts/s (second retries add $167 \times 0.05^2 \approx 0.4$/s more, negligible).
+3. Reserve OTP capacity: $200 - 10 = 190$ attempts/s are left for the campaign, enough for 175 with 15/s of headroom (8% of the quota).
+4. If the error rate jumps to 30% during a provider incident, attempts grow to about $167 \times (1 + 0.3 + 0.09 + 0.027) = 237$/s, over the 190 available, and the campaign falls behind while OTPs, served first, are unaffected.
+
+*Interpretation.* The campaign target is feasible with little headroom; a provider incident delays marketing, which is the correct casualty. *Engineering implication.* Give marketing a quota below the provider limit and reserve the rest for critical traffic, and let the circuit breaker slow the campaign rather than spend quota on retries.
+:::
+
+#### Test plan and load-test targets
+
+Unit tests cover idempotent acceptance (same key and body → same ID; same key, different body → `422`), preference evaluation with time zones and daylight-saving transitions, frequency caps, backoff bounds and terminal-state transitions. The mixed load test runs a 100,000-recipient campaign and 10 OTPs per second simultaneously for 10 minutes, recording OTP latency per second; the fake provider counts sends per notification ID to detect duplicates. A reconciliation query after every test checks that the count of accepted notifications equals the sum of terminal states.
+
+#### Failure-injection exercises
+
+1. **Provider outage.** Make the SMS provider return `503` for 60 s. Verify that the circuit breaker opens, OTPs are failed over to a second fake provider (or to push), and marketing waits.
+2. **Throttling.** Lower the provider quota below the campaign's needs and make the provider return `429` with `Retry-After`. Your workers must slow down, not retry harder.
+3. **Worker crash after send.** Kill a worker right after the provider accepts a message. Count duplicates with and without the provider-side idempotency key.
+4. **Opt-out mid-campaign.** Opt out 1,000 campaign recipients halfway through and verify that none of their remaining messages is sent after 60 s.
+5. **Poison template.** Add a template that fails to render for one user's data. It must be dead-lettered with the rendering error, not retried four times against the provider.
+
+#### Extensions
+
+- Add digesting: group several low-priority notifications to the same user within 15 minutes into one message.
+- Add per-tenant fairness so that one calling service's campaign cannot delay another's transactional mail (§47).
+- Add delivery-status webhooks back to calling services with signed payloads and retries (§10.4.6).
+- Add a send-time optimization model (§92 Q21 frames it as an ML problem) behind a simple interface.
+
+#### Self-assessment rubric
+
+**Table 93.19 — Notification service: self-assessment rubric.**
+
+| Dimension | 1 — Working | 2 — Solid | 3 — Interview-ready |
+|---|---|---|---|
+| Acceptance | Requests accepted | Durable, idempotent `202`; crash test passes | You can explain why acceptance is synchronous and delivery is not |
+| Priorities and quotas | One queue | Priority isolation and marketing quota; OTP target met during a campaign | You can size quotas from provider limits and error rates |
+| Reliability | Retries | Backoff with jitter, circuit breaker, dead letters, reconciliation | You can explain where duplicates come from and how each is prevented |
+| Preferences | Opt-outs checked once | Send-time checks, quiet hours, frequency caps; opt-out freshness met | You can discuss the consistency requirement of preferences |
+| Observability | Logs | State history per notification; lag and dead-letter metrics | You can debug a "user never got the code" report from your data |
+
